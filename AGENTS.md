@@ -136,12 +136,13 @@ Plan (nur geplant, nicht begonnen):
 - v0.2.1: App-Icons (F-Monogramm mit Lupe; Quick invertiert + Blitz).
 - v0.3.0: `--progress` + Live-Anzeige des durchsuchten Ordners/Archivs
   im Schnellsuche-Panel (`runSearchStreaming` in FavenioCore).
+- v0.4.0: Suchbereich der Schnellsuche wählbar — vorderster
+  Finder-Ordner (Vorauswahl) oder Benutzerordner. Handtest des
+  Finder-Zugriffs (Automation-Dialog) steht noch aus.
 - Ideen (nicht begonnen): 7z/rar via externe Tools, Größen-/Datums-
   filter, Mehrwort-Suche („alle Wörter" wie EasyFind),
   Suchabbruch-Button in der GUI, Optionen im Schnellsuche-Panel,
-  Fortschrittsanzeige auch in der großen GUI-Statuszeile,
-  Schnellsuche im aktuellen Finder-Ordner statt im ganzen
-  Benutzerordner (oder wählbar).
+  Fortschrittsanzeige auch in der großen GUI-Statuszeile.
 - Idee (2026-07-11): README-H1 mit Einordnung versehen („Favenio:
   Dateisuche für macOS ohne Index, mit Blick in Archive", analog
   Fastra); bei einem späteren GitHub-Gang englische `README.md` +
@@ -171,6 +172,10 @@ Plan (nur geplant, nicht begonnen):
   Marker (gefunden 2026-07-11 bei `--progress`; Homebrew-Python 3.14
   zählt boot-relativ und verdeckte den Fehler in den Tests → Tests im
   Zweifel auch mit `/usr/bin/python3 -m unittest discover -s tests`).
-- Die Schnellsuche durchsucht IMMER `NSHomeDirectory()` (ganzer
-  Benutzerordner), nicht den aktuellen Finder-Ordner — Nutzer erwarten
-  im Zweifel Letzteres (Idee dazu unter Status/offene Ideen).
+- Suchbereich der Schnellsuche: vorderster Finder-Ordner (per
+  AppleScript erfragt) oder Benutzerordner, wählbar im Panel-Menü.
+  Der ERSTE Finder-Zugriff löst den macOS-Automation-Dialog aus
+  („… möchte Finder steuern"); wird er verweigert oder ist kein
+  Finder-Fenster offen, fällt die App still auf `~` zurück. Die
+  Erlaubnis steht unter Systemeinstellungen → Datenschutz →
+  Automation.

@@ -34,9 +34,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
     var panel: NSPanel!
     let field = NSSearchField()
     let infoLabel = NSTextField(labelWithString:
-        "Return sucht in deinem Benutzerordner · Esc beendet")
+        "Return startet die Suche · Esc beendet")
     let spinner = NSProgressIndicator()
+    let scopePopup = NSPopUpButton()   // wo gesucht wird: Finder-Ordner / ~
     var searching = false
+    var searchRoot = NSHomeDirectory() // Wurzel des laufenden Suchlaufs
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu(appName: "Favenio Schnellsuche")
@@ -92,12 +94,22 @@ final class QuickController: NSObject, NSApplicationDelegate,
         infoLabel.font = NSFont.systemFont(ofSize: 11)
         infoLabel.textColor = .secondaryLabelColor
         infoLabel.lineBreakMode = .byTruncatingTail
+        // Die Info-Zeile darf schrumpfen (…-Kürzung), damit das
+        // Bereichs-Menü rechts immer sichtbar bleibt.
+        infoLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        infoLabel.setContentCompressionResistancePriority(
+            .defaultLow, for: .horizontal)
 
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.isDisplayedWhenStopped = false
 
-        let infoRow = NSStackView(views: [spinner, infoLabel])
+        // Auswahl des Suchbereichs (aktueller Finder-Ordner / Benutzer-
+        // ordner); die Einträge füllt updateScope() bei jedem Anzeigen.
+        scopePopup.controlSize = .small
+        scopePopup.font = NSFont.systemFont(ofSize: 11)
+
+        let infoRow = NSStackView(views: [spinner, infoLabel, scopePopup])
         infoRow.orientation = .horizontal
         infoRow.spacing = 6
 
@@ -116,6 +128,9 @@ final class QuickController: NSObject, NSApplicationDelegate,
                                             constant: -14),
             field.widthAnchor.constraint(equalTo: stack.widthAnchor),
             field.heightAnchor.constraint(equalToConstant: 34),
+            // Info-Zeile über die volle Breite, damit das Bereichs-Menü
+            // rechts außen sitzt.
+            infoRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
         // Oben-mittig auf dem Bildschirm platzieren (Spotlight-Gefühl).
@@ -128,9 +143,61 @@ final class QuickController: NSObject, NSApplicationDelegate,
     }
 
     func showPanel() {
+        updateScope()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(field)
+    }
+
+    // ---------- Suchbereich (Finder-Ordner / Benutzerordner) ----------
+
+    /// Kürzt den Benutzerordner-Anteil eines Pfads zu "~".
+    func abbreviate(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        if path.hasPrefix(home) {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
+    }
+
+    /// Fragt den Finder nach dem Ordner seines vordersten Fensters.
+    /// nil = kein Finder-Fenster offen, Zugriff verweigert (macOS fragt
+    /// beim ersten Mal um Erlaubnis) oder sonstiger Fehler — dann bleibt
+    /// der Benutzerordner der Suchbereich.
+    func frontFinderFolder() -> String? {
+        let source = """
+        tell application "Finder"
+            if (count of Finder windows) > 0 then
+                return POSIX path of (target of front Finder window as alias)
+            end if
+        end tell
+        """
+        var error: NSDictionary?
+        guard let descriptor = NSAppleScript(source: source)?
+                  .executeAndReturnError(&error),
+              var path = descriptor.stringValue, !path.isEmpty
+        else { return nil }
+        // "als alias" liefert Ordner mit Schluss-Schrägstrich — angleichen,
+        // damit der Vergleich mit NSHomeDirectory() funktioniert.
+        if path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+        return path
+    }
+
+    /// Baut das Bereichs-Menü neu auf: vorderster Finder-Ordner (falls
+    /// vorhanden und nicht sowieso der Benutzerordner) plus Benutzerordner.
+    /// Vorauswahl ist der Finder-Ordner — „suchen, wo ich gerade bin".
+    func updateScope() {
+        let home = NSHomeDirectory()
+        scopePopup.removeAllItems()
+        if let folder = frontFinderFolder(), folder != home {
+            let name = (folder as NSString).lastPathComponent
+            scopePopup.addItem(withTitle: "In „\(name)“")
+            scopePopup.lastItem?.representedObject = folder
+            scopePopup.lastItem?.toolTip = abbreviate(folder)
+        }
+        scopePopup.addItem(withTitle: "Im Benutzerordner (~)")
+        scopePopup.lastItem?.representedObject = home
+        scopePopup.selectItem(at: 0)
     }
 
     // ---------- Suche + Übergabe an die große GUI ----------
@@ -142,12 +209,15 @@ final class QuickController: NSObject, NSApplicationDelegate,
         spinner.startAnimation(nil)
         infoLabel.stringValue = "Suche läuft…"
 
-        let home = NSHomeDirectory()
+        // Suchbereich aus dem Menü übernehmen (Finder-Ordner oder ~).
+        searchRoot = scopePopup.selectedItem?.representedObject as? String
+            ?? NSHomeDirectory()
+        let root = searchRoot
         // Die Suche blockierend im Hintergrund-Thread laufen lassen,
         // damit das Panel bedienbar bleibt.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let arguments = searchArguments(
-                pattern: query, root: home, content: false, regex: false,
+                pattern: query, root: root, content: false, regex: false,
                 caseSensitive: false, archives: true, progress: true)
             else {
                 DispatchQueue.main.async {
@@ -162,7 +232,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
             // Suche noch arbeitet.
             let result = runSearchStreaming(arguments: arguments) {
                 [weak self] path in
-                self?.showProgress(path: path, home: home)
+                self?.showProgress(path: path)
             }
             DispatchQueue.main.async {
                 self?.finish(query: query, count: result.hits.count,
@@ -174,15 +244,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// Zeigt den gerade durchsuchten Ort in der Info-Zeile — bewusst
     /// zurückhaltend (tertiäre Textfarbe, in der Mitte gekürzt, damit
     /// der Datei-/Archivname am Ende lesbar bleibt).
-    func showProgress(path: String, home: String) {
+    func showProgress(path: String) {
         guard searching else { return }   // Suche schon fertig → nicht mehr
-        var shown = path                  // hinter das Ergebnis malen
-        if shown.hasPrefix(home) {
-            shown = "~" + shown.dropFirst(home.count)
-        }
-        infoLabel.textColor = .tertiaryLabelColor
+        infoLabel.textColor = .tertiaryLabelColor // hinters Ergebnis malen
         infoLabel.lineBreakMode = .byTruncatingMiddle
-        infoLabel.stringValue = "Durchsuche " + shown
+        infoLabel.stringValue = "Durchsuche " + abbreviate(path)
     }
 
     func finish(query: String, count: Int, raw: Data?, errorText: String?) {
@@ -207,7 +273,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
             infoLabel.stringValue = "Konnte Treffer nicht zwischenspeichern."
             return
         }
-        openMainApp(query: query, root: NSHomeDirectory(),
+        openMainApp(query: query, root: searchRoot,
                     resultsFile: resultsFile)
     }
 

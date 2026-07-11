@@ -75,6 +75,8 @@ cat > FavenioQuick.app/Contents/Info.plist <<EOF
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSUIElement</key><true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Favenio fragt den Finder nach dem aktuellen Ordner, um dort zu suchen.</string>
 </dict>
 </plist>
 EOF
