@@ -78,6 +78,10 @@ GUI-Anbindung, ohne Fenster. GUI-Optik: fenstergezielte Screenshots
 - Ideen (nicht begonnen): 7z/rar via externe Tools, Größen-/Datums-
   filter, Mehrwort-Suche („alle Wörter" wie EasyFind), App-Icon,
   Suchabbruch-Button in der GUI, Optionen im Schnellsuche-Panel.
+- Idee (2026-07-11): README-H1 mit Einordnung versehen („Favenio:
+  Dateisuche für macOS ohne Index, mit Blick in Archive", analog
+  Fastra); bei einem späteren GitHub-Gang englische `README.md` +
+  deutsche `README.de.md` anlegen.
 
 ## Fallen / Agent-Hinweise
 
