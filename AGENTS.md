@@ -68,6 +68,52 @@ Zip-im-Zip) selbst in einem Temp-Ordner. Der App-Selbsttest
 GUI-Anbindung, ohne Fenster. GUI-Optik: fenstergezielte Screenshots
 (CGWindowList → `screencapture -l <WID>`), siehe Fallen unten.
 
+## Performance-Einordnung (Messung 2026-07-11, M5, warmer FS-Cache)
+
+- **Namenssuche: praktisch am Single-Thread-Maximum.** ~527.000 Einträge
+  (`~/git`): Favenio 1,39 s vs. `find` 1,41 s, identische Trefferzahl.
+  Syscall-gebunden; `os.walk` nutzt intern C-`scandir`. Absolutes Maximum
+  wäre parallele Traversierung à la `fd` (~3–6× bei warmem Cache); bei
+  kaltem Cache (typischer Erstlauf ohne Index) ist die Platte der
+  Flaschenhals und der Vorsprung schrumpft deutlich.
+- **Inhaltssuche: ~14× langsamer als ripgrep** (~10.700 Dateien: 1,22 s
+  vs. 0,09 s). Drei Gründe: Single-Thread (rg nutzte ~11 Kerne),
+  Python-Zeilenschleife mit Komplett-UTF-8-Dekodierung statt
+  SIMD-Bytesuche, kein Early-Exit — jede Datei wird komplett in den RAM
+  gelesen (`visit_file()`), auch große Binärdateien. Der Faktor wächst
+  auf großen Bäumen eher noch.
+- **Archiv-Suche: konzeptbedingt nahe am Maximum.** Zip-Namenssuche liest
+  nur das zentrale Verzeichnis, Dekompression läuft in C (zlib).
+  Inhärente Kosten: tar.gz muss zum Auflisten komplett dekomprimiert
+  werden (Formateigenschaft); verschachtelte Archive landen ganz im RAM
+  (Design-Entscheidung).
+
+Größter Hebel ist die Inhaltssuche → geplantes Feature unten.
+
+## Geplant: parallele Inhaltssuche (opt-in, Default AUS)
+
+Entscheidung Daniel 2026-07-11: Beschleunigung über mehrere Kerne kann
+nerven (Rechner sofort voll ausgelastet, Lüfter) — deshalb bewusst
+abschaltbar und **standardmäßig aus**; meist braucht man sie nicht.
+
+Plan (nur geplant, nicht begonnen):
+
+1. **Kern (`favenio.py`):** Worker-Pool (stdlib, z. B.
+   `concurrent.futures.ProcessPoolExecutor`) NUR für die Inhaltssuche
+   in normalen Dateisystem-Dateien. Traversierung bleibt Single-Thread
+   und verteilt Datei-Pfade als Jobs; Archive bleiben seriell
+   (Archiv-Objekte sind nicht prozess-übergreifend teilbar).
+2. **Lese-Verbesserung unabhängig davon:** Chunk-Lesen mit Early-Exit
+   beim ersten Treffer statt Komplett-Read — hilft auch seriell.
+   Verhalten beibehalten: kein Binär-Skip (dokumentierte Eigenschaft,
+   Treffer in „halb-binären" Dateien).
+3. **CLI:** Flag `--parallel [N]` (ohne N = Kernzahl); ohne Flag exakt
+   bisheriges Verhalten.
+4. **GUI (`Favenio.app`):** Ankreuzfeld (z. B. „Alle Prozessorkerne
+   nutzen"), Default aus, reicht nur das Flag an den Unterprozess durch.
+5. **Tests:** Ergebnisgleichheit seriell vs. parallel auf den
+   bestehenden Fixtures; JSONL-Reihenfolge darf abweichen.
+
 ## Status / offene Ideen
 
 - v0.1.0: CLI — Namens-/Inhaltssuche, Zip+Tar, Verschachtelung, JSONL.
