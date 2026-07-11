@@ -27,9 +27,10 @@ import re
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -91,15 +92,21 @@ class Search:
     die Optionen und zwei Zähler (Treffer gefunden? Fehler passiert?).
     """
 
-    def __init__(self, matcher, content_mode, archive_depth, as_json):
+    def __init__(self, matcher, content_mode, archive_depth, as_json,
+                 progress=False):
         self.matcher = matcher                # Funktion text -> bool
         self.content_mode = content_mode      # True = Inhalt, False = Namen
         self.archive_depth = archive_depth    # 0 = Archive ignorieren,
                                               # 1 = in Archive schauen,
                                               # 2 = auch Archive IN Archiven …
         self.as_json = as_json                # Ausgabeformat JSONL statt Text
+        self.progress = progress              # laufend melden, wo wir suchen
         self.found_any = False                # für den Exit-Code (0 vs. 1)
         self.had_errors = False               # Warnungen gab es (stderr)
+        self._last_progress = None            # Zeitstempel fürs Drosseln
+                                              # (None = noch nie gemeldet;
+                                              # nicht 0.0 — time.monotonic()
+                                              # startet je nach Python nahe 0)
 
     # ---------- Ausgabe ----------
 
@@ -122,6 +129,29 @@ class Search:
         landen auf stderr, die Suche läuft weiter."""
         self.had_errors = True
         print("favenio: warnung: %s" % message, file=sys.stderr)
+
+    def report_progress(self, path):
+        """Meldet (mit --progress) laufend, welcher Ordner bzw. welches
+        Archiv gerade durchsucht wird — damit GUIs zeigen können, dass
+        die Suche noch lebt.
+
+        Gedrosselt auf höchstens ~10 Meldungen pro Sekunde, damit die
+        Ausgabe die Suche nicht ausbremst; die erste Meldung kommt immer.
+        Mit --json als eigenes JSONL-Objekt ({"type": "progress"}) auf
+        stdout — Konsumenten unterscheiden Treffer und Fortschritt am
+        type-Feld. Ohne --json auf stderr, damit stdout eine reine
+        Trefferliste bleibt."""
+        if not self.progress:
+            return
+        now = time.monotonic()
+        if self._last_progress is not None and now - self._last_progress < 0.1:
+            return
+        self._last_progress = now
+        if self.as_json:
+            print(json.dumps({"type": "progress", "path": path},
+                             ensure_ascii=False), flush=True)
+        else:
+            print("… durchsuche: %s" % path, file=sys.stderr)
 
     # ---------- Inhalts-Matching ----------
 
@@ -149,6 +179,7 @@ class Search:
         for dirpath, dirnames, filenames in os.walk(
             root, onerror=lambda err: self.warn(str(err)), followlinks=False
         ):
+            self.report_progress(dirpath)
             if not self.content_mode:
                 # Bei Namenssuche zählen auch Ordnernamen als Treffer.
                 for dirname in dirnames:
@@ -191,6 +222,7 @@ class Search:
         display ist der Anzeige-Pfad, z. B. "ordner/paket.zip" oder
         verschachtelt "aussen.zip!/innen.zip". depth zählt runter:
         bei 0 steigen wir nicht weiter in Unter-Archive ein."""
+        self.report_progress(display)
         try:
             if kind == "zip":
                 source = fileobj if fileobj is not None else fs_path
@@ -360,6 +392,10 @@ def main(argv=None):
                              "Default: 1)")
     parser.add_argument("--json", action="store_true",
                         help="Treffer als JSON-Zeilen ausgeben (JSONL)")
+    parser.add_argument("--progress", action="store_true",
+                        help="laufend melden, wo gerade gesucht wird "
+                             "(mit --json als JSONL-Objekte type=progress "
+                             "auf stdout, sonst auf stderr)")
     parser.add_argument("--extract", metavar="TREFFER",
                         help="statt zu suchen: einen Treffer-Pfad (ggf. mit "
                              "!/-Notation) in einen Temp-Ordner auspacken "
@@ -388,7 +424,8 @@ def main(argv=None):
         return 2
 
     archive_depth = 0 if args.no_archives else args.archive_depth
-    search = Search(matcher, args.content, archive_depth, args.json)
+    search = Search(matcher, args.content, archive_depth, args.json,
+                    progress=args.progress)
 
     for path in paths:
         if not os.path.exists(path):

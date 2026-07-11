@@ -170,6 +170,36 @@ class FavenioTest(unittest.TestCase):
         self.assertIn("file", types)    # notiz.txt
         self.assertIn("member", types)  # Archiv-Einträge
 
+    # ---------- Fortschrittsmeldungen (--progress) ----------
+
+    def test_progress_json(self):
+        # Mit --json --progress erscheinen Fortschritts-Objekte im Strom;
+        # die erste Meldung kommt immer (Drossel greift erst danach).
+        code, lines, _ = run(["--json", "--progress", "notiz", self.root])
+        self.assertEqual(code, 0)
+        records = [json.loads(line) for line in lines]
+        progress = [r for r in records if r["type"] == "progress"]
+        hits = [r for r in records if r["type"] != "progress"]
+        self.assertGreaterEqual(len(progress), 1)
+        self.assertTrue(all("path" in r for r in progress))
+        # Die Treffer bleiben davon unberührt.
+        self.assertEqual([os.path.basename(r["path"]) for r in hits],
+                         ["notiz.txt"])
+
+    def test_progress_text_mode_goes_to_stderr(self):
+        # Ohne --json bleibt stdout eine reine Trefferliste;
+        # die Fortschrittszeilen landen auf stderr.
+        code, lines, err = run(["--progress", "notiz", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("durchsuche", err)
+
+    def test_no_progress_without_flag(self):
+        code, lines, _ = run(["--json", "notiz", self.root])
+        self.assertEqual(code, 0)
+        types = {json.loads(line)["type"] for line in lines}
+        self.assertNotIn("progress", types)
+
     # ---------- Extraktion (--extract, Unterbau für die GUI) ----------
 
     def read(self, path):

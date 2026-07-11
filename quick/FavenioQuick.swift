@@ -140,7 +140,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         guard !query.isEmpty, !searching else { return }
         searching = true
         spinner.startAnimation(nil)
-        infoLabel.stringValue = "Suche läuft… (Esc nach Abbruch: Feld leeren)"
+        infoLabel.stringValue = "Suche läuft…"
 
         let home = NSHomeDirectory()
         // Die Suche blockierend im Hintergrund-Thread laufen lassen,
@@ -148,7 +148,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let arguments = searchArguments(
                 pattern: query, root: home, content: false, regex: false,
-                caseSensitive: false, archives: true)
+                caseSensitive: false, archives: true, progress: true)
             else {
                 DispatchQueue.main.async {
                     self?.finish(query: query, count: 0, raw: nil,
@@ -156,7 +156,14 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 }
                 return
             }
-            let result = runSearchSync(arguments: arguments)
+            // Fortschritt: der Kern meldet laufend (gedrosselt), welchen
+            // Ordner bzw. welches Archiv er gerade durchsucht — das zeigen
+            // wir dezent in der Info-Zeile, damit sichtbar ist, dass die
+            // Suche noch arbeitet.
+            let result = runSearchStreaming(arguments: arguments) {
+                [weak self] path in
+                self?.showProgress(path: path, home: home)
+            }
             DispatchQueue.main.async {
                 self?.finish(query: query, count: result.hits.count,
                              raw: result.raw, errorText: nil)
@@ -164,9 +171,26 @@ final class QuickController: NSObject, NSApplicationDelegate,
         }
     }
 
+    /// Zeigt den gerade durchsuchten Ort in der Info-Zeile — bewusst
+    /// zurückhaltend (tertiäre Textfarbe, in der Mitte gekürzt, damit
+    /// der Datei-/Archivname am Ende lesbar bleibt).
+    func showProgress(path: String, home: String) {
+        guard searching else { return }   // Suche schon fertig → nicht mehr
+        var shown = path                  // hinter das Ergebnis malen
+        if shown.hasPrefix(home) {
+            shown = "~" + shown.dropFirst(home.count)
+        }
+        infoLabel.textColor = .tertiaryLabelColor
+        infoLabel.lineBreakMode = .byTruncatingMiddle
+        infoLabel.stringValue = "Durchsuche " + shown
+    }
+
     func finish(query: String, count: Int, raw: Data?, errorText: String?) {
         searching = false
         spinner.stopAnimation(nil)
+        // Info-Zeile aus dem Fortschritts-Look zurückholen.
+        infoLabel.textColor = .secondaryLabelColor
+        infoLabel.lineBreakMode = .byTruncatingTail
         if let errorText {
             infoLabel.stringValue = errorText
             return

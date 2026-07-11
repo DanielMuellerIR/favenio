@@ -39,27 +39,43 @@ func findCLI() -> String? {
 }
 
 /// Übersetzt EINE JSONL-Zeile der Suche in einen Hit (oder nil bei Müll).
+/// Fortschritts-Zeilen (type=progress, von --progress) sind KEINE Treffer
+/// und werden hier bewusst verworfen — dafür gibt es parseProgress().
 func parseHit(_ lineData: Data) -> Hit? {
     guard
         let object = try? JSONSerialization.jsonObject(with: lineData),
         let dict = object as? [String: Any],
         let path = dict["path"] as? String,
-        let kind = dict["type"] as? String
+        let kind = dict["type"] as? String,
+        kind != "progress"
     else { return nil }
     return Hit(path: path, kind: kind, line: dict["line"] as? Int)
+}
+
+/// Übersetzt eine JSONL-Zeile in einen Fortschritts-Pfad (der Ordner bzw.
+/// das Archiv, das der Kern gerade durchsucht) — nil für alles andere.
+func parseProgress(_ lineData: Data) -> String? {
+    guard
+        let object = try? JSONSerialization.jsonObject(with: lineData),
+        let dict = object as? [String: Any],
+        dict["type"] as? String == "progress",
+        let path = dict["path"] as? String
+    else { return nil }
+    return path
 }
 
 /// Baut die Argumentliste für einen Suchlauf des Python-Kerns.
 /// nil, wenn favenio.py nicht auffindbar ist.
 func searchArguments(pattern: String, root: String, content: Bool,
                      regex: Bool, caseSensitive: Bool,
-                     archives: Bool) -> [String]? {
+                     archives: Bool, progress: Bool = false) -> [String]? {
     guard let cli = findCLI() else { return nil }
     var args = ["-u", cli, "--json"]   // -u = ungepuffert → Treffer streamen
     if content { args.append("--content") }
     if regex { args.append("--regex") }
     if caseSensitive { args.append("--case-sensitive") }
     if !archives { args.append("--no-archives") }
+    if progress { args.append("--progress") }
     args.append("--")   // ab hier nur noch Positionsargumente (Muster darf
     args.append(pattern) // sonst mit "-" beginnen und argparse verwirren)
     args.append(root)
@@ -84,6 +100,54 @@ func runSearchSync(arguments: [String]) -> (hits: [Hit], raw: Data) {
         if let hit = parseHit(Data(lineData)) { hits.append(hit) }
     }
     return (hits, raw)
+}
+
+/// Wie runSearchSync, liest die Ausgabe aber ZEILENWEISE, während die
+/// Suche läuft: Fortschritts-Zeilen (--progress) werden sofort über den
+/// Callback gemeldet (auf dem Main-Thread), Treffer gesammelt. Das
+/// zurückgegebene Roh-JSONL enthält NUR die Treffer — es kann also
+/// unverändert als Ergebnisdatei an die große GUI übergeben werden.
+/// Blockiert bis zum Ende der Suche; im Hintergrund-Thread aufrufen.
+func runSearchStreaming(arguments: [String],
+                        onProgress: @escaping (String) -> Void)
+    -> (hits: [Hit], raw: Data) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: pythonPath)
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    do { try process.run() } catch { return ([], Data()) }
+
+    var hits: [Hit] = []
+    var hitsRaw = Data()   // gefiltertes JSONL (ohne progress-Zeilen)
+    var buffer = Data()    // noch unvollständige Zeile vom Pipe-Ende
+
+    func handleLine(_ lineData: Data) {
+        if lineData.isEmpty { return }
+        if let path = parseProgress(lineData) {
+            DispatchQueue.main.async { onProgress(path) }
+        } else if let hit = parseHit(lineData) {
+            hits.append(hit)
+            hitsRaw.append(lineData)
+            hitsRaw.append(0x0A)
+        }
+    }
+
+    let handle = pipe.fileHandleForReading
+    while true {
+        let chunk = handle.availableData   // blockiert; leer = Pipe zu
+        if chunk.isEmpty { break }
+        buffer.append(chunk)
+        // Alle vollständigen Zeilen aus dem Puffer abarbeiten.
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            handleLine(buffer.subdata(in: buffer.startIndex..<newline))
+            buffer.removeSubrange(buffer.startIndex...newline)
+        }
+    }
+    handleLine(buffer)   // letzte Zeile, falls ohne Zeilenumbruch
+    process.waitUntilExit()
+    return (hits, hitsRaw)
 }
 
 /// Macht aus einem Treffer eine echte Datei auf der Platte:

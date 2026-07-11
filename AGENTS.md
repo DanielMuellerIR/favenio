@@ -39,8 +39,10 @@ GUI (`Favenio.app`) und Finder-Toolbar-Schnellsuche (`FavenioQuick.app`).
   öffnet, Rechtsklick (Öffnen / Öffnen mit… / Im Finder zeigen / Pfad
   kopieren), Drag&Drop nach draußen. `--selftest` = Headless-Test.
 - `quick/FavenioQuick.swift` — LSUIElement-Panel (schwebendes Suchfeld);
-  sucht selbst (blockierend im Hintergrund-Thread) und übergibt die
-  fertigen Treffer als JSONL-Temp-Datei an die GUI.
+  sucht selbst (streamend im Hintergrund-Thread, `runSearchStreaming`)
+  und übergibt die fertigen Treffer als JSONL-Temp-Datei an die GUI.
+  Während der Suche zeigt die Info-Zeile dezent (tertiäre Textfarbe,
+  Mitten-Kürzung) den gerade durchsuchten Ordner/das Archiv (`--progress`).
 - **Übergabe Schnellsuche → GUI:** primär URL-Schema
   `favenio://results?q=…&root=…&file=…` (in Info.plist registriert,
   `lsregister -f` im Build-Skript); Fallback Startargumente
@@ -58,6 +60,10 @@ GUI (`Favenio.app`) und Finder-Toolbar-Schnellsuche (`FavenioQuick.app`).
 
 - `--json` → JSONL, ein Objekt pro Treffer: `path`, `type`
   (`file`/`dir`/`member`), bei Inhaltssuche `line`.
+- `--progress` → laufende Meldung, wo gerade gesucht wird (gedrosselt
+  auf ~10/s, erste Meldung immer). Mit `--json` als eigene JSONL-Objekte
+  `{"type": "progress", "path": …}` im stdout-Strom (Konsumenten
+  unterscheiden am `type`-Feld); ohne `--json` auf stderr.
 - Exit-Codes wie grep: 0 Treffer / 1 keine / 2 Fehler.
 - Warnungen nach stderr, stdout bleibt parsebar.
 
@@ -127,9 +133,15 @@ Plan (nur geplant, nicht begonnen):
   Kontextmenü/Öffnen mit/Drag&Drop), FavenioQuick.app (Toolbar-
   Schnellsuche mit Übergabe an die GUI). Alles verifiziert bis auf
   echtes Tippen/Maus-Drag (Handtest).
+- v0.2.1: App-Icons (F-Monogramm mit Lupe; Quick invertiert + Blitz).
+- v0.3.0: `--progress` + Live-Anzeige des durchsuchten Ordners/Archivs
+  im Schnellsuche-Panel (`runSearchStreaming` in FavenioCore).
 - Ideen (nicht begonnen): 7z/rar via externe Tools, Größen-/Datums-
-  filter, Mehrwort-Suche („alle Wörter" wie EasyFind), App-Icon,
-  Suchabbruch-Button in der GUI, Optionen im Schnellsuche-Panel.
+  filter, Mehrwort-Suche („alle Wörter" wie EasyFind),
+  Suchabbruch-Button in der GUI, Optionen im Schnellsuche-Panel,
+  Fortschrittsanzeige auch in der großen GUI-Statuszeile,
+  Schnellsuche im aktuellen Finder-Ordner statt im ganzen
+  Benutzerordner (oder wählbar).
 - Idee (2026-07-11): README-H1 mit Einordnung versehen („Favenio:
   Dateisuche für macOS ohne Index, mit Blick in Archive", analog
   Fastra); bei einem späteren GitHub-Gang englische `README.md` +
@@ -153,3 +165,12 @@ Plan (nur geplant, nicht begonnen):
 - „Im Finder zeigen" zeigt bei Archiv-Einträgen die ausgepackte
   Temp-Kopie (genau die Datei, die Öffnen/Drag liefert), nicht das
   Archiv.
+- **`time.monotonic()` startet beim System-Python (3.9, das die Apps
+  nutzen) nahe 0 beim Prozessstart** — ein Drossel-Startwert von `0.0`
+  verschluckt dann die erste Meldung. Deshalb `None` als „noch nie"-
+  Marker (gefunden 2026-07-11 bei `--progress`; Homebrew-Python 3.14
+  zählt boot-relativ und verdeckte den Fehler in den Tests → Tests im
+  Zweifel auch mit `/usr/bin/python3 -m unittest discover -s tests`).
+- Die Schnellsuche durchsucht IMMER `NSHomeDirectory()` (ganzer
+  Benutzerordner), nicht den aktuellen Finder-Ordner — Nutzer erwarten
+  im Zweifel Letzteres (Idee dazu unter Status/offene Ideen).
