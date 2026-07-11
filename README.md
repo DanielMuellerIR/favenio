@@ -1,13 +1,14 @@
 # Favenio
 
-**„facile invenio" — ich finde mit Leichtigkeit.**
+**„facile invenio", Latein für „ich finde mit Leichtigkeit".**
 
 Favenio ist eine Dateisuche im Stil von EasyFind: Sie durchsucht das
 Dateisystem direkt (ohne Index, ohne Spotlight) nach Dateinamen oder
 Dateiinhalten. Die Besonderheit gegenüber EasyFind: **Favenio schaut
-auch in Archive hinein** — Zip-Familie (zip, jar, whl, epub, docx,
-xlsx, pptx, odt, ods, odp) und Tar-Familie (tar, tar.gz/tgz,
-tar.bz2/tbz2, tar.xz/txz), auf Wunsch auch Archive in Archiven.
+auch in Archive hinein**. Unterstützt werden die Zip-Familie (zip, jar,
+whl, epub, docx, xlsx, pptx, odt, ods, odp) und die Tar-Familie (tar,
+tar.gz/tgz, tar.bz2/tbz2, tar.xz/txz), auf Wunsch auch Archive in
+Archiven.
 
 Pures Python 3 (nur Standardbibliothek), eine Datei, keine Installation.
 
@@ -20,7 +21,7 @@ Pures Python 3 (nur Standardbibliothek), eine Datei, keine Installation.
 # Glob-Muster (matcht den ganzen Namen)
 ./favenio.py "*.sketch" ~/Projekte
 
-# Im Dateiinhalt suchen — auch innerhalb von Archiven
+# Im Dateiinhalt suchen, auch innerhalb von Archiven
 ./favenio.py -c "Kündigungsfrist" ~/Documents
 
 # Regulärer Ausdruck, Groß-/Kleinschreibung beachten
@@ -46,12 +47,12 @@ Bei Inhaltssuche hängt `:N` die Zeilennummer des ersten Treffers an.
 
 Favenio ist bewusst maschinenfreundlich gebaut:
 
-- **`--json`**: ein Treffer pro Zeile als JSON-Objekt (JSONL) —
+- **`--json`**: Ein Treffer pro Zeile als JSON-Objekt (JSONL), etwa
   `{"path": "...", "type": "file|dir|member", "line": 2}`
 - **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,
   `2` = Fehler (ungültiger Regex, Pfad fehlt)
-- **Warnungen** (unlesbare Dateien, kaputte Archive) gehen nach stderr,
-  die Suche läuft weiter — stdout bleibt sauber parsebar.
+- **Warnungen** (unlesbare Dateien, kaputte Archive) gehen nach stderr;
+  die Suche läuft weiter, und stdout bleibt sauber parsebar.
 
 ```bash
 ./favenio.py --json -c "TODO" src/ | jq -r .path | sort -u
@@ -84,12 +85,13 @@ open Favenio.app
 
 Aus der Trefferliste heraus:
 
-- **Doppelklick** — öffnet die Datei; Archiv-Einträge werden vorher
+- **Doppelklick**: Öffnet die Datei. Archiv-Einträge werden vorher
   automatisch in einen Temp-Ordner ausgepackt (`--extract`)
-- **Rechtsklick** — Öffnen / **Öffnen mit…** (alle passenden Apps) /
+- **Rechtsklick**: Öffnen / **Öffnen mit…** (alle passenden Apps) /
   Im Finder zeigen / Pfad kopieren
-- **Drag & Drop** — Treffer in den Finder oder andere Apps ziehen
-  (auch Dateien aus Archiven — gezogen wird die ausgepackte Kopie)
+- **Drag & Drop**: Treffer in den Finder oder andere Apps ziehen.
+  Das geht auch mit Dateien aus Archiven; gezogen wird dann die
+  ausgepackte Kopie
 
 Die GUI ist nur ein Frontend: Gesucht wird immer über `favenio.py`.
 
@@ -98,15 +100,17 @@ Die GUI ist nur ein Frontend: Gesucht wird immer über `favenio.py`.
 Spotlight-Ersatz für die Finder-Toolbar: `FavenioQuick.app` bei
 gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
 
-- Klick aufs Icon → kleines schwebendes Suchfeld (kein Dock-Icon)
-- **Return** → Namenssuche im Benutzerordner (inkl. Archive)
+- Ein Klick aufs Icon öffnet ein kleines schwebendes Suchfeld
+  (kein Dock-Icon)
+- **Return** startet die Namenssuche im Benutzerordner (inkl. Archive)
 - Bei Treffern öffnet sich die große GUI mit der fertigen Liste
   (die Treffer werden übergeben, es wird nicht doppelt gesucht);
   ohne Treffer bleibt nur das kleine Feld mit einer Meldung
 - **Esc** (bei leerem Feld) beendet die Schnellsuche
 
 Hinweis: Beim ersten Suchlauf über den Benutzerordner fragt macOS
-ggf. nach Zugriff auf Schreibtisch/Dokumente (TCC) — einmal erlauben.
+unter Umständen nach Zugriff auf Schreibtisch und Dokumente (TCC).
+Einmal erlauben genügt.
 
 ## Tests
 
