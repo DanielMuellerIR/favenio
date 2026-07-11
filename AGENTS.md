@@ -46,7 +46,13 @@ GUI (`Favenio.app`) und Finder-Toolbar-Schnellsuche (`FavenioQuick.app`).
   `lsregister -f` im Build-Skript); Fallback Startargumente
   `--query`/`--results-file` via `NSWorkspace.openApplication`.
 - `build-app.sh` baut beide Bundles (swiftc, ad-hoc-signiert), kopiert
-  `favenio.py` in die Resources und lässt den Selbsttest laufen.
+  `favenio.py` + App-Icon in die Resources und lässt den Selbsttest laufen.
+- **App-Icons** (`icons/`): programmatisch gezeichnet („F-Monogramm mit
+  Lupe"; Quick-Variante invertiert + Blitz in der Linse). Quelle ist
+  `icons/make-icons.swift` (CoreGraphics, kein SVG-Rasterizer nötig);
+  die fertigen `.icns` sind eingecheckt, die `.iconset`-Zwischenordner
+  nicht. Neu erzeugen: `swift icons/make-icons.swift` + `iconutil -c
+  icns icons/<Name>.iconset -o icons/<Name>.icns`.
 
 ## Headless-/Agent-Schnittstelle (Design-Entscheidung)
 

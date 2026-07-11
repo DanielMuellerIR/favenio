@@ -29,7 +29,7 @@ import tarfile
 import tempfile
 import zipfile
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,

@@ -21,6 +21,9 @@ mkdir -p Favenio.app/Contents/MacOS Favenio.app/Contents/Resources
 swiftc -O common/FavenioCore.swift gui/FavenioGUI.swift \
     -o Favenio.app/Contents/MacOS/Favenio
 cp favenio.py Favenio.app/Contents/Resources/
+# App-Icon (vorgefertigt eingecheckt; neu erzeugen: swift icons/make-icons.swift
+# + iconutil — siehe icons/make-icons.swift).
+cp icons/Favenio.icns Favenio.app/Contents/Resources/
 cat > Favenio.app/Contents/Info.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -30,6 +33,7 @@ cat > Favenio.app/Contents/Info.plist <<EOF
     <key>CFBundleIdentifier</key><string>local.favenio</string>
     <key>CFBundleName</key><string>Favenio</string>
     <key>CFBundleDisplayName</key><string>Favenio</string>
+    <key>CFBundleIconFile</key><string>Favenio</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>${VERSION}</string>
@@ -54,6 +58,7 @@ mkdir -p FavenioQuick.app/Contents/MacOS FavenioQuick.app/Contents/Resources
 swiftc -O common/FavenioCore.swift quick/FavenioQuick.swift \
     -o FavenioQuick.app/Contents/MacOS/FavenioQuick
 cp favenio.py FavenioQuick.app/Contents/Resources/
+cp icons/FavenioQuick.icns FavenioQuick.app/Contents/Resources/
 cat > FavenioQuick.app/Contents/Info.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -63,6 +68,7 @@ cat > FavenioQuick.app/Contents/Info.plist <<EOF
     <key>CFBundleIdentifier</key><string>local.favenio.quick</string>
     <key>CFBundleName</key><string>Favenio Schnellsuche</string>
     <key>CFBundleDisplayName</key><string>Favenio Schnellsuche</string>
+    <key>CFBundleIconFile</key><string>FavenioQuick</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>${VERSION}</string>
