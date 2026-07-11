@@ -25,7 +25,11 @@ def run(argv):
     Liefert (exit_code, stdout_zeilen, stderr_text)."""
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
-        code = favenio.main(argv)
+        try:
+            code = favenio.main(argv)
+        except SystemExit as exit_info:
+            # argparse (parser.error) beendet per SystemExit — Code einfangen.
+            code = exit_info.code
     lines = [line for line in out.getvalue().splitlines() if line]
     return code, lines, err.getvalue()
 
@@ -165,6 +169,56 @@ class FavenioTest(unittest.TestCase):
         types = {record["type"] for record in records}
         self.assertIn("file", types)    # notiz.txt
         self.assertIn("member", types)  # Archiv-Einträge
+
+    # ---------- Extraktion (--extract, Unterbau für die GUI) ----------
+
+    def read(self, path):
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_extract_plain_file(self):
+        # Normale Datei: wird nicht kopiert, nur absolut ausgegeben.
+        target = os.path.join(self.root, "notiz.txt")
+        code, lines, _ = run(["--extract", target])
+        self.assertEqual(code, 0)
+        self.assertEqual(lines, [os.path.abspath(target)])
+
+    def test_extract_zip_member(self):
+        result = os.path.join(self.root, "paket.zip") + "!/docs/anleitung.md"
+        code, lines, _ = run(["--extract", result])
+        self.assertEqual(code, 0)
+        self.assertTrue(lines[0].endswith("anleitung.md"))
+        self.assertIn("GEHEIMNIS", self.read(lines[0]))
+
+    def test_extract_tar_member(self):
+        result = (os.path.join(self.root, "backup.tar.gz")
+                  + "!/sicherung/alt.txt")
+        code, lines, _ = run(["--extract", result])
+        self.assertEqual(code, 0)
+        self.assertIn("GEHEIMNIS", self.read(lines[0]))
+
+    def test_extract_nested_zip(self):
+        result = (os.path.join(self.root, "aussen.zip")
+                  + "!/innen.zip!/tief/verstecktes.txt")
+        code, lines, _ = run(["--extract", result])
+        self.assertEqual(code, 0)
+        self.assertIn("ganz unten", self.read(lines[0]))
+
+    def test_extract_missing_member_exits_2(self):
+        result = os.path.join(self.root, "paket.zip") + "!/gibtsnicht.txt"
+        code, _, err = run(["--extract", result])
+        self.assertEqual(code, 2)
+        self.assertIn("fehler", err)
+
+    def test_extract_from_non_archive_exits_2(self):
+        result = os.path.join(self.root, "notiz.txt") + "!/x.txt"
+        code, _, err = run(["--extract", result])
+        self.assertEqual(code, 2)
+        self.assertIn("kein unterstütztes Archiv", err)
+
+    def test_no_pattern_and_no_extract_exits_2(self):
+        code, _, _ = run([])
+        self.assertEqual(code, 2)
 
     def test_single_file_as_start_path(self):
         # Auch eine einzelne Datei (statt Ordner) ist ein gültiger Startpfad.

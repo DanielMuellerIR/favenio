@@ -26,9 +26,10 @@ import os
 import re
 import sys
 import tarfile
+import tempfile
 import zipfile
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -266,6 +267,71 @@ class Search:
                               display, depth)
 
 
+def extract_result(result_path):
+    """Packt einen Suchtreffer für die Weiterverwendung aus.
+
+    Eingabe ist ein Treffer-Pfad, wie ihn die Suche ausgibt — entweder
+    ein normaler Dateipfad oder die !/-Notation für Archiv-Einträge
+    (auch verschachtelt: "aussen.zip!/innen.zip!/datei.txt").
+
+    Normale Pfade werden nur geprüft und absolut ausgegeben; Archiv-
+    Einträge werden in einen frischen Temp-Ordner extrahiert. In beiden
+    Fällen landet der nutzbare Datei-Pfad auf stdout (genau eine Zeile).
+    Das ist der Unterbau für Öffnen/„Öffnen mit"/Drag&Drop in der GUI."""
+    parts = result_path.split("!/")
+    fs_path = parts[0]
+    if not os.path.exists(fs_path):
+        print("favenio: fehler: Pfad existiert nicht: %s" % fs_path,
+              file=sys.stderr)
+        return 2
+    if len(parts) == 1:
+        # Kein Archiv-Eintrag, nur eine normale Datei: nichts auszupacken.
+        print(os.path.abspath(fs_path))
+        return 0
+
+    kind = classify_archive(fs_path)
+    data = None    # Bytes des aktuellen Archivs (None = liegt als Datei vor)
+    member = parts[-1]
+    try:
+        # Ebene für Ebene absteigen: erst das Archiv auf der Platte
+        # öffnen, dann ggf. innere Archive aus dem Speicher heraus.
+        for index, member in enumerate(parts[1:]):
+            if kind is None:
+                print("favenio: fehler: kein unterstütztes Archiv: %s"
+                      % "!/".join(parts[:index + 1]), file=sys.stderr)
+                return 2
+            if kind == "zip":
+                source = io.BytesIO(data) if data is not None else fs_path
+                with zipfile.ZipFile(source) as archive:
+                    data = archive.read(member)
+            else:  # "tar"
+                if data is not None:
+                    archive = tarfile.open(fileobj=io.BytesIO(data),
+                                           mode="r:*")
+                else:
+                    archive = tarfile.open(fs_path, mode="r:*")
+                with archive:
+                    handle = archive.extractfile(member)
+                    if handle is None:
+                        raise KeyError(member)
+                    with handle:
+                        data = handle.read()
+            # Endung des gerade gelesenen Eintrags bestimmt, ob die
+            # nächste Ebene wieder ein Archiv ist.
+            kind = classify_archive(member)
+    except (KeyError, OSError, zipfile.BadZipFile, tarfile.TarError) as err:
+        print("favenio: fehler: %s: %s" % (result_path, err),
+              file=sys.stderr)
+        return 2
+
+    out_dir = tempfile.mkdtemp(prefix="favenio-")
+    out_path = os.path.join(out_dir, os.path.basename(member.rstrip("/")))
+    with open(out_path, "wb") as handle:
+        handle.write(data)
+    print(out_path)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="favenio",
@@ -274,7 +340,7 @@ def main(argv=None):
         epilog="Exit-Codes: 0 = Treffer gefunden, 1 = keine Treffer, "
                "2 = Fehler. Ausgabeformat für Skripte/Agenten: --json.",
     )
-    parser.add_argument("pattern",
+    parser.add_argument("pattern", nargs="?",
                         help="Suchmuster: „enthält“-Text, Glob (* ? [) "
                              "oder mit --regex ein regulärer Ausdruck")
     parser.add_argument("paths", nargs="*", default=["."],
@@ -294,9 +360,21 @@ def main(argv=None):
                              "Default: 1)")
     parser.add_argument("--json", action="store_true",
                         help="Treffer als JSON-Zeilen ausgeben (JSONL)")
+    parser.add_argument("--extract", metavar="TREFFER",
+                        help="statt zu suchen: einen Treffer-Pfad (ggf. mit "
+                             "!/-Notation) in einen Temp-Ordner auspacken "
+                             "und den nutzbaren Pfad ausgeben")
     parser.add_argument("--version", action="version",
                         version="favenio " + __version__)
     args = parser.parse_args(argv)
+
+    # Extraktions-Modus: kein Suchlauf, nur einen Treffer auspacken.
+    if args.extract:
+        return extract_result(args.extract)
+
+    if not args.pattern:
+        # parser.error() gibt die Usage aus und beendet mit Exit-Code 2.
+        parser.error("PATTERN fehlt (oder --extract verwenden)")
 
     # argparse setzt den Default für nargs="*" nur, wenn GAR NICHTS kommt —
     # deshalb hier noch einmal absichern.

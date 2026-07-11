@@ -73,12 +73,50 @@ Ohne Platzhalter (`* ? [`) gilt „Name **enthält** den Suchtext";
 mit Platzhaltern Glob-Matching auf den ganzen Namen. Bei der
 Namenssuche zählen auch Ordnernamen als Treffer.
 
+## GUI (Favenio.app)
+
+EasyFind-artige Oberfläche: Suchfeld, Ordnerwahl, Optionen, Trefferliste.
+
+```bash
+./build-app.sh    # baut Favenio.app + FavenioQuick.app und testet sie
+open Favenio.app
+```
+
+Aus der Trefferliste heraus:
+
+- **Doppelklick** — öffnet die Datei; Archiv-Einträge werden vorher
+  automatisch in einen Temp-Ordner ausgepackt (`--extract`)
+- **Rechtsklick** — Öffnen / **Öffnen mit…** (alle passenden Apps) /
+  Im Finder zeigen / Pfad kopieren
+- **Drag & Drop** — Treffer in den Finder oder andere Apps ziehen
+  (auch Dateien aus Archiven — gezogen wird die ausgepackte Kopie)
+
+Die GUI ist nur ein Frontend: Gesucht wird immer über `favenio.py`.
+
+## Schnellsuche (FavenioQuick.app)
+
+Spotlight-Ersatz für die Finder-Toolbar: `FavenioQuick.app` bei
+gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
+
+- Klick aufs Icon → kleines schwebendes Suchfeld (kein Dock-Icon)
+- **Return** → Namenssuche im Benutzerordner (inkl. Archive)
+- Bei Treffern öffnet sich die große GUI mit der fertigen Liste
+  (die Treffer werden übergeben, es wird nicht doppelt gesucht);
+  ohne Treffer bleibt nur das kleine Feld mit einer Meldung
+- **Esc** (bei leerem Feld) beendet die Schnellsuche
+
+Hinweis: Beim ersten Suchlauf über den Benutzerordner fragt macOS
+ggf. nach Zugriff auf Schreibtisch/Dokumente (TCC) — einmal erlauben.
+
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests
+python3 -m unittest discover -s tests            # 21 Unit-Tests (Kern)
+Favenio.app/Contents/MacOS/Favenio --selftest    # Headless-GUI-Anbindung
 ```
+
+`build-app.sh` führt den Selbsttest nach jedem Build automatisch aus.
 
 ## Stand
 
-Version 0.1.0 · Stand: 2026-07-11
+Version 0.2.0 · Stand: 2026-07-11
