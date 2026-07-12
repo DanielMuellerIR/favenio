@@ -110,14 +110,14 @@ func runSearchSync(arguments: [String]) -> (hits: [Hit], raw: Data) {
 /// Blockiert bis zum Ende der Suche; im Hintergrund-Thread aufrufen.
 func runSearchStreaming(arguments: [String],
                         onProgress: @escaping (String) -> Void)
-    -> (hits: [Hit], raw: Data) {
+    -> (hits: [Hit], raw: Data, exitCode: Int32) {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: pythonPath)
     process.arguments = arguments
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = FileHandle.nullDevice
-    do { try process.run() } catch { return ([], Data()) }
+    do { try process.run() } catch { return ([], Data(), 2) }
 
     var hits: [Hit] = []
     var hitsRaw = Data()   // gefiltertes JSONL (ohne progress-Zeilen)
@@ -147,7 +147,7 @@ func runSearchStreaming(arguments: [String],
     }
     handleLine(buffer)   // letzte Zeile, falls ohne Zeilenumbruch
     process.waitUntilExit()
-    return (hits, hitsRaw)
+    return (hits, hitsRaw, process.terminationStatus)
 }
 
 /// Macht aus einem Treffer eine echte Datei auf der Platte:

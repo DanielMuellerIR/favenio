@@ -48,7 +48,8 @@ GUI (`Favenio.app`) und Finder-Toolbar-Schnellsuche (`FavenioQuick.app`).
   `lsregister -f` im Build-Skript); Fallback Startargumente
   `--query`/`--results-file` via `NSWorkspace.openApplication`.
 - `build-app.sh` baut beide Bundles (swiftc, ad-hoc-signiert), kopiert
-  `favenio.py` + App-Icon in die Resources und lässt den Selbsttest laufen.
+  `favenio.py` + App-Icon in die Resources, lässt den Selbsttest laufen und
+  installiert beide fertigen Apps nach `/Applications`.
 - **App-Icons** (`icons/`): programmatisch gezeichnet („F-Monogramm mit
   Lupe"; Quick-Variante invertiert + Blitz in der Linse). Quelle ist
   `icons/make-icons.swift` (CoreGraphics, kein SVG-Rasterizer nötig);
@@ -139,6 +140,8 @@ Plan (nur geplant, nicht begonnen):
 - v0.4.0: Suchbereich der Schnellsuche wählbar — vorderster
   Finder-Ordner (Vorauswahl) oder Benutzerordner. Handtest des
   Finder-Zugriffs (Automation-Dialog) steht noch aus.
+- v0.4.1: Quick-Layout stabilisiert, Suchprozessfehler sichtbar gemacht und
+  beide Apps als fester Build-Abschluss nach `/Applications` installiert.
 - Ideen (nicht begonnen): 7z/rar via externe Tools, Größen-/Datums-
   filter, Mehrwort-Suche („alle Wörter" wie EasyFind),
   Suchabbruch-Button in der GUI, Optionen im Schnellsuche-Panel,

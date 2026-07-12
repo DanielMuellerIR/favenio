@@ -30,7 +30,7 @@ import tempfile
 import time
 import zipfile
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,

@@ -79,7 +79,7 @@ Namenssuche zählen auch Ordnernamen als Treffer.
 EasyFind-artige Oberfläche: Suchfeld, Ordnerwahl, Optionen, Trefferliste.
 
 ```bash
-./build-app.sh    # baut Favenio.app + FavenioQuick.app und testet sie
+./build-app.sh    # baut, testet und installiert beide Apps nach /Applications
 open Favenio.app
 ```
 

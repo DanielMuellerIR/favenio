@@ -75,7 +75,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     func buildPanel() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 92),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 104),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered, defer: false)
         panel.titleVisibility = .hidden
@@ -109,35 +109,37 @@ final class QuickController: NSObject, NSApplicationDelegate,
         scopePopup.controlSize = .small
         scopePopup.font = NSFont.systemFont(ofSize: 11)
 
-        let infoRow = NSStackView(views: [spinner, infoLabel, scopePopup])
-        infoRow.orientation = .horizontal
-        infoRow.spacing = 6
-
-        let stack = NSStackView(views: [field, infoRow])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
+        // Direkte Constraints halten Suchfeld, Status und Bereichsmenü auch
+        // bei langen Ordnernamen sauber in einer Zeile. NSStackView hatte
+        // hier je nach macOS-Version überlappende Elemente erzeugt.
+        for view in [field, spinner, infoLabel, scopePopup] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(view)
+        }
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: content.topAnchor,
-                                       constant: 14),
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor,
+            field.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
+            field.leadingAnchor.constraint(equalTo: content.leadingAnchor,
                                            constant: 14),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor,
+            field.trailingAnchor.constraint(equalTo: content.trailingAnchor,
                                             constant: -14),
-            field.widthAnchor.constraint(equalTo: stack.widthAnchor),
             field.heightAnchor.constraint(equalToConstant: 34),
-            // Info-Zeile über die volle Breite, damit das Bereichs-Menü
-            // rechts außen sitzt.
-            infoRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            spinner.leadingAnchor.constraint(equalTo: field.leadingAnchor),
+            spinner.centerYAnchor.constraint(equalTo: infoLabel.centerYAnchor),
+            infoLabel.topAnchor.constraint(equalTo: field.bottomAnchor,
+                                           constant: 8),
+            infoLabel.leadingAnchor.constraint(equalTo: spinner.trailingAnchor,
+                                               constant: 6),
+            infoLabel.trailingAnchor.constraint(lessThanOrEqualTo:
+                scopePopup.leadingAnchor, constant: -10),
+            scopePopup.trailingAnchor.constraint(equalTo: field.trailingAnchor),
+            scopePopup.centerYAnchor.constraint(equalTo: infoLabel.centerYAnchor),
         ])
 
         // Oben-mittig auf dem Bildschirm platzieren (Spotlight-Gefühl).
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
             panel.setFrameOrigin(NSPoint(
-                x: visible.midX - 250,
+                x: visible.midX - 280,
                 y: visible.maxY - 180))
         }
     }
@@ -206,6 +208,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty, !searching else { return }
         searching = true
+        field.isEnabled = false
+        scopePopup.isEnabled = false
         spinner.startAnimation(nil)
         infoLabel.stringValue = "Suche läuft…"
 
@@ -235,8 +239,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 self?.showProgress(path: path)
             }
             DispatchQueue.main.async {
+                let errorText = result.exitCode == 2
+                    ? "Suche fehlgeschlagen. Bitte Favenio erneut installieren."
+                    : nil
                 self?.finish(query: query, count: result.hits.count,
-                             raw: result.raw, errorText: nil)
+                             raw: result.raw, errorText: errorText)
             }
         }
     }
@@ -253,6 +260,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     func finish(query: String, count: Int, raw: Data?, errorText: String?) {
         searching = false
+        field.isEnabled = true
+        scopePopup.isEnabled = true
         spinner.stopAnimation(nil)
         // Info-Zeile aus dem Fortschritts-Look zurückholen.
         infoLabel.textColor = .secondaryLabelColor
