@@ -315,38 +315,92 @@ func maybePromptFullDiskAccess(appName: String) {
     }
 }
 
-/// Alle offenen Finder-Fenster als POSIX-Pfade ihres Ziel-Ordners,
-/// VORDERSTES zuerst (Fenster-Index 1 = ganz vorn). Leer, wenn kein
-/// Finder-Fenster offen ist, der Automations-Zugriff (noch) nicht erlaubt
-/// wurde oder ein Fehler auftrat — der Aufrufer fällt dann auf andere
-/// Ordner zurück. (Finder-Tabs sind über AppleScript nicht einzeln
-/// adressierbar; wir bekommen pro Fenster den Ordner des vorderen Tabs.)
-func finderWindowFolders() -> [String] {
-    let source = """
-    tell application "Finder"
+/// Ermittelt die offenen Finder-Fenster (Ordner des vorderen Tabs),
+/// VORDERSTES zuerst — ASYNCHRON und ohne den Main-Thread zu blockieren.
+/// `completion` läuft auf dem Main-Thread; leere Liste = kein Fenster oder
+/// (noch) kein Automations-Zugriff.
+///
+/// WARUM per `osascript`-UNTERPROZESS (statt NSAppleScript im eigenen Prozess):
+/// Den Finder abzufragen ist ein Apple-Event, dessen Antwort der Apple-Event-
+/// Manager an den MAIN-Thread des Prozesses zustellt. In einer laufenden
+/// `NSApplication` (unsere Accessory-App) blockiert ein synchroner
+/// `NSAppleScript.executeAndReturnError` dann ewig — egal ob auf einem
+/// Hintergrund-Thread (die Antwort landet nie bei ihm) oder auf dem Main-Thread
+/// (er wartet auf eine Antwort, die nur er selbst zustellen könnte → Deadlock).
+/// Beide In-Prozess-Wege wurden im echten App-Kontext als Hänger verifiziert
+/// (2026-07-13). Ein separater `osascript`-Prozess hat seinen eigenen
+/// Event-Loop und kehrt sauber zurück — genau wie das nc_pin-AppleScript-Applet.
+/// TCC ordnet den Apple-Event dabei korrekt UNSERER App als verantwortlichem
+/// Prozess zu (Favenios `NSAppleEventsUsageDescription` → korrekter Prompt);
+/// die entgegengesetzte Handoff-Notiz („osascript scheidet aus") war falsch.
+/// (Finder-Tabs sind per AppleScript nicht einzeln adressierbar — pro Fenster
+/// kommt der Ordner des vorderen Tabs.)
+func finderWindowFoldersAsync(completion: @escaping ([String]) -> Void) {
+    // Hintergrund-Thread nur, damit das Starten/Warten des Unterprozesses den
+    // Main-Thread nicht anfasst; die eigentliche Apple-Event-Arbeit macht
+    // osascript in seinem eigenen Prozess.
+    DispatchQueue.global(qos: .userInitiated).async {
+        // VORDERSTES Fenster explizit über `front window` (wie nc_pin) —
+        // `Finder windows` ist nicht zuverlässig front-to-back sortiert. Die
+        // Pfade kommen zeilengetrennt zurück (front zuerst, dann die übrigen).
+        // `with timeout` verhindert ewiges Warten, falls der Finder klemmt.
+        // `text item delimiters` ist eine AppleScript-Eigenschaft und muss
+        // AUSSERHALB des `tell application "Finder"`-Blocks gesetzt werden —
+        // sonst versucht AppleScript, sie am Finder zu setzen (Fehler -10006).
+        let source = """
         set out to {}
-        repeat with w in Finder windows
-            try
-                set end of out to POSIX path of (target of w as alias)
-            end try
-        end repeat
-        return out
-    end tell
-    """
-    var error: NSDictionary?
-    guard let descriptor = NSAppleScript(source: source)?
-              .executeAndReturnError(&error) else { return [] }
-    let count = descriptor.numberOfItems
-    guard count > 0 else { return [] }   // AEList ist 1-indexiert
-    var paths: [String] = []
-    for index in 1...count {
-        guard var path = descriptor.atIndex(index)?.stringValue,
-              !path.isEmpty else { continue }
-        // „als alias" liefert Ordner mit Schluss-Schrägstrich — angleichen.
-        if path.count > 1 && path.hasSuffix("/") { path.removeLast() }
-        paths.append(path)
+        tell application "Finder"
+            with timeout of 8 seconds
+                set frontPath to ""
+                try
+                    set frontPath to POSIX path of (target of front window as alias)
+                end try
+                if frontPath is not "" then set end of out to frontPath
+                try
+                    repeat with w in Finder windows
+                        try
+                            set p to POSIX path of (target of w as alias)
+                            if p is not frontPath then set end of out to p
+                        end try
+                    end repeat
+                end try
+            end timeout
+        end tell
+        set text item delimiters to linefeed
+        return out as text
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", source]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        var folders: [String] = []
+        do {
+            try process.run()
+            // Not-Aus: klemmt osascript trotz AppleScript-Timeout, nach 12 s
+            // abbrechen — dann bleibt die Vorauswahl eben `~`, kein Hänger.
+            let killer = DispatchWorkItem {
+                if process.isRunning { process.terminate() }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 12, execute: killer)
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            killer.cancel()
+            if process.terminationStatus == 0,
+               let text = String(data: data, encoding: .utf8) {
+                for var line in text.split(separator: "\n", omittingEmptySubsequences: true)
+                                    .map(String.init) {
+                    // „als alias" liefert Ordner mit Schluss-Schrägstrich.
+                    if line.count > 1 && line.hasSuffix("/") { line.removeLast() }
+                    if !line.isEmpty { folders.append(line) }
+                }
+            }
+        } catch {
+            // osascript nicht startbar → leere Liste, App fällt auf `~` zurück.
+        }
+        DispatchQueue.main.async { completion(folders) }
     }
-    return paths
 }
 
 /// Die wichtigsten Ordner als (Anzeigename, Pfad) — für das Ordner-Popup der
