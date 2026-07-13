@@ -83,6 +83,61 @@ class FavenioTest(unittest.TestCase):
         self.assertIn("rechnung-2026.pdf", joined)
         self.assertIn("Rechnungen", joined)
 
+    def test_only_files_and_dirs_default_both(self):
+        # Ohne --only kommen Datei „rechnung-2026.pdf" UND Ordner „Rechnungen".
+        code, lines, _ = run(["--json", "rechnung", self.root])
+        self.assertEqual(code, 0)
+        types = {json.loads(line)["type"] for line in lines}
+        self.assertIn("file", types)
+        self.assertIn("dir", types)
+
+    def test_only_files(self):
+        # --only files unterdrückt den Ordner-Treffer.
+        code, lines, _ = run(["--json", "--only", "files", "rechnung",
+                              self.root])
+        self.assertEqual(code, 0)
+        types = {json.loads(line)["type"] for line in lines}
+        self.assertIn("file", types)
+        self.assertNotIn("dir", types)
+
+    def test_only_dirs(self):
+        # --only dirs liefert nur den Ordner, keine Dateien.
+        code, lines, _ = run(["--json", "--only", "dirs", "rechnung",
+                              self.root])
+        self.assertEqual(code, 0)
+        types = {json.loads(line)["type"] for line in lines}
+        self.assertEqual(types, {"dir"})
+
+    def test_hidden_skipped_by_default(self):
+        # Eine unsichtbare Datei wird ohne --hidden NICHT gefunden.
+        self.write(".geheim-notiz.txt", "x")
+        code, lines, _ = run(["geheim", self.root])
+        self.assertEqual(code, 1)   # kein Treffer
+        self.assertFalse(any(".geheim-notiz" in line for line in lines))
+
+    def test_hidden_found_with_flag(self):
+        self.write(".geheim-notiz.txt", "x")
+        code, lines, _ = run(["--hidden", "geheim", self.root])
+        self.assertEqual(code, 0)
+        self.assertTrue(any(".geheim-notiz" in line for line in lines))
+
+    def test_hidden_dir_pruned(self):
+        # In einem unsichtbaren Ordner liegende Treffer bleiben unsichtbar.
+        os.makedirs(os.path.join(self.root, ".versteck"))
+        self.write(".versteck/beute.txt", "x")
+        code, _, _ = run(["beute", self.root])
+        self.assertEqual(code, 1)
+        code, _, _ = run(["--hidden", "beute", self.root])
+        self.assertEqual(code, 0)
+
+    def test_size_in_json(self):
+        # Größe steht als Bytes im JSON; Ordner haben keine Größe.
+        self.write("groesse-probe.txt", "12345")   # 5 Bytes
+        code, lines, _ = run(["--json", "groesse-probe", self.root])
+        self.assertEqual(code, 0)
+        record = json.loads(lines[0])
+        self.assertEqual(record["size"], 5)
+
     def test_name_glob(self):
         # Glob muss den GANZEN Namen matchen.
         code, lines, _ = run(["*.txt", self.root])

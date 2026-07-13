@@ -30,7 +30,10 @@ import tempfile
 import time
 import zipfile
 
-__version__ = "0.4.1"
+__version__ = "0.8.0"
+# Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
+# das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
+__date__ = "2026-07-13"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -93,12 +96,16 @@ class Search:
     """
 
     def __init__(self, matcher, content_mode, archive_depth, as_json,
-                 progress=False):
+                 progress=False, only="both", include_hidden=False):
         self.matcher = matcher                # Funktion text -> bool
         self.content_mode = content_mode      # True = Inhalt, False = Namen
         self.archive_depth = archive_depth    # 0 = Archive ignorieren,
                                               # 1 = in Archive schauen,
                                               # 2 = auch Archive IN Archiven …
+        self.only = only                      # "both"/"files"/"dirs" —
+                                              # Treffer auf einen Typ begrenzen
+        self.include_hidden = include_hidden  # unsichtbare (Punkt-)Dateien
+                                              # und -Ordner mitdurchsuchen?
         self.as_json = as_json                # Ausgabeformat JSONL statt Text
         self.progress = progress              # laufend melden, wo wir suchen
         self.found_any = False                # für den Exit-Code (0 vs. 1)
@@ -110,15 +117,33 @@ class Search:
 
     # ---------- Ausgabe ----------
 
-    def emit(self, path, kind, line=None):
+    def type_allowed(self, is_directory):
+        """Filtert Treffer nach Typ (Drei-Wege-Umschalter der GUI):
+        "files" nur Dateien, "dirs" nur Ordner, "both" (Default) beides."""
+        if self.only == "files":
+            return not is_directory
+        if self.only == "dirs":
+            return is_directory
+        return True
+
+    @staticmethod
+    def is_hidden(name):
+        """Unsichtbar = Name beginnt mit einem Punkt (.DS_Store, .git, …) —
+        die auf macOS/Unix übliche Konvention, deckt den Finder-Fall ab."""
+        return name.startswith(".")
+
+    def emit(self, path, kind, line=None, size=None):
         """Gibt EINEN Treffer aus. kind ist "file", "dir" oder "member"
         (member = Eintrag innerhalb eines Archivs). line ist bei
-        Inhaltssuche die Zeilennummer des ersten Treffers."""
+        Inhaltssuche die Zeilennummer des ersten Treffers, size die
+        Dateigröße in Bytes (bei Ordnern None)."""
         self.found_any = True
         if self.as_json:
             record = {"path": path, "type": kind}
             if line is not None:
                 record["line"] = line
+            if size is not None:
+                record["size"] = size
             print(json.dumps(record, ensure_ascii=False))
         else:
             suffix = ":%d" % line if line is not None else ""
@@ -180,21 +205,36 @@ class Search:
             root, onerror=lambda err: self.warn(str(err)), followlinks=False
         ):
             self.report_progress(dirpath)
+            if not self.include_hidden:
+                # Unsichtbare Ordner gar nicht erst betreten (spart auch das
+                # Durchsuchen von .git & Co.) und unsichtbare Dateien
+                # überspringen. dirnames IN PLACE ändern, damit os.walk folgt.
+                dirnames[:] = [d for d in dirnames if not self.is_hidden(d)]
+                filenames = [f for f in filenames if not self.is_hidden(f)]
             if not self.content_mode:
                 # Bei Namenssuche zählen auch Ordnernamen als Treffer.
                 for dirname in dirnames:
-                    if self.matcher(dirname):
+                    if self.matcher(dirname) and self.type_allowed(True):
                         self.emit(os.path.join(dirpath, dirname), "dir")
             for filename in filenames:
                 self.visit_file(os.path.join(dirpath, filename))
+
+    @staticmethod
+    def file_size(path):
+        """Dateigröße in Bytes oder None, falls nicht ermittelbar."""
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return None
 
     def visit_file(self, path):
         """Behandelt EINE Datei im Dateisystem: Namens- oder Inhaltstest,
         und — falls es ein Archiv ist — der Blick hinein."""
         name = os.path.basename(path)
 
-        if not self.content_mode and self.matcher(name):
-            self.emit(path, "file")
+        if not self.content_mode and self.matcher(name) \
+                and self.type_allowed(False):
+            self.emit(path, "file", size=self.file_size(path))
 
         archive_kind = classify_archive(name)
         if archive_kind and self.archive_depth >= 1:
@@ -209,8 +249,8 @@ class Search:
                 self.warn(str(err))
                 return
             line = self.match_content(data)
-            if line is not None:
-                self.emit(path, "file", line)
+            if line is not None and self.type_allowed(False):
+                self.emit(path, "file", line, size=self.file_size(path))
 
     # ---------- Archive ----------
 
@@ -238,18 +278,25 @@ class Search:
         except (OSError, zipfile.BadZipFile, tarfile.TarError) as err:
             self.warn("%s: %s" % (display, err))
 
-    def visit_member(self, member_path, is_dir, read_bytes, display, depth):
+    def visit_member(self, member_path, is_dir, read_bytes, display, depth,
+                     size=None):
         """Gemeinsame Logik für EINEN Archiv-Eintrag (Zip wie Tar).
 
         member_path: Pfad innerhalb des Archivs.
         read_bytes:  Funktion, die den Inhalt liefert (lazy — wird nur
                      aufgerufen, wenn wir den Inhalt wirklich brauchen).
+        size:        entpackte Größe des Eintrags in Bytes (bei Ordnern None).
         """
         full_display = display + "!/" + member_path
         name = os.path.basename(member_path.rstrip("/"))
 
-        if not self.content_mode and self.matcher(name):
-            self.emit(full_display, "member")
+        # Unsichtbare Archiv-Einträge wie im Dateisystem überspringen.
+        if not self.include_hidden and self.is_hidden(name):
+            return
+
+        if not self.content_mode and self.matcher(name) \
+                and self.type_allowed(is_dir):
+            self.emit(full_display, "member", size=None if is_dir else size)
 
         if is_dir:
             return
@@ -272,8 +319,8 @@ class Search:
                 self.warn("%s: %s" % (full_display, err))
                 return
             line = self.match_content(data)
-            if line is not None:
-                self.emit(full_display, "member", line)
+            if line is not None and self.type_allowed(False):
+                self.emit(full_display, "member", line, size=size)
 
     def walk_zip(self, archive, display, depth):
         """Geht alle Einträge eines Zip-Archivs durch."""
@@ -284,6 +331,7 @@ class Search:
                 lambda info=info: archive.read(info),
                 display,
                 depth,
+                size=info.file_size,
             )
 
     def walk_tar(self, archive, display, depth):
@@ -296,7 +344,7 @@ class Search:
                 with extracted:
                     return extracted.read()
             self.visit_member(member.name, member.isdir(), read_bytes,
-                              display, depth)
+                              display, depth, size=member.size)
 
 
 def extract_result(result_path):
@@ -385,6 +433,14 @@ def main(argv=None):
                         help="Groß-/Kleinschreibung beachten")
     parser.add_argument("--no-archives", action="store_true",
                         help="nicht in Archive hineinschauen")
+    parser.add_argument("--only", choices=["both", "files", "dirs"],
+                        default="both",
+                        help="Treffer auf einen Typ begrenzen: both (Default, "
+                             "Dateien & Ordner), files (nur Dateien) oder "
+                             "dirs (nur Ordner)")
+    parser.add_argument("--hidden", action="store_true",
+                        help="unsichtbare (Punkt-)Dateien und -Ordner "
+                             "mitdurchsuchen (Default: überspringen)")
     parser.add_argument("--archive-depth", type=int, default=1,
                         metavar="N",
                         help="wie tief in verschachtelte Archive schauen "
@@ -425,7 +481,8 @@ def main(argv=None):
 
     archive_depth = 0 if args.no_archives else args.archive_depth
     search = Search(matcher, args.content, archive_depth, args.json,
-                    progress=args.progress)
+                    progress=args.progress, only=args.only,
+                    include_hidden=args.hidden)
 
     for path in paths:
         if not os.path.exists(path):
