@@ -134,6 +134,40 @@ Plan (nur geplant, nicht begonnen):
 
 ## Status / offene Ideen
 
+### Offener Stand (2026-07-13, v0.13.1 gebaut+installiert, UNCOMMITTED seit v0.8.0)
+
+Committet ist nur **v0.8.0** (HEAD `7e2c77b`). Alles Folgende liegt gebaut in
+`/Applications`, aber **noch nicht committet** — nächste Session reviewen +
+sauber getrennt committen + diesen Status-Block einarbeiten:
+
+- Regex-Vorlagen + Syntaxfärbung (Haupt-App, Farbschema/Vorlagen aus Fastra;
+  eigener leichter Tokenizer statt tree-sitter). Färbung braucht
+  `searchField.allowsEditingTextAttributes = true`.
+- QuickLook (Leertaste/Rechtsklick) in beiden Apps; folgt der Auswahl.
+- Haupt-App: „Über Favenio"-Dialog (lat. Spruch nur dort + Version/Datum),
+  Stopp-Button links vom Feld, Auswahl bleibt beim Streamen erhalten,
+  Fortschritt (durchsuchter Ordner) in der Statuszeile.
+- Quick: resizable + feste Default-Größe; **kein Auto-Sprung** mehr in die
+  Haupt-App (Button „Alle in Favenio ↗" / Cmd+Return); Optik.
+- Fenster-Breiten-Fix Haupt-App (Statuszeile war unbegrenzt breit). ✅ bestätigt.
+
+**BUG „Quick zeigt Benutzerordner" — GEFIXT (2026-07-13, v0.13.1).**
+Ursache war NICHT Accessory/Thread/Signatur/TCC (alles empirisch ausgeschlossen:
+`local.favenio.quick → com.apple.finder = 2`, kein Hardened Runtime). Der echte
+Fehler: **In-Prozess-`NSAppleScript` hängt in einer laufenden `NSApplication`.**
+Der Apple-Event-Manager stellt die Antwort dem MAIN-Thread zu — auf einem
+Hintergrund-Thread kommt sie nie an, auf dem Main-Thread wartet er auf eine
+Antwort, die nur er selbst zustellen könnte (Deadlock). Beide In-Prozess-Wege im
+echten App-Kontext als Hänger verifiziert (per Logfile, `completion` feuerte nie).
+**Beide Handoff-Verdächtigungen waren falsch:** „Hintergrund-Thread funktioniert"
+(hängt) und „osascript-Unterprozess scheidet aus wegen TCC" (funktioniert
+tadellos). **Fix:** `finderWindowFoldersAsync` in `common/FavenioCore.swift` ruft
+jetzt `/usr/bin/osascript` als Unterprozess (eigener Event-Loop, kehrt sauber
+zurück — genau wie das nc_pin-AppleScript-Applet), timeboxed. End-to-end
+verifiziert: Popup wählt jetzt den vordersten Finder-Ordner statt `~`.
+
+### Versionshistorie (committet)
+
 - v0.1.0: CLI — Namens-/Inhaltssuche, Zip+Tar, Verschachtelung, JSONL.
 - v0.2.0: `--extract`, Favenio.app (Trefferliste mit Doppelklick/
   Kontextmenü/Öffnen mit/Drag&Drop), FavenioQuick.app (Toolbar-
@@ -180,6 +214,13 @@ Plan (nur geplant, nicht begonnen):
   Marker (gefunden 2026-07-11 bei `--progress`; Homebrew-Python 3.14
   zählt boot-relativ und verdeckte den Fehler in den Tests → Tests im
   Zweifel auch mit `/usr/bin/python3 -m unittest discover -s tests`).
+- **Finder-Ordner NUR per `osascript`-Unterprozess abfragen, NIE
+  In-Prozess-`NSAppleScript`.** In einer laufenden `NSApplication` stellt der
+  Apple-Event-Manager die Antwort dem Main-Thread zu → ein synchroner
+  `executeAndReturnError` hängt ewig (Hintergrund-Thread: Antwort kommt nie an;
+  Main-Thread: Deadlock). Verifiziert 2026-07-13. `finderWindowFoldersAsync`
+  nutzt deshalb `/usr/bin/osascript` (eigener Event-Loop). TCC ordnet den Event
+  korrekt der App zu — nicht auf In-Prozess „optimieren".
 - Suchbereich der Schnellsuche: vorderster Finder-Ordner (per
   AppleScript erfragt) oder Benutzerordner, wählbar im Panel-Menü.
   Der ERSTE Finder-Zugriff löst den macOS-Automation-Dialog aus
