@@ -18,6 +18,7 @@
 // Berechtigungsfrage mitten in der Suche.
 
 import AppKit
+import Quartz   // QLPreviewPanel (QuickLook-Vorschau)
 
 @main
 struct FavenioQuickApp {
@@ -33,12 +34,14 @@ struct FavenioQuickApp {
 final class QuickController: NSObject, NSApplicationDelegate,
                              NSWindowDelegate, NSSearchFieldDelegate,
                              NSTableViewDataSource, NSTableViewDelegate,
-                             NSMenuDelegate {
+                             NSMenuDelegate,
+                             QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
     static let hint = "Return oder 0,6 s Pause startet die Suche · Esc beendet"
     static let debounceInterval: TimeInterval = 0.6
     static let maxQuickHits = 20        // ab hier übernimmt die große GUI
     static let windowWidth: CGFloat = 560
+    static let windowHeight: CGFloat = 420   // Default; Fenster ist resizable
 
     var panel: NSPanel!
     let field = NSSearchField()
@@ -49,12 +52,15 @@ final class QuickController: NSObject, NSApplicationDelegate,
                                    target: nil, action: nil)
     let hiddenCheckbox = NSButton(checkboxWithTitle: "Unsichtbare",
                                   target: nil, action: nil)
+    // Öffnet die große Favenio.app mit den Treffern (zum Sortieren / für mehr
+    // als die Top 20). Früher sprang Quick automatisch dorthin — jetzt nur
+    // noch auf Klick bzw. Cmd+Return.
+    let openButton = NSButton(title: "Alle in Favenio ↗",
+                              target: nil, action: nil)
     let infoLabel = NSTextField(labelWithString: QuickController.hint)
     let spinner = NSProgressIndicator()
     let tableView = NSTableView()
     let scrollView = NSScrollView()
-    var scrollHeight: NSLayoutConstraint!
-    var outerStack: NSStackView!        // für die Fensterhöhen-Berechnung
 
     var searchRoot = NSHomeDirectory()  // Wurzel des laufenden Suchlaufs
     var searching = false
@@ -73,8 +79,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     var hits: [Hit] = []                // was die Liste zeigt (max. 20)
     var pending: [Hit] = []             // frisch gestreamt, noch nicht gezeigt
-    var handedOff = false               // schon an die große GUI übergeben?
     var contextRow = -1                 // Zeile, auf die der Rechtsklick ging
+    var previewURLs: [URL] = []         // gerade in der QuickLook-Vorschau
 
     // ---------- App-Lebenszyklus ----------
 
@@ -87,13 +93,23 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // Runloop-Durchlauf holt das Fenster zuverlässig nach vorn.
         DispatchQueue.main.async { [weak self] in self?.showPanel() }
 
-        // Esc bei LEEREM Feld beendet die App; mit Text drin leert Esc das
-        // Feld (Standard) — wie bei Spotlight.
+        // Tastatur: Esc (leeres Feld) beendet; Cmd+Return öffnet die Haupt-App;
+        // Leertaste in der Trefferliste zeigt die QuickLook-Vorschau.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [weak self] event in
-            if event.keyCode == 53,                       // 53 = Escape
-               let self, self.field.stringValue.isEmpty {
+            guard let self else { return event }
+            if event.keyCode == 53, self.field.stringValue.isEmpty {  // Escape
                 NSApp.terminate(nil)
+                return nil
+            }
+            if event.keyCode == 36,                        // 36 = Return
+               event.modifierFlags.contains(.command), !self.hits.isEmpty {
+                self.openInMainApp()
+                return nil
+            }
+            if event.keyCode == 49,                        // 49 = Leertaste
+               self.panel.firstResponder === self.tableView {
+                self.togglePreview()
                 return nil
             }
             return event
@@ -111,6 +127,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
         return true
     }
 
+    /// App ist vorderste geworden → JETZT den Finder abfragen: nur so zeigt
+    /// TCC den Automations-Consent-Dialog. Läuft im Hintergrund (kein Hang).
+    func applicationDidBecomeActive(_ notification: Notification) {
+        refreshFinderFoldersAsync()
+    }
+
     /// Fenster geschlossen (roter Knopf / Cmd+W) → App beenden.
     func windowWillClose(_ notification: Notification) {
         NSApp.terminate(nil)
@@ -121,9 +143,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
     func buildPanel() {
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0,
-                                width: Self.windowWidth, height: 120),
-            styleMask: [.titled, .closable],
+                                width: Self.windowWidth,
+                                height: Self.windowHeight),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered, defer: false)
+        panel.minSize = NSSize(width: 420, height: 200)
         // Titel zeigt Version + Datum dieser Version.
         panel.title = "FavenioQuick \(favenioVersion) — \(favenioDate)"
         panel.titleVisibility = .visible
@@ -168,6 +192,13 @@ final class QuickController: NSObject, NSApplicationDelegate,
         scopePopup.target = self
         scopePopup.action = #selector(scopeChanged)
 
+        openButton.bezelStyle = .rounded
+        openButton.controlSize = .small
+        openButton.font = NSFont.systemFont(ofSize: 11)
+        openButton.target = self
+        openButton.action = #selector(openInMainApp)
+        openButton.isEnabled = false        // erst wenn es Treffer gibt
+
         infoLabel.font = NSFont.systemFont(ofSize: 11)
         infoLabel.textColor = .secondaryLabelColor
         infoLabel.lineBreakMode = .byTruncatingTail
@@ -189,7 +220,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         searchRow.spacing = 8
         searchRow.alignment = .centerY
         let optionsRow = NSStackView(views: [archivesCheckbox, contentCheckbox,
-                                             hiddenCheckbox])
+                                             hiddenCheckbox, openButton])
         optionsRow.orientation = .horizontal
         optionsRow.spacing = 14
         optionsRow.alignment = .centerY
@@ -205,27 +236,28 @@ final class QuickController: NSObject, NSApplicationDelegate,
         outer.alignment = .leading
         outer.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(outer)
-        outerStack = outer
 
-        scrollHeight = scrollView.heightAnchor.constraint(equalToConstant: 0)
+        // Die Trefferliste füllt den restlichen Platz (Fenster ist resizable);
+        // deshalb niedrige vertikale Hugging-Priorität und Boden-Anker.
+        scrollView.setContentHuggingPriority(NSLayoutConstraint.Priority(1),
+                                             for: .vertical)
         NSLayoutConstraint.activate([
             outer.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
             outer.leadingAnchor.constraint(equalTo: content.leadingAnchor,
                                            constant: 12),
             outer.trailingAnchor.constraint(equalTo: content.trailingAnchor,
                                             constant: -12),
+            outer.bottomAnchor.constraint(equalTo: content.bottomAnchor,
+                                          constant: -12),
             searchRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             optionsRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             infoRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: outer.widthAnchor),
             field.heightAnchor.constraint(equalToConstant: 32),
             scopePopup.widthAnchor.constraint(equalToConstant: 190),
-            scrollHeight,
         ])
 
-        layoutForHits()   // kompakte Startgröße (Liste noch leer)
-
-        // Oben-mittig auf dem Bildschirm (Spotlight-Gefühl).
+        // Immer in Default-Größe oben-mittig öffnen (Spotlight-Gefühl).
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
             panel.setFrameTopLeftPoint(NSPoint(
@@ -247,6 +279,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         tableView.addTableColumn(pathColumn)
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         tableView.rowHeight = 20
+        tableView.headerView = nil          // schlichte Liste, keine Spaltenköpfe
         tableView.dataSource = self
         tableView.delegate = self
         tableView.allowsMultipleSelection = true
@@ -282,33 +315,16 @@ final class QuickController: NSObject, NSApplicationDelegate,
         panel.makeFirstResponder(field)
     }
 
-    /// Fenster an die aktuelle Trefferzahl anpassen: Liste einblenden und die
-    /// Höhe auf min(Treffer, 20) Zeilen setzen, dabei die OBERE Fensterkante
-    /// festhalten (das Fenster wächst nach unten).
-    func layoutForHits() {
-        let count = min(hits.count, Self.maxQuickHits)
-        scrollView.isHidden = count == 0
-        let rowUnit = tableView.rowHeight + tableView.intercellSpacing.height
-        scrollHeight.constant = count == 0 ? 0
-                                           : CGFloat(count) * rowUnit + 6
-        outerStack.layoutSubtreeIfNeeded()
-        // Höhe = Inhalt des äußeren Stacks + 12 oben + 12 unten Rand.
-        let fitting = outerStack.fittingSize.height + 24
-        let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
-        panel.setContentSize(NSSize(width: Self.windowWidth, height: fitting))
-        panel.setFrameTopLeftPoint(topLeft)
-    }
-
     // ---------- Suchbereich (Finder-Fenster / Ordner) ----------
 
     @objc func scopeChanged() { userPickedScope = true }
 
-    /// Füllt das Bereichs-Menü sofort aus dem Cache (schnell, kein AppleScript)
-    /// und lädt die Finder-Fenster im Hintergrund nach — der Finder-Zugriff
-    /// darf den Start NICHT blockieren (sonst hängt die App sekundenlang).
+    /// Füllt das Bereichs-Menü aus dem Cache (schnell, kein AppleScript). Die
+    /// Finder-Fenster lädt applicationDidBecomeActive nach — der Apple-Event
+    /// darf nur laufen, wenn die App vorderste ist (sonst erscheint kein
+    /// TCC-Consent-Dialog) und nie auf dem Main-Thread (sonst Hang).
     func updateScope() {
         rebuildScopePopup()
-        refreshFinderFoldersAsync()
     }
 
     func rebuildScopePopup() {
@@ -340,15 +356,18 @@ final class QuickController: NSObject, NSApplicationDelegate,
     func refreshFinderFoldersAsync() {
         guard !refreshingScope else { return }
         refreshingScope = true
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let folders = finderWindowFolders()   // AppleScript → kann blockieren
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.refreshingScope = false
-                if folders != self.scopeFinderFolders {
-                    self.scopeFinderFolders = folders
-                    self.rebuildScopePopup()
-                }
+        // Läuft im Hintergrund (NSAppleScript aus unserem Prozess auf eigenem
+        // Thread) — der Main-Thread blockiert NIE.
+        finderWindowFoldersAsync { [weak self] folders in
+            guard let self else { return }
+            self.refreshingScope = false
+            // Nichts gefunden? Guard NICHT als „erledigt" behalten, damit ein
+            // späteres Aktivieren (nach erteilter Automations-Freigabe) es
+            // erneut versucht.
+            if folders.isEmpty { return }
+            if folders != self.scopeFinderFolders {
+                self.scopeFinderFolders = folders
+                self.rebuildScopePopup()
             }
         }
     }
@@ -362,7 +381,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else {
             hits = []
-            layoutForHits()
+            tableView.reloadData()
             infoLabel.stringValue = Self.hint
             return
         }
@@ -404,8 +423,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
         guard !query.isEmpty else { return }
         let generation = searchGeneration
         hits = []
-        handedOff = false
-        layoutForHits()
+        openButton.isEnabled = false
+        tableView.reloadData()
         searching = true
         spinner.startAnimation(nil)
         infoLabel.stringValue = "Suche läuft…"
@@ -480,24 +499,42 @@ final class QuickController: NSObject, NSApplicationDelegate,
         infoLabel.stringValue = "Durchsuche " + abbreviateHome(path)
     }
 
-    /// Gebündelt anzeigen; bei ≥20 Treffern an die große GUI übergeben.
+    /// Gebündelt anzeigen. Bei 20 Treffern STOPPT die Suche (Top 20 reichen
+    /// meist) — der Rest bzw. das Sortieren läuft auf Wunsch in der Haupt-App
+    /// (Button „Alle in Favenio ↗" oder Cmd+Return), nicht mehr automatisch.
     func flushPending() {
         guard !pending.isEmpty else { return }
+        // Auswahl über den reloadData hinweg festhalten (fürs QuickLook).
+        let selectedPaths = Set(tableView.selectedRowIndexes.compactMap {
+            $0 < hits.count ? hits[$0].path : nil
+        })
         let room = Self.maxQuickHits - hits.count
         if room > 0 { hits.append(contentsOf: pending.prefix(room)) }
         pending = []
         infoLabel.textColor = .secondaryLabelColor
         infoLabel.lineBreakMode = .byTruncatingTail
-        infoLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
-        layoutForHits()
         tableView.reloadData()
-        if hits.count >= Self.maxQuickHits, !handedOff { handOffToMainApp() }
+        if !selectedPaths.isEmpty {
+            let rows = IndexSet(hits.indices.filter {
+                selectedPaths.contains(hits[$0].path)
+            })
+            tableView.selectRowIndexes(rows, byExtendingSelection: false)
+        }
+        openButton.isEnabled = !hits.isEmpty
+        if hits.count >= Self.maxQuickHits {
+            cancelSearch()   // Top 20 erreicht → Suche stoppen
+            infoLabel.stringValue =
+                "Top \(Self.maxQuickHits) — ⌘↩ öffnet alle in Favenio"
+        } else {
+            infoLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
+        }
     }
 
     /// Suche natürlich fertig (weniger als 20 Treffer): Endstand zeigen.
     func finish(query: String, errorText: String?) {
         flushPending()
         cancelSearch()
+        openButton.isEnabled = !hits.isEmpty
         if let errorText {
             infoLabel.stringValue = errorText
             return
@@ -507,18 +544,18 @@ final class QuickController: NSObject, NSApplicationDelegate,
             : "\(hits.count) Treffer für „\(query)“."
     }
 
-    // ---------- Übergabe an die große GUI (ab 20 Treffern) ----------
+    // ---------- Übergabe an die große GUI (auf Wunsch) ----------
 
-    func handOffToMainApp() {
-        handedOff = true
+    /// Button „Alle in Favenio ↗" bzw. Cmd+Return: die schon gefundenen
+    /// Treffer an die Haupt-App übergeben, die sie sofort zeigt und die Suche
+    /// vollständig fortsetzt (dort kann man sortieren und alle sehen).
+    @objc func openInMainApp() {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return }
         let root = searchRoot
-        // Die schon gefundenen (max. 20) Treffer als JSONL-Datei ablegen.
         let resultsFile = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("favenio-quick-\(UUID().uuidString).jsonl")
         do { try jsonlData(for: hits).write(to: resultsFile) } catch {
-            // Übergabe nicht möglich → wenigstens die 20 hier bedienbar lassen.
-            handedOff = false
             infoLabel.stringValue = "Konnte Treffer nicht zwischenspeichern."
             return
         }
@@ -638,6 +675,54 @@ final class QuickController: NSObject, NSApplicationDelegate,
         }
     }
 
+    // ---------- QuickLook-Vorschau ----------
+
+    @objc func togglePreview() {
+        guard let panel = QLPreviewPanel.shared() else { return }
+        if QLPreviewPanel.sharedPreviewPanelExists() && panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    func rebuildPreviewURLs() {
+        // Vorschau folgt der AUSWAHL, nicht dem alten Rechtsklick (das war der
+        // „immer dieselbe Datei"-Fehler).
+        var rows = Array(tableView.selectedRowIndexes)
+        if rows.isEmpty, tableView.clickedRow >= 0 {
+            rows = [tableView.clickedRow]
+        }
+        previewURLs = rows.compactMap { row in
+            row < hits.count ? materializeHit(hits[row].path) : nil
+        }
+    }
+
+    @objc override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!)
+        -> Bool { true }
+    @objc override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        rebuildPreviewURLs()
+        panel.dataSource = self
+        panel.delegate = self
+    }
+    @objc override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        previewURLs.count
+    }
+    func previewPanel(_ panel: QLPreviewPanel!,
+                      previewItemAt index: Int) -> QLPreviewItem! {
+        previewURLs[index] as NSURL
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        if QLPreviewPanel.sharedPreviewPanelExists(),
+           QLPreviewPanel.shared().isVisible {
+            rebuildPreviewURLs()
+            QLPreviewPanel.shared().reloadData()
+        }
+    }
+
     // ---------- Rechtsklick-Menü (Öffnen / Öffnen mit / …) ----------
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -646,6 +731,9 @@ final class QuickController: NSObject, NSApplicationDelegate,
         guard contextRow >= 0, contextRow < hits.count else { return }
         let hit = hits[contextRow]
 
+        menu.addItem(withTitle: "Vorschau (Leertaste)",
+                     action: #selector(togglePreview),
+                     keyEquivalent: "").target = self
         menu.addItem(withTitle: "Öffnen", action: #selector(openSelected),
                      keyEquivalent: "").target = self
 
