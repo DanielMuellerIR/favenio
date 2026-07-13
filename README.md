@@ -67,12 +67,29 @@ Favenio ist bewusst maschinenfreundlich gebaut:
 | `-s`, `--case-sensitive` | Groß-/Kleinschreibung beachten |
 | `--no-archives` | nicht in Archive hineinschauen |
 | `--archive-depth N` | Verschachtelungstiefe (Default 1) |
-| `--json` | JSONL-Ausgabe für Skripte/Agenten |
+| `--only both\|files\|dirs` | Treffer auf Dateien, Ordner oder beides (Default) begrenzen |
+| `--hidden` | unsichtbare (Punkt-)Dateien und -Ordner mitdurchsuchen |
+| `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` = Bytes) |
 | `--version` | Version anzeigen |
 
-Ohne Platzhalter (`* ? [`) gilt „Name **enthält** den Suchtext";
-mit Platzhaltern Glob-Matching auf den ganzen Namen. Bei der
-Namenssuche zählen auch Ordnernamen als Treffer.
+## Suchmodi — und wie man z. B. nur `.md`-Dateien findet
+
+Favenio erkennt den Suchmodus **automatisch am Muster** — es gibt keinen
+Umschalter:
+
+| Eingabe | Modus | Findet |
+|---|---|---|
+| `notiz` | „enthält" (Default) | alles, was den Text **irgendwo** im Namen hat |
+| `*.md` | Glob/Wildcards (`* ? [`) | **nur** Namen, die genau auf `.md` enden |
+| `rechnung-\d{4}` mit `-r` | Regex | frei definierbares Muster (`re.search`) |
+
+Deshalb findet die Eingabe `.md` auch `.mdi`, `.mdx` oder `readme.md` —
+`.md` kommt dort ja *irgendwo* vor. **Für nur echte `.md`-Dateien: `*.md`
+suchen.** Das `*` schaltet auf Glob-Matching um, das den **ganzen** Namen
+prüft. (Endet ein *Ordner* auf `.md`, zusätzlich `--only files` bzw. in der
+GUI „Nur Dateien" wählen.) Exakt gleichwertig wäre der Regex `\.md$`.
+
+Bei der Namenssuche zählen auch Ordnernamen als Treffer.
 
 ## GUI (Favenio.app)
 
@@ -115,7 +132,7 @@ Einmal erlauben genügt.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests            # 21 Unit-Tests (Kern)
+python3 -m unittest discover -s tests            # 31 Unit-Tests (Kern)
 Favenio.app/Contents/MacOS/Favenio --selftest    # Headless-GUI-Anbindung
 ```
 
@@ -123,4 +140,4 @@ Favenio.app/Contents/MacOS/Favenio --selftest    # Headless-GUI-Anbindung
 
 ## Stand
 
-Version 0.2.0 · Stand: 2026-07-11
+Version 0.8.0 · Stand: 2026-07-13
