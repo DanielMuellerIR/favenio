@@ -16,6 +16,7 @@
 // Mit --selftest läuft statt der GUI ein Headless-Integrationstest.
 
 import AppKit
+import Quartz   // QLPreviewPanel (QuickLook-Vorschau)
 
 @main
 struct FavenioApp {
@@ -89,10 +90,12 @@ func runSelfTest() -> Int32 {
 
 final class MainController: NSObject, NSApplicationDelegate,
                             NSTableViewDataSource, NSTableViewDelegate,
-                            NSMenuDelegate {
+                            NSMenuDelegate, NSSearchFieldDelegate,
+                            QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
     var window: NSWindow!
     let searchField = NSSearchField()
+    let stopButton = NSButton(title: "", target: nil, action: nil)
     let folderButton = NSButton(title: "Ordner…", target: nil, action: nil)
     let contentCheckbox = NSButton(checkboxWithTitle: "Inhalt durchsuchen",
                                    target: nil, action: nil)
@@ -108,6 +111,9 @@ final class MainController: NSObject, NSApplicationDelegate,
     let typeControl = NSSegmentedControl(
         labels: ["Dateien & Ordner", "Dateien", "Ordner"],
         trackingMode: .selectOne, target: nil, action: nil)
+    // Aufklappbare Liste fertiger RegEx-Vorlagen (nur im Regex-Modus sinnvoll).
+    let templatesButton = NSButton(title: "Regex-Vorlagen ▾",
+                                   target: nil, action: nil)
     let statusLabel = NSTextField(labelWithString: "Bereit.")
     let tableView = NSTableView()
 
@@ -122,6 +128,7 @@ final class MainController: NSObject, NSApplicationDelegate,
     var flushTimer: Timer?
     var contextRow = -1             // Zeile, auf die der Rechtsklick ging
     var pendingURL: URL?            // favenio://-URL, die vor dem Fenster kam
+    var previewURLs: [URL] = []     // gerade in der QuickLook-Vorschau
 
     // ---------- App-Lebenszyklus ----------
 
@@ -138,6 +145,7 @@ final class MainController: NSObject, NSApplicationDelegate,
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu(appName: "Favenio")
         buildWindow()
+        installAboutItem()
         installViewMenu()
         // Finder-Fenster für das Ordner-Popup vorab im Hintergrund laden
         // (der AppleScript-Aufruf darf den Start nicht blockieren).
@@ -162,10 +170,111 @@ final class MainController: NSObject, NSApplicationDelegate,
         // Beim Start einmal auf Festplattenvollzugriff hinweisen (bringt bei
         // Suchen über den ganzen Benutzerordner deutlich weniger Nachfragen).
         maybePromptFullDiskAccess(appName: "Favenio")
+
+        // Leertaste in der Trefferliste öffnet die QuickLook-Vorschau (wie im
+        // Finder). Nur wenn die Tabelle den Fokus hat — sonst tippt die
+        // Leertaste normal ins Suchfeld.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            if event.keyCode == 49,                        // 49 = Leertaste
+               let self, self.window.firstResponder === self.tableView {
+                self.togglePreview()
+                return nil
+            }
+            return event
+        }
+    }
+
+    /// „Über Favenio" ganz oben ins App-Menü setzen.
+    func installAboutItem() {
+        guard let appMenu = NSApp.mainMenu?.item(at: 0)?.submenu else { return }
+        let about = NSMenuItem(title: "Über Favenio",
+                               action: #selector(showAbout), keyEquivalent: "")
+        about.target = self
+        appMenu.insertItem(about, at: 0)
+        appMenu.insertItem(.separator(), at: 1)
+    }
+
+    /// Über-Dialog: HIER (und nur hier) steht der lateinische Spruch, dazu
+    /// Versionsnummer und Versionsdatum.
+    @objc func showAbout() {
+        let credits = NSAttributedString(
+            string: "facile invenio — „ich finde mit Leichtigkeit“\n\n"
+                + "Indexlose Datei- und Archivsuche.",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ])
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Favenio",
+            .applicationVersion: favenioVersion,         // Versionsnummer
+            .version: favenioDate,                       // Versionsdatum
+            .credits: credits,
+        ])
+    }
+
+    // ---------- QuickLook-Vorschau ----------
+
+    /// Vorschau der ausgewählten Treffer ein-/ausblenden. Archiv-Einträge
+    /// werden dafür (wie beim Öffnen) in einen Temp-Ordner ausgepackt.
+    @objc func togglePreview() {
+        guard let panel = QLPreviewPanel.shared() else { return }
+        if QLPreviewPanel.sharedPreviewPanelExists() && panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    func rebuildPreviewURLs() {
+        // Vorschau folgt der AUSWAHL (Leertaste/Pfeiltasten). Nur wenn nichts
+        // ausgewählt ist, die angeklickte Zeile — NICHT den alten Rechtsklick
+        // (das war der „immer dieselbe Datei"-Fehler).
+        var rows = Array(tableView.selectedRowIndexes)
+        if rows.isEmpty, tableView.clickedRow >= 0 {
+            rows = [tableView.clickedRow]
+        }
+        previewURLs = rows.compactMap { row in
+            row < hits.count ? materializeHit(hits[row].path) : nil
+        }
+    }
+
+    // QuickLook fragt diese Methoden über die Responder-Kette + den
+    // App-Delegate ab (informelles Protokoll auf NSResponder).
+    @objc override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!)
+        -> Bool { true }
+    @objc override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        rebuildPreviewURLs()
+        panel.dataSource = self
+        panel.delegate = self
+    }
+    @objc override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        previewURLs.count
+    }
+    func previewPanel(_ panel: QLPreviewPanel!,
+                      previewItemAt index: Int) -> QLPreviewItem! {
+        previewURLs[index] as NSURL
+    }
+
+    /// Auswahl geändert, während die Vorschau offen ist → mitziehen.
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        if QLPreviewPanel.sharedPreviewPanelExists(),
+           QLPreviewPanel.shared().isVisible {
+            rebuildPreviewURLs()
+            QLPreviewPanel.shared().reloadData()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(
         _ sender: NSApplication) -> Bool { true }
+
+    /// App vorderste → Finder-Fenster (neu) laden. Nur wenn die App aktiv
+    /// ist, zeigt TCC den Automations-Consent-Dialog. Läuft im Hintergrund.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        refreshFinderFoldersAsync()
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         stopSearch()
@@ -242,7 +351,7 @@ final class MainController: NSObject, NSApplicationDelegate,
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        window.title = "Favenio — facile invenio"
+        window.title = "Favenio"   // der lateinische Spruch nur im „Über"-Dialog
         window.isReleasedWhenClosed = false
         guard let content = window.contentView else { return }
 
@@ -250,6 +359,20 @@ final class MainController: NSObject, NSApplicationDelegate,
             "Suchmuster — Return startet die Suche"
         searchField.target = self
         searchField.action = #selector(startSearch)
+        searchField.delegate = self   // controlTextDidChange → Regex-Färbung
+        // Ohne das zeigt NSSearchField NUR eine Textfarbe — die Token-Färbung
+        // im Regex-Modus wäre unsichtbar.
+        searchField.allowsEditingTextAttributes = true
+
+        // Stopp-Button links vom Suchfeld: bricht die laufende Suche ab.
+        stopButton.image = NSImage(systemSymbolName: "stop.fill",
+                                   accessibilityDescription: "Suche stoppen")
+        stopButton.bezelStyle = .rounded
+        stopButton.imagePosition = .imageOnly
+        stopButton.toolTip = "Suche stoppen"
+        stopButton.target = self
+        stopButton.action = #selector(stopSearchClicked)
+        stopButton.isEnabled = false
         searchField.setContentHuggingPriority(NSLayoutConstraint.Priority(1),
                                               for: .horizontal)
 
@@ -268,6 +391,20 @@ final class MainController: NSObject, NSApplicationDelegate,
         typeControl.target = self
         typeControl.action = #selector(startSearch)
 
+        // Regex-Umschalten färbt das Feld um (an) bzw. zurück (aus).
+        regexCheckbox.target = self
+        regexCheckbox.action = #selector(regexToggled)
+        templatesButton.bezelStyle = .rounded
+        templatesButton.target = self
+        templatesButton.action = #selector(showTemplatesMenu(_:))
+
+        // Statuszeile darf die Fensterbreite NICHT aufblähen: lange
+        // Fortschritts-Pfade werden gekürzt, die Breite an den Stack gebunden.
+        statusLabel.lineBreakMode = .byTruncatingMiddle
+        statusLabel.setContentCompressionResistancePriority(
+            .defaultLow, for: .horizontal)
+        statusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
         buildTable()
         let scroll = NSScrollView()
         scroll.documentView = tableView
@@ -275,11 +412,12 @@ final class MainController: NSObject, NSApplicationDelegate,
         scroll.setContentHuggingPriority(NSLayoutConstraint.Priority(1),
                                          for: .vertical)
 
-        let topRow = NSStackView(views: [searchField, folderButton])
+        let topRow = NSStackView(views: [stopButton, searchField, folderButton])
         topRow.orientation = .horizontal
         let optionsRow = NSStackView(views: [typeControl, contentCheckbox,
                                              archivesCheckbox, hiddenCheckbox,
-                                             regexCheckbox, caseCheckbox])
+                                             regexCheckbox, caseCheckbox,
+                                             templatesButton])
         optionsRow.orientation = .horizontal
         optionsRow.spacing = 12
 
@@ -300,7 +438,11 @@ final class MainController: NSObject, NSApplicationDelegate,
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor,
                                           constant: -12),
             topRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            optionsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            // Statuszeile an die Stack-Breite binden → kann das Fenster nicht
+            // in die Breite ziehen (langer „durchsuche …"-Pfad).
+            statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
         ])
 
@@ -388,17 +530,15 @@ final class MainController: NSObject, NSApplicationDelegate,
         startSearch()
     }
 
-    /// Lädt die offenen Finder-Fenster im Hintergrund (AppleScript kann
-    /// blockieren) und aktualisiert den Cache — nie auf dem Main-Thread.
+    /// Lädt die offenen Finder-Fenster in den Cache — asynchron über einen
+    /// osascript-Unterprozess, der den Main-Thread NIE blockiert (siehe
+    /// finderWindowFoldersAsync). Das Ordner-Popup nimmt danach den Cache.
     func refreshFinderFoldersAsync() {
         guard !refreshingFinder else { return }
         refreshingFinder = true
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let folders = finderWindowFolders()
-            DispatchQueue.main.async {
-                self?.refreshingFinder = false
-                self?.cachedFinderFolders = folders
-            }
+        finderWindowFoldersAsync { [weak self] folders in
+            self?.refreshingFinder = false
+            if !folders.isEmpty { self?.cachedFinderFolders = folders }
         }
     }
 
@@ -475,6 +615,93 @@ final class MainController: NSObject, NSApplicationDelegate,
         }
     }
 
+    // ---------- RegEx: Vorlagen + Syntaxfärbung ----------
+
+    /// Klick auf „Regex-Vorlagen": aufklappende Liste nach Kategorien.
+    @objc func showTemplatesMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        var lastCategory: String?
+        for template in regexTemplates {
+            if template.category != lastCategory {
+                if lastCategory != nil { menu.addItem(.separator()) }
+                let header = NSMenuItem(title: template.category, action: nil,
+                                        keyEquivalent: "")
+                header.isEnabled = false
+                menu.addItem(header)
+                lastCategory = template.category
+            }
+            let item = NSMenuItem(title: template.name,
+                                  action: #selector(insertTemplate(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = template.regex
+            item.toolTip = "\(template.regex)   —   z. B. \(template.example)"
+            menu.addItem(item)
+        }
+        if let host = sender.superview {
+            menu.popUp(positioning: nil,
+                       at: NSPoint(x: sender.frame.minX, y: sender.frame.minY),
+                       in: host)
+        }
+    }
+
+    /// Vorlage übernehmen: ins Suchfeld setzen, Regex-Modus an, einfärben.
+    @objc func insertTemplate(_ sender: NSMenuItem) {
+        guard let regex = sender.representedObject as? String else { return }
+        regexCheckbox.state = .on
+        searchField.stringValue = regex
+        window.makeFirstResponder(searchField)
+        recolorRegexField()
+    }
+
+    /// Regex-Checkbox umgeschaltet → Feld ein-/ausfärben.
+    @objc func regexToggled() { recolorRegexField() }
+
+    /// Live-Färbung des Suchfelds beim Tippen (nur im Regex-Modus).
+    func controlTextDidChange(_ notification: Notification) {
+        guard notification.object as? NSSearchField === searchField else { return }
+        recolorRegexField()
+    }
+
+    /// Färbt den Suchtext nach RegEx-Token-Art ein (Schema von Fastra) —
+    /// oder setzt ihn auf die Standardfarbe zurück, wenn Regex aus ist.
+    /// Verändert nur Farb-Attribute, nie den Text → Cursor bleibt stehen.
+    func recolorRegexField() {
+        let editor = searchField.currentEditor() as? NSTextView
+        let text = editor?.string ?? searchField.stringValue
+        let full = NSRange(location: 0, length: (text as NSString).length)
+        let regexOn = regexCheckbox.state == .on
+        let base: NSColor = regexOn ? RegexHighlighter.literalColor
+                                    : .textColor
+
+        if let storage = editor?.textStorage {
+            storage.beginEditing()
+            storage.removeAttribute(.foregroundColor, range: full)
+            storage.addAttribute(.foregroundColor, value: base, range: full)
+            if regexOn {
+                for (range, kind) in RegexHighlighter.tokenize(text) {
+                    storage.addAttribute(.foregroundColor,
+                                         value: RegexHighlighter.color(for: kind),
+                                         range: range)
+                }
+            }
+            storage.endEditing()
+            editor?.typingAttributes[.foregroundColor] = base
+        } else {
+            // Feld nicht im Fokus → über den attributierten Wert färben.
+            let attributed = NSMutableAttributedString(string: text)
+            attributed.addAttribute(.foregroundColor, value: base, range: full)
+            if regexOn {
+                for (range, kind) in RegexHighlighter.tokenize(text) {
+                    attributed.addAttribute(.foregroundColor,
+                                            value: RegexHighlighter.color(for: kind),
+                                            range: range)
+                }
+            }
+            searchField.attributedStringValue = attributed
+        }
+    }
+
     @objc func startSearch() {
         stopSearch()
         // Frische Suche: Tabelle leeren und von vorn sammeln.
@@ -526,6 +753,7 @@ final class MainController: NSObject, NSApplicationDelegate,
             regex: regexCheckbox.state == .on,
             caseSensitive: caseCheckbox.state == .on,
             archives: archivesCheckbox.state == .on,
+            progress: true,
             only: only, includeHidden: hiddenCheckbox.state == .on)
         else {
             statusLabel.stringValue = "favenio.py nicht gefunden."
@@ -558,6 +786,7 @@ final class MainController: NSObject, NSApplicationDelegate,
             return
         }
         searchProcess = process
+        stopButton.isEnabled = true
         statusLabel.stringValue = "Suche läuft…"
         // Die Tabelle nicht bei jedem einzelnen Treffer neu laden,
         // sondern gebündelt ein paar Mal pro Sekunde.
@@ -572,6 +801,15 @@ final class MainController: NSObject, NSApplicationDelegate,
         searchProcess = nil
         flushTimer?.invalidate()
         flushTimer = nil
+        stopButton.isEnabled = false
+    }
+
+    /// Klick auf den Stopp-Button: laufende Suche abbrechen.
+    @objc func stopSearchClicked() {
+        guard searchProcess != nil else { return }
+        stopSearch()
+        flushPending()
+        statusLabel.stringValue = "Suche gestoppt — \(hits.count) Treffer."
     }
 
     /// Rohbytes aus der Pipe in Zeilen zerlegen und als Hits vormerken.
@@ -581,10 +819,15 @@ final class MainController: NSObject, NSApplicationDelegate,
             let lineData = lineBuffer.subdata(
                 in: lineBuffer.startIndex..<newline)
             lineBuffer.removeSubrange(lineBuffer.startIndex...newline)
-            // Schon gezeigte Pfade (z. B. die aus der Schnellsuche
-            // übernommenen 20) nicht erneut auflisten.
-            if let hit = parseHit(lineData),
-               seenPaths.insert(hit.path).inserted {
+            // Fortschritt (welcher Ordner/welches Archiv gerade dran ist)
+            // wie in der Schnellsuche laufend anzeigen.
+            if let path = parseProgress(lineData) {
+                statusLabel.stringValue = "\(hits.count) Treffer — durchsuche "
+                    + abbreviateHome(path)
+            } else if let hit = parseHit(lineData),
+                      seenPaths.insert(hit.path).inserted {
+                // Schon gezeigte Pfade (z. B. die aus der Schnellsuche
+                // übernommenen 20) nicht erneut auflisten.
                 pending.append(hit)
             }
         }
@@ -592,10 +835,22 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     func flushPending() {
         guard !pending.isEmpty else { return }
+        // Auswahl über den reloadData hinweg festhalten (sonst verliert man
+        // beim Streamen sofort wieder die markierte Zeile — etwa fürs
+        // QuickLook). Wir merken die Pfade und stellen sie danach wieder her.
+        let selectedPaths = Set(tableView.selectedRowIndexes.compactMap {
+            $0 < hits.count ? hits[$0].path : nil
+        })
         hits.append(contentsOf: pending)
         pending = []
         sortHits()   // aktive Sortierung auch auf frische Treffer anwenden
         tableView.reloadData()
+        if !selectedPaths.isEmpty {
+            let rows = IndexSet(hits.indices.filter {
+                selectedPaths.contains(hits[$0].path)
+            })
+            tableView.selectRowIndexes(rows, byExtendingSelection: false)
+        }
         statusLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
     }
 
@@ -604,6 +859,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         flushTimer?.invalidate()
         flushTimer = nil
         searchProcess = nil
+        stopButton.isEnabled = false
         statusLabel.stringValue = hits.isEmpty
             ? "Keine Treffer."
             : "\(hits.count) Treffer."
@@ -741,6 +997,9 @@ final class MainController: NSObject, NSApplicationDelegate,
         guard contextRow >= 0, contextRow < hits.count else { return }
         let hit = hits[contextRow]
 
+        menu.addItem(withTitle: "Vorschau (Leertaste)",
+                     action: #selector(togglePreview),
+                     keyEquivalent: "").target = self
         menu.addItem(withTitle: "Öffnen", action: #selector(ctxOpen),
                      keyEquivalent: "").target = self
 
@@ -814,3 +1073,208 @@ final class MainController: NSObject, NSApplicationDelegate,
         pasteboard.setString(paths.joined(separator: "\n"), forType: .string)
     }
 }
+
+// MARK: - RegEx-Syntaxfärbung (Farbschema von Fastra übernommen)
+//
+// Fastra tokenisiert mit tree-sitter; das ist für Favenios Ein-Datei-Prinzip
+// zu schwer. Hier ein schlanker linearer Scanner, der dieselben Token-Arten
+// und exakt dieselben Farben (Fastra Theme/RegexFieldView) liefert.
+
+enum RegexTokenKind {
+    case anchor          // ^ $ \b \B
+    case characterClass  // [...] \d \w \s .
+    case quantifier      // * + ? {n,m}
+    case groupDelimiter  // ( ) (?: (?<name> (?= …
+    case alternation     // |
+    case escape          // \. \n \t …
+    case backreference   // \1 \k<name>
+    case error           // unvollständig (offene Klasse, Backslash am Ende)
+}
+
+enum RegexHighlighter {
+    /// Basisfarbe für gewöhnliche Zeichen (Lesbarkeit, kein Akzent).
+    static let literalColor = NSColor.textColor
+
+    /// Dynamische Farbe je Token-Art — Werte 1:1 aus Fastra.
+    static func color(for kind: RegexTokenKind) -> NSColor {
+        func pair(_ l: (Int, Int, Int), _ d: (Int, Int, Int)) -> NSColor {
+            NSColor(name: nil) { appearance in
+                let dark = appearance.bestMatch(from: [.darkAqua, .aqua])
+                    == .darkAqua
+                let (r, g, b) = dark ? d : l
+                return NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255,
+                               blue: CGFloat(b) / 255, alpha: 1)
+            }
+        }
+        switch kind {
+        case .anchor:         return pair((0xA3, 0x39, 0x2A), (0xE8, 0x8D, 0x7C))
+        case .characterClass: return pair((0x2A, 0x66, 0xB5), (0x7F, 0xB0, 0xEE))
+        case .quantifier:     return pair((0xB5, 0x6C, 0x1A), (0xDF, 0xA2, 0x5A))
+        case .groupDelimiter: return pair((0x70, 0x20, 0xA0), (0xC0, 0x8A, 0xE8))
+        case .alternation:    return pair((0x1A, 0x40, 0x80), (0x86, 0xA9, 0xE0))
+        case .escape:         return pair((0x2F, 0x5D, 0x3A), (0x94, 0xCE, 0x9F))
+        case .backreference:  return pair((0xA4, 0x66, 0xD9), (0xC0, 0x9A, 0xE8))
+        case .error:          return pair((0xCC, 0x00, 0x00), (0xFF, 0x6B, 0x5E))
+        }
+    }
+
+    /// Zerlegt das Muster in gefärbte Token. Gewöhnliche Zeichen werden NICHT
+    /// als Token ausgegeben — sie behalten die Basisfarbe. Ranges sind
+    /// UTF-16-NSRange (dieselbe Einheit wie NSTextStorage).
+    static func tokenize(_ pattern: String) -> [(NSRange, RegexTokenKind)] {
+        let s = pattern as NSString
+        let n = s.length
+        var i = 0
+        var out: [(NSRange, RegexTokenKind)] = []
+        func isDigit(_ c: unichar) -> Bool { c >= 0x30 && c <= 0x39 }
+        func push(_ location: Int, _ length: Int, _ kind: RegexTokenKind) {
+            out.append((NSRange(location: location, length: length), kind))
+        }
+        while i < n {
+            let c = s.character(at: i)
+            switch c {
+            case 0x5C:   // \  Backslash-Sequenz
+                if i + 1 >= n { push(i, 1, .error); i += 1; break }
+                let d = s.character(at: i + 1)
+                switch d {
+                case 0x62, 0x42:                               // b B → Anker
+                    push(i, 2, .anchor); i += 2
+                case 0x64, 0x44, 0x77, 0x57, 0x73, 0x53:       // d D w W s S
+                    push(i, 2, .characterClass); i += 2
+                case 0x31...0x39:                              // \1..\9
+                    var j = i + 1
+                    while j < n && isDigit(s.character(at: j)) { j += 1 }
+                    push(i, j - i, .backreference); i = j
+                case 0x6B:                                     // \k<name>
+                    var j = i + 2
+                    if j < n && s.character(at: j) == 0x3C {
+                        while j < n && s.character(at: j) != 0x3E { j += 1 }
+                        if j < n { j += 1 }
+                    }
+                    push(i, j - i, .backreference); i = j
+                default:
+                    push(i, 2, .escape); i += 2                // \. \n \( …
+                }
+            case 0x5E, 0x24:                                   // ^ $
+                push(i, 1, .anchor); i += 1
+            case 0x2E:                                         // .
+                push(i, 1, .characterClass); i += 1
+            case 0x5B:                                         // [  Zeichenklasse
+                var j = i + 1
+                if j < n && s.character(at: j) == 0x5E { j += 1 }   // ^
+                if j < n && s.character(at: j) == 0x5D { j += 1 }   // ] direkt am Anfang
+                while j < n && s.character(at: j) != 0x5D {
+                    if s.character(at: j) == 0x5C { j += 1 }         // Escape überspringen
+                    j += 1
+                }
+                if j < n { push(i, j - i + 1, .characterClass); i = j + 1 }
+                else { push(i, n - i, .error); i = n }              // offen → Fehler
+            case 0x28:                                         // (  Gruppe
+                var len = 1
+                if i + 1 < n && s.character(at: i + 1) == 0x3F {    // (?
+                    if i + 2 < n {
+                        let e = s.character(at: i + 2)
+                        if e == 0x3A || e == 0x3D || e == 0x21 {     // (?: (?= (?!
+                            len = 3
+                        } else if e == 0x3C {                        // (?<
+                            if i + 3 < n && (s.character(at: i + 3) == 0x3D
+                                             || s.character(at: i + 3) == 0x21) {
+                                len = 4                              // (?<= (?<!
+                            } else {                                 // (?<name>
+                                var j = i + 3
+                                while j < n && s.character(at: j) != 0x3E { j += 1 }
+                                if j < n { j += 1 }
+                                len = j - i
+                            }
+                        } else { len = 2 }                           // (?flags
+                    } else { len = 2 }
+                }
+                push(i, len, .groupDelimiter); i += len
+            case 0x29:                                         // )
+                push(i, 1, .groupDelimiter); i += 1
+            case 0x7C:                                         // |
+                push(i, 1, .alternation); i += 1
+            case 0x2A, 0x2B, 0x3F:                             // * + ?
+                push(i, 1, .quantifier); i += 1
+            case 0x7B:                                         // {  evtl. {n,m}
+                var j = i + 1
+                var digits = 0
+                while j < n && isDigit(s.character(at: j)) { j += 1; digits += 1 }
+                if j < n && s.character(at: j) == 0x2C {        // ,
+                    j += 1
+                    while j < n && isDigit(s.character(at: j)) { j += 1 }
+                }
+                if digits > 0 && j < n && s.character(at: j) == 0x7D {
+                    push(i, j - i + 1, .quantifier); i = j + 1
+                } else {
+                    i += 1                                     // literales {
+                }
+            default:
+                i += 1                                         // Literal → Basisfarbe
+            }
+        }
+        return out
+    }
+}
+
+// MARK: - RegEx-Vorlagen (Auswahl aus Fastras Bibliothek, such-tauglich)
+
+struct RegexTemplate {
+    let name: String
+    let category: String
+    let regex: String
+    let example: String
+}
+
+let regexTemplates: [RegexTemplate] = [
+    // Identifikatoren
+    .init(name: "E-Mail-Adresse", category: "Identifikatoren",
+          regex: #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#,
+          example: "max.muster@example.com"),
+    .init(name: "URL", category: "Identifikatoren",
+          regex: #"https?://[\w.-]+(?:/[\w./?=&%#-]*)?"#,
+          example: "https://example.com/path?q=1"),
+    .init(name: "IPv4-Adresse", category: "Identifikatoren",
+          regex: #"\b(?:\d{1,3}\.){3}\d{1,3}\b"#, example: "192.168.1.1"),
+    .init(name: "IBAN", category: "Identifikatoren",
+          regex: #"[A-Z]{2}\d{2}[A-Z0-9]{1,30}"#,
+          example: "DE89370400440532013000"),
+    .init(name: "UUID", category: "Identifikatoren",
+          regex: #"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"#,
+          example: "550e8400-e29b-41d4-a716-446655440000"),
+    .init(name: "Hex-Farbe (#RRGGBB)", category: "Identifikatoren",
+          regex: #"#(?:[0-9a-fA-F]{3}){1,2}\b"#, example: "#FF9900"),
+    .init(name: "Versionsnummer (v1.2.3)", category: "Identifikatoren",
+          regex: #"\bv?\d+\.\d+\.\d+\b"#, example: "v1.2.3"),
+    .init(name: "Dateiname mit Endung", category: "Identifikatoren",
+          regex: #"[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,4}\b"#, example: "notiz.md"),
+    // Datum & Zeit
+    .init(name: "ISO-Datum (YYYY-MM-DD)", category: "Datum & Zeit",
+          regex: #"\b(\d{4})-(\d{2})-(\d{2})\b"#, example: "2026-07-13"),
+    .init(name: "Deutsches Datum (DD.MM.YYYY)", category: "Datum & Zeit",
+          regex: #"\b(\d{2})\.(\d{2})\.(\d{4})\b"#, example: "13.07.2026"),
+    .init(name: "Uhrzeit", category: "Datum & Zeit",
+          regex: #"\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b"#, example: "14:30:45"),
+    .init(name: "ISO-Zeitstempel", category: "Datum & Zeit",
+          regex: #"\b(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?\b"#,
+          example: "2026-07-13 15:30:00"),
+    // Text & Struktur
+    .init(name: "Markdown-Link", category: "Text & Struktur",
+          regex: #"\[([^\]]+)\]\(([^)]+)\)"#,
+          example: "[OpenAI](https://openai.com)"),
+    .init(name: "Markdown-Überschrift", category: "Text & Struktur",
+          regex: #"^(#{1,6})\s+(.+)$"#, example: "## Überschrift"),
+    .init(name: "HTML-Tag", category: "Text & Struktur",
+          regex: #"<(/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>"#,
+          example: #"<a href="…">"#),
+    .init(name: "HTML-/XML-Kommentar", category: "Text & Struktur",
+          regex: #"<!--[\s\S]*?-->"#, example: "<!-- Notiz -->"),
+    // Zahlen
+    .init(name: "Ganzzahl", category: "Zahlen",
+          regex: #"-?\d+"#, example: "-42"),
+    .init(name: "Dezimalzahl (deutsch)", category: "Zahlen",
+          regex: #"-?\d+(?:\.\d{3})*,\d+"#, example: "1.234,56"),
+    .init(name: "Telefonnummer (DE)", category: "Zahlen",
+          regex: #"(?:\+49|0)[\s/-]?\d{2,5}[\s/-]?\d{4,8}"#,
+          example: "+49 30 12345678"),
+]
