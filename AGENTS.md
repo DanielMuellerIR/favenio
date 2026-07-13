@@ -2,6 +2,11 @@
 
 Stand: 2026-07-11
 
+## Typ & Zweck
+- **Typ:** GUI-App (+ CLI)
+- **Zweck:** Durchsucht Dateien und Archive indexlos nach Namen oder Inhalt; die macOS-Apps machen dieselbe Python-Suchmaschine als Finder-nahe Oberfläche nutzbar.
+- **Plattform:** macOS-GUI, CLI
+
 ## Was ist das?
 
 Favenio („facile invenio" — ich finde mit Leichtigkeit) ist ein
@@ -182,3 +187,17 @@ Plan (nur geplant, nicht begonnen):
   Finder-Fenster offen, fällt die App still auf `~` zurück. Die
   Erlaubnis steht unter Systemeinstellungen → Datenschutz →
   Automation.
+
+## Verzeichnisstruktur
+
+<!-- directory-structure: generated -->
+- [AGENTS.md](AGENTS.md) — Projektprofil, Arbeitsregeln und dieses Datei-Verzeichnis.
+- [README.md](README.md) — Projekt-Einstieg und Nutzerdokumentation.
+- `Favenio.app/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
+- `FavenioQuick.app/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
+- `common/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
+- `gui/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
+- `icons/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
+- `quick/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
+- `tests/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
+<!-- /directory-structure -->
