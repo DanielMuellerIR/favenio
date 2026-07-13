@@ -132,13 +132,23 @@ Plan (nur geplant, nicht begonnen):
 5. **Tests:** Ergebnisgleichheit seriell vs. parallel auf den
    bestehenden Fixtures; JSONL-Reihenfolge darf abweichen.
 
+## Arbeitsweise (Commit-Disziplin)
+
+**Nach jedem abgeschlossenen Feature committen — vor dem nächsten.** Lektion aus
+v0.8→v0.13: mehrere Features wurden über Sessions hinweg gebaut *und* nach
+`/Applications` installiert, ohne dazwischen zu committen. Ergebnis: ~720
+uncommittete, dateiübergreifend verzahnte Zeilen, die sich nur noch thematisch
+(nicht feature-atomar) trennen ließen — kein Zwischen-Commit compilierte für
+sich. `build-app.sh` installiert die Bundles am Ende automatisch; das ersetzt
+KEINEN Commit. Regel: Feature fertig + verifiziert → committen, dann erst das
+nächste. So bleiben Commits atomar und rückrollbar.
+
 ## Status / offene Ideen
 
-### Offener Stand (2026-07-13, v0.13.1 gebaut+installiert, UNCOMMITTED seit v0.8.0)
+### Stand (2026-07-14, v0.13.1 committet + gebaut + installiert)
 
-Committet ist nur **v0.8.0** (HEAD `7e2c77b`). Alles Folgende liegt gebaut in
-`/Applications`, aber **noch nicht committet** — nächste Session reviewen +
-sauber getrennt committen + diesen Status-Block einarbeiten:
+Seit v0.8.0 gebaut, in v0.13.1 committet (4 thematische Commits: Kern/Finder-Fix,
+Haupt-App-Features, Schnellsuche-Umbau, Doku):
 
 - Regex-Vorlagen + Syntaxfärbung (Haupt-App, Farbschema/Vorlagen aus Fastra;
   eigener leichter Tokenizer statt tree-sitter). Färbung braucht
