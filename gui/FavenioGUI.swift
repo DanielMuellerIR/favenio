@@ -16,7 +16,6 @@
 // Mit --selftest läuft statt der GUI ein Headless-Integrationstest.
 
 import AppKit
-import UniformTypeIdentifiers
 
 @main
 struct FavenioApp {
@@ -103,11 +102,20 @@ final class MainController: NSObject, NSApplicationDelegate,
                                  target: nil, action: nil)
     let caseCheckbox = NSButton(checkboxWithTitle: "Groß/klein beachten",
                                 target: nil, action: nil)
+    let hiddenCheckbox = NSButton(checkboxWithTitle: "Unsichtbare",
+                                  target: nil, action: nil)
+    // Drei-Wege-Umschalter: Dateien & Ordner / nur Dateien / nur Ordner.
+    let typeControl = NSSegmentedControl(
+        labels: ["Dateien & Ordner", "Dateien", "Ordner"],
+        trackingMode: .selectOne, target: nil, action: nil)
     let statusLabel = NSTextField(labelWithString: "Bereit.")
     let tableView = NSTableView()
 
     var hits: [Hit] = []            // was die Tabelle zeigt
     var pending: [Hit] = []         // frisch gestreamte, noch nicht gezeigte
+    var seenPaths = Set<String>()   // schon gezeigte Pfade → keine Doppelten
+    var cachedFinderFolders: [String] = []   // Finder-Fenster (async geladen)
+    var refreshingFinder = false
     var searchRoot = FileManager.default.homeDirectoryForCurrentUser
     var searchProcess: Process?
     var lineBuffer = Data()         // Restbytes einer angefangenen Zeile
@@ -130,6 +138,10 @@ final class MainController: NSObject, NSApplicationDelegate,
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu(appName: "Favenio")
         buildWindow()
+        installViewMenu()
+        // Finder-Fenster für das Ordner-Popup vorab im Hintergrund laden
+        // (der AppleScript-Aufruf darf den Start nicht blockieren).
+        refreshFinderFoldersAsync()
 
         // Startargumente der Schnellsuche (Fallback-Weg ohne URL-Schema).
         let arguments = CommandLine.arguments
@@ -146,6 +158,10 @@ final class MainController: NSObject, NSApplicationDelegate,
             pendingURL = nil
             handleFavenioURL(url)
         }
+
+        // Beim Start einmal auf Festplattenvollzugriff hinweisen (bringt bei
+        // Suchen über den ganzen Benutzerordner deutlich weniger Nachfragen).
+        maybePromptFullDiskAccess(appName: "Favenio")
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(
@@ -182,11 +198,27 @@ final class MainController: NSObject, NSApplicationDelegate,
         if let root = value("root") {
             setSearchRoot(URL(fileURLWithPath: root))
         }
-        if let file = value("file") {
-            loadResults(from: URL(fileURLWithPath: file))
-        }
+        // Suchoptionen der Schnellsuche übernehmen (Default: aus), damit die
+        // Weitersuche hier mit denselben Einstellungen läuft.
+        contentCheckbox.state = value("content") == "1" ? .on : .off
+        archivesCheckbox.state = value("archives") == "1" ? .on : .off
+        hiddenCheckbox.state = value("hidden") == "1" ? .on : .off
+        regexCheckbox.state = value("regex") == "1" ? .on : .off
+        caseCheckbox.state = value("case") == "1" ? .on : .off
+
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        if let file = value("file") {
+            if value("continue") == "1" {
+                // Schnellsuche hat bei 20 Treffern übergeben: die 20 sofort
+                // zeigen und die Suche hier live fortsetzen (weitere Treffer
+                // kommen hinzu, die 20 werden dabei nicht doppelt gelistet).
+                continueSearch(from: URL(fileURLWithPath: file))
+            } else {
+                loadResults(from: URL(fileURLWithPath: file))
+            }
+        }
     }
 
     /// Fertige Treffer (JSONL-Datei der Schnellsuche) direkt anzeigen —
@@ -221,12 +253,20 @@ final class MainController: NSObject, NSApplicationDelegate,
         searchField.setContentHuggingPriority(NSLayoutConstraint.Priority(1),
                                               for: .horizontal)
 
-        folderButton.title = "📁 " + searchRoot.lastPathComponent
+        folderButton.title = "📁 " + searchRoot.lastPathComponent + " ▾"
         folderButton.toolTip = searchRoot.path
         folderButton.target = self
-        folderButton.action = #selector(chooseFolder)
+        // Klick öffnet NICHT mehr direkt den Dateidialog, sondern ein
+        // Popup-Menü (wie EasyFind): offene Finder-Fenster + wichtige Ordner
+        // + „Anderer Ordner…". Ein ▾ signalisiert das Aufklappen.
+        folderButton.action = #selector(showFolderMenu)
 
         archivesCheckbox.state = .on   // Archiv-Blick ist das Markenzeichen
+
+        // Umschalter: „Dateien & Ordner" vorausgewählt; Wechsel sucht neu.
+        typeControl.selectedSegment = 0
+        typeControl.target = self
+        typeControl.action = #selector(startSearch)
 
         buildTable()
         let scroll = NSScrollView()
@@ -237,10 +277,11 @@ final class MainController: NSObject, NSApplicationDelegate,
 
         let topRow = NSStackView(views: [searchField, folderButton])
         topRow.orientation = .horizontal
-        let optionsRow = NSStackView(views: [contentCheckbox,
-                                             archivesCheckbox,
+        let optionsRow = NSStackView(views: [typeControl, contentCheckbox,
+                                             archivesCheckbox, hiddenCheckbox,
                                              regexCheckbox, caseCheckbox])
         optionsRow.orientation = .horizontal
+        optionsRow.spacing = 12
 
         let stack = NSStackView(views: [topRow, optionsRow, scroll,
                                         statusLabel])
@@ -269,21 +310,29 @@ final class MainController: NSObject, NSApplicationDelegate,
     }
 
     func buildTable() {
-        let nameColumn = NSTableColumn(
-            identifier: NSUserInterfaceItemIdentifier("name"))
-        nameColumn.title = "Name"
-        nameColumn.width = 240
-        let lineColumn = NSTableColumn(
-            identifier: NSUserInterfaceItemIdentifier("line"))
-        lineColumn.title = "Zeile"
-        lineColumn.width = 48
-        let pathColumn = NSTableColumn(
-            identifier: NSUserInterfaceItemIdentifier("path"))
-        pathColumn.title = "Ort"
-        pathColumn.width = 520
-        tableView.addTableColumn(nameColumn)
-        tableView.addTableColumn(lineColumn)
-        tableView.addTableColumn(pathColumn)
+        // (Identifier, Titel, Breite) — Reihenfolge = Spaltenreihenfolge.
+        // Jede Spalte ist über einen sortDescriptorPrototype sortierbar; der
+        // key zeigt auf die Sortier-Logik in sortDescriptorsDidChange.
+        let columns = [
+            ("name", "Name", CGFloat(220)),
+            ("type", "Typ", CGFloat(140)),
+            ("size", "Größe", CGFloat(90)),
+            ("line", "Zeile", CGFloat(48)),
+            ("path", "Ort", CGFloat(460)),
+        ]
+        for (identifier, title, width) in columns {
+            let column = NSTableColumn(
+                identifier: NSUserInterfaceItemIdentifier(identifier))
+            column.title = title
+            column.width = width
+            column.sortDescriptorPrototype =
+                NSSortDescriptor(key: identifier, ascending: true)
+            // Größe rechtsbündig (Zahlenspalte).
+            if identifier == "size" {
+                column.headerCell.alignment = .right
+            }
+            tableView.addTableColumn(column)
+        }
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
 
         tableView.dataSource = self
@@ -304,11 +353,116 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     func setSearchRoot(_ url: URL) {
         searchRoot = url
-        folderButton.title = "📁 " + url.lastPathComponent
+        // Wurzel-Ordner heißt "" bei "/" → dann den Pfad zeigen.
+        let name = url.lastPathComponent.isEmpty ? url.path
+                                                 : url.lastPathComponent
+        folderButton.title = "📁 " + name + " ▾"
         folderButton.toolTip = url.path
     }
 
     // ---------- Suche (asynchron, streamend) ----------
+
+    /// Klick auf den Ordner-Button: EasyFind-artiges Popup statt sofortigem
+    /// Dateidialog. Ganz oben die offenen Finder-Fenster (vorderstes zuerst),
+    /// darunter die wichtigsten Ordner, ganz unten „Anderer Ordner…".
+    /// „Ansicht"-Menü: bündelt den Unsichtbare-Umschalter mit dem Finder-
+    /// Kürzel Cmd+Shift+. (dieselbe Kombi wie im Finder).
+    func installViewMenu() {
+        guard let mainMenu = NSApp.mainMenu else { return }
+        let viewItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "Ansicht")
+        let hidden = NSMenuItem(title: "Unsichtbare Dateien",
+                                action: #selector(toggleHidden),
+                                keyEquivalent: ".")
+        hidden.keyEquivalentModifierMask = [.command, .shift]
+        hidden.target = self
+        viewMenu.addItem(hidden)
+        viewItem.submenu = viewMenu
+        // Vor „Bearbeiten" einsortieren (nach dem App-Menü).
+        mainMenu.insertItem(viewItem, at: min(1, mainMenu.numberOfItems))
+    }
+
+    /// Cmd+Shift+. bzw. Menü: Unsichtbare-Checkbox umschalten und neu suchen.
+    @objc func toggleHidden() {
+        hiddenCheckbox.state = hiddenCheckbox.state == .on ? .off : .on
+        startSearch()
+    }
+
+    /// Lädt die offenen Finder-Fenster im Hintergrund (AppleScript kann
+    /// blockieren) und aktualisiert den Cache — nie auf dem Main-Thread.
+    func refreshFinderFoldersAsync() {
+        guard !refreshingFinder else { return }
+        refreshingFinder = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let folders = finderWindowFolders()
+            DispatchQueue.main.async {
+                self?.refreshingFinder = false
+                self?.cachedFinderFolders = folders
+            }
+        }
+    }
+
+    @objc func showFolderMenu() {
+        // Für den nächsten Aufruf frisch laden, jetzt aber den Cache nehmen —
+        // so hängt der Klick nie am (evtl. blockierenden) Finder-AppleScript.
+        refreshFinderFoldersAsync()
+        let menu = NSMenu()
+
+        // 1) Offene Finder-Fenster. Der erste Eintrag ist das VORDERSTE
+        //    Finder-Fenster (Daniel: „aktives Finderfenster" gemeint als das
+        //    vorderste — aktiv kann es nicht sein, solange Favenio vorn ist).
+        let windows = cachedFinderFolders
+        for (index, path) in windows.enumerated() {
+            let name = (path as NSString).lastPathComponent
+            let title = index == 0 ? "Vorderstes Finder-Fenster — \(name)"
+                                   : name
+            addFolderItem(to: menu, title: title, path: path)
+        }
+        if !windows.isEmpty { menu.addItem(.separator()) }
+
+        // 2) Wichtige Ordner (feste, verständliche deutsche Namen).
+        for (title, path) in commonFolders() {
+            addFolderItem(to: menu, title: title, path: path)
+        }
+
+        // 3) Beliebiger Ordner über den Dateidialog (der frühere Direktweg).
+        menu.addItem(.separator())
+        let other = NSMenuItem(title: "Anderer Ordner…",
+                               action: #selector(chooseFolder),
+                               keyEquivalent: "")
+        other.target = self
+        menu.addItem(other)
+
+        // Direkt unter dem Button aufklappen. In der (nicht gespiegelten)
+        // Superview ist frame.minY die Unterkante des Buttons — von dort
+        // wächst das Menü nach unten.
+        if let host = folderButton.superview {
+            menu.popUp(positioning: nil,
+                       at: NSPoint(x: folderButton.frame.minX,
+                                   y: folderButton.frame.minY),
+                       in: host)
+        }
+    }
+
+    /// Ein Ordner-Eintrag mit Icon, Tooltip (Pfad, ~-gekürzt) und Häkchen,
+    /// falls es der gerade aktive Suchordner ist.
+    func addFolderItem(to menu: NSMenu, title: String, path: String) {
+        let item = NSMenuItem(title: title, action: #selector(pickFolder(_:)),
+                              keyEquivalent: "")
+        item.target = self
+        item.representedObject = path
+        item.toolTip = abbreviateHome(path)
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        icon.size = NSSize(width: 16, height: 16)
+        item.image = icon
+        if path == searchRoot.path { item.state = .on }
+        menu.addItem(item)
+    }
+
+    @objc func pickFolder(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        setSearchRoot(URL(fileURLWithPath: path))
+    }
 
     @objc func chooseFolder() {
         let panel = NSOpenPanel()
@@ -323,21 +477,56 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     @objc func startSearch() {
         stopSearch()
-        let pattern = searchField.stringValue
-            .trimmingCharacters(in: .whitespaces)
+        // Frische Suche: Tabelle leeren und von vorn sammeln.
         hits = []
         pending = []
+        seenPaths = []
         tableView.reloadData()
+        let pattern = searchField.stringValue
+            .trimmingCharacters(in: .whitespaces)
         guard !pattern.isEmpty else {
             statusLabel.stringValue = "Bereit."
             return
         }
+        launchSearch(pattern: pattern)
+    }
+
+    /// Fertige Treffer der Schnellsuche (≤20) sofort zeigen und die Suche
+    /// hier LIVE fortsetzen. Die schon gezeigten Treffer werden über
+    /// `seenPaths` nicht doppelt gelistet.
+    func continueSearch(from file: URL) {
+        stopSearch()
+        let seed = (try? Data(contentsOf: file)).map {
+            $0.split(separator: 0x0A).compactMap { parseHit(Data($0)) }
+        } ?? []
+        hits = seed
+        pending = []
+        seenPaths = Set(seed.map { $0.path })
+        // Die Schnellsuche findet Dateien & Ordner → hier ebenso weitersuchen.
+        typeControl.selectedSegment = 0
+        tableView.reloadData()
+        let pattern = searchField.stringValue
+            .trimmingCharacters(in: .whitespaces)
+        guard !pattern.isEmpty else {
+            statusLabel.stringValue = "\(hits.count) Treffer (aus Schnellsuche)."
+            return
+        }
+        launchSearch(pattern: pattern)
+    }
+
+    /// Startet den Suchprozess und streamt Treffer in die (evtl. schon per
+    /// `continueSearch` vorbelegte) Tabelle. Setzt hits/seenPaths NICHT
+    /// zurück — das machen die Aufrufer je nach Fall.
+    func launchSearch(pattern: String) {
+        let only = ["both", "files", "dirs"][
+            max(0, typeControl.selectedSegment)]
         guard let arguments = searchArguments(
             pattern: pattern, root: searchRoot.path,
             content: contentCheckbox.state == .on,
             regex: regexCheckbox.state == .on,
             caseSensitive: caseCheckbox.state == .on,
-            archives: archivesCheckbox.state == .on)
+            archives: archivesCheckbox.state == .on,
+            only: only, includeHidden: hiddenCheckbox.state == .on)
         else {
             statusLabel.stringValue = "favenio.py nicht gefunden."
             return
@@ -392,7 +581,12 @@ final class MainController: NSObject, NSApplicationDelegate,
             let lineData = lineBuffer.subdata(
                 in: lineBuffer.startIndex..<newline)
             lineBuffer.removeSubrange(lineBuffer.startIndex...newline)
-            if let hit = parseHit(lineData) { pending.append(hit) }
+            // Schon gezeigte Pfade (z. B. die aus der Schnellsuche
+            // übernommenen 20) nicht erneut auflisten.
+            if let hit = parseHit(lineData),
+               seenPaths.insert(hit.path).inserted {
+                pending.append(hit)
+            }
         }
     }
 
@@ -400,6 +594,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         guard !pending.isEmpty else { return }
         hits.append(contentsOf: pending)
         pending = []
+        sortHits()   // aktive Sortierung auch auf frische Treffer anwenden
         tableView.reloadData()
         statusLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
     }
@@ -444,15 +639,63 @@ final class MainController: NSObject, NSApplicationDelegate,
             cell = newCell
         }
         let hit = hits[row]
+        // Zellen werden recycelt → Ausrichtung je Spalte neu setzen.
+        cell?.textField?.alignment =
+            column.identifier.rawValue == "size" ? .right : .left
         switch column.identifier.rawValue {
         case "name":
             cell?.textField?.stringValue = hit.displayName
+        case "type":
+            cell?.textField?.stringValue = hit.typeDescription
+        case "size":
+            cell?.textField?.stringValue = humanSize(hit.size)
         case "line":
             cell?.textField?.stringValue = hit.line.map { String($0) } ?? ""
         default:
             cell?.textField?.stringValue = hit.path
         }
         return cell
+    }
+
+    /// Dateigröße menschenlesbar (z. B. „1,2 MB"); Ordner (nil) → „—".
+    func humanSize(_ bytes: Int?) -> String {
+        guard let bytes else { return "—" }
+        return ByteCountFormatter.string(fromByteCount: Int64(bytes),
+                                         countStyle: .file)
+    }
+
+    /// Header-Klick: Trefferliste nach der gewählten Spalte sortieren.
+    func tableView(_ tableView: NSTableView,
+                   sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        sortHits()
+        tableView.reloadData()
+    }
+
+    /// Sortiert `hits` nach dem aktiven Sortierkriterium (oder lässt die
+    /// Einfüge-Reihenfolge, wenn keins gesetzt ist).
+    func sortHits() {
+        guard let descriptor = tableView.sortDescriptors.first,
+              let key = descriptor.key else { return }
+        let ascending = descriptor.ascending
+        hits.sort { lhs, rhs in
+            let result: Bool
+            switch key {
+            case "size":
+                result = (lhs.size ?? -1) < (rhs.size ?? -1)
+            case "type":
+                result = lhs.typeDescription.localizedCaseInsensitiveCompare(
+                    rhs.typeDescription) == .orderedAscending
+            case "line":
+                result = (lhs.line ?? -1) < (rhs.line ?? -1)
+            case "path":
+                result = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
+                    == .orderedAscending
+            default:   // "name"
+                result = lhs.displayName.localizedCaseInsensitiveCompare(
+                    rhs.displayName) == .orderedAscending
+            }
+            return ascending ? result : !result
+        }
     }
 
     /// Drag & Drop: die gezogene Zeile liefert eine Datei-URL —
@@ -534,33 +777,6 @@ final class MainController: NSObject, NSApplicationDelegate,
         menu.addItem(withTitle: "Pfad kopieren",
                      action: #selector(ctxCopyPath),
                      keyEquivalent: "").target = self
-    }
-
-    /// Apps für „Öffnen mit“: bei normalen Dateien direkt über die URL,
-    /// bei Archiv-Einträgen über den Dateityp (Endung) — so muss fürs
-    /// bloße Menü noch nichts ausgepackt werden.
-    func applicationsFor(_ hit: Hit) -> [URL] {
-        var urls: [URL] = []
-        if hit.isMember {
-            let ext = (hit.displayName as NSString).pathExtension
-            if !ext.isEmpty, let type = UTType(filenameExtension:
-                                                ext.lowercased()) {
-                urls = NSWorkspace.shared.urlsForApplications(toOpen: type)
-            }
-        } else {
-            urls = NSWorkspace.shared.urlsForApplications(
-                toOpen: URL(fileURLWithPath: hit.path))
-        }
-        // Nach Namen sortieren und Doppelte (gleicher Pfad) entfernen.
-        var seen = Set<String>()
-        return urls
-            .filter { seen.insert($0.path).inserted }
-            .sorted {
-                FileManager.default.displayName(atPath: $0.path)
-                    .localizedCaseInsensitiveCompare(
-                        FileManager.default.displayName(atPath: $1.path))
-                    == .orderedAscending
-            }
     }
 
     @objc func ctxOpen() { openSelected() }
