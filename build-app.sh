@@ -13,14 +13,46 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Version aus dem Python-Kern lesen — eine einzige Versions-Quelle.
+# Version + Datum aus dem Python-Kern lesen — eine einzige Versions-Quelle.
 VERSION=$(/usr/bin/python3 -c "import favenio; print(favenio.__version__)")
-echo "Baue Favenio $VERSION …"
+DATE=$(/usr/bin/python3 -c "import favenio; print(getattr(favenio, '__date__', ''))")
+echo "Baue Favenio $VERSION ($DATE) …"
+
+# Beides in eine Swift-Konstante gießen (von beiden Apps mitkompiliert),
+# damit die Fenstertitel Version + Datum ohne Python-Aufruf zur Laufzeit
+# zeigen. Datei ist git-ignoriert (generiert).
+cat > common/Version.swift <<EOF
+// AUTO-GENERIERT von build-app.sh aus favenio.py — nicht von Hand editieren.
+let favenioVersion = "${VERSION}"
+let favenioDate = "${DATE}"
+EOF
+
+# Stabile Code-Signatur wählen. Mit einer Developer-ID-Identität behält
+# macOS/TCC die Freigaben (Festplattenvollzugriff, Finder-Automation) über
+# Builds hinweg — Ad-hoc (-s -) ändert bei JEDEM Build den cdhash und setzt
+# alle Freigaben zurück. Identität automatisch aus der Login-Keychain lesen
+# (überschreibbar per FAVENIO_SIGN_ID); ohne Developer-ID Rückfall auf Ad-hoc.
+# Kein --options runtime (Hardened Runtime): ohne Automation-Entitlement würde
+# das die Finder-AppleScripts blockieren; für lokale Nutzung nicht nötig.
+SIGN_ID="${FAVENIO_SIGN_ID:-}"
+if [ -z "$SIGN_ID" ]; then
+    SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
+        | grep "Developer ID Application" | head -1 \
+        | sed -E 's/^[^"]*"([^"]*)".*/\1/')
+fi
+if [ -n "$SIGN_ID" ]; then
+    SIGN=(--force --sign "$SIGN_ID")
+    echo "Signiere mit stabiler Identität: $SIGN_ID"
+else
+    SIGN=(--force --sign -)
+    echo "WARNUNG: keine Developer-ID gefunden → Ad-hoc-Signatur " \
+         "(TCC-Freigaben überleben KEINEN Rebuild)."
+fi
 
 # ---------- Favenio.app (große GUI) ----------
 rm -rf Favenio.app
 mkdir -p Favenio.app/Contents/MacOS Favenio.app/Contents/Resources
-swiftc -O common/FavenioCore.swift gui/FavenioGUI.swift \
+swiftc -O common/FavenioCore.swift common/Version.swift gui/FavenioGUI.swift \
     -o Favenio.app/Contents/MacOS/Favenio
 cp favenio.py Favenio.app/Contents/Resources/
 # App-Icon (vorgefertigt eingecheckt; neu erzeugen: swift icons/make-icons.swift
@@ -52,12 +84,12 @@ cat > Favenio.app/Contents/Info.plist <<EOF
 </dict>
 </plist>
 EOF
-codesign --force -s - Favenio.app
+codesign "${SIGN[@]}" Favenio.app
 
 # ---------- FavenioQuick.app (Toolbar-Schnellsuche) ----------
 rm -rf FavenioQuick.app
 mkdir -p FavenioQuick.app/Contents/MacOS FavenioQuick.app/Contents/Resources
-swiftc -O common/FavenioCore.swift quick/FavenioQuick.swift \
+swiftc -O common/FavenioCore.swift common/Version.swift quick/FavenioQuick.swift \
     -o FavenioQuick.app/Contents/MacOS/FavenioQuick
 cp favenio.py FavenioQuick.app/Contents/Resources/
 cp icons/FavenioQuick.icns FavenioQuick.app/Contents/Resources/
@@ -82,7 +114,7 @@ cat > FavenioQuick.app/Contents/Info.plist <<EOF
 </dict>
 </plist>
 EOF
-codesign --force -s - FavenioQuick.app
+codesign "${SIGN[@]}" FavenioQuick.app
 
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
