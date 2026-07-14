@@ -59,9 +59,25 @@ func drawIcon(pixels: Int, variant: Variant) -> NSBitmapImageRep {
 
     let s = CGFloat(pixels) / 1024.0
 
-    // Squircle nach Apple-Vorlage: 824×824 zentriert auf 1024er-Fläche,
-    // Eckenradius 185. Der Rest bleibt transparent (macOS rechnet den
-    // Schatten selbst dazu).
+    // Icon-Fläche maximal ausnutzen (2026-07-14).
+    // Der Entwurf unten ist weiter im klassischen Apple-Raster gedacht
+    // (824er-Squircle mittig auf 1024, 100 px Rand). Neben Full-Bleed-Icons
+    // anderer Apps wirkte Favenio dadurch spürbar (~24 %) kleiner. Statt jede
+    // Einzelkoordinate umzurechnen, skalieren wir die GESAMTE Komposition um
+    // den Bildmittelpunkt so, dass das 824er-Squircle die volle 1024er-Fläche
+    // ausfüllt (Faktor 1024/824). Motiv, „F" und Lupe wachsen proportional
+    // mit; die Anordnung bleibt identisch. Gleiche Maximierung wie beim
+    // Fastra-Icon.
+    let fillTransform = NSAffineTransform()
+    let center = CGFloat(pixels) / 2.0
+    fillTransform.translateX(by: center, yBy: center)
+    fillTransform.scale(by: 1024.0 / 824.0)
+    fillTransform.translateX(by: -center, yBy: -center)
+    fillTransform.concat()
+
+    // Squircle: im Entwurfsraster 824×824 zentriert (Eckenradius 185); die
+    // fillTransform oben zieht es auf die volle Fläche. Der schmale Rest an
+    // den Ecken bleibt transparent (macOS rechnet den Schatten selbst dazu).
     let inset = 100 * s
     let square = NSRect(x: inset, y: inset,
                         width: CGFloat(pixels) - 2 * inset,

@@ -145,7 +145,13 @@ nächste. So bleiben Commits atomar und rückrollbar.
 
 ## Status / offene Ideen
 
-### Stand (2026-07-14, v0.13.1 committet + gebaut + installiert)
+### Stand (2026-07-14, v0.13.2 committet + gebaut + installiert)
+
+v0.13.2: Beide App-Icons nutzen die Icon-Fläche jetzt vollständig aus. Bisher
+folgten sie exakt Apples Vorlage (824er-Squircle mittig auf 1024, 100 px Rand)
+und wirkten neben Full-Bleed-Icons anderer Apps ~24 % kleiner. `make-icons.swift`
+skaliert die Komposition nun um den Mittelpunkt auf die volle Fläche (Faktor
+1024/824) — gleiche Maximierung wie beim Fastra-Icon.
 
 Seit v0.8.0 gebaut, in v0.13.1 committet (4 thematische Commits: Kern/Finder-Fix,
 Haupt-App-Features, Schnellsuche-Umbau, Doku):
