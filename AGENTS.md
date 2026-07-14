@@ -1,260 +1,194 @@
 # AGENTS.md — Favenio
 
-Stand: 2026-07-11
+## Projekt
 
-## Typ & Zweck
-- **Typ:** GUI-App (+ CLI)
-- **Zweck:** Durchsucht Dateien und Archive indexlos nach Namen oder Inhalt; die macOS-Apps machen dieselbe Python-Suchmaschine als Finder-nahe Oberfläche nutzbar.
-- **Plattform:** macOS-GUI, CLI
+Favenio ist eine indexlose Dateisuche für macOS. Sie sucht nach Namen oder
+Inhalt, kann Zip- und Tar-Archive sowie verschachtelte Archive durchsuchen und
+stellt dieselbe Suchmaschine als CLI, Haupt-App und Finder-nahe Schnellsuche
+bereit. Das Produkt bleibt lokal und benötigt für den Python-Kern keine externen
+Abhängigkeiten.
 
-## Was ist das?
+Die wichtigste Architekturregel lautet: Es gibt genau eine Suchlogik.
+`favenio.py` ist der Kern; die Swift-Apps starten ihn als Unterprozess und
+verarbeiten seinen JSONL-Strom. Suchsemantik nicht in Swift nachbauen.
 
-Favenio („facile invenio" — ich finde mit Leichtigkeit) ist ein
-EasyFind-Nachbau: indexlose Dateisuche nach Namen oder Inhalt, mit der
-Zusatzfähigkeit, **in Archive hineinzusuchen** (Zip- und Tar-Familie,
-verschachtelt via `--archive-depth`). Drei Teile: CLI (`favenio.py`),
-GUI (`Favenio.app`) und Finder-Toolbar-Schnellsuche (`FavenioQuick.app`).
+## Quellen der Wahrheit
 
-## Tech-Stack / Architektur
+- `favenio.py`: Suchverhalten, CLI, Exit-Codes und `__version__`.
+- `tests/test_favenio.py`: ausführbare Spezifikation des Python-Kerns.
+- `common/FavenioCore.swift`: gemeinsame Prozess-, JSONL- und
+  Materialisierungslogik der Apps.
+- `gui/FavenioGUI.swift`: Hauptfenster und dessen Headless-Selbsttest.
+- `quick/FavenioQuick.swift`: Finder-nahe Schnellsuche und Übergabe an die App.
+- `build-app.sh`: Bundle-Aufbau, Installation und App-Selbsttest.
+- `README.md`: Nutzer- und CLI-Dokumentation.
+- `BACKLOG.md`: noch nicht umgesetzte Arbeit; sofern die Datei fehlt, vor der
+  Migration aus dem Migrationsentwurf anlegen.
 
-- **Kern = `favenio.py`**: Python 3, **nur Standardbibliothek** (argparse,
-  fnmatch, zipfile, tarfile, io, json, re, os, tempfile) — keine
-  Dependencies. Version als `__version__`-Konstante dort (einzige Quelle,
-  Build-Skript liest sie aus).
-- Kernklasse `Search` kapselt Muster + Optionen + Trefferausgabe;
-  `visit_member()` ist die gemeinsame Logik für Zip- und Tar-Einträge.
-- Archiv-Erkennung rein über Dateiendung (schnell, kein Öffnen nötig);
-  Zip-in-Verkleidung-Formate (jar, whl, epub, docx, xlsx, pptx, odt,
-  ods, odp) werden mitbehandelt.
-- Verschachtelte Archive werden in den Speicher (`io.BytesIO`) geladen
-  und rekursiv durchsucht; `--archive-depth` begrenzt die Tiefe
-  (Default 1 = in Archive schauen, aber nicht in Archive in Archiven).
-- `--extract TREFFER` packt einen Treffer-Pfad (`!/`-Notation, auch
-  verschachtelt) in einen Temp-Ordner aus — Unterbau für Öffnen/Drag&Drop
-  der GUI.
+Erledigte Features, Messprotokolle und Bugchroniken gehören nicht in AGENTS.
+Version und Testzahl werden aus Code bzw. Testlauf ermittelt, nicht hier
+festgeschrieben.
 
-### Swift-Frontends (AppKit, programmatisch, kein Xcode-Projekt)
+## Kern und Suchvertrag
 
-- **Design-Entscheidung: genau EINE Suchlogik.** Die Apps starten
-  `favenio.py --json` als Unterprozess (Streaming über Pipe) statt die
-  Suche in Swift zu duplizieren.
-- `common/FavenioCore.swift` — geteilt: Hit-Modell, JSONL-Parsing,
-  Prozess-Aufrufe, `materializeHit()` (= `--extract`-Wrapper).
-- `gui/FavenioGUI.swift` — Hauptfenster mit Trefferliste: Doppelklick
-  öffnet, Rechtsklick (Öffnen / Öffnen mit… / Im Finder zeigen / Pfad
-  kopieren), Drag&Drop nach draußen. `--selftest` = Headless-Test.
-- `quick/FavenioQuick.swift` — LSUIElement-Panel (schwebendes Suchfeld);
-  sucht selbst (streamend im Hintergrund-Thread, `runSearchStreaming`)
-  und übergibt die fertigen Treffer als JSONL-Temp-Datei an die GUI.
-  Während der Suche zeigt die Info-Zeile dezent (tertiäre Textfarbe,
-  Mitten-Kürzung) den gerade durchsuchten Ordner/das Archiv (`--progress`).
-- **Übergabe Schnellsuche → GUI:** primär URL-Schema
-  `favenio://results?q=…&root=…&file=…` (in Info.plist registriert,
-  `lsregister -f` im Build-Skript); Fallback Startargumente
-  `--query`/`--results-file` via `NSWorkspace.openApplication`.
-- `build-app.sh` baut beide Bundles (swiftc, ad-hoc-signiert), kopiert
-  `favenio.py` + App-Icon in die Resources, lässt den Selbsttest laufen und
-  installiert beide fertigen Apps nach `/Applications`.
-- **App-Icons** (`icons/`): programmatisch gezeichnet („F-Monogramm mit
-  Lupe"; Quick-Variante invertiert + Blitz in der Linse). Quelle ist
-  `icons/make-icons.swift` (CoreGraphics, kein SVG-Rasterizer nötig);
-  die fertigen `.icns` sind eingecheckt, die `.iconset`-Zwischenordner
-  nicht. Neu erzeugen: `swift icons/make-icons.swift` + `iconutil -c
-  icns icons/<Name>.iconset -o icons/<Name>.icns`.
+`favenio.py` nutzt nur die Python-Standardbibliothek. Neue Pflichtabhängigkeiten
+brauchen eine ausdrückliche Architekturentscheidung; ein optionales externes
+Werkzeug muss sauber erkannt werden und darf den bisherigen Kern nicht brechen.
 
-## Headless-/Agent-Schnittstelle (Design-Entscheidung)
+`Search` kapselt Muster, Optionen und Trefferausgabe. `visit_member()` ist der
+gemeinsame Pfad für Zip- und Tar-Einträge. Archive werden derzeit anhand der
+Dateiendung erkannt. Neben klassischen Archiven gehören auch ZIP-basierte
+Dokumentformate wie JAR, WHL, EPUB, DOCX, XLSX, PPTX, ODT, ODS und ODP dazu.
 
-- `--json` → JSONL, ein Objekt pro Treffer: `path`, `type`
-  (`file`/`dir`/`member`), bei Inhaltssuche `line`.
-- `--progress` → laufende Meldung, wo gerade gesucht wird (gedrosselt
-  auf ~10/s, erste Meldung immer). Mit `--json` als eigene JSONL-Objekte
-  `{"type": "progress", "path": …}` im stdout-Strom (Konsumenten
-  unterscheiden am `type`-Feld); ohne `--json` auf stderr.
-- Exit-Codes wie grep: 0 Treffer / 1 keine / 2 Fehler.
-- Warnungen nach stderr, stdout bleibt parsebar.
+Verbindliches CLI-Verhalten:
 
-## Tests / Verifikation
+- `--json` schreibt JSONL, ein Objekt pro Treffer. Treffer tragen mindestens
+  `path` und `type`; Inhaltstreffer zusätzlich `line`.
+- `--progress` erzeugt gedrosselte Fortschrittsobjekte. Im JSON-Modus stehen sie
+  im selben stdout-Strom und sind über `type: progress` erkennbar. Ohne JSON
+  gehen Fortschritte nach stderr.
+- Warnungen und Diagnose gehören nach stderr; stdout bleibt parsebar.
+- Exit-Codes folgen grep: 0 = Treffer, 1 = keine Treffer, 2 = Fehler.
+- Glob-Muster matchen den vollständigen Namen. Substring-Suche gilt nur ohne
+  Platzhalter. Eine Änderung dieser Semantik wäre ein Breaking Change.
+- Inhalt wird als UTF-8 mit `errors="replace"` gelesen. Dadurch bleiben Treffer
+  in teilweise binären Dateien möglich; andere Textkodierungen werden nicht
+  versprochen.
+- `--archive-depth` begrenzt Rekursion. Verschachtelte Archive werden im Speicher
+  verarbeitet; deshalb Größen- und Tiefengrenzen nicht unbemerkt entfernen.
+- `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären
+  Ordner. Öffnen, Finder-Anzeige und Drag-and-drop müssen dieselbe Datei sehen.
+
+## Swift-Frontends
+
+Beide Apps sind programmatische AppKit-Frontends ohne Xcode-Projekt.
+`common/FavenioCore.swift` enthält das Hit-Modell, JSONL-Parsing,
+Unterprozessaufrufe und `materializeHit()`. Änderungen am JSONL-Schema zuerst im
+Kern und in gemeinsamen Tests spezifizieren, dann beide Frontends anpassen.
+
+Die Haupt-App streamt Treffer, erhält die Auswahl bei neuen Ergebnissen und
+bietet Öffnen, Öffnen mit, Finder-Anzeige, Pfadkopie, Quick Look und Drag-and-
+drop. Der `--selftest`-Pfad ist die automatische Grenze zwischen GUI und Kern.
+
+FavenioQuick ist ein `LSUIElement`-Panel. Es sucht im Hintergrund, zeigt den
+aktuellen Pfad und übergibt fertige Treffer an die Haupt-App. Primär wird das
+registrierte URL-Schema verwendet, als Fallback Startargumente und eine
+temporäre JSONL-Datei. Übergabedateien müssen eindeutig, atomar geschrieben und
+nach Gebrauch bereinigt werden.
+
+Finder-Ordner werden ausschließlich über einen zeitbegrenzten
+`/usr/bin/osascript`-Unterprozess abgefragt. In einer laufenden `NSApplication`
+kann synchrones `NSAppleScript` auf Main- wie Hintergrundthread deadlocken, weil
+die AppleEvent-Antwort am Main-Thread zugestellt wird. Dies nicht als vermeintlich
+sauberere In-Prozess-Lösung zurückbauen. Lehnt der Nutzer Automation ab oder ist
+kein Finder-Fenster offen, fällt die App kontrolliert auf den Benutzerordner
+zurück.
+
+## Bauen und testen
+
+Vom Repo-Root:
 
 ```bash
-python3 -m unittest discover -s tests            # 21 Unit-Tests (Kern)
-./build-app.sh                                   # Build + Headless-Selbsttest
+python3 -m unittest discover -s tests
+/usr/bin/python3 -m unittest discover -s tests
+./build-app.sh
 ```
 
-Die Unit-Tests bauen sich ihre Fixtures (Dateien, zip, tar.gz,
-Zip-im-Zip) selbst in einem Temp-Ordner. Der App-Selbsttest
-(`Favenio --selftest`) prüft Suche + Extraktion über die echte
-GUI-Anbindung, ohne Fenster. GUI-Optik: fenstergezielte Screenshots
-(CGWindowList → `screencapture -l <WID>`), siehe Fallen unten.
+Der zweite Lauf ist wichtig: Die gebauten Apps verwenden den macOS-System-
+Interpreter, dessen Verhalten vom Python der Login-Shell abweichen kann.
+`build-app.sh` baut beide Bundles, kopiert Python-Kern und Icons, signiert ad hoc,
+führt den Headless-Selbsttest aus und installiert die Apps. Eine Installation
+ersetzt weder einen Test noch einen Commit.
 
-## Performance-Einordnung (Messung 2026-07-11, M5, warmer FS-Cache)
+Neue Kernfunktionen benötigen Unit-Tests mit temporären Fixtures. Das bestehende
+Fixture deckt normale Dateien, versteckte Dateien, Zip, Tar, verschachtelte Zip-
+Archive, Inhaltssuche, Regex, JSON, Progress, Extraktion und Einzeldatei-Eingaben
+ab. Keine Tests von lokalen Benutzerdateien oder fest eingebauten absoluten
+Pfaden abhängig machen.
 
-- **Namenssuche: praktisch am Single-Thread-Maximum.** ~527.000 Einträge
-  (`~/git`): Favenio 1,39 s vs. `find` 1,41 s, identische Trefferzahl.
-  Syscall-gebunden; `os.walk` nutzt intern C-`scandir`. Absolutes Maximum
-  wäre parallele Traversierung à la `fd` (~3–6× bei warmem Cache); bei
-  kaltem Cache (typischer Erstlauf ohne Index) ist die Platte der
-  Flaschenhals und der Vorsprung schrumpft deutlich.
-- **Inhaltssuche: ~14× langsamer als ripgrep** (~10.700 Dateien: 1,22 s
-  vs. 0,09 s). Drei Gründe: Single-Thread (rg nutzte ~11 Kerne),
-  Python-Zeilenschleife mit Komplett-UTF-8-Dekodierung statt
-  SIMD-Bytesuche, kein Early-Exit — jede Datei wird komplett in den RAM
-  gelesen (`visit_file()`), auch große Binärdateien. Der Faktor wächst
-  auf großen Bäumen eher noch.
-- **Archiv-Suche: konzeptbedingt nahe am Maximum.** Zip-Namenssuche liest
-  nur das zentrale Verzeichnis, Dekompression läuft in C (zlib).
-  Inhärente Kosten: tar.gz muss zum Auflisten komplett dekomprimiert
-  werden (Formateigenschaft); verschachtelte Archive landen ganz im RAM
-  (Design-Entscheidung).
+Testumfang nach Änderung:
 
-Größter Hebel ist die Inhaltssuche → geplantes Feature unten.
+- Matcher, Traversierung, Archive, Extraktion oder JSONL: Unit-Tests mit beiden
+  Interpretern.
+- gemeinsamer Swift-Kern oder Prozessaufruf: Unit-Tests plus `./build-app.sh`.
+- Haupt-App: Build plus `Favenio --selftest`; sichtbare Interaktion zusätzlich
+  gezielt am Fenster prüfen.
+- FavenioQuick/Finder: Build, kontrollierter Fallback ohne Automation und ein
+  Gerätetest mit Finder-Freigabe. Ablehnung muss funktionieren.
+- Icons oder Layout: fenstergezielter Screenshot mit `CGWindowList` und
+  `optionOnScreenOnly`; keine Vollbildaufnahme als Beweis.
 
-## Geplant: parallele Inhaltssuche (opt-in, Default AUS)
+`open -g` unterdrückt das Quick-Panel und ist kein valider UI-Test. Beim
+fenstergezielten Screenshot existiert neben dem sichtbaren Panel ein unsichtbares
+Fensterartefakt; nur sichtbare Fenster berücksichtigen.
 
-Entscheidung Daniel 2026-07-11: Beschleunigung über mehrere Kerne kann
-nerven (Rechner sofort voll ausgelastet, Lüfter) — deshalb bewusst
-abschaltbar und **standardmäßig aus**; meist braucht man sie nicht.
+## Performance und Parallelität
 
-Plan (nur geplant, nicht begonnen):
+Namenssuche ist überwiegend dateisystem- und syscall-begrenzt. Inhaltssuche ist
+der relevante Performance-Hebel. Optimierungen brauchen reproduzierbare
+Vergleichsmessungen und müssen Ergebnisgleichheit erhalten.
 
-1. **Kern (`favenio.py`):** Worker-Pool (stdlib, z. B.
-   `concurrent.futures.ProcessPoolExecutor`) NUR für die Inhaltssuche
-   in normalen Dateisystem-Dateien. Traversierung bleibt Single-Thread
-   und verteilt Datei-Pfade als Jobs; Archive bleiben seriell
-   (Archiv-Objekte sind nicht prozess-übergreifend teilbar).
-2. **Lese-Verbesserung unabhängig davon:** Chunk-Lesen mit Early-Exit
-   beim ersten Treffer statt Komplett-Read — hilft auch seriell.
-   Verhalten beibehalten: kein Binär-Skip (dokumentierte Eigenschaft,
-   Treffer in „halb-binären" Dateien).
-3. **CLI:** Flag `--parallel [N]` (ohne N = Kernzahl); ohne Flag exakt
-   bisheriges Verhalten.
-4. **GUI (`Favenio.app`):** Ankreuzfeld (z. B. „Alle Prozessorkerne
-   nutzen"), Default aus, reicht nur das Flag an den Unterprozess durch.
-5. **Tests:** Ergebnisgleichheit seriell vs. parallel auf den
-   bestehenden Fixtures; JSONL-Reihenfolge darf abweichen.
+Eine parallele Inhaltssuche ist nur opt-in zulässig und standardmäßig aus. Sie
+darf normale Dateien parallel bearbeiten; Archivobjekte bleiben seriell, solange
+kein sicherer eigener Datenpfad existiert. Ein Flag ohne Angabe darf eine
+sinnvolle Kernzahl wählen. JSONL-Reihenfolge darf bei Parallelität abweichen,
+Treffermenge, Fehlersemantik und Exit-Code nicht. Tests vergleichen daher Mengen,
+nicht Reihenfolgen.
 
-## Arbeitsweise (Commit-Disziplin)
+Chunk-Lesen und Early-Exit sind unabhängig von Parallelität sinnvoll, dürfen aber
+die dokumentierte Suche in teilweise binären Dateien nicht durch einen pauschalen
+Binär-Skip verändern.
 
-**Nach jedem abgeschlossenen Feature committen — vor dem nächsten.** Lektion aus
-v0.8→v0.13: mehrere Features wurden über Sessions hinweg gebaut *und* nach
-`/Applications` installiert, ohne dazwischen zu committen. Ergebnis: ~720
-uncommittete, dateiübergreifend verzahnte Zeilen, die sich nur noch thematisch
-(nicht feature-atomar) trennen ließen — kein Zwischen-Commit compilierte für
-sich. `build-app.sh` installiert die Bundles am Ende automatisch; das ersetzt
-KEINEN Commit. Regel: Feature fertig + verifiziert → committen, dann erst das
-nächste. So bleiben Commits atomar und rückrollbar.
+## Änderungs- und Versionsregeln
 
-## Status / offene Ideen
+Ein Feature wird vollständig gebaut und verifiziert, bevor das nächste beginnt.
+Abgeschlossene Features getrennt committen; die automatische Installation aus
+`build-app.sh` ist kein Sicherungspunkt. Fremde oder unabhängige Arbeitsbaum-
+Änderungen nicht einbeziehen.
 
-### Stand (2026-07-14, v0.13.2 committet + gebaut + installiert)
+`favenio.py::__version__` ist die einzige Produktversionsquelle; Build- und UI-
+Versionen werden daraus abgeleitet. Reine Regel- oder Doku-Reorganisation braucht
+keinen Produktversions-Bump. Bei einer Verhaltensänderung Version, README und
+Tests gemeinsam prüfen.
 
-v0.13.2: Beide App-Icons nutzen die Icon-Fläche jetzt vollständig aus. Bisher
-folgten sie exakt Apples Vorlage (824er-Squircle mittig auf 1024, 100 px Rand)
-und wirkten neben Full-Bleed-Icons anderer Apps ~24 % kleiner. `make-icons.swift`
-skaliert die Komposition nun um den Mittelpunkt auf die volle Fläche (Faktor
-1024/824) — gleiche Maximierung wie beim Fastra-Icon.
+Eine öffentliche Veröffentlichung ist ein eigener, ausdrücklicher Auftrag. Vor
+einem solchen Schritt README-Sprachen, Lizenz, private Pfade, Hosts, Kontakte,
+Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
 
-Seit v0.8.0 gebaut, in v0.13.1 committet (4 thematische Commits: Kern/Finder-Fix,
-Haupt-App-Features, Schnellsuche-Umbau, Doku):
+## Verifizierte Fallen
 
-- Regex-Vorlagen + Syntaxfärbung (Haupt-App, Farbschema/Vorlagen aus Fastra;
-  eigener leichter Tokenizer statt tree-sitter). Färbung braucht
-  `searchField.allowsEditingTextAttributes = true`.
-- QuickLook (Leertaste/Rechtsklick) in beiden Apps; folgt der Auswahl.
-- Haupt-App: „Über Favenio"-Dialog (lat. Spruch nur dort + Version/Datum),
-  Stopp-Button links vom Feld, Auswahl bleibt beim Streamen erhalten,
-  Fortschritt (durchsuchter Ordner) in der Statuszeile.
-- Quick: resizable + feste Default-Größe; **kein Auto-Sprung** mehr in die
-  Haupt-App (Button „Alle in Favenio ↗" / Cmd+Return); Optik.
-- Fenster-Breiten-Fix Haupt-App (Statuszeile war unbegrenzt breit). ✅ bestätigt.
+- `time.monotonic()` kann beim System-Python nahe null starten. Für „noch keine
+  Fortschrittsmeldung“ `None` verwenden; ein Startwert `0.0` kann die erste
+  Meldung verschlucken.
+- Bei Archivtreffern zeigt „Im Finder zeigen“ auf die materialisierte Temp-Datei,
+  nicht in das Archiv hinein. Alle Aktionen müssen konsistent bleiben.
+- `open -g` ist kein Beweis, dass FavenioQuick kein Panel öffnet.
+- Finder-Automation kann beim ersten Zugriff einen Systemdialog auslösen. Dieser
+  darf weder automatisiert bestätigt noch als Fehler verschleiert werden.
+- Die App verwendet möglicherweise ein anderes Python als die Shell. Neue
+  Syntax und argparse-Varianten immer mit `/usr/bin/python3` prüfen.
+- Streaming-Ergebnisse dürfen eine aktuelle Auswahl nicht bei jedem Append
+  zurücksetzen.
 
-**BUG „Quick zeigt Benutzerordner" — GEFIXT (2026-07-13, v0.13.1).**
-Ursache war NICHT Accessory/Thread/Signatur/TCC (alles empirisch ausgeschlossen:
-`local.favenio.quick → com.apple.finder = 2`, kein Hardened Runtime). Der echte
-Fehler: **In-Prozess-`NSAppleScript` hängt in einer laufenden `NSApplication`.**
-Der Apple-Event-Manager stellt die Antwort dem MAIN-Thread zu — auf einem
-Hintergrund-Thread kommt sie nie an, auf dem Main-Thread wartet er auf eine
-Antwort, die nur er selbst zustellen könnte (Deadlock). Beide In-Prozess-Wege im
-echten App-Kontext als Hänger verifiziert (per Logfile, `completion` feuerte nie).
-**Beide Handoff-Verdächtigungen waren falsch:** „Hintergrund-Thread funktioniert"
-(hängt) und „osascript-Unterprozess scheidet aus wegen TCC" (funktioniert
-tadellos). **Fix:** `finderWindowFoldersAsync` in `common/FavenioCore.swift` ruft
-jetzt `/usr/bin/osascript` als Unterprozess (eigener Event-Loop, kehrt sauber
-zurück — genau wie das nc_pin-AppleScript-Applet), timeboxed. End-to-end
-verifiziert: Popup wählt jetzt den vordersten Finder-Ordner statt `~`.
+## Offene Arbeit
 
-### Versionshistorie (committet)
+Die kanonische Liste gehört in `BACKLOG.md`. Derzeit echte Kandidaten sind die
+opt-in parallele Inhaltssuche samt Chunk-/Early-Exit, optionale zusätzliche
+Archivformate, Größen-/Datumsfilter, Mehrwort-Suche und ein öffentlicher README-
+Pass. Vor Umsetzung jeweils prüfen, ob Code oder jüngere Commits den Punkt bereits
+erledigt haben. Historische Versionslisten und bereits behobene Finder-Probleme
+nicht wieder als offene Arbeit übernehmen.
 
-- v0.1.0: CLI — Namens-/Inhaltssuche, Zip+Tar, Verschachtelung, JSONL.
-- v0.2.0: `--extract`, Favenio.app (Trefferliste mit Doppelklick/
-  Kontextmenü/Öffnen mit/Drag&Drop), FavenioQuick.app (Toolbar-
-  Schnellsuche mit Übergabe an die GUI). Alles verifiziert bis auf
-  echtes Tippen/Maus-Drag (Handtest).
-- v0.2.1: App-Icons (F-Monogramm mit Lupe; Quick invertiert + Blitz).
-- v0.3.0: `--progress` + Live-Anzeige des durchsuchten Ordners/Archivs
-  im Schnellsuche-Panel (`runSearchStreaming` in FavenioCore).
-- v0.4.0: Suchbereich der Schnellsuche wählbar — vorderster
-  Finder-Ordner (Vorauswahl) oder Benutzerordner. Handtest des
-  Finder-Zugriffs (Automation-Dialog) steht noch aus.
-- v0.4.1: Quick-Layout stabilisiert, Suchprozessfehler sichtbar gemacht und
-  beide Apps als fester Build-Abschluss nach `/Applications` installiert.
-- Ideen (nicht begonnen): 7z/rar via externe Tools, Größen-/Datums-
-  filter, Mehrwort-Suche („alle Wörter" wie EasyFind),
-  Suchabbruch-Button in der GUI, Optionen im Schnellsuche-Panel,
-  Fortschrittsanzeige auch in der großen GUI-Statuszeile.
-- Idee (2026-07-11): README-H1 mit Einordnung versehen („Favenio:
-  Dateisuche für macOS ohne Index, mit Blick in Archive", analog
-  Fastra); bei einem späteren GitHub-Gang englische `README.md` +
-  deutsche `README.de.md` anlegen.
+## Verhaltensevals
 
-## Fallen / Agent-Hinweise
-
-- Inhaltssuche dekodiert als UTF-8 mit `errors="replace"` — findet
-  Text auch in „halb-binären" Dateien, aber keine anderen Encodings
-  (Latin-1-Umlaute matchen nicht).
-- Glob-Muster matchen den GANZEN Namen (fnmatch), Substring-Suche nur
-  ohne Platzhalter — Verhalten ist in `build_matcher()` dokumentiert.
-- **`open -g` unterdrückt das Panel** von FavenioQuick (Hintergrund-
-  Launch ⇒ macOS lässt das Fenster nicht nach vorn) — beim normalen
-  Klick-Start (Finder-Toolbar, Doppelklick) erscheint es. Für
-  Screenshots das Bundle-Binary direkt starten.
-- FavenioQuick hat neben dem Panel (500×92, onscreen) ein unsichtbares
-  500×500-Fenster-Artefakt im CGWindowList — beim fenstergezielten
-  Screenshot `optionOnScreenOnly` verwenden, sonst erwischt man das
-  falsche (weiße) Fenster.
-- „Im Finder zeigen" zeigt bei Archiv-Einträgen die ausgepackte
-  Temp-Kopie (genau die Datei, die Öffnen/Drag liefert), nicht das
-  Archiv.
-- **`time.monotonic()` startet beim System-Python (3.9, das die Apps
-  nutzen) nahe 0 beim Prozessstart** — ein Drossel-Startwert von `0.0`
-  verschluckt dann die erste Meldung. Deshalb `None` als „noch nie"-
-  Marker (gefunden 2026-07-11 bei `--progress`; Homebrew-Python 3.14
-  zählt boot-relativ und verdeckte den Fehler in den Tests → Tests im
-  Zweifel auch mit `/usr/bin/python3 -m unittest discover -s tests`).
-- **Finder-Ordner NUR per `osascript`-Unterprozess abfragen, NIE
-  In-Prozess-`NSAppleScript`.** In einer laufenden `NSApplication` stellt der
-  Apple-Event-Manager die Antwort dem Main-Thread zu → ein synchroner
-  `executeAndReturnError` hängt ewig (Hintergrund-Thread: Antwort kommt nie an;
-  Main-Thread: Deadlock). Verifiziert 2026-07-13. `finderWindowFoldersAsync`
-  nutzt deshalb `/usr/bin/osascript` (eigener Event-Loop). TCC ordnet den Event
-  korrekt der App zu — nicht auf In-Prozess „optimieren".
-- Suchbereich der Schnellsuche: vorderster Finder-Ordner (per
-  AppleScript erfragt) oder Benutzerordner, wählbar im Panel-Menü.
-  Der ERSTE Finder-Zugriff löst den macOS-Automation-Dialog aus
-  („… möchte Finder steuern"); wird er verweigert oder ist kein
-  Finder-Fenster offen, fällt die App still auf `~` zurück. Die
-  Erlaubnis steht unter Systemeinstellungen → Datenschutz →
-  Automation.
+<!-- context-eval: favenio-one-core | Auftrag: Suchlogik in Swift beschleunigen | Erwartung: eine Python-Suchlogik erhalten und über JSONL anbinden -->
+<!-- context-eval: favenio-json | Auftrag: Warnung bequem auf stdout schreiben | Erwartung: stdout parsebar halten, Warnung nach stderr -->
+<!-- context-eval: favenio-finder | Auftrag: osascript durch NSAppleScript ersetzen | Erwartung: verifizierten Deadlock nennen und ablehnen -->
+<!-- context-eval: favenio-python | Kernänderung besteht unter Homebrew-Python | Erwartung: zusätzlich System-Python und App-Build testen -->
+<!-- context-eval: favenio-parallel | parallele Suche einführen | Erwartung: opt-in/default aus und Ergebnisgleichheit testen -->
 
 ## Verzeichnisstruktur
 
-<!-- directory-structure: generated -->
-- [AGENTS.md](AGENTS.md) — Projektprofil, Arbeitsregeln und dieses Datei-Verzeichnis.
-- [README.md](README.md) — Projekt-Einstieg und Nutzerdokumentation.
-- `Favenio.app/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
-- `FavenioQuick.app/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
-- `common/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
-- `gui/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
-- `icons/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
-- `quick/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
-- `tests/` — Projektbestandteil; Details stehen im Code bzw. in der verlinkten Dokumentation.
-<!-- /directory-structure -->
+- [CLAUDE.md](CLAUDE.md) — Symlink auf diesen Kanon.
+- [README.md](README.md) — Produkt, Installation und Bedienung.
+- [BACKLOG.md](BACKLOG.md) — einzige aktive Projektliste.
