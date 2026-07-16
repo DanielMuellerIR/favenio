@@ -1,143 +1,164 @@
+**🌐 Sprache / Language:** [English](README.md) · [Deutsch](README.de.md)
+
 # Favenio
 
-**„facile invenio", Latein für „ich finde mit Leichtigkeit".**
+**"facile invenio" — Latin for "I find with ease".**
 
-Favenio ist eine Dateisuche im Stil von EasyFind: Sie durchsucht das
-Dateisystem direkt (ohne Index, ohne Spotlight) nach Dateinamen oder
-Dateiinhalten. Die Besonderheit gegenüber EasyFind: **Favenio schaut
-auch in Archive hinein**. Unterstützt werden die Zip-Familie (zip, jar,
-whl, epub, docx, xlsx, pptx, odt, ods, odp) und die Tar-Familie (tar,
-tar.gz/tgz, tar.bz2/tbz2, tar.xz/txz), auf Wunsch auch Archive in
-Archiven.
+Favenio is an index-free file search for macOS in the spirit of EasyFind: it
+scans the file system directly (no index, no Spotlight) for file names or file
+contents. What sets it apart: **Favenio also looks inside archives.** Supported
+are the zip family (zip, jar, whl, epub, docx, xlsx, pptx, odt, ods, odp) and
+the tar family (tar, tar.gz/tgz, tar.bz2/tbz2, tar.xz/txz) — optionally even
+archives nested inside archives.
 
-Pures Python 3 (nur Standardbibliothek), eine Datei, keine Installation.
+The search core is pure Python 3 (standard library only), a single file, no
+installation. Two native macOS apps are built on top of it: a full search
+window and a small quick-search panel for the Finder toolbar.
 
-## Schnellstart
+## Requirements
+
+- **CLI (`favenio.py`)**: Python 3.9 or newer, no third-party packages.
+- **Apps (`Favenio.app`, `FavenioQuick.app`)**: macOS 12 (Monterey) or newer,
+  Apple Silicon. The apps run the search core with the system
+  `/usr/bin/python3` from Apple's Command Line Tools; macOS offers to install
+  those automatically if they are missing.
+
+## Installation
+
+Download `Favenio-<version>.dmg` from the
+[Releases page](../../releases/latest), open it and drag both apps into
+`Applications`.
+
+The apps are signed with a Developer ID but not notarized. If macOS refuses
+the first launch, allow the app under **System Settings → Privacy & Security →
+"Open Anyway"**.
+
+Building from source instead:
 
 ```bash
-# Dateinamen suchen („enthält“, Groß-/Kleinschreibung egal)
-./favenio.py rechnung ~/Documents
-
-# Glob-Muster (matcht den ganzen Namen)
-./favenio.py "*.sketch" ~/Projekte
-
-# Im Dateiinhalt suchen, auch innerhalb von Archiven
-./favenio.py -c "Kündigungsfrist" ~/Documents
-
-# Regulärer Ausdruck, Groß-/Kleinschreibung beachten
-./favenio.py -r -s "rechnung-\d{4}" .
-
-# Archive in Archiven durchsuchen (Tiefe 2)
-./favenio.py -c geheim ~/Backups --archive-depth 2
-
-# Archive ignorieren
-./favenio.py notiz . --no-archives
+./build-app.sh    # builds, tests and installs both apps to /Applications
 ```
 
-Treffer in Archiven werden mit `!/` markiert:
+## Quick start (CLI)
+
+```bash
+# Search file names ("contains", case-insensitive)
+./favenio.py invoice ~/Documents
+
+# Glob pattern (matches the whole name)
+./favenio.py "*.sketch" ~/Projects
+
+# Search file contents, including inside archives
+./favenio.py -c "notice period" ~/Documents
+
+# Regular expression, case-sensitive
+./favenio.py -r -s "invoice-\d{4}" .
+
+# Search archives inside archives (depth 2)
+./favenio.py -c secret ~/Backups --archive-depth 2
+
+# Ignore archives
+./favenio.py note . --no-archives
+```
+
+Hits inside archives are marked with `!/`:
 
 ```
-backup.tar.gz!/sicherung/alt.txt:1
-aussen.zip!/innen.zip!/tief/verstecktes.txt
+backup.tar.gz!/save/old.txt:1
+outer.zip!/inner.zip!/deep/hidden.txt
 ```
 
-Bei Inhaltssuche hängt `:N` die Zeilennummer des ersten Treffers an.
+For content search, `:N` appends the line number of the first match.
 
-## Nutzung durch AI-Agenten / Skripte (headless)
+## Use by scripts and AI agents (headless)
 
-Favenio ist bewusst maschinenfreundlich gebaut:
+Favenio is deliberately machine-friendly:
 
-- **`--json`**: Ein Treffer pro Zeile als JSON-Objekt (JSONL), etwa
+- **`--json`**: one hit per line as a JSON object (JSONL), e.g.
   `{"path": "...", "type": "file|dir|member", "line": 2}`
-- **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,
-  `2` = Fehler (ungültiger Regex, Pfad fehlt)
-- **Warnungen** (unlesbare Dateien, kaputte Archive) gehen nach stderr;
-  die Suche läuft weiter, und stdout bleibt sauber parsebar.
+- **Exit codes** as with grep: `0` = hits, `1` = no hits,
+  `2` = error (invalid regex, missing path)
+- **Warnings** (unreadable files, broken archives) go to stderr;
+  the search continues and stdout stays cleanly parseable.
 
 ```bash
 ./favenio.py --json -c "TODO" src/ | jq -r .path | sort -u
 ```
 
-## Optionen
+## Options
 
-| Option | Wirkung |
+| Option | Effect |
 |---|---|
-| `-c`, `--content` | im Dateiinhalt suchen statt in Namen |
-| `-r`, `--regex` | Muster als regulären Ausdruck interpretieren |
-| `-s`, `--case-sensitive` | Groß-/Kleinschreibung beachten |
-| `--no-archives` | nicht in Archive hineinschauen |
-| `--archive-depth N` | Verschachtelungstiefe (Default 1) |
-| `--only both\|files\|dirs` | Treffer auf Dateien, Ordner oder beides (Default) begrenzen |
-| `--hidden` | unsichtbare (Punkt-)Dateien und -Ordner mitdurchsuchen |
-| `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` = Bytes) |
-| `--version` | Version anzeigen |
+| `-c`, `--content` | search file contents instead of names |
+| `-r`, `--regex` | interpret the pattern as a regular expression |
+| `-s`, `--case-sensitive` | match case-sensitively |
+| `--no-archives` | do not look inside archives |
+| `--archive-depth N` | nesting depth (default 1) |
+| `--only both\|files\|dirs` | limit hits to files, directories or both (default) |
+| `--hidden` | include hidden (dot) files and directories |
+| `--json` | JSONL output for scripts/agents (includes `size` in bytes) |
+| `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
+| `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |
+| `--version` | show version |
 
-## Suchmodi — und wie man z. B. nur `.md`-Dateien findet
+## Search modes — and how to find only `.md` files
 
-Favenio erkennt den Suchmodus **automatisch am Muster** — es gibt keinen
-Umschalter:
+Favenio detects the search mode **automatically from the pattern** — there is
+no switch:
 
-| Eingabe | Modus | Findet |
+| Input | Mode | Finds |
 |---|---|---|
-| `notiz` | „enthält" (Default) | alles, was den Text **irgendwo** im Namen hat |
-| `*.md` | Glob/Wildcards (`* ? [`) | **nur** Namen, die genau auf `.md` enden |
-| `rechnung-\d{4}` mit `-r` | Regex | frei definierbares Muster (`re.search`) |
+| `note` | "contains" (default) | anything with the text **anywhere** in the name |
+| `*.md` | glob/wildcards (`* ? [`) | **only** names ending exactly in `.md` |
+| `invoice-\d{4}` with `-r` | regex | any pattern (`re.search`) |
 
-Deshalb findet die Eingabe `.md` auch `.mdi`, `.mdx` oder `readme.md` —
-`.md` kommt dort ja *irgendwo* vor. **Für nur echte `.md`-Dateien: `*.md`
-suchen.** Das `*` schaltet auf Glob-Matching um, das den **ganzen** Namen
-prüft. (Endet ein *Ordner* auf `.md`, zusätzlich `--only files` bzw. in der
-GUI „Nur Dateien" wählen.) Exakt gleichwertig wäre der Regex `\.md$`.
+This is why the input `.md` also finds `.mdi`, `.mdx` or `readme.md` — `.md`
+does occur *somewhere* in those names. **To find only real `.md` files, search
+for `*.md`.** The `*` switches to glob matching, which checks the **whole**
+name. (If a *directory* ends in `.md`, additionally use `--only files` or
+"Files only" in the GUI.) The regex `\.md$` is exactly equivalent.
 
-Bei der Namenssuche zählen auch Ordnernamen als Treffer.
+In name search, directory names count as hits too.
 
 ## GUI (Favenio.app)
 
-EasyFind-artige Oberfläche: Suchfeld, Ordnerwahl, Optionen, Trefferliste.
+EasyFind-style interface: search field, folder picker, options, results list.
 
-```bash
-./build-app.sh    # baut, testet und installiert beide Apps nach /Applications
-open Favenio.app
-```
+From the results list:
 
-Aus der Trefferliste heraus:
+- **Double-click**: opens the file. Archive members are extracted to a temp
+  folder first (`--extract`)
+- **Right-click**: Open / **Open With…** (all matching apps) /
+  Show in Finder / Copy path
+- **Drag & drop**: drag hits into Finder or other apps. This also works for
+  files inside archives; the extracted copy is dragged
 
-- **Doppelklick**: Öffnet die Datei. Archiv-Einträge werden vorher
-  automatisch in einen Temp-Ordner ausgepackt (`--extract`)
-- **Rechtsklick**: Öffnen / **Öffnen mit…** (alle passenden Apps) /
-  Im Finder zeigen / Pfad kopieren
-- **Drag & Drop**: Treffer in den Finder oder andere Apps ziehen.
-  Das geht auch mit Dateien aus Archiven; gezogen wird dann die
-  ausgepackte Kopie
+The GUI is only a frontend: searching always happens through `favenio.py`.
 
-Die GUI ist nur ein Frontend: Gesucht wird immer über `favenio.py`.
+## Quick search (FavenioQuick.app)
 
-## Schnellsuche (FavenioQuick.app)
+A Spotlight alternative for the Finder toolbar: drag `FavenioQuick.app` into
+the header of a Finder window while holding **Cmd**.
 
-Spotlight-Ersatz für die Finder-Toolbar: `FavenioQuick.app` bei
-gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
+- One click on the icon opens a small floating search field (no Dock icon)
+- **Return** starts the name search in your home folder (including archives)
+- With hits, the main app opens with the finished list (hits are handed
+  over, nothing is searched twice); without hits, only the small field with
+  a message remains
+- **Esc** (with an empty field) quits the quick search
 
-- Ein Klick aufs Icon öffnet ein kleines schwebendes Suchfeld
-  (kein Dock-Icon)
-- **Return** startet die Namenssuche im Benutzerordner (inkl. Archive)
-- Bei Treffern öffnet sich die große GUI mit der fertigen Liste
-  (die Treffer werden übergeben, es wird nicht doppelt gesucht);
-  ohne Treffer bleibt nur das kleine Feld mit einer Meldung
-- **Esc** (bei leerem Feld) beendet die Schnellsuche
-
-Hinweis: Beim ersten Suchlauf über den Benutzerordner fragt macOS
-unter Umständen nach Zugriff auf Schreibtisch und Dokumente (TCC).
-Einmal erlauben genügt.
+Note: On the first search across your home folder, macOS may ask for access
+to Desktop and Documents (TCC). Allowing it once is enough.
 
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests            # 31 Unit-Tests (Kern)
-Favenio.app/Contents/MacOS/Favenio --selftest    # Headless-GUI-Anbindung
+python3 -m unittest discover -s tests            # unit tests (core)
+Favenio.app/Contents/MacOS/Favenio --selftest    # headless GUI wiring
 ```
 
-`build-app.sh` führt den Selbsttest nach jedem Build automatisch aus.
+`build-app.sh` runs the self-test automatically after every build.
 
-## Stand
+## License
 
-Version 0.8.0 · Stand: 2026-07-13
+[MIT](LICENSE)

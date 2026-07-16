@@ -190,5 +190,11 @@ nicht wieder als offene Arbeit übernehmen.
 ## Verzeichnisstruktur
 
 - [CLAUDE.md](CLAUDE.md) — Symlink auf diesen Kanon.
-- [README.md](README.md) — Produkt, Installation und Bedienung.
+- [README.md](README.md) — Produkt, Installation und Bedienung (englische
+  Standardfassung).
+- [README.de.md](README.de.md) — deutsche Fassung; inhaltlich mit README.md
+  synchron halten.
+- [LICENSE](LICENSE) — MIT.
 - [BACKLOG.md](BACKLOG.md) — einzige aktive Projektliste.
+- [.github/workflows/ci.yml](.github/workflows/ci.yml) — CI auf macOS:
+  Kern-Tests mit beiden Interpretern plus App-Build und Selbsttest.

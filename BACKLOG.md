@@ -8,8 +8,7 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 2. Inhaltssuche in Chunks mit Early-Exit, ohne pauschalen Binär-Skip.
 3. Größen-/Datumsfilter und Mehrwortmodus als getrennte Produktentscheidungen.
 4. Zusätzliche Archivformate nur als sauber erkannte optionale Integration.
-5. Vor einer Veröffentlichung englische/deutsche README-Struktur, Lizenz,
-   Screenshots und public-safe Defaults abschließend prüfen.
+5. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
 
 Nicht offen: der frühere Finder-Ordner-Fehler; `osascript` als Unterprozess ist
 die verifizierte Lösung und eine Dauerregel.

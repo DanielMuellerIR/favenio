@@ -1,0 +1,24 @@
+# CI: Unit-Tests des Python-Kerns und kompletter App-Build mit Headless-
+# Selbsttest auf macOS. Der Kern läuft bewusst mit BEIDEN Interpretern:
+# /usr/bin/python3 ist das System-Python, das auch die gebauten Apps nutzen.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit-Tests (System-Python /usr/bin/python3)
+        run: /usr/bin/python3 -m unittest discover -s tests
+
+      - name: Unit-Tests (PATH-python3)
+        run: python3 -m unittest discover -s tests
+
+      - name: Apps bauen + Headless-Selbsttest
+        run: ./build-app.sh
