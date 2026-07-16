@@ -36,9 +36,12 @@ EOF
 # das die Finder-AppleScripts blockieren; für lokale Nutzung nicht nötig.
 SIGN_ID="${FAVENIO_SIGN_ID:-}"
 if [ -z "$SIGN_ID" ]; then
+    # `|| true`: Ohne Developer-ID (z. B. auf CI-Runnern) findet grep nichts
+    # und würde die Pipeline unter `set -euo pipefail` das Skript abbrechen,
+    # bevor der Ad-hoc-Fallback unten greifen kann.
     SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
         | grep "Developer ID Application" | head -1 \
-        | sed -E 's/^[^"]*"([^"]*)".*/\1/')
+        | sed -E 's/^[^"]*"([^"]*)".*/\1/' || true)
 fi
 if [ -n "$SIGN_ID" ]; then
     SIGN=(--force --sign "$SIGN_ID")
