@@ -29,9 +29,8 @@ Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
 [Releases-Seite](../../releases/latest) laden, öffnen und beide Apps nach
 `Programme` ziehen.
 
-Die Apps sind mit einer Developer-ID signiert, aber nicht notarisiert.
-Verweigert macOS den ersten Start, die App unter **Systemeinstellungen →
-Datenschutz & Sicherheit → „Dennoch öffnen"** freigeben.
+Das DMG ist mit einer Developer-ID signiert und von Apple notarisiert;
+Gatekeeper öffnet die Apps ohne zusätzliche Schritte.
 
 Alternativ selbst bauen:
 

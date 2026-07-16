@@ -29,9 +29,8 @@ Download `Favenio-<version>.dmg` from the
 [Releases page](../../releases/latest), open it and drag both apps into
 `Applications`.
 
-The apps are signed with a Developer ID but not notarized. If macOS refuses
-the first launch, allow the app under **System Settings → Privacy & Security →
-"Open Anyway"**.
+The DMG is signed with a Developer ID and notarized by Apple, so Gatekeeper
+opens the apps without extra steps.
 
 Building from source instead:
 

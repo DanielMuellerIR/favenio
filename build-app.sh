@@ -32,8 +32,11 @@ EOF
 # Builds hinweg — Ad-hoc (-s -) ändert bei JEDEM Build den cdhash und setzt
 # alle Freigaben zurück. Identität automatisch aus der Login-Keychain lesen
 # (überschreibbar per FAVENIO_SIGN_ID); ohne Developer-ID Rückfall auf Ad-hoc.
-# Kein --options runtime (Hardened Runtime): ohne Automation-Entitlement würde
-# das die Finder-AppleScripts blockieren; für lokale Nutzung nicht nötig.
+# --options runtime (Hardened Runtime) ist Pflicht für die Notarisierung
+# (release.sh). Damit die Finder-AppleScripts dabei erlaubt bleiben, wird das
+# Automation-Entitlement aus assets/favenio.entitlements mitsigniert.
+# --timestamp hält die Signatur nach Zertifikatsablauf gültig (bei Ad-hoc
+# wird es von codesign ignoriert).
 SIGN_ID="${FAVENIO_SIGN_ID:-}"
 if [ -z "$SIGN_ID" ]; then
     # `|| true`: Ohne Developer-ID (z. B. auf CI-Runnern) findet grep nichts
@@ -44,10 +47,12 @@ if [ -z "$SIGN_ID" ]; then
         | sed -E 's/^[^"]*"([^"]*)".*/\1/' || true)
 fi
 if [ -n "$SIGN_ID" ]; then
-    SIGN=(--force --sign "$SIGN_ID")
+    SIGN=(--force --options runtime --timestamp \
+          --entitlements assets/favenio.entitlements --sign "$SIGN_ID")
     echo "Signiere mit stabiler Identität: $SIGN_ID"
 else
-    SIGN=(--force --sign -)
+    SIGN=(--force --options runtime \
+          --entitlements assets/favenio.entitlements --sign -)
     echo "WARNUNG: keine Developer-ID gefunden → Ad-hoc-Signatur " \
          "(TCC-Freigaben überleben KEINEN Rebuild)."
 fi
@@ -84,6 +89,8 @@ cat > Favenio.app/Contents/Info.plist <<EOF
     <key>CFBundleVersion</key><string>${VERSION}</string>
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Favenio fragt den Finder nach offenen Ordnern, um dort zu suchen.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
