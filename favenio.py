@@ -30,10 +30,10 @@ import tempfile
 import time
 import zipfile
 
-__version__ = "0.13.2"
+__version__ = "0.13.3"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-07-14"
+__date__ = "2026-07-16"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,

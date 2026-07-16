@@ -6,3 +6,4 @@ FavenioQuick.app/
 icons/*.iconset/
 # Vom build-app.sh aus favenio.py erzeugt (Version + Datum für Fenstertitel).
 common/Version.swift
+.commit-lock

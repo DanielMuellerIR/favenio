@@ -49,10 +49,18 @@ else
          "(TCC-Freigaben überleben KEINEN Rebuild)."
 fi
 
+# Deployment-Target festnageln: Ohne -target erbt das Binary das macOS der
+# Build-Maschine als Minimum (LC_BUILD_VERSION minos) und startet auf älteren
+# Systemen gar nicht — LSMinimumSystemVersion im Info.plist ändert daran nichts.
+# macOS 12 ist das echte Minimum: urlsForApplications(toOpen:) („Öffnen mit"-
+# Menü) und die im System enthaltene Swift-Concurrency-Runtime brauchen es.
+TARGET="arm64-apple-macos12.0"
+
 # ---------- Favenio.app (große GUI) ----------
 rm -rf Favenio.app
 mkdir -p Favenio.app/Contents/MacOS Favenio.app/Contents/Resources
-swiftc -O common/FavenioCore.swift common/Version.swift gui/FavenioGUI.swift \
+swiftc -O -target "$TARGET" \
+    common/FavenioCore.swift common/Version.swift gui/FavenioGUI.swift \
     -o Favenio.app/Contents/MacOS/Favenio
 cp favenio.py Favenio.app/Contents/Resources/
 # App-Icon (vorgefertigt eingecheckt; neu erzeugen: swift icons/make-icons.swift
@@ -89,7 +97,8 @@ codesign "${SIGN[@]}" Favenio.app
 # ---------- FavenioQuick.app (Toolbar-Schnellsuche) ----------
 rm -rf FavenioQuick.app
 mkdir -p FavenioQuick.app/Contents/MacOS FavenioQuick.app/Contents/Resources
-swiftc -O common/FavenioCore.swift common/Version.swift quick/FavenioQuick.swift \
+swiftc -O -target "$TARGET" \
+    common/FavenioCore.swift common/Version.swift quick/FavenioQuick.swift \
     -o FavenioQuick.app/Contents/MacOS/FavenioQuick
 cp favenio.py FavenioQuick.app/Contents/Resources/
 cp icons/FavenioQuick.icns FavenioQuick.app/Contents/Resources/
