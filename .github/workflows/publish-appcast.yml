@@ -51,7 +51,6 @@ jobs:
             exit 1
           fi
 
-          # Matching base names let generate_appcast attach the release notes.
           gh release view "$RELEASE_TAG" --json body --jq .body \
             > "${dmgs[0]%.dmg}.md"
 
@@ -66,23 +65,158 @@ jobs:
 
           swift package resolve
           tool="$(find .build/artifacts/sparkle -type f \
-            -name generate_appcast -print -quit)"
+            -name sign_update -not -path '*/old_dsa_scripts/*' -print -quit)"
           if [[ -z "$tool" ]]; then
-            echo "ERROR: Sparkle generate_appcast tool was not found." >&2
+            echo "ERROR: Sparkle sign_update tool was not found." >&2
             exit 1
           fi
 
-          # The private key appears in neither argv, a file nor the log.
-          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$tool" \
-            --ed-key-file - \
-            --embed-release-notes \
-            --maximum-versions 1 \
-            --maximum-deltas 0 \
-            --download-url-prefix \
-              "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/" \
-            --link "https://github.com/${GITHUB_REPOSITORY}" \
-            -o "$PWD/site/appcast.xml" \
-            "$PWD/update"
+          shopt -s nullglob
+          dmgs=(update/*.dmg)
+          dmg="${dmgs[0]}"
+          notes="${dmg%.dmg}.md"
+          mountpoint="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mountpoint" -quiet || true
+          }
+          trap cleanup EXIT
+          hdiutil attach "$dmg" -nobrowse -readonly \
+            -mountpoint "$mountpoint" -quiet
+
+          apps=("$mountpoint"/*.app)
+          if (( ${#apps[@]} != 2 )); then
+            echo "ERROR: release DMG must contain exactly two apps." >&2
+            exit 1
+          fi
+
+          version=""
+          build=""
+          for app in "${apps[@]}"; do
+            plist="$app/Contents/Info.plist"
+            app_version=$(
+              /usr/libexec/PlistBuddy \
+                -c 'Print :CFBundleShortVersionString' "$plist"
+            )
+            app_build=$(
+              /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist"
+            )
+            if [[ -z "$version" ]]; then
+              version="$app_version"
+              build="$app_build"
+            elif [[ "$version" != "$app_version" || "$build" != "$app_build" ]]; then
+              echo "ERROR: app versions in the release DMG differ." >&2
+              exit 1
+            fi
+          done
+
+          # sign_update accepts the private key on stdin, so it appears in
+          # neither argv, a file nor the log.
+          signature_attributes=$(
+            printf '%s' "$SPARKLE_PRIVATE_KEY" |
+              "$tool" --ed-key-file - "$dmg"
+          )
+          published_at=$(
+            gh release view "$RELEASE_TAG" --json publishedAt \
+              --jq .publishedAt
+          )
+          release_url=$(
+            gh release view "$RELEASE_TAG" --json url --jq .url
+          )
+          notes_html="${notes%.md}.html"
+          jq -n --rawfile text "$notes" \
+            --arg context "$GITHUB_REPOSITORY" \
+            '{text: $text, mode: "gfm", context: $context}' |
+            gh api --method POST markdown --input - \
+              -H 'Accept: text/html' > "$notes_html"
+
+          export APPCAST_BUILD="$build"
+          export APPCAST_DMG="$dmg"
+          export APPCAST_NOTES_HTML="$notes_html"
+          export APPCAST_PUBLISHED_AT="$published_at"
+          export APPCAST_RELEASE_URL="$release_url"
+          export APPCAST_SIGNATURE_ATTRIBUTES="$signature_attributes"
+          export APPCAST_VERSION="$version"
+
+          python3 <<'PY'
+          import email.utils
+          import os
+          import pathlib
+          import re
+          import xml.etree.ElementTree as ET
+          from datetime import datetime
+
+          sparkle = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+          ET.register_namespace("sparkle", sparkle)
+
+          attributes = os.environ["APPCAST_SIGNATURE_ATTRIBUTES"]
+          match = re.fullmatch(
+              r'sparkle:edSignature="([^"]+)" length="([0-9]+)"',
+              attributes,
+          )
+          if match is None:
+              raise SystemExit("ERROR: unexpected sign_update output")
+          signature, length = match.groups()
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["RELEASE_TAG"]
+          dmg_name = pathlib.Path(os.environ["APPCAST_DMG"]).name
+          version = os.environ["APPCAST_VERSION"]
+          build = os.environ["APPCAST_BUILD"]
+          published = datetime.fromisoformat(
+              os.environ["APPCAST_PUBLISHED_AT"].replace("Z", "+00:00")
+          )
+
+          rss = ET.Element("rss", {"version": "2.0"})
+          channel = ET.SubElement(rss, "channel")
+          ET.SubElement(channel, "title").text = "Favenio Updates"
+          ET.SubElement(channel, "link").text = (
+              f"https://github.com/{repository}"
+          )
+          ET.SubElement(channel, "description").text = (
+              "Signed updates for Favenio and FavenioQuick"
+          )
+          ET.SubElement(channel, "language").text = "en"
+
+          item = ET.SubElement(channel, "item")
+          ET.SubElement(item, "title").text = f"Version {version}"
+          ET.SubElement(item, "link").text = os.environ[
+              "APPCAST_RELEASE_URL"
+          ]
+          ET.SubElement(item, f"{{{sparkle}}}version").text = build
+          ET.SubElement(
+              item, f"{{{sparkle}}}shortVersionString"
+          ).text = version
+          ET.SubElement(
+              item, f"{{{sparkle}}}minimumSystemVersion"
+          ).text = "12.0"
+          ET.SubElement(item, "pubDate").text = email.utils.format_datetime(
+              published
+          )
+          ET.SubElement(item, "description").text = pathlib.Path(
+              os.environ["APPCAST_NOTES_HTML"]
+          ).read_text(encoding="utf-8")
+          ET.SubElement(
+              item,
+              "enclosure",
+              {
+                  "url": (
+                      f"https://github.com/{repository}/releases/download/"
+                      f"{tag}/{dmg_name}"
+                  ),
+                  f"{{{sparkle}}}edSignature": signature,
+                  "length": length,
+                  "type": "application/x-apple-diskimage",
+              },
+          )
+
+          tree = ET.ElementTree(rss)
+          ET.indent(tree, space="  ")
+          tree.write(
+              "site/appcast.xml",
+              encoding="utf-8",
+              xml_declaration=True,
+          )
+          PY
 
           xmllint --noout site/appcast.xml
 
