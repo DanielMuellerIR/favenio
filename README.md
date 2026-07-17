@@ -32,6 +32,12 @@ Download `Favenio-<version>.dmg` from the
 The DMG is signed with a Developer ID and notarized by Apple, so Gatekeeper
 opens the apps without extra steps.
 
+Starting with version 0.14.0, both apps check for signed updates automatically
+and install them only after confirmation. The main app also provides
+**Favenio → Nach Updates suchen …** (“Check for Updates”). No hardware or
+system profile is sent with update checks. Versions before 0.14.0 have no
+updater, so 0.14.0 must be installed once from the DMG.
+
 Building from source instead:
 
 ```bash
@@ -160,4 +166,5 @@ Favenio.app/Contents/MacOS/Favenio --selftest    # headless GUI wiring
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The macOS apps include Sparkle under its own compatible license;
+see [third-party software](THIRD-PARTY.md).

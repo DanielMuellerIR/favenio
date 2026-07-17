@@ -23,6 +23,17 @@ import Quartz   // QLPreviewPanel (QuickLook-Vorschau)
 @main
 struct FavenioQuickApp {
     static func main() {
+        if CommandLine.arguments.contains("--selftest") {
+            if let error = validateSparkleConfiguration(
+                expectedBundleIdentifier: "local.favenio.quick"
+            ) {
+                print("SELFTEST FEHLER: \(error)")
+                exit(1)
+            }
+            print("SELFTEST OK — Sparkle-Anbindung der Schnellsuche "
+                  + "funktioniert")
+            exit(0)
+        }
         let app = NSApplication.shared
         let delegate = QuickController()
         app.delegate = delegate
@@ -37,6 +48,9 @@ final class QuickController: NSObject, NSApplicationDelegate,
                              NSMenuDelegate,
                              QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
+    /// Die Schnellsuche ist ein eigenes App-Bundle und aktualisiert deshalb
+    /// sich selbst aus demselben signierten Favenio-DMG wie die Haupt-App.
+    private let updaterController = makeUpdaterController()
     static let hint = "Return oder 0,6 s Pause startet die Suche · Esc beendet"
     static let debounceInterval: TimeInterval = 0.6
     static let maxQuickHits = 20        // ab hier übernimmt die große GUI
@@ -86,6 +100,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu(appName: "Favenio Schnellsuche", includeClose: true)
+        installUpdateMenuItem(updaterController: updaterController)
         buildPanel()
         showPanel()
         // Beim allerersten Start ist die App noch im Launch-Handshake —

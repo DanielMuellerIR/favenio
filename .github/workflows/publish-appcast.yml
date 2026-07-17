@@ -1,0 +1,96 @@
+name: Publish Sparkle appcast
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, for example v0.14.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: sparkle-appcast
+  cancel-in-progress: false
+
+jobs:
+  appcast:
+    runs-on: macos-15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Download release DMG and notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p update site
+          gh release download "$RELEASE_TAG" --pattern '*.dmg' --dir update
+
+          shopt -s nullglob
+          dmgs=(update/*.dmg)
+          if (( ${#dmgs[@]} != 1 )); then
+            echo "ERROR: release $RELEASE_TAG must contain exactly one DMG." >&2
+            exit 1
+          fi
+
+          # Matching base names let generate_appcast attach the release notes.
+          gh release view "$RELEASE_TAG" --json body --jq .body \
+            > "${dmgs[0]%.dmg}.md"
+
+      - name: Generate signed appcast
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "ERROR: GitHub secret SPARKLE_PRIVATE_KEY is missing." >&2
+            exit 1
+          fi
+
+          swift package resolve
+          tool="$(find .build/artifacts/sparkle -type f \
+            -name generate_appcast -print -quit)"
+          if [[ -z "$tool" ]]; then
+            echo "ERROR: Sparkle generate_appcast tool was not found." >&2
+            exit 1
+          fi
+
+          # The private key appears in neither argv, a file nor the log.
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$tool" \
+            --ed-key-file - \
+            --embed-release-notes \
+            --maximum-versions 1 \
+            --maximum-deltas 0 \
+            --download-url-prefix \
+              "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/" \
+            --link "https://github.com/${GITHUB_REPOSITORY}" \
+            -o "$PWD/site/appcast.xml" \
+            "$PWD/update"
+
+          xmllint --noout site/appcast.xml
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - name: Deploy appcast to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

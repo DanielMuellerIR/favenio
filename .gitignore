@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+.build/
 Favenio.app/
 FavenioQuick.app/
 icons/*.iconset/

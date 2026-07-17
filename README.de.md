@@ -32,6 +32,12 @@ Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
 Das DMG ist mit einer Developer-ID signiert und von Apple notarisiert;
 Gatekeeper öffnet die Apps ohne zusätzliche Schritte.
 
+Ab Version 0.14.0 suchen beide Apps automatisch nach signierten Updates und
+installieren sie nur nach Bestätigung. In der Haupt-App gibt es zusätzlich
+**Favenio → Nach Updates suchen …**. Bei der Update-Prüfung werden keine
+Hardware- oder Systemprofildaten übertragen. Ältere Versionen enthalten noch
+keinen Updater; 0.14.0 muss deshalb einmalig über das DMG installiert werden.
+
 Alternativ selbst bauen:
 
 ```bash
@@ -163,4 +169,5 @@ Favenio.app/Contents/MacOS/Favenio --selftest    # Headless-GUI-Anbindung
 
 ## Lizenz
 
-[MIT](LICENSE)
+[MIT](LICENSE). Die macOS-Apps enthalten Sparkle unter dessen kompatibler
+Lizenz; siehe [Drittanbieter-Software](THIRD-PARTY.md).

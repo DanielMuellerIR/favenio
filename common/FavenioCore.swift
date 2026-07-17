@@ -7,10 +7,113 @@
 // EINE Suchlogik, die auch headless (CLI, AI-Agenten) identisch arbeitet.
 
 import AppKit
+import Sparkle
 import UniformTypeIdentifiers
 
 /// Pfad zum System-Python (auf jedem Mac mit Xcode-CLT vorhanden).
 let pythonPath = "/usr/bin/python3"
+
+/// Erzeugt pro App-Prozess genau einen langlebigen Sparkle-Controller.
+/// Die aufrufenden Controller halten ihn als Feld über die gesamte Laufzeit.
+func makeUpdaterController() -> SPUStandardUpdaterController {
+    SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
+}
+
+/// Verdrahtet „Nach Updates suchen …" direkt auf Sparkle. Dadurch validiert
+/// Sparkle den Eintrag auch während einer laufenden Suche oder Installation.
+func installUpdateMenuItem(
+    updaterController: SPUStandardUpdaterController
+) {
+    guard let appMenu = NSApp.mainMenu?.item(at: 0)?.submenu else { return }
+    let identifier = NSUserInterfaceItemIdentifier("Favenio.CheckForUpdates")
+
+    if let existing = appMenu.items.first(where: {
+        $0.identifier == identifier
+    }) {
+        existing.action =
+            #selector(SPUStandardUpdaterController.checkForUpdates(_:))
+        existing.target = updaterController
+        return
+    }
+
+    let item = NSMenuItem(
+        title: "Nach Updates suchen …",
+        action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+        keyEquivalent: ""
+    )
+    item.identifier = identifier
+    item.target = updaterController
+
+    let quitIndex = appMenu.items.firstIndex(where: {
+        $0.action == #selector(NSApplication.terminate(_:))
+    }) ?? appMenu.items.count
+    appMenu.insertItem(item, at: quitIndex)
+    appMenu.insertItem(.separator(), at: quitIndex + 1)
+}
+
+/// Prüft ohne Fenster oder Netzwerkzugriff die sicherheitsrelevante
+/// Sparkle-Konfiguration des tatsächlich gebauten App-Bundles.
+func validateSparkleConfiguration(
+    expectedBundleIdentifier: String
+) -> String? {
+    let info = Bundle.main.infoDictionary ?? [:]
+    guard Bundle.main.bundleIdentifier == expectedBundleIdentifier else {
+        return "unerwartete Bundle-ID"
+    }
+    guard let feed = info["SUFeedURL"] as? String,
+          let feedURL = URL(string: feed),
+          feedURL.scheme == "https",
+          feedURL.host != nil else {
+        return "Sparkle-Feed ist keine gültige HTTPS-URL"
+    }
+    guard info["SUPublicEDKey"] as? String == favenioSparklePublicKey,
+          info["SUEnableAutomaticChecks"] as? Bool == true,
+          info["SUAutomaticallyUpdate"] as? Bool == false,
+          info["SUAllowsAutomaticUpdates"] as? Bool == false,
+          info["SUEnableSystemProfiling"] as? Bool == false,
+          info["SUVerifyUpdateBeforeExtraction"] as? Bool == true,
+          info["SURequireSignedFeed"] as? Bool == true else {
+        return "Sparkle-Signatur-, Update- oder Datenschutzwerte fehlen"
+    }
+    guard let frameworks = Bundle.main.privateFrameworksURL,
+          FileManager.default.fileExists(
+              atPath: frameworks.appendingPathComponent(
+                  "Sparkle.framework"
+              ).path
+          ) else {
+        return "Sparkle.framework fehlt im App-Bundle"
+    }
+
+    // Der normale App-Start erzeugt NSApplication vor dem Controller. Der
+    // Headless-Pfad muss dieselbe Grundlage ohne Runloop ausdrücklich anlegen.
+    _ = NSApplication.shared
+    // Separater, nicht gestarteter Controller: kein Feed-Abruf, aber der Test
+    // beweist, dass Framework, Selector und Menüverdrahtung wirklich laden.
+    let controller = SPUStandardUpdaterController(
+        startingUpdater: false,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
+    installMainMenu(appName: "Favenio Selbsttest")
+    installUpdateMenuItem(updaterController: controller)
+    guard let item = NSApp.mainMenu?.item(at: 0)?.submenu?.items.first(
+        where: {
+            $0.identifier
+                == NSUserInterfaceItemIdentifier("Favenio.CheckForUpdates")
+        }
+    ),
+    item.action == #selector(
+        SPUStandardUpdaterController.checkForUpdates(_:)
+    ),
+    item.target === controller else {
+        return "Update-Menüpunkt zielt nicht direkt auf Sparkle"
+    }
+    return nil
+}
 
 /// Ein einzelner Suchtreffer, wie ihn `favenio.py --json` liefert.
 struct Hit {

@@ -27,6 +27,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+if [ -n "${FAVENIO_SPARKLE_TEST_VERSION:-}" ]; then
+    echo "FEHLER: Release mit FAVENIO_SPARKLE_TEST_VERSION ist verboten." >&2
+    exit 1
+fi
+
 FINDER_LAYOUT=1
 for arg in "$@"; do
     case "$arg" in

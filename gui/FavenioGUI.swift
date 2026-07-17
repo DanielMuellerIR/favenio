@@ -42,6 +42,12 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: favenio.py nicht gefunden")
         return 1
     }
+    if let error = validateSparkleConfiguration(
+        expectedBundleIdentifier: "local.favenio"
+    ) {
+        print("SELFTEST FEHLER: \(error)")
+        return 1
+    }
     // Eigene kleine Test-Welt in einem Temp-Ordner bauen.
     let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("favenio-selftest-\(ProcessInfo.processInfo.processIdentifier)")
@@ -81,8 +87,8 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Archiv-Extraktion fehlgeschlagen")
         return 1
     }
-    print("SELFTEST OK — Suche und Archiv-Extraktion über die "
-          + "GUI-Anbindung funktionieren")
+    print("SELFTEST OK — Suche, Archiv-Extraktion und Sparkle-Anbindung "
+          + "funktionieren")
     return 0
 }
 
@@ -93,6 +99,9 @@ final class MainController: NSObject, NSApplicationDelegate,
                             NSMenuDelegate, NSSearchFieldDelegate,
                             QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
+    /// Ein Controller pro App-Prozess; Sparkle hält darüber Update-Zustand,
+    /// Download und Installation über die gesamte App-Laufzeit zusammen.
+    private let updaterController = makeUpdaterController()
     var window: NSWindow!
     let searchField = NSSearchField()
     let stopButton = NSButton(title: "", target: nil, action: nil)
@@ -144,6 +153,7 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu(appName: "Favenio")
+        installUpdateMenuItem(updaterController: updaterController)
         buildWindow()
         installAboutItem()
         installViewMenu()
