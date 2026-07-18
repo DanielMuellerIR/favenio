@@ -101,29 +101,10 @@ Favenio ist bewusst maschinenfreundlich gebaut:
 | `--archive-depth N` | Verschachtelungstiefe (Default 1) |
 | `--only both\|files\|dirs` | Treffer auf Dateien, Ordner oder beides (Default) begrenzen |
 | `--hidden` | unsichtbare (Punkt-)Dateien und -Ordner mitdurchsuchen |
-| `-j`, `--jobs [N]` | Inhaltssuche in N Threads (Default 1 = seriell; `--jobs` ohne Zahl oder `--jobs 0` nimmt die Zahl der CPU-Kerne) |
 | `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` = Bytes) |
 | `--progress` | laufend melden, wo gerade gesucht wird (mit `--json` als JSONL-Objekte, sonst auf stderr) |
 | `--extract TREFFER` | Treffer-Pfad (`!/`-Notation) in einen Temp-Ordner auspacken und den nutzbaren Pfad ausgeben |
 | `--version` | Version anzeigen |
-
-### Wann `--jobs` etwas bringt
-
-Die parallele Inhaltssuche ist standardmäßig aus, und das ist Absicht. Die
-Threads lohnen sich nur, wenn das Lesen wirklich warten muss — kalter Cache,
-externe oder Netzlaufwerke, drehende Platten. Dann überlappen sich mehrere
-Lesevorgänge und die Suche wird deutlich schneller.
-
-Liegen die Dateien schon im Cache, ist die Arbeit reine Rechenzeit im
-Python-Interpreter, der immer nur einen Thread gleichzeitig rechnen lässt.
-`--jobs` ist dann ein Verlustgeschäft, und je mehr kleine Dateien im Spiel
-sind, desto größer wird der Verlust. Also: ein Schalter für langsamen
-Speicher — vor dem dauerhaften Einschalten im eigenen Fall nachmessen.
-
-Archive bleiben in jedem Fall seriell: ihre Einträge hängen an einem
-gemeinsamen offenen Archiv-Objekt. Mit `--jobs` bleiben Treffermenge und
-Exit-Code gleich — nur ihre **Reihenfolge** kann abweichen; wer eine stabile
-Folge braucht, sortiert nach.
 
 ## Suchmodi — und wie man z. B. nur `.md`-Dateien findet
 

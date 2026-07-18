@@ -101,28 +101,10 @@ Favenio is deliberately machine-friendly:
 | `--archive-depth N` | nesting depth (default 1) |
 | `--only both\|files\|dirs` | limit hits to files, directories or both (default) |
 | `--hidden` | include hidden (dot) files and directories |
-| `-j`, `--jobs [N]` | search file contents in N threads (default 1 = serial; bare `--jobs` or `--jobs 0` uses the CPU core count) |
 | `--json` | JSONL output for scripts/agents (includes `size` in bytes) |
 | `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
 | `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |
 | `--version` | show version |
-
-### When `--jobs` helps
-
-Parallel content search is off by default, and that default is deliberate.
-The threads only pay off when reading actually has to wait — a cold cache, an
-external or network volume, a spinning disk. Then several reads overlap and
-the search gets markedly faster.
-
-When the files are already in the page cache, the work is pure CPU inside the
-Python interpreter, which runs one thread at a time. `--jobs` is then a net
-loss, and the more small files are involved, the bigger that loss gets.
-So treat it as a knob for slow storage, and measure your own case before
-leaving it on.
-
-Archives stay serial regardless: their entries share one open archive
-object. With `--jobs` the set of hits and the exit code are unchanged — only
-their **order** may differ, so sort if you need a stable sequence.
 
 ## Search modes — and how to find only `.md` files
 

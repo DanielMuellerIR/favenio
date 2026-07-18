@@ -8,19 +8,12 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 3. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
 4. CLI-Wart, nachgestellt und bestätigt: eine Option MIT Wert darf nicht
    zwischen Muster und Startpfad stehen. `--content X --archive-depth 2 PFAD`
-   und `--content X --jobs 4 PFAD` brechen beide mit „unrecognized arguments"
-   und Exit 2 ab — argparse trennt die Positionsargumente an der Option auf.
-   Vor dem Muster oder hinter allen Positionsargumenten funktioniert es.
-   Der Wart ist alt (auch v0.14.0 zeigt ihn), nur `--jobs` macht ihn sichtbarer.
-   Dazu neu: `--jobs` ohne Zahl frisst ein direkt folgendes Positionsargument
-   (`--jobs PFAD` → „invalid int value"), weil es das einzige `nargs="?"` ist.
-   Entweder Parsing umbauen (z. B. `nargs="?"` streichen und Auto nur über
-   `--jobs 0`) oder die Reihenfolge in beiden READMEs festschreiben.
-5. Entscheiden, ob `--jobs` eine GUI-Einstellung bekommt. Bisher bewusst nicht
-   verdrahtet: die parallele Suche lohnt nur bei langsamem Speicher und kostet
-   bei warmem Cache — in der GUI bräuchte sie also Erklärung, nicht nur einen
-   Schalter.
-6. Echtes Streaming aus Archiven prüfen: `visit_member()` bekommt heute die
+   bricht mit „unrecognized arguments" und Exit 2 ab — argparse trennt die
+   Positionsargumente an der Option auf. Vor dem Muster oder hinter allen
+   Positionsargumenten funktioniert es. Der Wart ist alt, schon v0.14.0 zeigt
+   ihn. Entweder Parsing umbauen oder die Reihenfolge in beiden READMEs
+   festschreiben.
+5. Echtes Streaming aus Archiven prüfen: `visit_member()` bekommt heute die
    fertigen Bytes, obwohl `tarfile.extractfile()` und `ZipFile.open()` einen
    Strom liefern. Nutzen nur bei sehr großen Einträgen; Haken ist, dass
    `ZipFile.open()` die CRC erst am Stromende prüft — mit Early-Exit liefe
@@ -28,3 +21,12 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
 Nicht offen: der frühere Finder-Ordner-Fehler; `osascript` als Unterprozess ist
 die verifizierte Lösung und eine Dauerregel.
+
+Nicht offen — parallele Inhaltssuche (`--jobs`): gebaut, gemessen und bewusst
+wieder entfernt. Messung auf 174-MB-Korpus mit System-Python 3.9.6 zeigte einen
+Gewinn nur bei ungecachtem Lesen (~1,9x), dagegen Verluste bei warmem Cache
+(0,68x bei 3000 kleinen Dateien) — Dekodieren, `splitlines()` und Matcher laufen
+alle unter der GIL, nur `read()` gibt sie frei. Der Nutzen rechtfertigte Pool,
+Sperre und Auftragsbuchhaltung im Kern nicht. Details in der Historie um
+v0.15.0. Vor einem neuen Anlauf bräuchte es einen Datenpfad, der die GIL
+wirklich freigibt — sonst wird das Ergebnis dasselbe.

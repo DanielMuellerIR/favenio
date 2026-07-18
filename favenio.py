@@ -20,8 +20,6 @@ Nur Python-Standardbibliothek, keine Abhängigkeiten.
 
 import argparse
 import codecs
-import collections
-import concurrent.futures
 import fnmatch
 import io
 import json
@@ -30,11 +28,10 @@ import re
 import sys
 import tarfile
 import tempfile
-import threading
 import time
 import zipfile
 
-__version__ = "0.15.0"
+__version__ = "0.15.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-07-18"
@@ -105,15 +102,12 @@ def build_matcher(pattern, use_regex, case_sensitive):
 class Search:
     """Kapselt eine Suche: Muster, Optionen und das Einsammeln der Treffer.
 
-    Der Zustand bleibt bewusst überschaubar: matcher (die Testfunktion),
-    die Optionen und zwei Merker (Treffer gefunden? Fehler passiert?).
-    Nur für --jobs > 1 kommt Maschinerie dazu — Thread-Pool, dessen
-    laufende Aufträge und eine Sperre für die Ausgabe. Deshalb ist eine
-    Instanz für GENAU EINEN run()-Aufruf gedacht, nicht wiederverwendbar.
+    Die Klasse hält bewusst wenig Zustand: matcher (die Testfunktion),
+    die Optionen und zwei Zähler (Treffer gefunden? Fehler passiert?).
     """
 
     def __init__(self, matcher, content_mode, archive_depth, as_json,
-                 progress=False, only="both", include_hidden=False, jobs=1):
+                 progress=False, only="both", include_hidden=False):
         self.matcher = matcher                # Funktion text -> bool
         self.content_mode = content_mode      # True = Inhalt, False = Namen
         self.archive_depth = archive_depth    # 0 = Archive ignorieren,
@@ -131,16 +125,6 @@ class Search:
                                               # (None = noch nie gemeldet;
                                               # nicht 0.0 — time.monotonic()
                                               # startet je nach Python nahe 0)
-        # 1 = seriell (Default), >1 = so viele Threads für die Inhaltssuche
-        # normaler Dateien. 0 oder kleiner heißt „so viele wie CPU-Kerne" —
-        # die Auflösung sitzt hier und nicht in main(), damit jobs für CLI
-        # und direkte Benutzung dasselbe bedeutet.
-        self.jobs = jobs if jobs >= 1 else (os.cpu_count() or 1)
-        self._output_lock = threading.Lock()  # schützt die Trefferausgabe,
-                                              # damit Zeilen aus mehreren
-                                              # Threads nicht ineinanderlaufen
-        self._pool = None                     # aktiver Thread-Pool (oder None)
-        self._pending = collections.deque()   # laufende Aufträge im Pool
 
     # ---------- Ausgabe ----------
 
@@ -163,11 +147,8 @@ class Search:
         """Gibt EINEN Treffer aus. kind ist "file", "dir" oder "member"
         (member = Eintrag innerhalb eines Archivs). line ist bei
         Inhaltssuche die Zeilennummer des ersten Treffers, size die
-        Dateigröße in Bytes (bei Ordnern None).
-
-        Das Sperren ist nur bei --jobs > 1 nötig (dann melden mehrere
-        Threads Treffer); seriell kostet es praktisch nichts, weil es
-        pro Treffer genau einmal anfällt."""
+        Dateigröße in Bytes (bei Ordnern None)."""
+        self.found_any = True
         if self.as_json:
             record = {"path": path, "type": kind}
             if line is not None:
@@ -177,16 +158,13 @@ class Search:
             text = json.dumps(record, ensure_ascii=False)
         else:
             text = path + (":%d" % line if line is not None else "")
-        with self._output_lock:
-            self.found_any = True
-            print(text)
+        print(text)
 
     def warn(self, message):
         """Nicht-fatale Probleme (z. B. kaputtes Archiv, keine Leserechte)
         landen auf stderr, die Suche läuft weiter."""
-        with self._output_lock:
-            self.had_errors = True
-            print("favenio: warnung: %s" % message, file=sys.stderr)
+        self.had_errors = True
+        print("favenio: warnung: %s" % message, file=sys.stderr)
 
     def report_progress(self, path):
         """Meldet (mit --progress) laufend, welcher Ordner bzw. welches
@@ -269,49 +247,6 @@ class Search:
 
     # ---------- Dateisystem ----------
 
-    def run(self, paths):
-        """Durchsucht alle Startpfade — der Einstiegspunkt für main().
-
-        Mit --jobs > 1 und Inhaltssuche werden normale Dateien in einem
-        Thread-Pool abgearbeitet. Archive bleiben bewusst seriell: ihre
-        Einträge hängen an einem gemeinsamen, offenen Archiv-Objekt.
-        Threads helfen nur, solange das Lesen wirklich wartet (kalter
-        Cache, Netz- oder Wechselmedien) — die eigentliche Suche läuft
-        unter der GIL. Deshalb ist --jobs opt-in und Default seriell.
-
-        Eine Search-Instanz ist für GENAU EINEN run()-Aufruf gedacht."""
-        if self.jobs > 1 and self.content_mode:
-            with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=self.jobs) as pool:
-                self._pool = pool
-                for path in paths:
-                    self.search_path(path)
-                # Auf das Ende der Arbeit wartet schon das Verlassen des
-                # with-Blocks. .result() ist nur dafür da, Ausnahmen aus
-                # den Threads durchzureichen — wie im seriellen Fall.
-                for future in self._pending:
-                    future.result()
-            self._pool = None
-        else:
-            for path in paths:
-                self.search_path(path)
-
-    def search_content(self, path):
-        """Inhaltssuche für EINE normale Datei — seriell sofort, mit
-        --jobs über den Thread-Pool. Die Ablaufsteuerung sitzt hier,
-        damit visit_file() nur beantwortet, WAS eine Datei ist.
-
-        Damit die Warteschlange bei großen Bäumen nicht unbegrenzt wächst,
-        warten wir ab einer Obergrenze jeweils auf den ÄLTESTEN Auftrag.
-        Ein Abwarten aller Aufträge (Barriere) wäre langsamer: der Pool
-        liefe dann bei jeder Portion leer."""
-        if self._pool is None:
-            self.scan_content(path)
-            return
-        self._pending.append(self._pool.submit(self.scan_content, path))
-        if len(self._pending) >= self.jobs * 64:
-            self._pending.popleft().result()
-
     def search_path(self, root):
         """Durchsucht einen Startpfad rekursiv (Datei ODER Ordner)."""
         if os.path.isfile(root):
@@ -358,7 +293,7 @@ class Search:
             self.search_archive(path, None, archive_kind, path,
                                 self.archive_depth)
         elif self.content_mode and not archive_kind:
-            self.search_content(path)
+            self.scan_content(path)
 
     def scan_content(self, path):
         """Inhaltssuche in EINER normalen Datei des Dateisystems.
@@ -580,13 +515,6 @@ def main(argv=None):
                         help="laufend melden, wo gerade gesucht wird "
                              "(mit --json als JSONL-Objekte type=progress "
                              "auf stdout, sonst auf stderr)")
-    parser.add_argument("-j", "--jobs", nargs="?", type=int, const=0,
-                        default=1, metavar="N",
-                        help="Inhaltssuche in N Threads parallel abarbeiten "
-                             "(Default: 1 = seriell; „--jobs“ ohne Zahl oder "
-                             "„--jobs 0“ wählt die Zahl der CPU-Kerne). "
-                             "Archive bleiben seriell. Die Treffermenge "
-                             "bleibt gleich, ihre REIHENFOLGE kann abweichen")
     parser.add_argument("--extract", metavar="TREFFER",
                         help="statt zu suchen: einen Treffer-Pfad (ggf. mit "
                              "!/-Notation) in einen Temp-Ordner auspacken "
@@ -617,14 +545,18 @@ def main(argv=None):
     archive_depth = 0 if args.no_archives else args.archive_depth
     search = Search(matcher, args.content, archive_depth, args.json,
                     progress=args.progress, only=args.only,
-                    include_hidden=args.hidden, jobs=args.jobs)
+                    include_hidden=args.hidden)
 
+    # Erst alle Startpfade prüfen, dann suchen: sonst stünden bei mehreren
+    # Pfaden schon Treffer auf stdout, bevor ein späterer Pfad den Fehler
+    # auslöst.
     for path in paths:
         if not os.path.exists(path):
             print("favenio: fehler: Pfad existiert nicht: %s" % path,
                   file=sys.stderr)
             return 2
-    search.run(paths)
+    for path in paths:
+        search.search_path(path)
 
     return 0 if search.found_any else 1
 
