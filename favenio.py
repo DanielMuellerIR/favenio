@@ -19,6 +19,7 @@ Nur Python-Standardbibliothek, keine Abhängigkeiten.
 """
 
 import argparse
+import codecs
 import fnmatch
 import io
 import json
@@ -30,10 +31,10 @@ import tempfile
 import time
 import zipfile
 
-__version__ = "0.14.0"
+__version__ = "0.14.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-07-17"
+__date__ = "2026-07-18"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -47,6 +48,17 @@ ZIP_EXTENSIONS = (
 TAR_EXTENSIONS = (
     ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz",
 )
+
+# Häppchengrösse für die Inhaltssuche. Dateien werden nicht am Stück
+# eingelesen, sondern in Portionen dieser Grösse — das hält den Speicher
+# klein und erlaubt den Abbruch beim ersten Treffer.
+CHUNK_SIZE = 64 * 1024
+
+# Alle Zeichen, an denen str.splitlines() eine Zeile umbricht (nicht nur \n:
+# auch \r, Seitenvorschub und die Unicode-Trenner). Wir brauchen die Liste,
+# um zu erkennen, ob ein Häppchen mit einer vollständigen Zeile endet.
+LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+LINE_BREAK_RE = re.compile("[%s]" % re.escape(LINE_BREAKS))
 
 
 def classify_archive(name):
@@ -180,15 +192,60 @@ class Search:
 
     # ---------- Inhalts-Matching ----------
 
-    def match_content(self, data):
-        """Sucht das Muster im Datei-Inhalt (Bytes). Liefert die
-        Zeilennummer des ersten Treffers oder None.
+    def match_content(self, chunks):
+        """Sucht das Muster im Datei-Inhalt. Liefert die Zeilennummer des
+        ersten Treffers oder None.
 
-        Wir dekodieren als UTF-8 und ersetzen undekodierbare Bytes —
-        so funktioniert die Suche auch in „halb-binären" Dateien,
-        ohne dass das Programm abbricht."""
-        text = data.decode("utf-8", errors="replace")
-        for number, line in enumerate(text.splitlines(), start=1):
+        chunks ist eine Folge von Byte-Häppchen: bei Dateien liest der
+        Aufrufer sie portionsweise von der Platte, bei Archiv-Einträgen ist
+        es genau ein Häppchen. Beim ersten Treffer steigen wir sofort aus —
+        der Rest der Datei wird dann gar nicht mehr gelesen.
+
+        Dekodiert wird als UTF-8 mit errors="replace", damit die Suche auch
+        in „halb-binären" Dateien funktioniert, ohne dass das Programm
+        abbricht. Der inkrementelle Decoder setzt Mehrbyte-Zeichen über
+        Häppchengrenzen hinweg korrekt zusammen; das Ergebnis ist deshalb
+        identisch zum Dekodieren der ganzen Datei am Stück."""
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        pending = []          # Bruchstücke der noch nicht beendeten Zeile
+        number = 0
+        for chunk in chunks:
+            text = decoder.decode(chunk)
+            if not text:
+                continue
+            pending.append(text)
+            if not LINE_BREAK_RE.search(text):
+                # Kein Umbruch in diesem Häppchen, also auch keine fertige
+                # Zeile. Nur puffern: würden wir den wachsenden Puffer bei
+                # jedem Häppchen neu zusammensetzen, bekämen Dateien ohne
+                # Zeilenumbrüche quadratischen Aufwand.
+                continue
+            buffer = "".join(pending)
+            pending.clear()
+            if buffer.endswith("\r"):
+                # Ein \r am Ende zurückhalten: folgt im nächsten Häppchen
+                # ein \n, sind beide zusammen EIN Umbruch (CRLF) — sonst
+                # zählten wir hier eine Zeile zu viel.
+                buffer, held_back = buffer[:-1], "\r"
+            else:
+                held_back = ""
+            lines = buffer.splitlines()
+            if buffer and buffer[-1] not in LINE_BREAKS:
+                # Die letzte Zeile ist noch offen; sie wird im nächsten
+                # Häppchen fortgesetzt.
+                pending.append(lines.pop())
+            if held_back:
+                pending.append(held_back)
+            for line in lines:
+                number += 1
+                if self.matcher(line):
+                    return number
+        # Rest: Decoder leeren (ein angebrochenes Mehrbyte-Zeichen am
+        # Dateiende wird dabei zum Ersatzzeichen) und die letzte noch
+        # offene Zeile prüfen.
+        pending.append(decoder.decode(b"", True))
+        for line in "".join(pending).splitlines():
+            number += 1
             if self.matcher(line):
                 return number
         return None
@@ -241,16 +298,25 @@ class Search:
             self.search_archive(path, None, archive_kind, path,
                                 self.archive_depth)
         elif self.content_mode and not archive_kind:
-            # Normale Datei bei Inhaltssuche: einlesen und testen.
-            try:
-                with open(path, "rb") as handle:
-                    data = handle.read()
-            except OSError as err:
-                self.warn(str(err))
-                return
-            line = self.match_content(data)
-            if line is not None and self.type_allowed(False):
-                self.emit(path, "file", line, size=self.file_size(path))
+            self.scan_content(path)
+
+    def scan_content(self, path):
+        """Inhaltssuche in EINER normalen Datei des Dateisystems.
+
+        Gelesen wird häppchenweise statt am Stück: so bleibt der Speicher
+        unabhängig von der Dateigröße klein, und bei einem Treffer weit
+        vorne sparen wir uns den ganzen Rest."""
+        try:
+            with open(path, "rb") as handle:
+                # iter(callable, sentinel) ruft read() so lange auf,
+                # bis es b"" liefert — das Dateiende.
+                line = self.match_content(
+                    iter(lambda: handle.read(CHUNK_SIZE), b""))
+        except OSError as err:
+            self.warn(str(err))
+            return
+        if line is not None and self.type_allowed(False):
+            self.emit(path, "file", line, size=self.file_size(path))
 
     # ---------- Archive ----------
 
@@ -318,7 +384,9 @@ class Search:
             except (OSError, zipfile.BadZipFile, tarfile.TarError) as err:
                 self.warn("%s: %s" % (full_display, err))
                 return
-            line = self.match_content(data)
+            # Archiv-Einträge liegen bereits vollständig im Speicher —
+            # deshalb genau ein Häppchen.
+            line = self.match_content((data,))
             if line is not None and self.type_allowed(False):
                 self.emit(full_display, "member", line, size=size)
 

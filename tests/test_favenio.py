@@ -311,5 +311,76 @@ class FavenioTest(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
+class ChunkedContentTest(unittest.TestCase):
+    """Die Inhaltssuche liest häppchenweise. Diese Tests sichern ab, dass
+    dabei GENAU dieselben Zeilen entstehen wie beim Dekodieren am Stück —
+    inklusive Zeilennummern, Häppchengrenzen und kaputter Bytes."""
+
+    def collect_lines(self, data, chunk_size):
+        """Lässt match_content über die Daten laufen und schreibt jede
+        geprüfte Zeile mit. Der Matcher liefert nie True, damit wirklich
+        alle Zeilen durchlaufen werden."""
+        seen = []
+
+        def record(line):
+            seen.append(line)
+            return False
+
+        search = favenio.Search(record, True, 0, False)
+        chunks = [data[i:i + chunk_size]
+                  for i in range(0, len(data), chunk_size)]
+        self.assertIsNone(search.match_content(iter(chunks)))
+        return seen
+
+    def assert_same_as_whole(self, data):
+        """Häppchenweise == am Stück, für viele Häppchengrößen."""
+        expected = data.decode("utf-8", errors="replace").splitlines()
+        for chunk_size in (1, 2, 3, 5, 8, 64, 4096):
+            self.assertEqual(self.collect_lines(data, chunk_size), expected,
+                             "Häppchengröße %d" % chunk_size)
+
+    def test_line_endings_across_chunks(self):
+        # CRLF, einzelnes CR und LF — auch wenn ein \r\n genau auf einer
+        # Häppchengrenze auseinandergerissen wird.
+        self.assert_same_as_whole(b"eins\r\nzwei\rdrei\nvier")
+        self.assert_same_as_whole(b"a\r\n\r\nb")
+        self.assert_same_as_whole(b"endet-mit-cr\r")
+
+    def test_exotic_line_separators(self):
+        # str.splitlines() bricht auch bei \v \f \x1c \x1d \x1e, U+0085,
+        # U+2028 und U+2029 um — das muss die Häppchen-Variante mitmachen.
+        self.assert_same_as_whole(
+            "a\vb\fc\x1cd\x1de\x1ef\x85g h i".encode("utf-8"))
+
+    def test_multibyte_split_across_chunks(self):
+        # Mehrbyte-Zeichen dürfen an Häppchengrenzen nicht zerfallen.
+        self.assert_same_as_whole("äöü ✓ 🔍\nzweite Zeile\n".encode("utf-8"))
+
+    def test_broken_bytes_stay_replaced(self):
+        # Halb-binäre Dateien bleiben durchsuchbar (errors="replace"),
+        # auch bei einem abgeschnittenen Zeichen am Dateiende.
+        self.assert_same_as_whole(b"gut\n\xff\xfe kaputt\ngut\n\xe2\x80")
+
+    def test_file_without_any_line_break(self):
+        # Eine einzige sehr lange Zeile über viele Häppchen hinweg.
+        self.assert_same_as_whole(b"x" * 5000 + b"NADEL" + b"y" * 5000)
+
+    def test_empty_file(self):
+        self.assert_same_as_whole(b"")
+
+    def test_line_number_beyond_chunk_boundary(self):
+        # Treffer weit hinten: die Zeilennummer muss über Häppchengrenzen
+        # hinweg korrekt weitergezählt werden.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "gross.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("fuellzeile\n" * 20000)
+            handle.write("hier steht GEHEIMNIS\n")
+        code, lines, _ = run(["--json", "--content", "GEHEIMNIS", path])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(lines[0])["line"], 20001)
+
+
 if __name__ == "__main__":
     unittest.main()
