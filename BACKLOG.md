@@ -13,11 +13,7 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Positionsargumenten funktioniert es. Der Wart ist alt, schon v0.14.0 zeigt
    ihn. Entweder Parsing umbauen oder die Reihenfolge in beiden READMEs
    festschreiben.
-5. Public-Repo-Hygiene: Der Kommentar in `gui/FavenioGUI.swift` bei der
-   Finder-Fenster-Ermittlung zitiert eine persönliche Rückfrage statt die
-   Sache zu beschreiben. Auf eine sachliche Formulierung umstellen. Steht
-   seit v0.14.0 öffentlich, ist also kein akuter Fund, sondern Nachpflege.
-6. Echtes Streaming aus Archiven prüfen: `visit_member()` bekommt heute die
+5. Echtes Streaming aus Archiven prüfen: `visit_member()` bekommt heute die
    fertigen Bytes, obwohl `tarfile.extractfile()` und `ZipFile.open()` einen
    Strom liefern. Nutzen nur bei sehr großen Einträgen; Haken ist, dass
    `ZipFile.open()` die CRC erst am Stromende prüft — mit Early-Exit liefe

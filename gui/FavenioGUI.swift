@@ -559,8 +559,8 @@ final class MainController: NSObject, NSApplicationDelegate,
         let menu = NSMenu()
 
         // 1) Offene Finder-Fenster. Der erste Eintrag ist das VORDERSTE
-        //    Finder-Fenster (Daniel: „aktives Finderfenster" gemeint als das
-        //    vorderste — aktiv kann es nicht sein, solange Favenio vorn ist).
+        //    Finder-Fenster. Bewusst „vorderstes" und nicht „aktives": Solange
+        //    Favenio vorn ist, hat kein Finder-Fenster den Tastaturfokus.
         let windows = cachedFinderFolders
         for (index, path) in windows.enumerated() {
             let name = (path as NSString).lastPathComponent
