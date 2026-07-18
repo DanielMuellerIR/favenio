@@ -172,12 +172,10 @@ Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
 
 ## Offene Arbeit
 
-Die kanonische Liste gehört in `BACKLOG.md`. Derzeit echte Kandidaten sind die
-opt-in parallele Inhaltssuche samt Chunk-/Early-Exit, optionale zusätzliche
-Archivformate, Größen-/Datumsfilter, Mehrwort-Suche und ein öffentlicher README-
-Pass. Vor Umsetzung jeweils prüfen, ob Code oder jüngere Commits den Punkt bereits
-erledigt haben. Historische Versionslisten und bereits behobene Finder-Probleme
-nicht wieder als offene Arbeit übernehmen.
+Die kanonische Liste steht in `BACKLOG.md` — hier bewusst keine zweite Kopie,
+die veralten kann. Vor Umsetzung eines Punktes prüfen, ob Code oder jüngere
+Commits ihn bereits erledigt haben. Historische Versionslisten und bereits
+behobene Finder-Probleme nicht wieder als offene Arbeit übernehmen.
 
 ## Verhaltensevals
 

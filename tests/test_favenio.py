@@ -34,12 +34,25 @@ def run(argv):
     return code, lines, err.getvalue()
 
 
-class FavenioTest(unittest.TestCase):
+class TempTreeTest(unittest.TestCase):
+    """Gemeinsames Gerüst: ein Temp-Ordner je Test, der danach automatisch
+    verschwindet, plus ein Helfer zum Schreiben von Testdateien."""
+
     def setUp(self):
-        # Temp-Ordner, der nach jedem Test automatisch verschwindet.
         self.tmp = tempfile.TemporaryDirectory()
         self.root = self.tmp.name
         self.addCleanup(self.tmp.cleanup)
+
+    def write(self, rel_path, text):
+        path = os.path.join(self.root, rel_path)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+
+class FavenioTest(TempTreeTest):
+    def setUp(self):
+        super().setUp()
 
         # --- normale Dateien und ein Unterordner ---
         os.makedirs(os.path.join(self.root, "Rechnungen"))
@@ -67,11 +80,6 @@ class FavenioTest(unittest.TestCase):
         outer_path = os.path.join(self.root, "aussen.zip")
         with zipfile.ZipFile(outer_path, "w") as zf:
             zf.writestr("innen.zip", inner.getvalue())
-
-    def write(self, rel_path, text):
-        path = os.path.join(self.root, rel_path)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(text)
 
     # ---------- Namenssuche ----------
 
@@ -311,7 +319,7 @@ class FavenioTest(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
-class ChunkedContentTest(unittest.TestCase):
+class ChunkedContentTest(TempTreeTest):
     """Die Inhaltssuche liest häppchenweise. Diese Tests sichern ab, dass
     dabei GENAU dieselben Zeilen entstehen wie beim Dekodieren am Stück —
     inklusive Zeilennummern, Häppchengrenzen und kaputter Bytes."""
@@ -371,36 +379,28 @@ class ChunkedContentTest(unittest.TestCase):
     def test_line_number_beyond_chunk_boundary(self):
         # Treffer weit hinten: die Zeilennummer muss über Häppchengrenzen
         # hinweg korrekt weitergezählt werden.
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        path = os.path.join(tmp.name, "gross.txt")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write("fuellzeile\n" * 20000)
-            handle.write("hier steht GEHEIMNIS\n")
+        path = self.write("gross.txt",
+                          "fuellzeile\n" * 20000 + "hier steht GEHEIMNIS\n")
         code, lines, _ = run(["--json", "--content", "GEHEIMNIS", path])
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(lines[0])["line"], 20001)
 
 
-class ParallelContentTest(unittest.TestCase):
+class ParallelContentTest(TempTreeTest):
     """--jobs > 1 darf die TREFFERMENGE nicht verändern — nur ihre
     Reihenfolge. Deshalb vergleichen diese Tests Mengen, nie Listen."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = self.tmp.name
-        self.addCleanup(self.tmp.cleanup)
+        super().setUp()
 
         # Genug Dateien, dass mehrere Threads wirklich etwas zu tun haben.
         for i in range(60):
-            folder = os.path.join(self.root, "d%d" % (i % 5))
-            os.makedirs(folder, exist_ok=True)
+            os.makedirs(os.path.join(self.root, "d%d" % (i % 5)),
+                        exist_ok=True)
             body = "fuellzeile\n" * 20
             if i % 3 == 0:
                 body += "hier steht GEHEIMNIS\n"
-            with open(os.path.join(folder, "datei-%02d.txt" % i), "w",
-                      encoding="utf-8") as handle:
-                handle.write(body)
+            self.write("d%d/datei-%02d.txt" % (i % 5, i), body)
 
         # Ein Archiv dazu: dessen Einträge werden seriell abgearbeitet,
         # müssen aber trotzdem in der Treffermenge landen.
@@ -412,16 +412,16 @@ class ParallelContentTest(unittest.TestCase):
         # Optionen mit Wert stehen VOR dem Muster — zwischen Muster und
         # Startpfad kann argparse sie nicht von Positionsargumenten trennen
         # (gilt genauso für das ältere --archive-depth).
-        code, lines, err = run(extra + ["--json", "--content", "GEHEIMNIS",
-                                        self.root])
-        return code, {json.loads(line)["path"] for line in lines}, err
+        code, lines, _ = run(extra + ["--json", "--content", "GEHEIMNIS",
+                                      self.root])
+        return code, {json.loads(line)["path"] for line in lines}
 
     def test_same_hits_as_serial(self):
-        code_serial, serial, _ = self.hits([])
+        code_serial, serial = self.hits([])
         self.assertEqual(code_serial, 0)
         self.assertEqual(len(serial), 21)          # 20 Dateien + 1 Archiveintrag
         for jobs in ("2", "4", "8"):
-            code, parallel, _ = self.hits(["--jobs", jobs])
+            code, parallel = self.hits(["--jobs", jobs])
             self.assertEqual(code, 0)
             self.assertEqual(parallel, serial, "--jobs %s" % jobs)
 

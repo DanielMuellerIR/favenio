@@ -110,12 +110,15 @@ Favenio ist bewusst maschinenfreundlich gebaut:
 ### Wann `--jobs` etwas bringt
 
 Die parallele Inhaltssuche ist standardmäßig aus, und das ist Absicht. Die
-Threads lohnen sich nur, wenn das Lesen wirklich Zeit kostet — kalter Cache,
+Threads lohnen sich nur, wenn das Lesen wirklich warten muss — kalter Cache,
 externe oder Netzlaufwerke, drehende Platten. Dann überlappen sich mehrere
-Lesevorgänge und die Suche wird fast doppelt so schnell. Liegen die Dateien
-schon im Cache, ist die Arbeit reine Rechenzeit im Interpreter, die Threads
-wechseln sich ab statt nebeneinander zu laufen, und `--jobs` kostet rund
-10–20 % extra. Vor dem Einschalten also im eigenen Fall nachmessen.
+Lesevorgänge und die Suche wird deutlich schneller.
+
+Liegen die Dateien schon im Cache, ist die Arbeit reine Rechenzeit im
+Python-Interpreter, der immer nur einen Thread gleichzeitig rechnen lässt.
+`--jobs` ist dann ein Verlustgeschäft, und je mehr kleine Dateien im Spiel
+sind, desto größer wird der Verlust. Also: ein Schalter für langsamen
+Speicher — vor dem dauerhaften Einschalten im eigenen Fall nachmessen.
 
 Archive bleiben in jedem Fall seriell: ihre Einträge hängen an einem
 gemeinsamen offenen Archiv-Objekt. Mit `--jobs` bleiben Treffermenge und

@@ -61,7 +61,6 @@ CHUNK_SIZE = 64 * 1024
 # auch \r, Seitenvorschub und die Unicode-Trenner). Wir brauchen die Liste,
 # um zu erkennen, ob ein Häppchen mit einer vollständigen Zeile endet.
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
-LINE_BREAK_RE = re.compile("[%s]" % re.escape(LINE_BREAKS))
 
 
 def classify_archive(name):
@@ -106,8 +105,11 @@ def build_matcher(pattern, use_regex, case_sensitive):
 class Search:
     """Kapselt eine Suche: Muster, Optionen und das Einsammeln der Treffer.
 
-    Die Klasse hält bewusst wenig Zustand: matcher (die Testfunktion),
-    die Optionen und zwei Zähler (Treffer gefunden? Fehler passiert?).
+    Der Zustand bleibt bewusst überschaubar: matcher (die Testfunktion),
+    die Optionen und zwei Merker (Treffer gefunden? Fehler passiert?).
+    Nur für --jobs > 1 kommt Maschinerie dazu — Thread-Pool, dessen
+    laufende Aufträge und eine Sperre für die Ausgabe. Deshalb ist eine
+    Instanz für GENAU EINEN run()-Aufruf gedacht, nicht wiederverwendbar.
     """
 
     def __init__(self, matcher, content_mode, archive_depth, as_json,
@@ -129,9 +131,11 @@ class Search:
                                               # (None = noch nie gemeldet;
                                               # nicht 0.0 — time.monotonic()
                                               # startet je nach Python nahe 0)
-        self.jobs = jobs                      # 1 = seriell (Default),
-                                              # >1 = so viele Threads für die
-                                              # Inhaltssuche normaler Dateien
+        # 1 = seriell (Default), >1 = so viele Threads für die Inhaltssuche
+        # normaler Dateien. 0 oder kleiner heißt „so viele wie CPU-Kerne" —
+        # die Auflösung sitzt hier und nicht in main(), damit jobs für CLI
+        # und direkte Benutzung dasselbe bedeutet.
+        self.jobs = jobs if jobs >= 1 else (os.cpu_count() or 1)
         self._output_lock = threading.Lock()  # schützt die Trefferausgabe,
                                               # damit Zeilen aus mehreren
                                               # Threads nicht ineinanderlaufen
@@ -223,44 +227,40 @@ class Search:
         abbricht. Der inkrementelle Decoder setzt Mehrbyte-Zeichen über
         Häppchengrenzen hinweg korrekt zusammen; das Ergebnis ist deshalb
         identisch zum Dekodieren der ganzen Datei am Stück."""
-        decoder = codecs.getincrementaldecoder("utf-8")("replace")
         pending = []          # Bruchstücke der noch nicht beendeten Zeile
         number = 0
-        for chunk in chunks:
-            text = decoder.decode(chunk)
+        for text in codecs.iterdecode(chunks, "utf-8", errors="replace"):
             if not text:
                 continue
             pending.append(text)
-            if not LINE_BREAK_RE.search(text):
-                # Kein Umbruch in diesem Häppchen, also auch keine fertige
-                # Zeile. Nur puffern: würden wir den wachsenden Puffer bei
-                # jedem Häppchen neu zusammensetzen, bekämen Dateien ohne
-                # Zeilenumbrüche quadratischen Aufwand.
+            # Steckt in diesem Häppchen überhaupt ein Umbruch? Wenn nicht,
+            # gibt es keine fertige Zeile und wir puffern nur weiter — würden
+            # wir den wachsenden Puffer bei jedem Häppchen neu zusammensetzen,
+            # bekämen Dateien ohne Zeilenumbrüche quadratischen Aufwand.
+            # Der \n-Test ist der billige Normalfall; erst wenn er scheitert,
+            # kosten die selteneren Umbruchzeichen einen splitlines()-Lauf.
+            if "\n" not in text and len(text.splitlines()) == 1 \
+                    and text[-1] not in LINE_BREAKS:
                 continue
             buffer = "".join(pending)
             pending.clear()
-            if buffer.endswith("\r"):
-                # Ein \r am Ende zurückhalten: folgt im nächsten Häppchen
-                # ein \n, sind beide zusammen EIN Umbruch (CRLF) — sonst
-                # zählten wir hier eine Zeile zu viel.
-                buffer, held_back = buffer[:-1], "\r"
-            else:
-                held_back = ""
             lines = buffer.splitlines()
-            if buffer and buffer[-1] not in LINE_BREAKS:
+            if buffer[-1] not in LINE_BREAKS:
                 # Die letzte Zeile ist noch offen; sie wird im nächsten
                 # Häppchen fortgesetzt.
                 pending.append(lines.pop())
-            if held_back:
-                pending.append(held_back)
+            elif buffer.endswith("\r"):
+                # Umbruch noch offen: folgt im nächsten Häppchen ein \n,
+                # sind beide zusammen EIN Umbruch (CRLF) — sonst zählten
+                # wir hier eine Zeile zu viel.
+                pending.append(lines.pop() + "\r")
             for line in lines:
                 number += 1
                 if self.matcher(line):
                     return number
-        # Rest: Decoder leeren (ein angebrochenes Mehrbyte-Zeichen am
-        # Dateiende wird dabei zum Ersatzzeichen) und die letzte noch
-        # offene Zeile prüfen.
-        pending.append(decoder.decode(b"", True))
+        # Rest: die letzte noch offene Zeile prüfen. Den Decoder leert
+        # iterdecode() selbst — ein angebrochenes Mehrbyte-Zeichen am
+        # Dateiende steht dann schon als Ersatzzeichen im Puffer.
         for line in "".join(pending).splitlines():
             number += 1
             if self.matcher(line):
@@ -275,39 +275,41 @@ class Search:
         Mit --jobs > 1 und Inhaltssuche werden normale Dateien in einem
         Thread-Pool abgearbeitet. Archive bleiben bewusst seriell: ihre
         Einträge hängen an einem gemeinsamen, offenen Archiv-Objekt.
-        Das Lesen der Dateien gibt die GIL frei, deshalb überlappen sich
-        die Zugriffe trotz Threads."""
+        Threads helfen nur, solange das Lesen wirklich wartet (kalter
+        Cache, Netz- oder Wechselmedien) — die eigentliche Suche läuft
+        unter der GIL. Deshalb ist --jobs opt-in und Default seriell.
+
+        Eine Search-Instanz ist für GENAU EINEN run()-Aufruf gedacht."""
         if self.jobs > 1 and self.content_mode:
             with concurrent.futures.ThreadPoolExecutor(
                     max_workers=self.jobs) as pool:
                 self._pool = pool
-                try:
-                    for path in paths:
-                        self.search_path(path)
-                finally:
-                    # Auch bei einem Fehler erst alle laufenden Aufträge
-                    # einsammeln, damit ihre Treffer nicht verlorengehen.
-                    self.drain()
-                    self._pool = None
+                for path in paths:
+                    self.search_path(path)
+                # Auf das Ende der Arbeit wartet schon das Verlassen des
+                # with-Blocks. .result() ist nur dafür da, Ausnahmen aus
+                # den Threads durchzureichen — wie im seriellen Fall.
+                for future in self._pending:
+                    future.result()
+            self._pool = None
         else:
             for path in paths:
                 self.search_path(path)
 
-    def submit_content(self, path):
-        """Reiht eine Datei zur Inhaltssuche in den Thread-Pool ein.
+    def search_content(self, path):
+        """Inhaltssuche für EINE normale Datei — seriell sofort, mit
+        --jobs über den Thread-Pool. Die Ablaufsteuerung sitzt hier,
+        damit visit_file() nur beantwortet, WAS eine Datei ist.
 
         Damit die Warteschlange bei großen Bäumen nicht unbegrenzt wächst,
         warten wir ab einer Obergrenze jeweils auf den ÄLTESTEN Auftrag.
         Ein Abwarten aller Aufträge (Barriere) wäre langsamer: der Pool
         liefe dann bei jeder Portion leer."""
+        if self._pool is None:
+            self.scan_content(path)
+            return
         self._pending.append(self._pool.submit(self.scan_content, path))
         if len(self._pending) >= self.jobs * 64:
-            self._pending.popleft().result()
-
-    def drain(self):
-        """Wartet auf alle noch laufenden Aufträge. .result() reicht
-        Ausnahmen aus den Threads hier weiter — wie im seriellen Fall."""
-        while self._pending:
             self._pending.popleft().result()
 
     def search_path(self, root):
@@ -356,10 +358,7 @@ class Search:
             self.search_archive(path, None, archive_kind, path,
                                 self.archive_depth)
         elif self.content_mode and not archive_kind:
-            if self._pool is None:
-                self.scan_content(path)
-            else:
-                self.submit_content(path)
+            self.search_content(path)
 
     def scan_content(self, path):
         """Inhaltssuche in EINER normalen Datei des Dateisystems.
@@ -616,12 +615,9 @@ def main(argv=None):
         return 2
 
     archive_depth = 0 if args.no_archives else args.archive_depth
-    # „--jobs" ohne Zahl (const=0) und „--jobs 0" heißen: so viele Threads
-    # wie CPU-Kerne. os.cpu_count() kann None liefern — dann seriell.
-    jobs = args.jobs if args.jobs >= 1 else (os.cpu_count() or 1)
     search = Search(matcher, args.content, archive_depth, args.json,
                     progress=args.progress, only=args.only,
-                    include_hidden=args.hidden, jobs=jobs)
+                    include_hidden=args.hidden, jobs=args.jobs)
 
     for path in paths:
         if not os.path.exists(path):

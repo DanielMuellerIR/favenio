@@ -110,12 +110,15 @@ Favenio is deliberately machine-friendly:
 ### When `--jobs` helps
 
 Parallel content search is off by default, and that default is deliberate.
-The threads only pay off when reading actually costs time — a cold cache, an
+The threads only pay off when reading actually has to wait — a cold cache, an
 external or network volume, a spinning disk. Then several reads overlap and
-the search runs close to twice as fast. When the files are already in the
-page cache, the work is pure CPU inside the interpreter, the threads take
-turns instead of running side by side, and `--jobs` costs about 10–20 %
-extra. Measure your case before turning it on.
+the search gets markedly faster.
+
+When the files are already in the page cache, the work is pure CPU inside the
+Python interpreter, which runs one thread at a time. `--jobs` is then a net
+loss, and the more small files are involved, the bigger that loss gets.
+So treat it as a knob for slow storage, and measure your own case before
+leaving it on.
 
 Archives stay serial regardless: their entries share one open archive
 object. With `--jobs` the set of hits and the exit code are unchanged — only
