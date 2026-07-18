@@ -382,5 +382,86 @@ class ChunkedContentTest(unittest.TestCase):
         self.assertEqual(json.loads(lines[0])["line"], 20001)
 
 
+class ParallelContentTest(unittest.TestCase):
+    """--jobs > 1 darf die TREFFERMENGE nicht verändern — nur ihre
+    Reihenfolge. Deshalb vergleichen diese Tests Mengen, nie Listen."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = self.tmp.name
+        self.addCleanup(self.tmp.cleanup)
+
+        # Genug Dateien, dass mehrere Threads wirklich etwas zu tun haben.
+        for i in range(60):
+            folder = os.path.join(self.root, "d%d" % (i % 5))
+            os.makedirs(folder, exist_ok=True)
+            body = "fuellzeile\n" * 20
+            if i % 3 == 0:
+                body += "hier steht GEHEIMNIS\n"
+            with open(os.path.join(folder, "datei-%02d.txt" % i), "w",
+                      encoding="utf-8") as handle:
+                handle.write(body)
+
+        # Ein Archiv dazu: dessen Einträge werden seriell abgearbeitet,
+        # müssen aber trotzdem in der Treffermenge landen.
+        with zipfile.ZipFile(os.path.join(self.root, "paket.zip"), "w") as zf:
+            zf.writestr("innen/a.txt", "auch hier GEHEIMNIS\n")
+            zf.writestr("innen/b.txt", "nichts zu holen\n")
+
+    def hits(self, extra):
+        # Optionen mit Wert stehen VOR dem Muster — zwischen Muster und
+        # Startpfad kann argparse sie nicht von Positionsargumenten trennen
+        # (gilt genauso für das ältere --archive-depth).
+        code, lines, err = run(extra + ["--json", "--content", "GEHEIMNIS",
+                                        self.root])
+        return code, {json.loads(line)["path"] for line in lines}, err
+
+    def test_same_hits_as_serial(self):
+        code_serial, serial, _ = self.hits([])
+        self.assertEqual(code_serial, 0)
+        self.assertEqual(len(serial), 21)          # 20 Dateien + 1 Archiveintrag
+        for jobs in ("2", "4", "8"):
+            code, parallel, _ = self.hits(["--jobs", jobs])
+            self.assertEqual(code, 0)
+            self.assertEqual(parallel, serial, "--jobs %s" % jobs)
+
+    def test_line_numbers_survive_parallel(self):
+        code, lines, _ = run(["--jobs", "4", "--json", "--content",
+                              "GEHEIMNIS", self.root])
+        self.assertEqual(code, 0)
+        for line in lines:
+            record = json.loads(line)
+            if record["type"] == "file":
+                self.assertEqual(record["line"], 21)
+
+    def test_exit_code_without_hits(self):
+        code, _, _ = run(["--jobs", "4", "--content", "GIBTSNICHT",
+                          self.root])
+        self.assertEqual(code, 1)
+
+    def test_jobs_without_number_is_automatic(self):
+        # „--jobs" ohne Zahl bzw. „--jobs 0" heißt: Zahl der CPU-Kerne.
+        for extra in (["--jobs"], ["--jobs", "0"]):
+            code, lines, _ = run(extra + ["--content", "GEHEIMNIS",
+                                          self.root])
+            self.assertEqual(code, 0)
+            self.assertEqual(len(lines), 21)
+
+    def test_name_search_ignores_jobs(self):
+        # --jobs betrifft nur die Inhaltssuche; die Namenssuche bleibt seriell
+        # und liefert unverändert dieselbe Menge.
+        _, serial, _ = run(["datei-01.txt", self.root])
+        _, parallel, _ = run(["--jobs", "8", "datei-01.txt", self.root])
+        self.assertEqual(set(parallel), set(serial))
+
+    def test_progress_with_jobs(self):
+        code, lines, _ = run(["--jobs", "4", "--json", "--progress",
+                              "--content", "GEHEIMNIS", self.root])
+        self.assertEqual(code, 0)
+        # Jede Zeile bleibt gültiges JSON (keine ineinandergelaufene Ausgabe).
+        types = {json.loads(line)["type"] for line in lines}
+        self.assertIn("file", types)
+
+
 if __name__ == "__main__":
     unittest.main()
