@@ -8,6 +8,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -64,6 +65,8 @@ class FavenioTest(TempTreeTest):
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.writestr("docs/anleitung.md", "Schritt 1: GEHEIMNIS lesen\n")
             zf.writestr("bild.png", "binaerkram")
+            zf.writestr(".private/visible.txt", "HIDDEN CONTENT\n")
+            zf.writestr("odd!/name.txt", "STRUKTURIERT\n")
 
         # --- ein tar.gz-Archiv ---
         tar_path = os.path.join(self.root, "backup.tar.gz")
@@ -72,6 +75,10 @@ class FavenioTest(TempTreeTest):
             info = tarfile.TarInfo("sicherung/alt.txt")
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
+            hidden = b"HIDDEN TAR\n"
+            hidden_info = tarfile.TarInfo(".private/visible-tar.txt")
+            hidden_info.size = len(hidden)
+            tf.addfile(hidden_info, io.BytesIO(hidden))
 
         # --- Zip im Zip (Verschachtelung) ---
         inner = io.BytesIO()
@@ -137,6 +144,19 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(code, 1)
         code, _, _ = run(["--hidden", "beute", self.root])
         self.assertEqual(code, 0)
+
+    def test_hidden_archive_parent_component_is_skipped(self):
+        code, lines, _ = run(["visible", self.root])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        code, lines, _ = run(["--hidden", "visible", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 2)
+
+    def test_hidden_archive_content_is_skipped(self):
+        code, lines, _ = run(["--content", "HIDDEN", self.root])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
 
     def test_size_in_json(self):
         # Größe steht als Bytes im JSON; Ordner haben keine Größe.
@@ -229,6 +249,8 @@ class FavenioTest(TempTreeTest):
             self.assertIn("path", record)
             self.assertIn("type", record)
             self.assertIn("line", record)
+            self.assertIn("filesystemPath", record)
+            self.assertIn("archiveMembers", record)
         types = {record["type"] for record in records}
         self.assertIn("file", types)    # notiz.txt
         self.assertIn("member", types)  # Archiv-Einträge
@@ -276,6 +298,33 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(code, 0)
         self.assertEqual(lines, [os.path.abspath(target)])
 
+    def test_plain_path_containing_archive_separator_stays_plain(self):
+        os.makedirs(os.path.join(self.root, "folder!"))
+        target = self.write("folder!/plain.txt", "normal")
+        code, lines, _ = run(["--extract", target])
+        self.assertEqual(code, 0)
+        self.assertEqual(lines, [os.path.abspath(target)])
+
+    def test_structured_archive_path_handles_separator_inside_member(self):
+        archive = os.path.join(self.root, "paket.zip")
+        code, lines, _ = run(["--json", "name.txt", archive])
+        self.assertEqual(code, 0)
+        record = json.loads(lines[0])
+        self.assertEqual(record["filesystemPath"], archive)
+        self.assertEqual(record["archiveMembers"], ["odd!/name.txt"])
+        materialization_root = os.path.join(self.root, "materialized")
+        os.makedirs(materialization_root)
+        code, extracted, _ = run([
+            "--extract-json", json.dumps(record),
+            "--extract-root", materialization_root,
+        ])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read(extracted[0]), "STRUKTURIERT\n")
+        self.assertEqual(
+            os.path.dirname(os.path.dirname(extracted[0])),
+            materialization_root,
+        )
+
     def test_extract_zip_member(self):
         result = os.path.join(self.root, "paket.zip") + "!/docs/anleitung.md"
         code, lines, _ = run(["--extract", result])
@@ -308,6 +357,70 @@ class FavenioTest(TempTreeTest):
         code, _, err = run(["--extract", result])
         self.assertEqual(code, 2)
         self.assertIn("kein unterstütztes Archiv", err)
+
+    def make_encrypted_zip(self):
+        source = self.write("encrypted-source.txt", "VERSCHLUESSELT\n")
+        archive = os.path.join(self.root, "encrypted.zip")
+        subprocess.run([
+            "/usr/bin/zip", "-q", "-j", "-P", "test-only-password",
+            archive, source,
+        ], check=True)
+        return archive
+
+    def test_encrypted_zip_member_warns_and_search_continues(self):
+        archive = self.make_encrypted_zip()
+        code, lines, err = run(["--content", "VERSCHLUESSELT", archive])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("encrypted", err.lower())
+        self.assertNotIn("Traceback", err)
+
+    def test_encrypted_zip_extract_exits_2_without_traceback(self):
+        archive = self.make_encrypted_zip()
+        result = archive + "!/encrypted-source.txt"
+        code, _, err = run(["--extract", result])
+        self.assertEqual(code, 2)
+        self.assertIn("fehler", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_archive_member_and_total_budgets(self):
+        archive = os.path.join(self.root, "budget.zip")
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as zf:
+            zf.writestr("one.txt", "A" * 48)
+            zf.writestr("two.txt", "B" * 48)
+        code, lines, err = run([
+            "--content", "NADEL", archive,
+            "--max-archive-member-bytes", "32",
+        ])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("Einzelgrenze", err)
+        code, _, err = run([
+            "--content", "NADEL", archive,
+            "--max-archive-member-bytes", "64",
+            "--max-archive-total-bytes", "64",
+        ])
+        self.assertEqual(code, 1)
+        self.assertIn("Gesamtbudget", err)
+
+    def test_extract_respects_archive_budget(self):
+        result = os.path.join(self.root, "paket.zip") + "!/docs/anleitung.md"
+        code, _, err = run([
+            "--extract", result, "--max-archive-member-bytes", "8",
+        ])
+        self.assertEqual(code, 2)
+        self.assertIn("Einzelgrenze", err)
+
+    def test_zip_compression_ratio_limit(self):
+        archive = os.path.join(self.root, "ratio.zip")
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("repeated.txt", "A" * 4096)
+        code, lines, err = run([
+            "--content", "NADEL", archive, "--max-archive-ratio", "2",
+        ])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("Kompressionsverhältnis", err)
 
     def test_no_pattern_and_no_extract_exits_2(self):
         code, _, _ = run([])

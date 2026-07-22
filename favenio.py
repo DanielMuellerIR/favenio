@@ -25,6 +25,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -53,11 +54,81 @@ TAR_EXTENSIONS = (
 # eingelesen, sondern in Portionen dieser Grösse — das hält den Speicher
 # klein und erlaubt den Abbruch beim ersten Treffer.
 CHUNK_SIZE = 64 * 1024
+DEFAULT_MAX_ARCHIVE_MEMBER_BYTES = 256 * 1024 * 1024
+DEFAULT_MAX_ARCHIVE_TOTAL_BYTES = 1024 * 1024 * 1024
+DEFAULT_MAX_ARCHIVE_RATIO = 1000.0
 
 # Alle Zeichen, an denen str.splitlines() eine Zeile umbricht (nicht nur \n:
 # auch \r, Seitenvorschub und die Unicode-Trenner). Wir brauchen die Liste,
 # um zu erkennen, ob ein Häppchen mit einer vollständigen Zeile endet.
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+
+
+class ArchiveReadError(Exception):
+    """Kontrollierter Lesefehler eines einzelnen Archiveintrags."""
+
+
+class ArchiveLimitError(ArchiveReadError):
+    """Ein Archivmitglied überschreitet eine konfigurierte Sicherheitsgrenze."""
+
+
+class ArchiveBudget:
+    """Begrenzt entpackte Einzel- und Gesamtbytes eines Suchlaufs."""
+
+    def __init__(self, maximum_member, maximum_total, maximum_ratio):
+        self.maximum_member = maximum_member
+        self.maximum_total = maximum_total
+        self.maximum_ratio = maximum_ratio
+        self.consumed = 0
+
+    def validate(self, label, declared_size=None, compressed_size=None):
+        if declared_size is not None and declared_size > self.maximum_member:
+            raise ArchiveLimitError(
+                "%s: entpackte Größe %d überschreitet Einzelgrenze %d"
+                % (label, declared_size, self.maximum_member))
+        if declared_size and compressed_size is not None:
+            ratio = declared_size / max(1, compressed_size)
+            if ratio > self.maximum_ratio:
+                raise ArchiveLimitError(
+                    "%s: Kompressionsverhältnis %.1f überschreitet Grenze %.1f"
+                    % (label, ratio, self.maximum_ratio))
+
+    def iter_chunks(self, handle, label, declared_size=None,
+                    compressed_size=None):
+        self.validate(label, declared_size, compressed_size)
+        member_bytes = 0
+        while True:
+            chunk = handle.read(CHUNK_SIZE)
+            if not chunk:
+                return
+            member_bytes += len(chunk)
+            self.consumed += len(chunk)
+            if member_bytes > self.maximum_member:
+                raise ArchiveLimitError(
+                    "%s: Einzelgrenze %d überschritten"
+                    % (label, self.maximum_member))
+            if self.consumed > self.maximum_total:
+                raise ArchiveLimitError(
+                    "%s: Gesamtbudget %d überschritten"
+                    % (label, self.maximum_total))
+            yield chunk
+
+    def read_all(self, handle, label, declared_size=None,
+                 compressed_size=None):
+        return b"".join(self.iter_chunks(
+            handle, label, declared_size, compressed_size))
+
+
+EXPECTED_ARCHIVE_ERRORS = (
+    ArchiveReadError,
+    OSError,
+    RuntimeError,          # z. B. verschlüsseltes ZIP-Mitglied
+    NotImplementedError,   # nicht unterstützte ZIP-Kompression
+    KeyError,
+    zipfile.BadZipFile,
+    zipfile.LargeZipFile,
+    tarfile.TarError,
+)
 
 
 def classify_archive(name):
@@ -99,15 +170,32 @@ def build_matcher(pattern, use_regex, case_sensitive):
     return lambda text: lowered_pattern in text.lower()
 
 
+def positive_int(value):
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("muss größer als 0 sein")
+    return parsed
+
+
+def positive_float(value):
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("muss größer als 0 sein")
+    return parsed
+
+
 class Search:
     """Kapselt eine Suche: Muster, Optionen und das Einsammeln der Treffer.
 
     Die Klasse hält bewusst wenig Zustand: matcher (die Testfunktion),
-    die Optionen und zwei Zähler (Treffer gefunden? Fehler passiert?).
+    die Optionen und den Trefferzustand für den Exit-Code.
     """
 
     def __init__(self, matcher, content_mode, archive_depth, as_json,
-                 progress=False, only="both", include_hidden=False):
+                 progress=False, only="both", include_hidden=False,
+                 max_archive_member_bytes=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
+                 max_archive_total_bytes=DEFAULT_MAX_ARCHIVE_TOTAL_BYTES,
+                 max_archive_ratio=DEFAULT_MAX_ARCHIVE_RATIO):
         self.matcher = matcher                # Funktion text -> bool
         self.content_mode = content_mode      # True = Inhalt, False = Namen
         self.archive_depth = archive_depth    # 0 = Archive ignorieren,
@@ -120,7 +208,11 @@ class Search:
         self.as_json = as_json                # Ausgabeformat JSONL statt Text
         self.progress = progress              # laufend melden, wo wir suchen
         self.found_any = False                # für den Exit-Code (0 vs. 1)
-        self.had_errors = False               # Warnungen gab es (stderr)
+        self.archive_budget = ArchiveBudget(
+            max_archive_member_bytes,
+            max_archive_total_bytes,
+            max_archive_ratio,
+        )
         self._last_progress = None            # Zeitstempel fürs Drosseln
                                               # (None = noch nie gemeldet;
                                               # nicht 0.0 — time.monotonic()
@@ -143,7 +235,8 @@ class Search:
         die auf macOS/Unix übliche Konvention, deckt den Finder-Fall ab."""
         return name.startswith(".")
 
-    def emit(self, path, kind, line=None, size=None):
+    def emit(self, path, kind, line=None, size=None, filesystem_path=None,
+             archive_members=None):
         """Gibt EINEN Treffer aus. kind ist "file", "dir" oder "member"
         (member = Eintrag innerhalb eines Archivs). line ist bei
         Inhaltssuche die Zeilennummer des ersten Treffers, size die
@@ -151,6 +244,10 @@ class Search:
         self.found_any = True
         if self.as_json:
             record = {"path": path, "type": kind}
+            record["filesystemPath"] = (filesystem_path
+                                        if filesystem_path is not None
+                                        else path)
+            record["archiveMembers"] = list(archive_members or ())
             if line is not None:
                 record["line"] = line
             if size is not None:
@@ -163,7 +260,6 @@ class Search:
     def warn(self, message):
         """Nicht-fatale Probleme (z. B. kaputtes Archiv, keine Leserechte)
         landen auf stderr, die Suche läuft weiter."""
-        self.had_errors = True
         print("favenio: warnung: %s" % message, file=sys.stderr)
 
     def report_progress(self, path):
@@ -315,7 +411,8 @@ class Search:
 
     # ---------- Archive ----------
 
-    def search_archive(self, fs_path, fileobj, kind, display, depth):
+    def search_archive(self, fs_path, fileobj, kind, display, depth,
+                       archive_path=None, archive_members=()):
         """Durchsucht ein Archiv. Entweder liegt es als Datei auf der
         Platte (fs_path) oder als Bytes im Speicher (fileobj — das ist
         der Fall bei Archiven INNERHALB von Archiven).
@@ -324,23 +421,35 @@ class Search:
         verschachtelt "aussen.zip!/innen.zip". depth zählt runter:
         bei 0 steigen wir nicht weiter in Unter-Archive ein."""
         self.report_progress(display)
+        if archive_path is None:
+            archive_path = fs_path
         try:
             if kind == "zip":
                 source = fileobj if fileobj is not None else fs_path
                 with zipfile.ZipFile(source) as archive:
-                    self.walk_zip(archive, display, depth)
+                    self.walk_zip(archive, display, depth, archive_path,
+                                  archive_members)
             else:  # "tar" — tarfile erkennt die Kompression selbst ("r:*")
                 if fileobj is not None:
                     archive = tarfile.open(fileobj=fileobj, mode="r:*")
                 else:
                     archive = tarfile.open(fs_path, mode="r:*")
                 with archive:
-                    self.walk_tar(archive, display, depth)
-        except (OSError, zipfile.BadZipFile, tarfile.TarError) as err:
+                    self.walk_tar(archive, display, depth, archive_path,
+                                  archive_members)
+        except EXPECTED_ARCHIVE_ERRORS as err:
             self.warn("%s: %s" % (display, err))
 
-    def visit_member(self, member_path, is_dir, read_bytes, display, depth,
-                     size=None):
+    @staticmethod
+    def member_is_hidden(member_path):
+        """Prüft jede Pfadkomponente, nicht nur den sichtbaren Blattnamen."""
+        components = re.split(r"[/\\]+", member_path)
+        return any(component.startswith(".") for component in components
+                   if component)
+
+    def visit_member(self, member_path, is_dir, open_member, display, depth,
+                     archive_path, archive_members, size=None,
+                     compressed_size=None):
         """Gemeinsame Logik für EINEN Archiv-Eintrag (Zip wie Tar).
 
         member_path: Pfad innerhalb des Archivs.
@@ -349,15 +458,18 @@ class Search:
         size:        entpackte Größe des Eintrags in Bytes (bei Ordnern None).
         """
         full_display = display + "!/" + member_path
+        member_chain = tuple(archive_members) + (member_path,)
         name = os.path.basename(member_path.rstrip("/"))
 
         # Unsichtbare Archiv-Einträge wie im Dateisystem überspringen.
-        if not self.include_hidden and self.is_hidden(name):
+        if not self.include_hidden and self.member_is_hidden(member_path):
             return
 
         if not self.content_mode and self.matcher(name) \
                 and self.type_allowed(is_dir):
-            self.emit(full_display, "member", size=None if is_dir else size)
+            self.emit(full_display, "member", size=None if is_dir else size,
+                      filesystem_path=archive_path,
+                      archive_members=member_chain)
 
         if is_dir:
             return
@@ -367,50 +479,65 @@ class Search:
             # Archiv im Archiv: Inhalt in den Speicher holen und rekursiv
             # weitersuchen (depth sinkt um 1).
             try:
-                data = read_bytes()
-            except (OSError, zipfile.BadZipFile, tarfile.TarError) as err:
+                with open_member() as handle:
+                    data = self.archive_budget.read_all(
+                        handle, full_display, size, compressed_size)
+            except EXPECTED_ARCHIVE_ERRORS as err:
                 self.warn("%s: %s" % (full_display, err))
                 return
             self.search_archive(None, io.BytesIO(data), nested_kind,
-                                full_display, depth - 1)
+                                full_display, depth - 1,
+                                archive_path=archive_path,
+                                archive_members=member_chain)
         elif self.content_mode and not nested_kind:
             try:
-                data = read_bytes()
-            except (OSError, zipfile.BadZipFile, tarfile.TarError) as err:
+                with open_member() as handle:
+                    line = self.match_content(
+                        self.archive_budget.iter_chunks(
+                            handle, full_display, size, compressed_size))
+            except EXPECTED_ARCHIVE_ERRORS as err:
                 self.warn("%s: %s" % (full_display, err))
                 return
-            # Archiv-Einträge liegen bereits vollständig im Speicher —
-            # deshalb genau ein Häppchen.
-            line = self.match_content((data,))
             if line is not None and self.type_allowed(False):
-                self.emit(full_display, "member", line, size=size)
+                self.emit(full_display, "member", line, size=size,
+                          filesystem_path=archive_path,
+                          archive_members=member_chain)
 
-    def walk_zip(self, archive, display, depth):
+    def walk_zip(self, archive, display, depth, archive_path,
+                 archive_members):
         """Geht alle Einträge eines Zip-Archivs durch."""
         for info in archive.infolist():
             self.visit_member(
                 info.filename.rstrip("/"),
                 info.is_dir(),
-                lambda info=info: archive.read(info),
+                lambda info=info: archive.open(info, "r"),
                 display,
                 depth,
+                archive_path,
+                archive_members,
                 size=info.file_size,
+                compressed_size=info.compress_size,
             )
 
-    def walk_tar(self, archive, display, depth):
+    def walk_tar(self, archive, display, depth, archive_path,
+                 archive_members):
         """Geht alle Einträge eines Tar-Archivs durch."""
         for member in archive.getmembers():
-            def read_bytes(member=member):
+            def open_member(member=member):
                 extracted = archive.extractfile(member)
                 if extracted is None:
                     raise tarfile.TarError("Eintrag nicht lesbar")
-                with extracted:
-                    return extracted.read()
-            self.visit_member(member.name, member.isdir(), read_bytes,
-                              display, depth, size=member.size)
+                return extracted
+            self.visit_member(member.name, member.isdir(), open_member,
+                              display, depth, archive_path, archive_members,
+                              size=member.size)
 
 
-def extract_result(result_path):
+def extract_result(result_path=None, filesystem_path=None, archive_members=None,
+                   max_archive_member_bytes=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
+                   max_archive_total_bytes=DEFAULT_MAX_ARCHIVE_TOTAL_BYTES,
+                   max_archive_ratio=DEFAULT_MAX_ARCHIVE_RATIO,
+                   materialization_root=None):
     """Packt einen Suchtreffer für die Weiterverwendung aus.
 
     Eingabe ist ein Treffer-Pfad, wie ihn die Suche ausgibt — entweder
@@ -421,32 +548,51 @@ def extract_result(result_path):
     Einträge werden in einen frischen Temp-Ordner extrahiert. In beiden
     Fällen landet der nutzbare Datei-Pfad auf stdout (genau eine Zeile).
     Das ist der Unterbau für Öffnen/„Öffnen mit"/Drag&Drop in der GUI."""
-    parts = result_path.split("!/")
-    fs_path = parts[0]
+    if filesystem_path is None:
+        # Ein existierender Pfad gewinnt immer gegen die historische !/-Notation.
+        # Damit bleibt z. B. /tmp/folder!/plain.txt eine normale Datei.
+        if result_path is not None and os.path.exists(result_path):
+            filesystem_path = result_path
+            archive_members = []
+        else:
+            parts = (result_path or "").split("!/")
+            filesystem_path = parts[0]
+            archive_members = parts[1:]
+    fs_path = filesystem_path
+    members = list(archive_members or [])
+    display_path = result_path or fs_path + "".join(
+        "!/" + member for member in members)
     if not os.path.exists(fs_path):
         print("favenio: fehler: Pfad existiert nicht: %s" % fs_path,
               file=sys.stderr)
         return 2
-    if len(parts) == 1:
+    if not members:
         # Kein Archiv-Eintrag, nur eine normale Datei: nichts auszupacken.
         print(os.path.abspath(fs_path))
         return 0
 
     kind = classify_archive(fs_path)
     data = None    # Bytes des aktuellen Archivs (None = liegt als Datei vor)
-    member = parts[-1]
+    member = members[-1]
+    budget = ArchiveBudget(max_archive_member_bytes,
+                           max_archive_total_bytes,
+                           max_archive_ratio)
     try:
         # Ebene für Ebene absteigen: erst das Archiv auf der Platte
         # öffnen, dann ggf. innere Archive aus dem Speicher heraus.
-        for index, member in enumerate(parts[1:]):
+        for index, member in enumerate(members):
             if kind is None:
                 print("favenio: fehler: kein unterstütztes Archiv: %s"
-                      % "!/".join(parts[:index + 1]), file=sys.stderr)
+                      % display_path, file=sys.stderr)
                 return 2
             if kind == "zip":
                 source = io.BytesIO(data) if data is not None else fs_path
                 with zipfile.ZipFile(source) as archive:
-                    data = archive.read(member)
+                    info = archive.getinfo(member)
+                    with archive.open(info, "r") as handle:
+                        data = budget.read_all(
+                            handle, display_path, info.file_size,
+                            info.compress_size)
             else:  # "tar"
                 if data is not None:
                     archive = tarfile.open(fileobj=io.BytesIO(data),
@@ -458,19 +604,36 @@ def extract_result(result_path):
                     if handle is None:
                         raise KeyError(member)
                     with handle:
-                        data = handle.read()
+                        tar_member = archive.getmember(member)
+                        data = budget.read_all(
+                            handle, display_path, tar_member.size)
             # Endung des gerade gelesenen Eintrags bestimmt, ob die
             # nächste Ebene wieder ein Archiv ist.
             kind = classify_archive(member)
-    except (KeyError, OSError, zipfile.BadZipFile, tarfile.TarError) as err:
-        print("favenio: fehler: %s: %s" % (result_path, err),
+    except EXPECTED_ARCHIVE_ERRORS as err:
+        print("favenio: fehler: %s: %s" % (display_path, err),
               file=sys.stderr)
         return 2
 
-    out_dir = tempfile.mkdtemp(prefix="favenio-")
-    out_path = os.path.join(out_dir, os.path.basename(member.rstrip("/")))
-    with open(out_path, "wb") as handle:
-        handle.write(data)
+    if materialization_root is not None:
+        materialization_root = os.path.abspath(materialization_root)
+        if not os.path.isdir(materialization_root):
+            print("favenio: fehler: Materialisierungsordner existiert nicht: %s"
+                  % materialization_root, file=sys.stderr)
+            return 2
+    out_dir = None
+    try:
+        out_dir = tempfile.mkdtemp(prefix="hit-", dir=materialization_root)
+        out_path = os.path.join(out_dir,
+                                os.path.basename(member.rstrip("/")))
+        with open(out_path, "wb") as handle:
+            handle.write(data)
+    except OSError as err:
+        if out_dir is not None:
+            shutil.rmtree(out_dir, ignore_errors=True)
+        print("favenio: fehler: Materialisierung fehlgeschlagen: %s" % err,
+              file=sys.stderr)
+        return 2
     print(out_path)
     return 0
 
@@ -509,6 +672,20 @@ def main(argv=None):
                         help="wie tief in verschachtelte Archive schauen "
                              "(1 = Archive, 2 = Archive in Archiven, …; "
                              "Default: 1)")
+    parser.add_argument("--max-archive-member-bytes", type=positive_int,
+                        default=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
+                        metavar="BYTES",
+                        help="maximal gelesene entpackte Bytes pro "
+                             "Archivmitglied")
+    parser.add_argument("--max-archive-total-bytes", type=positive_int,
+                        default=DEFAULT_MAX_ARCHIVE_TOTAL_BYTES,
+                        metavar="BYTES",
+                        help="maximal gelesene entpackte Archivbytes pro "
+                             "Suchlauf")
+    parser.add_argument("--max-archive-ratio", type=positive_float,
+                        default=DEFAULT_MAX_ARCHIVE_RATIO,
+                        metavar="FAKTOR",
+                        help="maximales ZIP-Kompressionsverhältnis")
     parser.add_argument("--json", action="store_true",
                         help="Treffer als JSON-Zeilen ausgeben (JSONL)")
     parser.add_argument("--progress", action="store_true",
@@ -519,13 +696,43 @@ def main(argv=None):
                         help="statt zu suchen: einen Treffer-Pfad (ggf. mit "
                              "!/-Notation) in einen Temp-Ordner auspacken "
                              "und den nutzbaren Pfad ausgeben")
+    parser.add_argument("--extract-json", metavar="JSON",
+                        help="Treffer strukturiert mit filesystemPath und "
+                             "archiveMembers materialisieren")
+    parser.add_argument("--extract-root", metavar="ORDNER",
+                        help="app-eigener Temp-Root für Materialisierung")
     parser.add_argument("--version", action="version",
                         version="favenio " + __version__)
     args = parser.parse_args(argv)
 
     # Extraktions-Modus: kein Suchlauf, nur einen Treffer auspacken.
+    extract_options = {
+        "max_archive_member_bytes": args.max_archive_member_bytes,
+        "max_archive_total_bytes": args.max_archive_total_bytes,
+        "max_archive_ratio": args.max_archive_ratio,
+        "materialization_root": args.extract_root,
+    }
+    if args.extract and args.extract_json:
+        parser.error("--extract und --extract-json schließen sich aus")
     if args.extract:
-        return extract_result(args.extract)
+        return extract_result(args.extract, **extract_options)
+    if args.extract_json:
+        try:
+            record = json.loads(args.extract_json)
+            filesystem_path = record["filesystemPath"]
+            archive_members = record.get("archiveMembers", [])
+            if not isinstance(filesystem_path, str) \
+                    or not isinstance(archive_members, list) \
+                    or not all(isinstance(item, str)
+                               for item in archive_members):
+                raise ValueError("ungültige Feldtypen")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as err:
+            print("favenio: fehler: ungültiger strukturierter Treffer: %s"
+                  % err, file=sys.stderr)
+            return 2
+        return extract_result(filesystem_path=filesystem_path,
+                              archive_members=archive_members,
+                              **extract_options)
 
     if not args.pattern:
         # parser.error() gibt die Usage aus und beendet mit Exit-Code 2.
@@ -545,7 +752,10 @@ def main(argv=None):
     archive_depth = 0 if args.no_archives else args.archive_depth
     search = Search(matcher, args.content, archive_depth, args.json,
                     progress=args.progress, only=args.only,
-                    include_hidden=args.hidden)
+                    include_hidden=args.hidden,
+                    max_archive_member_bytes=args.max_archive_member_bytes,
+                    max_archive_total_bytes=args.max_archive_total_bytes,
+                    max_archive_ratio=args.max_archive_ratio)
 
     # Erst alle Startpfade prüfen, dann suchen: sonst stünden bei mehreren
     # Pfaden schon Treffer auf stdout, bevor ein späterer Pfad den Fehler
