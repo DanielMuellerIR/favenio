@@ -7,6 +7,7 @@
 // EINE Suchlogik, die auch headless (CLI, AI-Agenten) identisch arbeitet.
 
 import AppKit
+import Darwin
 import Sparkle
 import UniformTypeIdentifiers
 
@@ -116,18 +117,20 @@ func validateSparkleConfiguration(
 }
 
 /// Ein einzelner Suchtreffer, wie ihn `favenio.py --json` liefert.
-struct Hit {
-    let path: String   // voller Pfad; Archiv-Einträge mit "!/"-Notation
+struct Hit: Hashable {
+    let path: String   // menschenlesbarer Pfad; kann !/-Notation enthalten
     let kind: String   // "file", "dir" oder "member" (= im Archiv)
     let line: Int?     // Zeilennummer bei Inhaltssuche, sonst nil
     let size: Int?     // Dateigröße in Bytes; bei Ordnern nil
+    let filesystemPath: String
+    let archiveMembers: [String]
 
     /// Liegt der Treffer INNERHALB eines Archivs?
-    var isMember: Bool { path.contains("!/") }
+    var isMember: Bool { !archiveMembers.isEmpty }
 
     /// Nur der Dateiname (letzte Komponente), für die Namensspalte.
     var displayName: String {
-        let lastSegment = path.components(separatedBy: "!/").last ?? path
+        let lastSegment = archiveMembers.last ?? filesystemPath
         return (lastSegment as NSString).lastPathComponent
     }
 
@@ -168,8 +171,18 @@ func parseHit(_ lineData: Data) -> Hit? {
         let kind = dict["type"] as? String,
         kind != "progress"
     else { return nil }
+    let filesystemPath = dict["filesystemPath"] as? String
+        ?? (kind == "member"
+            ? path.components(separatedBy: "!/").first ?? path
+            : path)
+    let archiveMembers = dict["archiveMembers"] as? [String]
+        ?? (kind == "member"
+            ? Array(path.components(separatedBy: "!/").dropFirst())
+            : [])
     return Hit(path: path, kind: kind, line: dict["line"] as? Int,
-               size: dict["size"] as? Int)
+               size: dict["size"] as? Int,
+               filesystemPath: filesystemPath,
+               archiveMembers: archiveMembers)
 }
 
 /// Übersetzt eine JSONL-Zeile in einen Fortschritts-Pfad (der Ordner bzw.
@@ -208,31 +221,30 @@ func searchArguments(pattern: String, root: String, content: Bool,
     return args
 }
 
-/// Führt eine Suche BLOCKIEREND aus und liefert (Treffer, Roh-JSONL).
+/// Führt eine Suche BLOCKIEREND aus und liefert Treffer.
 /// Für die Schnellsuche und den Selbsttest; die große GUI streamt
 /// stattdessen asynchron (siehe MainController in FavenioGUI.swift).
-func runSearchSync(arguments: [String]) -> (hits: [Hit], raw: Data) {
+func runSearchSync(arguments: [String]) -> [Hit] {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: pythonPath)
     process.arguments = arguments
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = FileHandle.nullDevice
-    do { try process.run() } catch { return ([], Data()) }
+    do { try process.run() } catch { return [] }
     let raw = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     var hits: [Hit] = []
     for lineData in raw.split(separator: 0x0A) {   // 0x0A = "\n"
         if let hit = parseHit(Data(lineData)) { hits.append(hit) }
     }
-    return (hits, raw)
+    return hits
 }
 
 /// Wie runSearchSync, liest die Ausgabe aber ZEILENWEISE, während die
 /// Suche läuft: Fortschritts-Zeilen (--progress) werden sofort über den
-/// Callback gemeldet (auf dem Main-Thread), Treffer gesammelt. Das
-/// zurückgegebene Roh-JSONL enthält NUR die Treffer — es kann also
-/// unverändert als Ergebnisdatei an die große GUI übergeben werden.
+/// Callback gemeldet (auf dem Main-Thread). Treffer werden ausschließlich
+/// über `onHit` weitergereicht; der Kern legt keine redundante zweite Kopie an.
 /// Blockiert bis zum Ende der Suche; im Hintergrund-Thread aufrufen.
 ///
 /// `register` bekommt (falls gesetzt) den gestarteten Prozess durchgereicht,
@@ -249,18 +261,16 @@ func runSearchStreaming(arguments: [String],
                         register: ((Process) -> Void)? = nil,
                         onHit: ((Hit) -> Void)? = nil,
                         onProgress: @escaping (String) -> Void)
-    -> (hits: [Hit], raw: Data, exitCode: Int32) {
+    -> Int32 {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: pythonPath)
     process.arguments = arguments
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = FileHandle.nullDevice
-    do { try process.run() } catch { return ([], Data(), 2) }
+    do { try process.run() } catch { return 2 }
     register?(process)   // Aufrufer kann den Lauf ab jetzt abbrechen
 
-    var hits: [Hit] = []
-    var hitsRaw = Data()   // gefiltertes JSONL (ohne progress-Zeilen)
     var buffer = Data()    // noch unvollständige Zeile vom Pipe-Ende
 
     func handleLine(_ lineData: Data) {
@@ -268,9 +278,6 @@ func runSearchStreaming(arguments: [String],
         if let path = parseProgress(lineData) {
             DispatchQueue.main.async { onProgress(path) }
         } else if let hit = parseHit(lineData) {
-            hits.append(hit)
-            hitsRaw.append(lineData)
-            hitsRaw.append(0x0A)
             if let onHit { DispatchQueue.main.async { onHit(hit) } }
         }
     }
@@ -288,34 +295,85 @@ func runSearchStreaming(arguments: [String],
     }
     handleLine(buffer)   // letzte Zeile, falls ohne Zeilenumbruch
     process.waitUntilExit()
-    return (hits, hitsRaw, process.terminationStatus)
+    return process.terminationStatus
 }
 
-/// Macht aus einem Treffer eine echte Datei auf der Platte:
-/// normale Pfade unverändert, Archiv-Einträge via `favenio.py --extract`
-/// in einen Temp-Ordner. nil = Extraktion fehlgeschlagen.
-/// Damit funktionieren Öffnen, „Öffnen mit" und Drag&Drop auch für
-/// Dateien, die in einem Zip/Tar stecken.
-func materializeHit(_ resultPath: String) -> URL? {
-    if !resultPath.contains("!/") {
-        return URL(fileURLWithPath: resultPath)
+/// Appweiter Cache: jede Aktion auf denselben Archivtreffer verwendet dieselbe
+/// materialisierte Datei. Alle Kopien liegen unter einem eindeutigen Root und
+/// werden beim App-Ende gemeinsam entfernt.
+final class MaterializationManager {
+    static let shared = MaterializationManager()
+    private var cache: [Hit: URL] = [:]
+    private var root: URL?
+
+    private func materializationRoot() -> URL? {
+        if let root { return root }
+        let candidate = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Favenio-(UUID().uuidString)",
+                                    isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: candidate, withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700])
+            root = candidate
+            return candidate
+        } catch {
+            return nil
+        }
     }
-    guard let cli = findCLI() else { return nil }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: pythonPath)
-    process.arguments = [cli, "--extract", resultPath]
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = FileHandle.nullDevice
-    do { try process.run() } catch { return nil }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0,
-          let output = String(data: data, encoding: .utf8)?
-              .trimmingCharacters(in: .whitespacesAndNewlines),
-          !output.isEmpty
-    else { return nil }
-    return URL(fileURLWithPath: output)
+
+    func materialize(_ hit: Hit) -> URL? {
+        if !hit.isMember {
+            return URL(fileURLWithPath: hit.filesystemPath)
+        }
+        if let cached = cache[hit],
+           FileManager.default.fileExists(atPath: cached.path) {
+            return cached
+        }
+        guard let cli = findCLI(), let root = materializationRoot() else {
+            return nil
+        }
+        let object: [String: Any] = [
+            "filesystemPath": hit.filesystemPath,
+            "archiveMembers": hit.archiveMembers,
+        ]
+        guard let json = try? JSONSerialization.data(withJSONObject: object),
+              let jsonText = String(data: json, encoding: .utf8) else {
+            return nil
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: pythonPath)
+        process.arguments = [cli, "--extract-json", jsonText,
+                             "--extract-root", root.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0,
+              let output = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !output.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: output)
+        cache[hit] = url
+        return url
+    }
+
+    func cleanup() {
+        cache.removeAll()
+        guard let root else { return }
+        try? FileManager.default.removeItem(at: root)
+        self.root = nil
+    }
+}
+
+func materializeHit(_ hit: Hit) -> URL? {
+    MaterializationManager.shared.materialize(hit)
+}
+
+func cleanupMaterializedHits() {
+    MaterializationManager.shared.cleanup()
 }
 
 /// Serialisiert Treffer zu JSONL (eine Zeile pro Treffer), im selben Format,
@@ -326,6 +384,8 @@ func jsonlData(for hits: [Hit]) -> Data {
     var data = Data()
     for hit in hits {
         var object: [String: Any] = ["path": hit.path, "type": hit.kind]
+        object["filesystemPath"] = hit.filesystemPath
+        object["archiveMembers"] = hit.archiveMembers
         if let line = hit.line { object["line"] = line }
         if let size = hit.size { object["size"] = size }
         if let encoded = try? JSONSerialization.data(withJSONObject: object) {
@@ -334,6 +394,85 @@ func jsonlData(for hits: [Hit]) -> Data {
         }
     }
     return data
+}
+
+let quickHandoffPrefix = "favenio-quick-"
+let quickHandoffSuffix = ".jsonl"
+let maximumHandoffBytes = 8 * 1024 * 1024
+let maximumHandoffLineBytes = 1024 * 1024
+
+/// Schreibt die Quick→Haupt-App-Übergabe atomar und nur für den Besitzer.
+func writeQuickHandoff(_ hits: [Hit]) throws -> URL {
+    let data = jsonlData(for: hits)
+    guard data.count <= maximumHandoffBytes else {
+        throw CocoaError(.fileWriteOutOfSpace)
+    }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+        quickHandoffPrefix + UUID().uuidString + quickHandoffSuffix)
+    try data.write(to: url, options: .atomic)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o600], ofItemAtPath: url.path)
+    return url
+}
+
+/// Akzeptiert nur eigene reguläre Dateien direkt im System-Temp-Ordner.
+func validatedQuickHandoff(_ candidate: URL) -> URL? {
+    let url = candidate.standardizedFileURL
+    let temporary = FileManager.default.temporaryDirectory
+        .standardizedFileURL.resolvingSymlinksInPath()
+    guard url.deletingLastPathComponent().resolvingSymlinksInPath()
+            == temporary,
+          url.lastPathComponent.hasPrefix(quickHandoffPrefix),
+          url.lastPathComponent.hasSuffix(quickHandoffSuffix),
+          let values = try? url.resourceValues(forKeys: [
+            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
+          ]),
+          values.isRegularFile == true,
+          values.isSymbolicLink != true,
+          let size = values.fileSize,
+          size <= maximumHandoffBytes,
+          let attributes = try? FileManager.default.attributesOfItem(
+            atPath: url.path),
+          let owner = attributes[.ownerAccountID] as? NSNumber,
+          owner.uint32Value == getuid() else {
+        return nil
+    }
+    return url
+}
+
+/// Liest begrenzt und zeilenweise; eine validierte Übergabedatei wird bei
+/// Erfolg wie Fehler exakt einmal verbraucht und anschließend gelöscht.
+func consumeQuickHandoff(_ candidate: URL) -> [Hit]? {
+    guard let url = validatedQuickHandoff(candidate) else { return nil }
+    defer { try? FileManager.default.removeItem(at: url) }
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? handle.close() }
+    var total = 0
+    var buffer = Data()
+    var hits: [Hit] = []
+    do {
+        while let chunk = try handle.read(upToCount: 64 * 1024),
+              !chunk.isEmpty {
+            total += chunk.count
+            guard total <= maximumHandoffBytes else { return nil }
+            buffer.append(chunk)
+            while let newline = buffer.firstIndex(of: 0x0A) {
+                let line = buffer.subdata(in: buffer.startIndex..<newline)
+                buffer.removeSubrange(buffer.startIndex...newline)
+                guard line.count <= maximumHandoffLineBytes,
+                      let hit = parseHit(line) else { return nil }
+                hits.append(hit)
+            }
+            guard buffer.count <= maximumHandoffLineBytes else { return nil }
+        }
+    } catch {
+        return nil
+    }
+    if !buffer.isEmpty {
+        guard let hit = parseHit(buffer) else { return nil }
+        hits.append(hit)
+    }
+    return hits
 }
 
 /// Apps, die einen Treffer öffnen können — für das „Öffnen mit"-Menü.

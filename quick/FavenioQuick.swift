@@ -153,6 +153,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
         NSApp.terminate(nil)
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        cancelSearch()
+        cleanupMaterializedHits()
+    }
+
     // ---------- Aufbau ----------
 
     func buildPanel() {
@@ -473,7 +478,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 }
                 return
             }
-            let result = runSearchStreaming(arguments: arguments,
+            let exitCode = runSearchStreaming(arguments: arguments,
                 register: { [weak self] process in
                     DispatchQueue.main.async {
                         guard let self else { return }
@@ -498,7 +503,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 guard let self, generation == self.searchGeneration
                 else { return }   // abgebrochen/übergeben → verwerfen
                 self.runningProcess = nil
-                let errorText = result.exitCode == 2
+                let errorText = exitCode == 2
                     ? "Suche fehlgeschlagen. Bitte Favenio erneut installieren."
                     : nil
                 self.finish(query: query, errorText: errorText)
@@ -568,9 +573,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
         let root = searchRoot
-        let resultsFile = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("favenio-quick-\(UUID().uuidString).jsonl")
-        do { try jsonlData(for: hits).write(to: resultsFile) } catch {
+        let resultsFile: URL
+        do { resultsFile = try writeQuickHandoff(hits) } catch {
             infoLabel.stringValue = "Konnte Treffer nicht zwischenspeichern."
             return
         }
@@ -603,6 +607,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         }
         // Weg 2 (Fallback): Favenio.app direkt starten (ohne Weitersuchen).
         guard let appURL = locateMainApp() else {
+            try? FileManager.default.removeItem(at: resultsFile)
             infoLabel.stringValue =
                 "Favenio.app nicht gefunden — bitte einmal manuell starten."
             return
@@ -682,7 +687,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let row = tableView.clickedRow
         let rows = row >= 0 ? [row] : actionRows()
         for row in rows where row < hits.count {
-            if let url = materializeHit(hits[row].path) {
+            if let url = materializeHit(hits[row]) {
                 NSWorkspace.shared.open(url)
             } else {
                 infoLabel.stringValue = "Konnte nicht öffnen: \(hits[row].path)"
@@ -709,7 +714,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
             rows = [tableView.clickedRow]
         }
         previewURLs = rows.compactMap { row in
-            row < hits.count ? materializeHit(hits[row].path) : nil
+            row < hits.count ? materializeHit(hits[row]) : nil
         }
     }
 
@@ -787,7 +792,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
     @objc func ctxOpenWith(_ sender: NSMenuItem) {
         guard let appURL = sender.representedObject as? URL else { return }
         let urls = actionRows().compactMap { row in
-            row < hits.count ? materializeHit(hits[row].path) : nil
+            row < hits.count ? materializeHit(hits[row]) : nil
         }
         guard !urls.isEmpty else { return }
         NSWorkspace.shared.open(urls, withApplicationAt: appURL,
@@ -796,7 +801,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     @objc func ctxReveal() {
         let urls = actionRows().compactMap { row in
-            row < hits.count ? materializeHit(hits[row].path) : nil
+            row < hits.count ? materializeHit(hits[row]) : nil
         }
         if !urls.isEmpty {
             NSWorkspace.shared.activateFileViewerSelecting(urls)

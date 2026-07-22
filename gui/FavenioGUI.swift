@@ -38,6 +38,7 @@ struct FavenioApp {
 // MARK: - Headless-Selbsttest
 
 func runSelfTest() -> Int32 {
+    defer { cleanupMaterializedHits() }
     guard findCLI() != nil else {
         print("SELFTEST FEHLER: favenio.py nicht gefunden")
         return 1
@@ -74,17 +75,47 @@ func runSelfTest() -> Int32 {
                                      root: tmp.path, content: true,
                                      regex: false, caseSensitive: true,
                                      archives: true) else { return 1 }
-    let hits = runSearchSync(arguments: args).hits
+    let hits = runSearchSync(arguments: args)
     guard hits.count == 2 else {
         print("SELFTEST FEHLER: \(hits.count) Treffer statt 2")
         return 1
     }
     guard let member = hits.first(where: { $0.isMember }),
-          let extracted = materializeHit(member.path),
+          let extracted = materializeHit(member),
+          materializeHit(member) == extracted,
           let content = try? String(contentsOf: extracted, encoding: .utf8),
           content.contains("FAVENIO_PROBE")
     else {
         print("SELFTEST FEHLER: Archiv-Extraktion fehlgeschlagen")
+        return 1
+    }
+    let tied = Hit(path: "/tmp/b/same.txt", kind: "file", line: 7,
+                   size: 42, filesystemPath: "/tmp/b/same.txt",
+                   archiveMembers: [])
+    let tiedEarlier = Hit(path: "/tmp/a/same.txt", kind: "file", line: 7,
+                          size: 42, filesystemPath: "/tmp/a/same.txt",
+                          archiveMembers: [])
+    for key in ["name", "type", "size", "line", "path"] {
+        for ascending in [true, false] {
+            guard !compareHits(tied, tied, key: key, ascending: ascending),
+                  !(compareHits(tied, tiedEarlier, key: key,
+                                ascending: ascending)
+                    && compareHits(tiedEarlier, tied, key: key,
+                                   ascending: ascending)) else {
+                print("SELFTEST FEHLER: Sortierordnung für \(key)")
+                return 1
+            }
+        }
+    }
+    do {
+        let handoff = try writeQuickHandoff(hits)
+        guard consumeQuickHandoff(handoff)?.count == hits.count,
+              !FileManager.default.fileExists(atPath: handoff.path) else {
+            print("SELFTEST FEHLER: Ergebnisübergabe nicht verbraucht")
+            return 1
+        }
+    } catch {
+        print("SELFTEST FEHLER: Ergebnisübergabe: \(error)")
         return 1
     }
     print("SELFTEST OK — Suche, Archiv-Extraktion und Sparkle-Anbindung "
@@ -93,6 +124,53 @@ func runSelfTest() -> Int32 {
 }
 
 // MARK: - Haupt-Controller
+
+final class ActiveSearchRun {
+    let process: Process
+    let pipe: Pipe
+    var lineBuffer = Data()
+    var reachedEOF = false
+    var terminationStatus: Int32?
+
+    init(process: Process, pipe: Pipe) {
+        self.process = process
+        self.pipe = pipe
+    }
+}
+
+func compareHits(_ lhs: Hit, _ rhs: Hit, key: String,
+                 ascending: Bool) -> Bool {
+    let primary: ComparisonResult
+    switch key {
+    case "size":
+        primary = (lhs.size ?? -1) < (rhs.size ?? -1) ? .orderedAscending
+            : (lhs.size ?? -1) > (rhs.size ?? -1) ? .orderedDescending
+            : .orderedSame
+    case "type":
+        primary = lhs.typeDescription.localizedCaseInsensitiveCompare(
+            rhs.typeDescription)
+    case "line":
+        primary = (lhs.line ?? -1) < (rhs.line ?? -1) ? .orderedAscending
+            : (lhs.line ?? -1) > (rhs.line ?? -1) ? .orderedDescending
+            : .orderedSame
+    case "path":
+        primary = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
+    default:
+        primary = lhs.displayName.localizedCaseInsensitiveCompare(
+            rhs.displayName)
+    }
+    if primary != .orderedSame {
+        return ascending ? primary == .orderedAscending
+                         : primary == .orderedDescending
+    }
+    // Deterministischer Tie-Breaker, unabhängig von der Sortierrichtung.
+    // Vollständig gleiche Treffer vergleichen in beiden Richtungen false.
+    let pathOrder = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
+    if pathOrder != .orderedSame { return pathOrder == .orderedAscending }
+    if lhs.kind != rhs.kind { return lhs.kind < rhs.kind }
+    if lhs.line != rhs.line { return (lhs.line ?? -1) < (rhs.line ?? -1) }
+    return false
+}
 
 final class MainController: NSObject, NSApplicationDelegate,
                             NSTableViewDataSource, NSTableViewDelegate,
@@ -132,8 +210,7 @@ final class MainController: NSObject, NSApplicationDelegate,
     var cachedFinderFolders: [String] = []   // Finder-Fenster (async geladen)
     var refreshingFinder = false
     var searchRoot = FileManager.default.homeDirectoryForCurrentUser
-    var searchProcess: Process?
-    var lineBuffer = Data()         // Restbytes einer angefangenen Zeile
+    var activeSearchRun: ActiveSearchRun?
     var flushTimer: Timer?
     var contextRow = -1             // Zeile, auf die der Rechtsklick ging
     var pendingURL: URL?            // favenio://-URL, die vor dem Fenster kam
@@ -245,7 +322,7 @@ final class MainController: NSObject, NSApplicationDelegate,
             rows = [tableView.clickedRow]
         }
         previewURLs = rows.compactMap { row in
-            row < hits.count ? materializeHit(hits[row].path) : nil
+            row < hits.count ? materializeHit(hits[row]) : nil
         }
     }
 
@@ -288,6 +365,7 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     func applicationWillTerminate(_ notification: Notification) {
         stopSearch()
+        cleanupMaterializedHits()
     }
 
     // ---------- URL-Schema (favenio://results?file=…&q=…&root=…) ----------
@@ -307,7 +385,9 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     func handleFavenioURL(_ url: URL) {
         guard let components = URLComponents(url: url,
-                                             resolvingAgainstBaseURL: false)
+                                             resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "favenio",
+              components.host?.lowercased() == "results"
         else { return }
         let items = components.queryItems ?? []
         func value(_ name: String) -> String? {
@@ -343,12 +423,12 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// Fertige Treffer (JSONL-Datei der Schnellsuche) direkt anzeigen —
     /// die Suche lief dort schon, hier wird nichts doppelt gesucht.
     func loadResults(from file: URL) {
-        guard let raw = try? Data(contentsOf: file) else {
-            statusLabel.stringValue = "Ergebnisdatei nicht lesbar: \(file.path)"
+        guard let loaded = consumeQuickHandoff(file) else {
+            statusLabel.stringValue = "Ungültige oder zu große Ergebnisübergabe."
             return
         }
         stopSearch()
-        hits = raw.split(separator: 0x0A).compactMap { parseHit(Data($0)) }
+        hits = loaded
         pending = []
         tableView.reloadData()
         statusLabel.stringValue = "\(hits.count) Treffer (aus Schnellsuche)."
@@ -733,9 +813,10 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// `seenPaths` nicht doppelt gelistet.
     func continueSearch(from file: URL) {
         stopSearch()
-        let seed = (try? Data(contentsOf: file)).map {
-            $0.split(separator: 0x0A).compactMap { parseHit(Data($0)) }
-        } ?? []
+        guard let seed = consumeQuickHandoff(file) else {
+            statusLabel.stringValue = "Ungültige oder zu große Ergebnisübergabe."
+            return
+        }
         hits = seed
         pending = []
         seenPaths = Set(seed.map { $0.path })
@@ -776,26 +857,44 @@ final class MainController: NSObject, NSApplicationDelegate,
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        lineBuffer = Data()
+        let run = ActiveSearchRun(process: process, pipe: pipe)
+        activeSearchRun = run
 
         // Treffer kommen zeilenweise über die Pipe herein (Hintergrund-
         // Thread) und werden auf dem Main-Thread eingesammelt.
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        pipe.fileHandleForReading.readabilityHandler = { [weak self, weak run]
+                                                          handle in
+            guard let run else { return }
             let data = handle.availableData
             if data.isEmpty {                    // EOF
                 handle.readabilityHandler = nil
+                DispatchQueue.main.async {
+                    guard let self, self.activeSearchRun === run else { return }
+                    run.reachedEOF = true
+                    self.finishSearchRunIfReady(run)
+                }
                 return
             }
-            DispatchQueue.main.async { self?.consume(data) }
+            DispatchQueue.main.async {
+                guard let self, self.activeSearchRun === run else { return }
+                self.consume(data, for: run)
+            }
         }
-        process.terminationHandler = { [weak self] _ in
-            DispatchQueue.main.async { self?.searchFinished() }
+        process.terminationHandler = { [weak self, weak run] process in
+            guard let run else { return }
+            DispatchQueue.main.async {
+                guard let self, self.activeSearchRun === run else { return }
+                run.terminationStatus = process.terminationStatus
+                self.finishSearchRunIfReady(run)
+            }
         }
         do { try process.run() } catch {
+            activeSearchRun = nil
+            pipe.fileHandleForReading.readabilityHandler = nil
+            process.terminationHandler = nil
             statusLabel.stringValue = "Suche ließ sich nicht starten: \(error.localizedDescription)"
             return
         }
-        searchProcess = process
         stopButton.isEnabled = true
         statusLabel.stringValue = "Suche läuft…"
         // Die Tabelle nicht bei jedem einzelnen Treffer neu laden,
@@ -807,8 +906,11 @@ final class MainController: NSObject, NSApplicationDelegate,
     }
 
     func stopSearch() {
-        searchProcess?.terminate()
-        searchProcess = nil
+        let run = activeSearchRun
+        activeSearchRun = nil
+        run?.pipe.fileHandleForReading.readabilityHandler = nil
+        run?.process.terminationHandler = nil
+        if run?.process.isRunning == true { run?.process.terminate() }
         flushTimer?.invalidate()
         flushTimer = nil
         stopButton.isEnabled = false
@@ -816,30 +918,34 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     /// Klick auf den Stopp-Button: laufende Suche abbrechen.
     @objc func stopSearchClicked() {
-        guard searchProcess != nil else { return }
+        guard activeSearchRun != nil else { return }
         stopSearch()
         flushPending()
         statusLabel.stringValue = "Suche gestoppt — \(hits.count) Treffer."
     }
 
     /// Rohbytes aus der Pipe in Zeilen zerlegen und als Hits vormerken.
-    func consume(_ data: Data) {
-        lineBuffer.append(data)
-        while let newline = lineBuffer.firstIndex(of: 0x0A) {
-            let lineData = lineBuffer.subdata(
-                in: lineBuffer.startIndex..<newline)
-            lineBuffer.removeSubrange(lineBuffer.startIndex...newline)
-            // Fortschritt (welcher Ordner/welches Archiv gerade dran ist)
-            // wie in der Schnellsuche laufend anzeigen.
-            if let path = parseProgress(lineData) {
-                statusLabel.stringValue = "\(hits.count) Treffer — durchsuche "
-                    + abbreviateHome(path)
-            } else if let hit = parseHit(lineData),
-                      seenPaths.insert(hit.path).inserted {
-                // Schon gezeigte Pfade (z. B. die aus der Schnellsuche
-                // übernommenen 20) nicht erneut auflisten.
-                pending.append(hit)
-            }
+    func consume(_ data: Data, for run: ActiveSearchRun) {
+        run.lineBuffer.append(data)
+        while let newline = run.lineBuffer.firstIndex(of: 0x0A) {
+            let lineData = run.lineBuffer.subdata(
+                in: run.lineBuffer.startIndex..<newline)
+            run.lineBuffer.removeSubrange(run.lineBuffer.startIndex...newline)
+            consumeSearchLine(lineData)
+        }
+    }
+
+    func consumeSearchLine(_ lineData: Data) {
+        // Fortschritt (welcher Ordner/welches Archiv gerade dran ist)
+        // wie in der Schnellsuche laufend anzeigen.
+        if let path = parseProgress(lineData) {
+            statusLabel.stringValue = "\(hits.count) Treffer — durchsuche "
+                + abbreviateHome(path)
+        } else if let hit = parseHit(lineData),
+                  seenPaths.insert(hit.path).inserted {
+            // Schon gezeigte Pfade (z. B. die aus der Schnellsuche
+            // übernommenen 20) nicht erneut auflisten.
+            pending.append(hit)
         }
     }
 
@@ -864,15 +970,27 @@ final class MainController: NSObject, NSApplicationDelegate,
         statusLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
     }
 
-    func searchFinished() {
+    func finishSearchRunIfReady(_ run: ActiveSearchRun) {
+        guard activeSearchRun === run, run.reachedEOF,
+              let status = run.terminationStatus else { return }
+        if !run.lineBuffer.isEmpty {
+            consumeSearchLine(run.lineBuffer)
+            run.lineBuffer.removeAll()
+        }
         flushPending()
         flushTimer?.invalidate()
         flushTimer = nil
-        searchProcess = nil
+        run.pipe.fileHandleForReading.readabilityHandler = nil
+        run.process.terminationHandler = nil
+        activeSearchRun = nil
         stopButton.isEnabled = false
-        statusLabel.stringValue = hits.isEmpty
-            ? "Keine Treffer."
-            : "\(hits.count) Treffer."
+        if status == 2 {
+            statusLabel.stringValue = "Suche fehlgeschlagen."
+        } else {
+            statusLabel.stringValue = hits.isEmpty
+                ? "Keine Treffer."
+                : "\(hits.count) Treffer."
+        }
     }
 
     // ---------- Tabelle ----------
@@ -943,25 +1061,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         guard let descriptor = tableView.sortDescriptors.first,
               let key = descriptor.key else { return }
         let ascending = descriptor.ascending
-        hits.sort { lhs, rhs in
-            let result: Bool
-            switch key {
-            case "size":
-                result = (lhs.size ?? -1) < (rhs.size ?? -1)
-            case "type":
-                result = lhs.typeDescription.localizedCaseInsensitiveCompare(
-                    rhs.typeDescription) == .orderedAscending
-            case "line":
-                result = (lhs.line ?? -1) < (rhs.line ?? -1)
-            case "path":
-                result = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
-                    == .orderedAscending
-            default:   // "name"
-                result = lhs.displayName.localizedCaseInsensitiveCompare(
-                    rhs.displayName) == .orderedAscending
-            }
-            return ascending ? result : !result
-        }
+        hits.sort { compareHits($0, $1, key: key, ascending: ascending) }
     }
 
     /// Drag & Drop: die gezogene Zeile liefert eine Datei-URL —
@@ -969,7 +1069,7 @@ final class MainController: NSObject, NSApplicationDelegate,
     func tableView(_ tableView: NSTableView,
                    pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
         guard row < hits.count,
-              let url = materializeHit(hits[row].path) else { return nil }
+              let url = materializeHit(hits[row]) else { return nil }
         return url as NSURL
     }
 
@@ -992,7 +1092,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         let row = tableView.clickedRow
         let rows = row >= 0 ? [row] : actionRows()
         for row in rows where row < hits.count {
-            if let url = materializeHit(hits[row].path) {
+            if let url = materializeHit(hits[row]) {
                 NSWorkspace.shared.open(url)
             } else {
                 statusLabel.stringValue =
@@ -1053,7 +1153,7 @@ final class MainController: NSObject, NSApplicationDelegate,
     @objc func ctxOpenWith(_ sender: NSMenuItem) {
         guard let appURL = sender.representedObject as? URL else { return }
         let urls = actionRows().compactMap { row in
-            row < hits.count ? materializeHit(hits[row].path) : nil
+            row < hits.count ? materializeHit(hits[row]) : nil
         }
         guard !urls.isEmpty else { return }
         NSWorkspace.shared.open(urls, withApplicationAt: appURL,
@@ -1064,7 +1164,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         // Für Archiv-Einträge zeigt das die ausgepackte Temp-Kopie —
         // das ist genau die Datei, die man beim Öffnen/Ziehen bekommt.
         let urls = actionRows().compactMap { row in
-            row < hits.count ? materializeHit(hits[row].path) : nil
+            row < hits.count ? materializeHit(hits[row]) : nil
         }
         if !urls.isEmpty {
             NSWorkspace.shared.activateFileViewerSelecting(urls)
