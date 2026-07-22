@@ -218,5 +218,4 @@ Favenio.app/Contents/MacOS/Favenio --selftest
 FavenioQuick.app/Contents/MacOS/FavenioQuick --selftest
 
 echo "Fertig: Favenio.app + FavenioQuick.app $VERSION im Projektverzeichnis"
-echo "Keine Installation durchgeführt. Releases ausschließlich aus dem " \
-     "notarisierten DMG installieren."
+echo "Keine Installation durchgeführt. Releases nur aus dem notarisierten DMG installieren."

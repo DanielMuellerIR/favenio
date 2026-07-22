@@ -96,9 +96,11 @@ python3 -m unittest discover -s tests
 
 Der zweite Lauf ist wichtig: Die gebauten Apps verwenden den macOS-System-
 Interpreter, dessen Verhalten vom Python der Login-Shell abweichen kann.
-`build-app.sh` baut beide Bundles, kopiert Python-Kern und Icons, signiert ad hoc,
-führt den Headless-Selbsttest aus und installiert die Apps. Eine Installation
-ersetzt weder einen Test noch einen Commit.
+`build-app.sh` baut beide Bundles im Projektverzeichnis, kopiert Python-Kern und
+Icons, signiert je nach verfügbarer Identität und führt die Headless-Selbsttests
+aus. Es installiert niemals nach `/Applications`; dafür ist ausschließlich ein
+fertig signiertes, notarisiertes und von Gatekeeper akzeptiertes Release-DMG
+vorgesehen. Eine Installation ersetzt weder einen Test noch einen Commit.
 
 Neue Kernfunktionen benötigen Unit-Tests mit temporären Fixtures. Das bestehende
 Fixture deckt normale Dateien, versteckte Dateien, Zip, Tar, verschachtelte Zip-

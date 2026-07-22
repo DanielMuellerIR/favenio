@@ -393,6 +393,10 @@ final class MainController: NSObject, NSApplicationDelegate,
         func value(_ name: String) -> String? {
             items.first { $0.name == name }?.value
         }
+        guard let filePath = value("file"),
+              validatedQuickHandoff(URL(fileURLWithPath: filePath)) != nil,
+              (value("q")?.utf8.count ?? 0) <= 4096,
+              (value("root")?.utf8.count ?? 0) <= 4096 else { return }
         if let query = value("q") { searchField.stringValue = query }
         if let root = value("root") {
             setSearchRoot(URL(fileURLWithPath: root))
@@ -408,15 +412,13 @@ final class MainController: NSObject, NSApplicationDelegate,
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        if let file = value("file") {
-            if value("continue") == "1" {
-                // Schnellsuche hat bei 20 Treffern übergeben: die 20 sofort
-                // zeigen und die Suche hier live fortsetzen (weitere Treffer
-                // kommen hinzu, die 20 werden dabei nicht doppelt gelistet).
-                continueSearch(from: URL(fileURLWithPath: file))
-            } else {
-                loadResults(from: URL(fileURLWithPath: file))
-            }
+        if value("continue") == "1" {
+            // Schnellsuche hat bei 20 Treffern übergeben: die 20 sofort
+            // zeigen und die Suche hier live fortsetzen (weitere Treffer
+            // kommen hinzu, die 20 werden dabei nicht doppelt gelistet).
+            continueSearch(from: URL(fileURLWithPath: filePath))
+        } else {
+            loadResults(from: URL(fileURLWithPath: filePath))
         }
     }
 
@@ -812,11 +814,11 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// hier LIVE fortsetzen. Die schon gezeigten Treffer werden über
     /// `seenPaths` nicht doppelt gelistet.
     func continueSearch(from file: URL) {
-        stopSearch()
         guard let seed = consumeQuickHandoff(file) else {
             statusLabel.stringValue = "Ungültige oder zu große Ergebnisübergabe."
             return
         }
+        stopSearch()
         hits = seed
         pending = []
         seenPaths = Set(seed.map { $0.path })

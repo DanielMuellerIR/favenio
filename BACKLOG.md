@@ -13,6 +13,11 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Positionsargumenten funktioniert es. Der Wart ist alt, schon v0.14.0 zeigt
    ihn. Entweder Parsing umbauen oder die Reihenfolge in beiden READMEs
    festschreiben.
+5. ZIP-CRC nach frühem Inhaltstreffer als Produktentscheidung klären. Das neue
+   Archiv-Streaming beendet das Lesen absichtlich beim ersten Treffer; Python
+   prüft die CRC eines `ZipExtFile` jedoch erst am Dateiende. Vollständiges
+   Drainen würde den Early-Exit-Vorteil aufheben und muss weiterhin innerhalb
+   der Archivbudgets bleiben.
 Nicht offen: der frühere Finder-Ordner-Fehler; `osascript` als Unterprozess ist
 die verifizierte Lösung und eine Dauerregel.
 

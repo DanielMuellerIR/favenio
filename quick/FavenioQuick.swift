@@ -617,8 +617,16 @@ final class QuickController: NSObject, NSApplicationDelegate,
                                    "--results-file", resultsFile.path]
         NSWorkspace.shared.openApplication(at: appURL,
                                            configuration: configuration) {
-            _, _ in
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+            _, error in
+            DispatchQueue.main.async {
+                if error == nil {
+                    NSApp.terminate(nil)
+                } else {
+                    try? FileManager.default.removeItem(at: resultsFile)
+                    self.infoLabel.stringValue =
+                        "Favenio.app konnte nicht gestartet werden."
+                }
+            }
         }
     }
 

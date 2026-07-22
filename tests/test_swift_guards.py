@@ -34,6 +34,16 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn("Data(contentsOf:", GUI)
         self.assertIn('components.scheme?.lowercased() == "favenio"', GUI)
         self.assertIn('components.host?.lowercased() == "results"', GUI)
+        handler = GUI[
+            GUI.index("func handleFavenioURL"):
+            GUI.index("func loadResults")
+        ]
+        self.assertLess(
+            handler.index("validatedQuickHandoff(URL(fileURLWithPath: filePath))"),
+            handler.index("searchField.stringValue = query"),
+        )
+        self.assertIn("let resultsFile: URL", QUICK)
+        self.assertIn("try writeQuickHandoff(hits)", QUICK)
 
     def test_streaming_core_does_not_collect_duplicate_results(self):
         self.assertNotIn("var hitsRaw", COMMON)

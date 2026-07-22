@@ -15,6 +15,9 @@
   Beenden aus einem app-eigenen Temp-Root entfernt.
 - Quick-Handoffs werden atomar mit Besitzer- und Größenprüfung geschrieben,
   begrenzt gestreamt gelesen und nach jedem Verbrauch gelöscht.
+- Swift-Streaming liefert Treffer nur noch per Callback statt sie zusätzlich
+  als zweite Treffer- und JSONL-Kopie im Speicher zu sammeln; der wirkungslose
+  Python-Fehlerzustand wurde entfernt.
 - Der Sortier-Comparator ist auch absteigend bei Gleichständen strikt.
 - `build-app.sh` baut und testet ausschließlich im Repository. Nur das fertig
   signierte, gestapelte und von Gatekeeper akzeptierte Release-DMG ist für eine
