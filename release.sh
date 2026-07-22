@@ -165,6 +165,10 @@ codesign --force --timestamp --sign "$SIGN_ID" "$DMG_PATH"
 xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
 xcrun stapler staple "$DMG_PATH"
 xcrun stapler validate "$DMG_PATH"
+# Gatekeeper muss genau das fertig signierte und gestapelte Artefakt akzeptieren.
+# Erst dieses DMG darf der Nutzer anschließend bewusst nach /Applications
+# installieren; Build und Release selbst verändern /Applications nie.
+spctl --assess --type open --context context:primary-signature -v "$DMG_PATH"
 
 echo "────────────────────────────────────────────"
 echo "RELEASE OK: $DMG_PATH"

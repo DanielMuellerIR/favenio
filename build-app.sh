@@ -5,9 +5,9 @@
 #
 # Beide Bundles bekommen eine Kopie von favenio.py in ihre Resources —
 # der Python-Kern ist der einzige Suchmotor, die Apps sind nur Frontends.
-# Am Ende laufen der Headless-Selbsttest und die Installation beider Apps
-# nach /Applications. So aktualisiert jedes abgeschlossene App-Todo auch
-# automatisch die tatsächlich gestarteten Bundles.
+# Am Ende läuft der Headless-Selbsttest. Die Bundles bleiben bewusst im
+# Projektverzeichnis: Ein Build ist keine Installation und darf eine
+# notarisierten Produktinstallation unter /Applications niemals ersetzen.
 #
 # Aufruf:  ./build-app.sh
 #
@@ -213,22 +213,10 @@ embed_sparkle_and_licenses FavenioQuick.app
 codesign "${APP_SIGN[@]}" FavenioQuick.app
 codesign --verify --deep --strict FavenioQuick.app
 
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-
 echo "== Headless-Selbsttest =="
 Favenio.app/Contents/MacOS/Favenio --selftest
 FavenioQuick.app/Contents/MacOS/FavenioQuick --selftest
 
-echo "== Installation nach /Applications =="
-# ditto ersetzt vorhandene Bundles vollständig und erhält die für macOS
-# erforderliche Bundle-Struktur. Vorher laufende Instanzen werden beendet,
-# damit beim nächsten Klick sicher die neue Version startet.
-pkill -x Favenio 2>/dev/null || true
-pkill -x FavenioQuick 2>/dev/null || true
-rm -rf /Applications/Favenio.app /Applications/FavenioQuick.app
-ditto Favenio.app /Applications/Favenio.app
-ditto FavenioQuick.app /Applications/FavenioQuick.app
-"$LSREGISTER" -f /Applications/Favenio.app || true
-"$LSREGISTER" -f /Applications/FavenioQuick.app || true
-
-echo "Fertig: Favenio.app + FavenioQuick.app $VERSION in /Applications"
+echo "Fertig: Favenio.app + FavenioQuick.app $VERSION im Projektverzeichnis"
+echo "Keine Installation durchgeführt. Releases ausschließlich aus dem " \
+     "notarisierten DMG installieren."
