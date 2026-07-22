@@ -23,6 +23,8 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("let filesystemPath: String", COMMON)
         self.assertIn("let archiveMembers: [String]", COMMON)
         self.assertIn("private var cache: [Hit: URL]", COMMON)
+        self.assertIn('"Favenio-\\(UUID().uuidString)"', COMMON)
+        self.assertNotIn('"Favenio-(UUID().uuidString)"', COMMON)
         self.assertIn("func cleanupMaterializedHits()", COMMON)
         self.assertNotIn('path.contains("!/")', COMMON)
 

@@ -309,7 +309,7 @@ final class MaterializationManager {
     private func materializationRoot() -> URL? {
         if let root { return root }
         let candidate = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Favenio-(UUID().uuidString)",
+            .appendingPathComponent("Favenio-\(UUID().uuidString)",
                                     isDirectory: true)
         do {
             try FileManager.default.createDirectory(
