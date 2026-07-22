@@ -13,12 +13,6 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Positionsargumenten funktioniert es. Der Wart ist alt, schon v0.14.0 zeigt
    ihn. Entweder Parsing umbauen oder die Reihenfolge in beiden READMEs
    festschreiben.
-5. Echtes Streaming aus Archiven prüfen: `visit_member()` bekommt heute die
-   fertigen Bytes, obwohl `tarfile.extractfile()` und `ZipFile.open()` einen
-   Strom liefern. Nutzen nur bei sehr großen Einträgen; Haken ist, dass
-   `ZipFile.open()` die CRC erst am Stromende prüft — mit Early-Exit liefe
-   ein kaputter Eintrag dann still durch statt zu warnen.
-
 Nicht offen: der frühere Finder-Ordner-Fehler; `osascript` als Unterprozess ist
 die verifizierte Lösung und eine Dauerregel.
 

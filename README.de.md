@@ -41,8 +41,12 @@ keinen Updater; 0.14.0 muss deshalb einmalig über das DMG installiert werden.
 Alternativ selbst bauen:
 
 ```bash
-./build-app.sh    # baut, testet und installiert beide Apps nach /Applications
+./build-app.sh    # baut und testet beide Apps im Repository
 ```
+
+Quell-Builds können nur ad hoc signiert sein und werden nie automatisch
+installiert. Eine notarisierte Installation nicht damit ersetzen; Releases nur
+aus dem signierten, notarisierten und von Gatekeeper akzeptierten DMG installieren.
 
 ## Schnellstart (CLI)
 
@@ -80,7 +84,9 @@ Bei Inhaltssuche hängt `:N` die Zeilennummer des ersten Treffers an.
 Favenio ist bewusst maschinenfreundlich gebaut:
 
 - **`--json`**: Ein Treffer pro Zeile als JSON-Objekt (JSONL), etwa
-  `{"path": "...", "type": "file|dir|member", "line": 2}`
+  `{"path": "...", "type": "member", "filesystemPath": "/tmp/a.zip", "archiveMembers": ["innen.txt"], "line": 2}`.
+  `path` bleibt die menschenlesbare Darstellung; Automation sollte die
+  eindeutigen strukturierten Felder verwenden.
 - **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,
   `2` = Fehler (ungültiger Regex, Pfad fehlt)
 - **Warnungen** (unlesbare Dateien, kaputte Archive) gehen nach stderr;
@@ -99,11 +105,15 @@ Favenio ist bewusst maschinenfreundlich gebaut:
 | `-s`, `--case-sensitive` | Groß-/Kleinschreibung beachten |
 | `--no-archives` | nicht in Archive hineinschauen |
 | `--archive-depth N` | Verschachtelungstiefe (Default 1) |
+| `--max-archive-member-bytes BYTES` | maximal gelesene entpackte Bytes pro Archivmitglied |
+| `--max-archive-total-bytes BYTES` | maximal gelesene entpackte Archivbytes pro Suchlauf |
+| `--max-archive-ratio FAKTOR` | maximales ZIP-Kompressionsverhältnis |
 | `--only both\|files\|dirs` | Treffer auf Dateien, Ordner oder beides (Default) begrenzen |
 | `--hidden` | unsichtbare (Punkt-)Dateien und -Ordner mitdurchsuchen |
 | `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` = Bytes) |
 | `--progress` | laufend melden, wo gerade gesucht wird (mit `--json` als JSONL-Objekte, sonst auf stderr) |
 | `--extract TREFFER` | Treffer-Pfad (`!/`-Notation) in einen Temp-Ordner auspacken und den nutzbaren Pfad ausgeben |
+| `--extract-json JSON` | einen eindeutigen strukturierten JSON-Treffer auspacken |
 | `--version` | Version anzeigen |
 
 ## Suchmodi — und wie man z. B. nur `.md`-Dateien findet
@@ -131,8 +141,9 @@ EasyFind-artige Oberfläche: Suchfeld, Ordnerwahl, Optionen, Trefferliste.
 
 Aus der Trefferliste heraus:
 
-- **Doppelklick**: Öffnet die Datei. Archiv-Einträge werden vorher
-  automatisch in einen Temp-Ordner ausgepackt (`--extract`)
+- **Doppelklick**: Öffnet die Datei. Archiv-Einträge werden einmal in einen
+  app-eigenen Temp-Ordner ausgepackt und für Vorschau, Öffnen, Finder und Ziehen
+  wiederverwendet
 - **Rechtsklick**: Öffnen / **Öffnen mit…** (alle passenden Apps) /
   Im Finder zeigen / Pfad kopieren
 - **Drag & Drop**: Treffer in den Finder oder andere Apps ziehen.
@@ -162,10 +173,12 @@ Einmal erlauben genügt.
 
 ```bash
 python3 -m unittest discover -s tests            # Unit-Tests (Kern)
+/usr/bin/python3 -m unittest discover -s tests   # Interpreter der Apps
 Favenio.app/Contents/MacOS/Favenio --selftest    # Headless-GUI-Anbindung
 ```
 
-`build-app.sh` führt den Selbsttest nach jedem Build automatisch aus.
+`build-app.sh` führt nach jedem Build beide App-Selbsttests aus und lässt die
+Bundles im Repository. Release-Änderungen stehen in [CHANGELOG.md](CHANGELOG.md).
 
 ## Lizenz
 

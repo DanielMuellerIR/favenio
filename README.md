@@ -41,8 +41,12 @@ updater, so 0.14.0 must be installed once from the DMG.
 Building from source instead:
 
 ```bash
-./build-app.sh    # builds, tests and installs both apps to /Applications
+./build-app.sh    # builds and tests both apps in the repository
 ```
+
+Source builds may be ad-hoc signed and are never installed automatically.
+Do not replace a notarized installation with them; install releases only from
+the signed, notarized and Gatekeeper-accepted DMG.
 
 ## Quick start (CLI)
 
@@ -80,7 +84,9 @@ For content search, `:N` appends the line number of the first match.
 Favenio is deliberately machine-friendly:
 
 - **`--json`**: one hit per line as a JSON object (JSONL), e.g.
-  `{"path": "...", "type": "file|dir|member", "line": 2}`
+  `{"path": "...", "type": "member", "filesystemPath": "/tmp/a.zip", "archiveMembers": ["inside.txt"], "line": 2}`.
+  `path` remains the human-readable representation; automation should use the
+  unambiguous structured fields.
 - **Exit codes** as with grep: `0` = hits, `1` = no hits,
   `2` = error (invalid regex, missing path)
 - **Warnings** (unreadable files, broken archives) go to stderr;
@@ -99,11 +105,15 @@ Favenio is deliberately machine-friendly:
 | `-s`, `--case-sensitive` | match case-sensitively |
 | `--no-archives` | do not look inside archives |
 | `--archive-depth N` | nesting depth (default 1) |
+| `--max-archive-member-bytes BYTES` | maximum uncompressed bytes read per archive member |
+| `--max-archive-total-bytes BYTES` | maximum uncompressed archive bytes read per search |
+| `--max-archive-ratio FACTOR` | maximum ZIP compression ratio |
 | `--only both\|files\|dirs` | limit hits to files, directories or both (default) |
 | `--hidden` | include hidden (dot) files and directories |
 | `--json` | JSONL output for scripts/agents (includes `size` in bytes) |
 | `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
 | `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |
+| `--extract-json JSON` | extract an unambiguous structured JSON hit |
 | `--version` | show version |
 
 ## Search modes — and how to find only `.md` files
@@ -131,8 +141,8 @@ EasyFind-style interface: search field, folder picker, options, results list.
 
 From the results list:
 
-- **Double-click**: opens the file. Archive members are extracted to a temp
-  folder first (`--extract`)
+- **Double-click**: opens the file. Archive members are extracted once into an
+  app-owned temporary folder and reused by preview, open, reveal and drag
 - **Right-click**: Open / **Open With…** (all matching apps) /
   Show in Finder / Copy path
 - **Drag & drop**: drag hits into Finder or other apps. This also works for
@@ -159,10 +169,13 @@ to Desktop and Documents (TCC). Allowing it once is enough.
 
 ```bash
 python3 -m unittest discover -s tests            # unit tests (core)
+/usr/bin/python3 -m unittest discover -s tests   # app runtime interpreter
 Favenio.app/Contents/MacOS/Favenio --selftest    # headless GUI wiring
 ```
 
-`build-app.sh` runs the self-test automatically after every build.
+`build-app.sh` runs both app self-tests automatically after every build and
+leaves the resulting bundles in the repository. See [CHANGELOG.md](CHANGELOG.md)
+for release changes.
 
 ## License
 
