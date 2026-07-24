@@ -18,6 +18,24 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    prüft die CRC eines `ZipExtFile` jedoch erst am Dateiende. Vollständiges
    Drainen würde den Early-Exit-Vorteil aufheben und muss weiterhin innerhalb
    der Archivbudgets bleiben.
+## Niedrigprior (Code-Review-Triage 2026-07-24)
+
+Aus der Review-Triage vom 2026-07-24 (Quelle: MiniMax-Review, von Opus
+verifiziert). Kosmetik und bewusste Tradeoffs, keine Bugs.
+
+- `common/FavenioCore.swift` (~344–360): Materialisierung liest die
+  Unterprozess-Ausgabe synchron auf dem Main-Thread (`readDataToEndOfFile`).
+  Bewusster Tradeoff — entweder als solchen kommentieren oder später auf
+  `Task.detached` umstellen.
+- `quick/FavenioQuick.swift` (~362–372): Fällt ein zuvor gewählter
+  Finder-Ordner aus der neu gebauten Liste, springt die Auswahl kommentarlos
+  auf Index 0. Stillen Reset entweder bewusst dokumentieren oder abfangen.
+- `favenio.py` (~516–528, `walk_tar`): Die Kompressions-Ratio-Heuristik greift
+  nur bei ZIP; für TAR schützen allein die Byte-Budgets (per-Member-Ratio bei
+  tar nicht ermittelbar). Klarstellenden Kommentar ergänzen.
+- `favenio.py:583`: Ungenutzte Schleifenvariable `index` durch `_` ersetzen
+  (reine Kosmetik, beim nächsten Anfassen miterledigen).
+
 Nicht offen: der frühere Finder-Ordner-Fehler; `osascript` als Unterprozess ist
 die verifizierte Lösung und eine Dauerregel.
 
