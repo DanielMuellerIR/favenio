@@ -159,15 +159,35 @@ gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
 
 - Ein Klick aufs Icon öffnet ein kleines schwebendes Suchfeld
   (kein Dock-Icon)
-- **Return** startet die Namenssuche im Benutzerordner (inkl. Archive)
+- **Return** startet die Namenssuche (inkl. Archive) in dem Suchbereich, der
+  neben dem Feld steht — voreingestellt ist der Ordner des vordersten
+  Finder-Fensters
 - Bei Treffern öffnet sich die große GUI mit der fertigen Liste
   (die Treffer werden übergeben, es wird nicht doppelt gesucht);
   ohne Treffer bleibt nur das kleine Feld mit einer Meldung
 - **Esc** (bei leerem Feld) beendet die Schnellsuche
 
+Der Suchbereich wird nie stillschweigend geraten. Solange der Finder befragt
+wird, sagt das Menü das, und eine Suche wartet kurz, statt anderswo zu starten.
+Lässt sich der Ordner nicht ermitteln — Automation verweigert, kein
+Finder-Fenster offen, Finder antwortet nicht —, wird der Grund gezeigt und der
+tatsächlich durchsuchte Ordner benannt.
+
 Hinweis: Beim ersten Suchlauf über den Benutzerordner fragt macOS
 unter Umständen nach Zugriff auf Schreibtisch und Dokumente (TCC).
-Einmal erlauben genügt.
+Einmal erlauben genügt. Den Finder nach dem aktuellen Ordner zu fragen braucht
+eine eigene Freigabe (Systemeinstellungen → Datenschutz & Sicherheit →
+Automation).
+
+Was die Apps erkennen, zeigt ohne jedes Fenster:
+
+```bash
+FavenioQuick.app/Contents/MacOS/FavenioQuick --finder-scope
+```
+
+Eine JSON-Zeile mit den erkannten Ordnern (vorderstes Fenster zuerst).
+Exit-Code 0 = Ordner ermittelt, 1 = kein Finder-Fenster, 2 = Fehler
+(auch verweigerter Zugriff).
 
 ## Tests
 

@@ -27,6 +27,10 @@ struct FavenioApp {
         if CommandLine.arguments.contains("--selftest") {
             exit(runSelfTest())
         }
+        // Headless-Diagnose: was sieht DIESES Bundle beim Finder wirklich?
+        if CommandLine.arguments.contains("--finder-scope") {
+            runFinderScopeDiagnostic()
+        }
         let app = NSApplication.shared
         let controller = MainController()
         app.delegate = controller
@@ -209,6 +213,10 @@ final class MainController: NSObject, NSApplicationDelegate,
     var seenPaths = Set<String>()   // schon gezeigte Pfade → keine Doppelten
     var cachedFinderFolders: [String] = []   // Finder-Fenster (async geladen)
     var refreshingFinder = false
+    // Warum die Finder-Fenster fehlen (verweigerte Automation, kein Fenster,
+    // Zeitüberschreitung). Steht im Ordner-Menü, statt kommentarlos zu fehlen.
+    var finderScopeProblem: String?
+    var finderScopeDenied = false
     var searchRoot = FileManager.default.homeDirectoryForCurrentUser
     var activeSearchRun: ActiveSearchRun?
     var flushTimer: Timer?
@@ -628,11 +636,24 @@ final class MainController: NSObject, NSApplicationDelegate,
     func refreshFinderFoldersAsync() {
         guard !refreshingFinder else { return }
         refreshingFinder = true
-        finderWindowFoldersAsync { [weak self] folders in
-            self?.refreshingFinder = false
-            if !folders.isEmpty { self?.cachedFinderFolders = folders }
+        finderWindowFoldersAsync { [weak self] outcome in
+            guard let self else { return }
+            self.refreshingFinder = false
+            self.finderScopeProblem = outcome.problemText
+            if case .denied = outcome {
+                self.finderScopeDenied = true
+            } else {
+                self.finderScopeDenied = false
+            }
+            if case .folders(let folders) = outcome {
+                self.cachedFinderFolders = folders
+            }
         }
     }
+
+    /// Menüpunkt bei verweigerter Automation: direkt in die passende
+    /// Systemeinstellung springen.
+    @objc func openAutomationPrefs() { openAutomationSettings() }
 
     @objc func showFolderMenu() {
         // Für den nächsten Aufruf frisch laden, jetzt aber den Cache nehmen —
@@ -651,6 +672,21 @@ final class MainController: NSObject, NSApplicationDelegate,
             addFolderItem(to: menu, title: title, path: path)
         }
         if !windows.isEmpty { menu.addItem(.separator()) }
+        // Fehlen die Finder-Fenster, den Grund zeigen statt sie stumm
+        // wegzulassen — sonst wirkt der Benutzerordner wie eine bewusste Wahl.
+        if windows.isEmpty, let problem = finderScopeProblem {
+            let info = NSMenuItem(title: problem, action: nil, keyEquivalent: "")
+            info.isEnabled = false
+            menu.addItem(info)
+            if finderScopeDenied {
+                let fix = NSMenuItem(title: "Automatisierung erlauben…",
+                                     action: #selector(openAutomationPrefs),
+                                     keyEquivalent: "")
+                fix.target = self
+                menu.addItem(fix)
+            }
+            menu.addItem(.separator())
+        }
 
         // 2) Wichtige Ordner (feste, verständliche deutsche Namen).
         for (title, path) in commonFolders() {

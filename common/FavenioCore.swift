@@ -557,10 +557,67 @@ func maybePromptFullDiskAccess(appName: String) {
     }
 }
 
+/// Ergebnis der Finder-Abfrage. Eine leere Ordnerliste ist NICHT aussagekräftig
+/// genug: „kein Fenster offen" und „Automation verboten" führen beide zu null
+/// Ordnern, verlangen aber völlig verschiedene Reaktionen. Deshalb trägt jeder
+/// Fehlschlag hier seinen Grund mit; die Frontends dürfen ihn nicht verschlucken
+/// und stillschweigend im Benutzerordner suchen.
+enum FinderScopeOutcome {
+    case folders([String])   // mindestens ein Finder-Ordner, vorderster zuerst
+    case noWindow            // Finder erreichbar, aber kein Ordnerfenster offen
+    case denied              // Automations-Zugriff auf den Finder verweigert
+    case failed(String)      // Zeitüberschreitung oder anderer Fehler
+}
+
+extension FinderScopeOutcome {
+    /// Die ermittelten Ordner (bei jedem Fehlschlag leer).
+    var folders: [String] {
+        if case .folders(let folders) = self { return folders }
+        return []
+    }
+
+    /// Kurztext für die Oberfläche; `nil`, wenn alles geklappt hat.
+    /// Bewusst inklusive der Folge („Suchbereich bleibt …"), damit der Nutzer
+    /// nicht selbst raten muss, wo gerade gesucht wird.
+    var problemText: String? {
+        switch self {
+        case .folders:
+            return nil
+        case .noWindow:
+            return "Kein Finder-Fenster offen — Suchbereich manuell wählen."
+        case .denied:
+            return "Finder-Zugriff nicht erlaubt — Suchbereich manuell wählen "
+                 + "(Systemeinstellungen → Datenschutz & Sicherheit → "
+                 + "Automation)."
+        case .failed(let reason):
+            return "Finder-Ordner nicht ermittelbar (\(reason)) — Suchbereich "
+                 + "manuell wählen."
+        }
+    }
+
+    /// Maschinenlesbares Kürzel für die Diagnose auf der Kommandozeile.
+    var statusName: String {
+        switch self {
+        case .folders:  return "folders"
+        case .noWindow: return "no-window"
+        case .denied:   return "denied"
+        case .failed:   return "failed"
+        }
+    }
+}
+
+/// Öffnet die Automations-Freigabe in den Systemeinstellungen.
+func openAutomationSettings() {
+    if let url = URL(string: "x-apple.systempreferences:"
+        + "com.apple.preference.security?Privacy_Automation") {
+        NSWorkspace.shared.open(url)
+    }
+}
+
 /// Ermittelt die offenen Finder-Fenster (Ordner des vorderen Tabs),
 /// VORDERSTES zuerst — ASYNCHRON und ohne den Main-Thread zu blockieren.
-/// `completion` läuft auf dem Main-Thread; leere Liste = kein Fenster oder
-/// (noch) kein Automations-Zugriff.
+/// `completion` läuft auf dem Main-Thread und bekommt bei Fehlschlag den
+/// Grund mitgeliefert (siehe `FinderScopeOutcome`).
 ///
 /// WARUM per `osascript`-UNTERPROZESS (statt NSAppleScript im eigenen Prozess):
 /// Den Finder abzufragen ist ein Apple-Event, dessen Antwort der Apple-Event-
@@ -577,7 +634,9 @@ func maybePromptFullDiskAccess(appName: String) {
 /// die entgegengesetzte Handoff-Notiz („osascript scheidet aus") war falsch.
 /// (Finder-Tabs sind per AppleScript nicht einzeln adressierbar — pro Fenster
 /// kommt der Ordner des vorderen Tabs.)
-func finderWindowFoldersAsync(completion: @escaping ([String]) -> Void) {
+func finderWindowFoldersAsync(
+    completion: @escaping (FinderScopeOutcome) -> Void
+) {
     // Hintergrund-Thread nur, damit das Starten/Warten des Unterprozesses den
     // Main-Thread nicht anfasst; die eigentliche Apple-Event-Arbeit macht
     // osascript in seinem eigenen Prozess.
@@ -589,60 +648,153 @@ func finderWindowFoldersAsync(completion: @escaping ([String]) -> Void) {
         // `text item delimiters` ist eine AppleScript-Eigenschaft und muss
         // AUSSERHALB des `tell application "Finder"`-Blocks gesetzt werden —
         // sonst versucht AppleScript, sie am Finder zu setzen (Fehler -10006).
+        //
+        // Die übrigen Fenster werden in EINEM Zug geholt
+        // (`target of every Finder window as alias list`), nicht in einer
+        // Schleife über die Fenster. Jeder Schleifendurchlauf wäre ein eigener
+        // Apple-Event; gemessen am 2026-07-25 mit 13 offenen Finder-Fenstern:
+        // Schleife 11,6 s, Bulk-Abfrage 0,19 s. Die Schleife lief damit
+        // regelmäßig in den Not-Aus unten — die App fiel auf den Benutzerordner
+        // zurück, während der Nutzer längst tippte. Diese Abfrage deshalb NICHT
+        // wieder auf eine Fenster-Schleife zurückbauen.
         let source = """
         set out to {}
+        set frontPath to ""
+        set targets to {}
         tell application "Finder"
             with timeout of 8 seconds
-                set frontPath to ""
                 try
                     set frontPath to POSIX path of (target of front window as alias)
                 end try
-                if frontPath is not "" then set end of out to frontPath
                 try
-                    repeat with w in Finder windows
-                        try
-                            set p to POSIX path of (target of w as alias)
-                            if p is not frontPath then set end of out to p
-                        end try
-                    end repeat
+                    set targets to target of every Finder window as alias list
                 end try
             end timeout
         end tell
+        if frontPath is not "" then set end of out to frontPath
+        repeat with t in targets
+            set p to POSIX path of t
+            if out does not contain p then set end of out to p
+        end repeat
         set text item delimiters to linefeed
         return out as text
         """
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", source]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        var folders: [String] = []
+        let outPipe = Pipe()
+        // stderr wird gelesen, NICHT verworfen: Nur dort steht, ob TCC den
+        // Apple-Event verboten hat (-1743/-1744) oder der Finder nicht
+        // antwortet (-1712). Ohne diesen Text bliebe jeder Fehlschlag stumm.
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+
+        var outcome: FinderScopeOutcome
         do {
             try process.run()
             // Not-Aus: klemmt osascript trotz AppleScript-Timeout, nach 12 s
-            // abbrechen — dann bleibt die Vorauswahl eben `~`, kein Hänger.
+            // abbrechen. Der Abbruch wird gemeldet, nicht stillschweigend zu
+            // „keine Ordner" gemacht.
+            let killed = Atomic(false)
             let killer = DispatchWorkItem {
-                if process.isRunning { process.terminate() }
+                if process.isRunning { killed.set(true); process.terminate() }
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + 12, execute: killer)
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            // Beide Pipes gleichzeitig leeren: Läuft stderr voll, während wir
+            // nur stdout lesen, blockiert der Unterprozess.
+            let group = DispatchGroup()
+            let out = Atomic(Data())
+            let err = Atomic(Data())
+            DispatchQueue.global().async(group: group) {
+                out.set(outPipe.fileHandleForReading.readDataToEndOfFile())
+            }
+            DispatchQueue.global().async(group: group) {
+                err.set(errPipe.fileHandleForReading.readDataToEndOfFile())
+            }
+            group.wait()
             process.waitUntilExit()
             killer.cancel()
-            if process.terminationStatus == 0,
-               let text = String(data: data, encoding: .utf8) {
-                for var line in text.split(separator: "\n", omittingEmptySubsequences: true)
-                                    .map(String.init) {
-                    // „als alias" liefert Ordner mit Schluss-Schrägstrich.
-                    if line.count > 1 && line.hasSuffix("/") { line.removeLast() }
-                    if !line.isEmpty { folders.append(line) }
-                }
+
+            let text = String(data: out.get(), encoding: .utf8) ?? ""
+            let errorText = (String(data: err.get(), encoding: .utf8) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            var folders: [String] = []
+            for var line in text.split(separator: "\n",
+                                       omittingEmptySubsequences: true)
+                                .map(String.init) {
+                // „als alias" liefert Ordner mit Schluss-Schrägstrich.
+                if line.count > 1 && line.hasSuffix("/") { line.removeLast() }
+                if !line.isEmpty { folders.append(line) }
+            }
+
+            if killed.get() {
+                outcome = .failed("Finder antwortet nicht")
+            } else if process.terminationStatus == 0 {
+                outcome = folders.isEmpty ? .noWindow : .folders(folders)
+            } else if errorText.contains("-1743")
+                        || errorText.contains("-1744")
+                        || errorText.localizedCaseInsensitiveContains(
+                            "not authorized") {
+                outcome = .denied
+            } else if errorText.contains("-1712") {
+                outcome = .failed("Zeitüberschreitung beim Finder")
+            } else {
+                outcome = .failed(firstLine(of: errorText)
+                                  ?? "osascript-Fehler "
+                                     + "\(process.terminationStatus)")
             }
         } catch {
-            // osascript nicht startbar → leere Liste, App fällt auf `~` zurück.
+            outcome = .failed("osascript nicht startbar")
         }
-        DispatchQueue.main.async { completion(folders) }
+        let result = outcome
+        DispatchQueue.main.async { completion(result) }
     }
+}
+
+/// Headless-Diagnose (`--finder-scope`): fragt den Finder genau so wie die App
+/// und schreibt eine JSON-Zeile nach stdout. Weil die Abfrage aus DEM Bundle
+/// läuft, das auch TCC bewertet, zeigt sie den echten Zugriffsstatus — anders
+/// als dasselbe AppleScript aus dem Terminal.
+/// Exit-Codes wie im Kern: 0 = Ordner ermittelt, 1 = kein Fenster, 2 = Fehler
+/// (auch verweigerter Zugriff).
+func runFinderScopeDiagnostic() -> Never {
+    finderWindowFoldersAsync { outcome in
+        var payload: [String: Any] = [
+            "status": outcome.statusName,
+            "folders": outcome.folders,
+        ]
+        if let problem = outcome.problemText { payload["problem"] = problem }
+        if let data = try? JSONSerialization.data(withJSONObject: payload),
+           let line = String(data: data, encoding: .utf8) {
+            print(line)
+        }
+        switch outcome {
+        case .folders:  exit(0)
+        case .noWindow: exit(1)
+        default:        exit(2)
+        }
+    }
+    // Die Antwort kommt über die Main-Queue; ohne laufenden Runloop käme sie nie.
+    RunLoop.main.run()
+    exit(2)   // wird nie erreicht
+}
+
+/// Erste nicht-leere Zeile eines Fehlertexts (osascript hängt gern mehrere an).
+private func firstLine(of text: String) -> String? {
+    text.split(separator: "\n").map(String.init).first {
+        !$0.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+}
+
+/// Winziger Thread-sicherer Behälter — die beiden Pipe-Leser laufen auf eigenen
+/// Queues und geben ihr Ergebnis hier ab.
+private final class Atomic<Value> {
+    private var value: Value
+    private let lock = NSLock()
+    init(_ value: Value) { self.value = value }
+    func get() -> Value { lock.lock(); defer { lock.unlock() }; return value }
+    func set(_ newValue: Value) { lock.lock(); value = newValue; lock.unlock() }
 }
 
 /// Die wichtigsten Ordner als (Anzeigename, Pfad) — für das Ordner-Popup der

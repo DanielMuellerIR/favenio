@@ -34,6 +34,10 @@ struct FavenioQuickApp {
                   + "funktioniert")
             exit(0)
         }
+        // Headless-Diagnose: was sieht DIESES Bundle beim Finder wirklich?
+        if CommandLine.arguments.contains("--finder-scope") {
+            runFinderScopeDiagnostic()
+        }
         let app = NSApplication.shared
         let delegate = QuickController()
         app.delegate = delegate
@@ -82,6 +86,19 @@ final class QuickController: NSObject, NSApplicationDelegate,
     var scopeFinderFolders: [String] = []   // Finder-Fenster (async geladen)
     var refreshingScope = false
     var userPickedScope = false             // hat der Nutzer selbst gewählt?
+    // Steht die Antwort des Finders für DIESE Aktivierung schon fest? Solange
+    // nicht, ist der Suchbereich unbekannt — und eine Suche darf nicht
+    // ersatzweise im Benutzerordner loslaufen (genau das suchte im falschen
+    // Ordner, ohne es zu sagen).
+    var scopeResolved = false
+    var scopeProblem: String?               // warum kein Finder-Ordner da ist
+    var scopeDenied = false                 // Automation ausdrücklich verboten
+    var deniedAlertShown = false            // Hinweis höchstens einmal pro Start
+    var queuedQuery = false                 // Suche wartet auf den Suchbereich
+    var scopeWaitTimer: Timer?
+    /// So lange wartet eine Suche höchstens auf den Finder-Ordner; danach
+    /// läuft sie im Ersatzordner — mit sichtbarem Hinweis.
+    static let scopeWaitLimit: TimeInterval = 2.0
 
     // Debounce + Abbruch: nach der letzten Taste 0,6 s warten, dann suchen;
     // Weitertippen bricht den laufenden favenio.py-Prozess ab. Nur das
@@ -144,8 +161,13 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     /// App ist vorderste geworden → JETZT den Finder abfragen: nur so zeigt
     /// TCC den Automations-Consent-Dialog. Läuft im Hintergrund (kein Hang).
+    /// Jede Aktivierung fragt neu, denn inzwischen kann ein anderes
+    /// Finder-Fenster vorn sein; bis die Antwort da ist, gilt der Suchbereich
+    /// als unbekannt.
     func applicationDidBecomeActive(_ notification: Notification) {
+        scopeResolved = false
         refreshFinderFoldersAsync()
+        rebuildScopePopup()
     }
 
     /// Fenster geschlossen (roter Knopf / Cmd+W) → App beenden.
@@ -357,11 +379,25 @@ final class QuickController: NSObject, NSApplicationDelegate,
             scopePopup.lastItem?.representedObject = path
             scopePopup.lastItem?.toolTip = abbreviateHome(path)
         }
+        // Solange die Finder-Antwort aussteht, steht oben ein Platzhalter OHNE
+        // Pfad. Damit ist der unbekannte Suchbereich sichtbar, und startSearch()
+        // erkennt am fehlenden Pfad, dass es kurz warten muss.
+        if !scopeResolved {
+            scopePopup.addItem(withTitle: "Finder-Ordner wird ermittelt…")
+            scopePopup.lastItem?.toolTip =
+                "Favenio fragt gerade den Finder nach dem vordersten Fenster."
+        }
         for (index, path) in scopeFinderFolders.enumerated() {
             let name = (path as NSString).lastPathComponent
             add(index == 0 ? "Vorderstes Finder-Fenster — \(name)" : name, path)
         }
         for (title, path) in commonFolders() { add(title, path) }
+        // Ein selbst gewählter Ordner bleibt wählbar, auch wenn sein
+        // Finder-Fenster inzwischen zu ist — sonst spränge die Auswahl
+        // kommentarlos auf den ersten Eintrag.
+        if userPickedScope, let previous, !added.contains(previous) {
+            add((previous as NSString).lastPathComponent, previous)
+        }
         // Hat der Nutzer selbst gewählt, seine Auswahl halten; sonst den
         // ersten Eintrag (= vorderstes Finder-Fenster, sobald geladen).
         if userPickedScope, let previous,
@@ -376,19 +412,94 @@ final class QuickController: NSObject, NSApplicationDelegate,
     func refreshFinderFoldersAsync() {
         guard !refreshingScope else { return }
         refreshingScope = true
-        // Läuft im Hintergrund (NSAppleScript aus unserem Prozess auf eigenem
-        // Thread) — der Main-Thread blockiert NIE.
-        finderWindowFoldersAsync { [weak self] folders in
-            guard let self else { return }
-            self.refreshingScope = false
-            // Nichts gefunden? Guard NICHT als „erledigt" behalten, damit ein
-            // späteres Aktivieren (nach erteilter Automations-Freigabe) es
-            // erneut versucht.
-            if folders.isEmpty { return }
-            if folders != self.scopeFinderFolders {
-                self.scopeFinderFolders = folders
-                self.rebuildScopePopup()
-            }
+        // Läuft im Hintergrund (osascript-Unterprozess) — der Main-Thread
+        // blockiert NIE.
+        finderWindowFoldersAsync { [weak self] outcome in
+            self?.applyScopeOutcome(outcome)
+        }
+    }
+
+    /// Antwort des Finders verarbeiten. Wichtig: Ein Fehlschlag wird GEMELDET
+    /// statt stillschweigend auf den Benutzerordner zurückzufallen.
+    func applyScopeOutcome(_ outcome: FinderScopeOutcome) {
+        refreshingScope = false
+        scopeResolved = true
+        scopeProblem = outcome.problemText
+        if case .denied = outcome { scopeDenied = true } else { scopeDenied = false }
+        if case .folders(let folders) = outcome { scopeFinderFolders = folders }
+        rebuildScopePopup()
+
+        if let problem = scopeProblem, !searching {
+            showScopeProblem(problem)
+        }
+        // Kam die Finder-Antwort erst, nachdem eine Suche im Ersatzordner
+        // angelaufen ist: sagen, wo der Finder steht. Die laufende Suche wird
+        // NICHT hinter dem Rücken des Nutzers umgehängt.
+        if scopeProblem == nil, searching, !userPickedScope,
+           let front = scopeFinderFolders.first, front != searchRoot {
+            showScopeProblem("Suche läuft in " + abbreviateHome(searchRoot)
+                             + " — Finder-Ordner ist "
+                             + abbreviateHome(front) + " (Return sucht dort).")
+        }
+        if scopeDenied { maybeReportDeniedAutomation() }
+
+        // Auf den Suchbereich wartende Suche jetzt starten.
+        if queuedQuery {
+            queuedQuery = false
+            scopeWaitTimer?.invalidate(); scopeWaitTimer = nil
+            startSearch()
+        }
+    }
+
+    /// Der Finder hat innerhalb der Wartezeit nicht geantwortet: Suche trotzdem
+    /// starten, aber sagen, dass der Bereich nur der Ersatzordner ist.
+    func scopeWaitExpired() {
+        guard queuedQuery else { return }
+        queuedQuery = false
+        scopeResolved = true      // Platzhalter weg, sonst wartet es ewig
+        scopeProblem = "Finder antwortet nicht — Suchbereich nicht bestätigt."
+        rebuildScopePopup()
+        startSearch()
+    }
+
+    /// Problemtext sichtbar (nicht grau) in die Info-Zeile schreiben.
+    func showScopeProblem(_ problem: String) {
+        infoLabel.textColor = .systemOrange
+        infoLabel.lineBreakMode = .byTruncatingTail
+        infoLabel.stringValue = problem
+        infoLabel.toolTip = problem
+    }
+
+    /// Verbotene Finder-Automation ist nichts, was man nur klein in die
+    /// Info-Zeile schreibt: einmal pro Start ausdrücklich melden — mit dem Weg
+    /// zur Freigabe und der Möglichkeit, das künftig zu lassen.
+    func maybeReportDeniedAutomation() {
+        let suppressKey = "FavenioSuppressAutomationAlert"
+        if deniedAlertShown { return }
+        if UserDefaults.standard.bool(forKey: suppressKey) { return }
+        deniedAlertShown = true
+
+        let alert = NSAlert()
+        alert.messageText = "Finder-Ordner nicht abfragbar"
+        alert.informativeText = """
+            macOS erlaubt der Schnellsuche nicht, den Finder nach dem \
+            vordersten Fenster zu fragen. Deshalb kann Favenio den Ordner \
+            nicht übernehmen, in dem du gerade bist — der Suchbereich muss \
+            von Hand gewählt werden.
+
+            Freigeben: Systemeinstellungen → Datenschutz & Sicherheit → \
+            Automation → „Favenio Schnellsuche" → Finder aktivieren.
+            """
+        alert.addButton(withTitle: "Systemeinstellungen öffnen")
+        alert.addButton(withTitle: "Später")
+        alert.addButton(withTitle: "Nicht mehr melden")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            openAutomationSettings()
+        case .alertThirdButtonReturn:
+            UserDefaults.standard.set(true, forKey: suppressKey)
+        default:
+            break
         }
     }
 
@@ -426,6 +537,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
     func cancelSearch() {
         debounceTimer?.invalidate(); debounceTimer = nil
         flushTimer?.invalidate(); flushTimer = nil
+        scopeWaitTimer?.invalidate(); scopeWaitTimer = nil
+        queuedQuery = false
         searchGeneration += 1
         runningProcess?.terminate(); runningProcess = nil
         pending = []
@@ -441,17 +554,41 @@ final class QuickController: NSObject, NSApplicationDelegate,
         cancelSearch()   // sauberer Ausgangszustand; zählt Generation hoch
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
+
+        // Der ausgewählte Eintrag trägt keinen Pfad → der Finder-Ordner steht
+        // noch aus. Dann NICHT ersatzweise im Benutzerordner suchen, sondern
+        // kurz warten; das ist sichtbar und endet spätestens nach
+        // `scopeWaitLimit` (scopeWaitExpired sucht dann mit Hinweis weiter).
+        guard let root = scopePopup.selectedItem?.representedObject as? String
+        else {
+            queuedQuery = true
+            spinner.startAnimation(nil)
+            infoLabel.textColor = .secondaryLabelColor
+            infoLabel.stringValue = "Finder-Ordner wird ermittelt…"
+            scopeWaitTimer = Timer.scheduledTimer(
+                withTimeInterval: Self.scopeWaitLimit, repeats: false) {
+                [weak self] _ in self?.scopeWaitExpired()
+            }
+            return
+        }
+
         let generation = searchGeneration
         hits = []
         openButton.isEnabled = false
         tableView.reloadData()
         searching = true
         spinner.startAnimation(nil)
-        infoLabel.stringValue = "Suche läuft…"
-
-        searchRoot = scopePopup.selectedItem?.representedObject as? String
-            ?? NSHomeDirectory()
-        let root = searchRoot
+        // Immer sagen, WO gesucht wird — und warum es nicht der Finder-Ordner
+        // ist, falls dessen Abfrage schiefging.
+        searchRoot = root
+        if let problem = scopeProblem {
+            showScopeProblem("Suche in " + abbreviateHome(root) + " — "
+                             + problem)
+        } else {
+            infoLabel.textColor = .secondaryLabelColor
+            infoLabel.stringValue = "Suche in " + abbreviateHome(root) + " …"
+            infoLabel.toolTip = root
+        }
         let searchContent = contentCheckbox.state == .on
         let searchArchives = archivesCheckbox.state == .on
         let searchHidden = hiddenCheckbox.state == .on
@@ -511,9 +648,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
         }
     }
 
-    /// Zeigt den gerade durchsuchten Ort dezent in der Info-Zeile.
+    /// Zeigt den gerade durchsuchten Ort dezent in der Info-Zeile. Steht dort
+    /// eine Warnung zum Suchbereich, bleibt die stehen — sie ist wichtiger als
+    /// der laufende Ort.
     func showProgress(path: String) {
-        guard searching, hits.isEmpty, pending.isEmpty else { return }
+        guard searching, hits.isEmpty, pending.isEmpty, scopeProblem == nil
+        else { return }
         infoLabel.textColor = .tertiaryLabelColor
         infoLabel.lineBreakMode = .byTruncatingMiddle
         infoLabel.stringValue = "Durchsuche " + abbreviateHome(path)
@@ -559,9 +699,16 @@ final class QuickController: NSObject, NSApplicationDelegate,
             infoLabel.stringValue = errorText
             return
         }
-        infoLabel.stringValue = hits.isEmpty
-            ? "Keine Treffer für „\(query)“."
+        let summary = hits.isEmpty
+            ? "Keine Treffer für „\(query)“ in \(abbreviateHome(searchRoot))."
             : "\(hits.count) Treffer für „\(query)“."
+        // Gerade wenn NICHTS gefunden wurde, muss ein unklarer Suchbereich
+        // dabeistehen — sonst sucht man den Fehler beim Suchbegriff.
+        if let problem = scopeProblem {
+            showScopeProblem(summary + " " + problem)
+        } else {
+            infoLabel.stringValue = summary
+        }
     }
 
     // ---------- Übergabe an die große GUI (auf Wunsch) ----------

@@ -27,9 +27,6 @@ verifiziert). Kosmetik und bewusste Tradeoffs, keine Bugs.
   Unterprozess-Ausgabe synchron auf dem Main-Thread (`readDataToEndOfFile`).
   Bewusster Tradeoff — entweder als solchen kommentieren oder später auf
   `Task.detached` umstellen.
-- `quick/FavenioQuick.swift` (~362–372): Fällt ein zuvor gewählter
-  Finder-Ordner aus der neu gebauten Liste, springt die Auswahl kommentarlos
-  auf Index 0. Stillen Reset entweder bewusst dokumentieren oder abfangen.
 - `favenio.py` (~516–528, `walk_tar`): Die Kompressions-Ratio-Heuristik greift
   nur bei ZIP; für TAR schützen allein die Byte-Budgets (per-Member-Ratio bei
   tar nicht ermittelbar). Klarstellenden Kommentar ergänzen.

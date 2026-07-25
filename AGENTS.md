@@ -167,6 +167,18 @@ Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
 - `open -g` ist kein Beweis, dass FavenioQuick kein Panel öffnet.
 - Finder-Automation kann beim ersten Zugriff einen Systemdialog auslösen. Dieser
   darf weder automatisiert bestätigt noch als Fehler verschleiert werden.
+- Finder-Fenster nur in EINER Abfrage holen (`target of every Finder window as
+  alias list`). Eine Schleife über die Fenster kostet je Fenster einen eigenen
+  Apple-Event: gemessen am 2026-07-25 mit 13 offenen Fenstern 11,6 s gegenüber
+  0,19 s. Solche Laufzeiten schlagen als „falscher Suchordner" durch, weil die
+  Oberfläche längst mit dem Ersatzordner weiterarbeitet.
+- Eine gescheiterte Finder-Abfrage ist ein meldepflichtiger Zustand, kein
+  leeres Ergebnis. `FinderScopeOutcome` unterscheidet verweigerte Automation,
+  fehlendes Fenster und Zeitüberschreitung; die Frontends müssen den Grund
+  zeigen und den tatsächlich durchsuchten Ordner benennen.
+- `--finder-scope` beantwortet headless, was ein App-Bundle beim Finder wirklich
+  sieht. Dasselbe AppleScript aus dem Terminal wird von TCC anders bewertet und
+  beweist deshalb nichts über die App.
 - Die App verwendet möglicherweise ein anderes Python als die Shell. Neue
   Syntax und argparse-Varianten immer mit `/usr/bin/python3` prüfen.
 - Streaming-Ergebnisse dürfen eine aktuelle Auswahl nicht bei jedem Append

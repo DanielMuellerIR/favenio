@@ -156,14 +156,33 @@ A Spotlight alternative for the Finder toolbar: drag `FavenioQuick.app` into
 the header of a Finder window while holding **Cmd**.
 
 - One click on the icon opens a small floating search field (no Dock icon)
-- **Return** starts the name search in your home folder (including archives)
+- **Return** starts the name search (including archives) in the search scope
+  shown next to the field — by default the folder of the frontmost Finder
+  window
 - With hits, the main app opens with the finished list (hits are handed
   over, nothing is searched twice); without hits, only the small field with
   a message remains
 - **Esc** (with an empty field) quits the quick search
 
+The search scope is never guessed silently. While the Finder is being asked,
+the menu says so and a search waits briefly instead of starting somewhere else.
+If the folder cannot be determined — automation denied, no Finder window open,
+Finder not responding — the reason is shown, and the folder actually being
+searched is named.
+
 Note: On the first search across your home folder, macOS may ask for access
-to Desktop and Documents (TCC). Allowing it once is enough.
+to Desktop and Documents (TCC). Allowing it once is enough. Asking the Finder
+for the current folder needs a separate permission (Settings → Privacy &
+Security → Automation).
+
+To see what the apps detect, without any window:
+
+```bash
+FavenioQuick.app/Contents/MacOS/FavenioQuick --finder-scope
+```
+
+One JSON line with the detected folders (frontmost first). Exit code 0 =
+folders found, 1 = no Finder window, 2 = error (including denied access).
 
 ## Tests
 
