@@ -1,0 +1,36 @@
+<!-- Quelle des GitHub-Social-Previews (1280x640).
+     Schriften: Georgia + Helvetica Neue (macOS-Systemschriften).
+     Rendern: PANGOCAIRO_BACKEND=fc rsvg-convert -w 1280 -h 640 social-preview.svg -o social-preview.png -->
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#243247"/>
+      <stop offset="100%" stop-color="#141E2E"/>
+    </linearGradient>
+    <radialGradient id="lensglow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#F59E0B" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#F59E0B" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <!-- Lupe mit serifigem F, wie im App-Icon -->
+  <g>
+    <circle cx="300" cy="290" r="200" fill="url(#lensglow)"/>
+    <circle cx="300" cy="290" r="128" fill="#1B2536" stroke="#F59E0B" stroke-width="22"/>
+    <line x1="398" y1="388" x2="492" y2="482" stroke="#F59E0B" stroke-width="34" stroke-linecap="round"/>
+    <text x="300" y="352" text-anchor="middle"
+          font-family="Georgia" font-weight="bold" font-size="180"
+          fill="#F8FAFC">F</text>
+  </g>
+  <!-- Wortmarke und Claim -->
+  <g>
+    <text x="560" y="300" font-family="Georgia" font-weight="bold" font-size="120"
+          fill="#F8FAFC">Favenio</text>
+    <text x="565" y="356" font-family="Helvetica Neue" font-size="30" fill="#F59E0B">
+      Index-free file search for macOS</text>
+    <text x="565" y="404" font-family="Helvetica Neue" font-size="26" fill="#B8C4D6">
+      No index, no Spotlight — scans the file system directly</text>
+    <text x="565" y="440" font-family="Helvetica Neue" font-size="26" fill="#B8C4D6">
+      and looks inside zip &amp; tar archives, even nested ones.</text>
+  </g>
+</svg>
