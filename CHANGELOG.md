@@ -19,6 +19,11 @@
   inzwischen geschlossen wurde.
 - Neu: `--finder-scope` in beiden Apps — eine headless JSON-Diagnose, die aus
   dem echten App-Bundle heraus zeigt, welche Finder-Ordner erkannt werden.
+- Neu: `install.sh` als drittes Skript neben `build-app.sh` und `release.sh`.
+  Es installiert ein Release-DMG nach `/Applications`, aber nur mit angeheftetem
+  Notary-Ticket und Gatekeeper-Akzeptanz, prüft beide Bundles vor und nach dem
+  Kopieren und tauscht erst nach vollständigem Kopiervorgang. `--verify-only`
+  prüft ohne zu installieren.
 
 ## 0.16.0 — 2026-07-22
 

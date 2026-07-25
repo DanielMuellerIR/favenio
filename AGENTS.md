@@ -20,7 +20,7 @@ verarbeiten seinen JSONL-Strom. Suchsemantik nicht in Swift nachbauen.
   Materialisierungslogik der Apps.
 - `gui/FavenioGUI.swift`: Hauptfenster und dessen Headless-Selbsttest.
 - `quick/FavenioQuick.swift`: Finder-nahe Schnellsuche und Übergabe an die App.
-- `build-app.sh`: Bundle-Aufbau, Installation und App-Selbsttest.
+- `build-app.sh`: Bundle-Aufbau und App-Selbsttest (installiert nie).
 - `README.md`: Nutzer- und CLI-Dokumentation.
 - `BACKLOG.md`: noch nicht umgesetzte Arbeit; sofern die Datei fehlt, vor der
   Migration aus dem Migrationsentwurf anlegen.
@@ -98,9 +98,22 @@ Der zweite Lauf ist wichtig: Die gebauten Apps verwenden den macOS-System-
 Interpreter, dessen Verhalten vom Python der Login-Shell abweichen kann.
 `build-app.sh` baut beide Bundles im Projektverzeichnis, kopiert Python-Kern und
 Icons, signiert je nach verfügbarer Identität und führt die Headless-Selbsttests
-aus. Es installiert niemals nach `/Applications`; dafür ist ausschließlich ein
-fertig signiertes, notarisiertes und von Gatekeeper akzeptiertes Release-DMG
-vorgesehen. Eine Installation ersetzt weder einen Test noch einen Commit.
+aus. Eine Installation ersetzt weder einen Test noch einen Commit.
+
+Die drei Skripte sind bewusst getrennt und dürfen nicht zusammenwachsen:
+
+| Skript | Aufgabe | Fasst `/Applications` an |
+| --- | --- | --- |
+| `build-app.sh` | bauen und Selbsttests | nein |
+| `release.sh` | DMG bauen, notarisieren, stapeln | nein |
+| `install.sh` | geprüftes DMG installieren | ja, nur nach Prüfung |
+
+`install.sh` baut und notarisiert selbst nichts. Es verlangt ein DMG mit
+angeheftetem Notary-Ticket (`stapler validate`) und Gatekeeper-Akzeptanz
+(`spctl`), prüft beide Bundles im DMG, beendet laufende Instanzen freundlich,
+kopiert erst vollständig daneben und tauscht dann — und prüft danach erneut, was
+tatsächlich in `/Applications` liegt. `--verify-only` prüft ohne zu
+installieren; Exit 2 heißt in jedem Fall: nichts installiert.
 
 Neue Kernfunktionen benötigen Unit-Tests mit temporären Fixtures. Das bestehende
 Fixture deckt normale Dateien, versteckte Dateien, Zip, Tar, verschachtelte Zip-
@@ -208,6 +221,8 @@ behobene Finder-Probleme nicht wieder als offene Arbeit übernehmen.
   synchron halten.
 - [LICENSE](LICENSE) — MIT.
 - [BACKLOG.md](BACKLOG.md) — einzige aktive Projektliste.
+- [install.sh](install.sh) — geprüftes Release-DMG nach `/Applications`
+  installieren; baut und notarisiert selbst nichts.
 - [release.sh](release.sh) — Release-DMG bauen, notarisieren, stapeln;
   Notary-Profilname kommt über die Umgebungsvariable `NOTARY_PROFILE`
   (nicht eingecheckt).

@@ -38,15 +38,20 @@ installieren sie nur nach Bestätigung. In der Haupt-App gibt es zusätzlich
 Hardware- oder Systemprofildaten übertragen. Ältere Versionen enthalten noch
 keinen Updater; 0.14.0 muss deshalb einmalig über das DMG installiert werden.
 
-Alternativ selbst bauen:
+Alternativ selbst bauen — drei getrennte Skripte, von denen keines die Aufgabe
+der anderen übernimmt:
 
 ```bash
-./build-app.sh    # baut und testet beide Apps im Repository
+./build-app.sh      # beide Apps im Repository bauen und selbst testen
+./release.sh        # DMG bauen, notarisieren und stapeln (installiert nicht)
+./install.sh        # geprüftes DMG nach /Applications installieren
 ```
 
 Quell-Builds können nur ad hoc signiert sein und werden nie automatisch
-installiert. Eine notarisierte Installation nicht damit ersetzen; Releases nur
-aus dem signierten, notarisierten und von Gatekeeper akzeptierten DMG installieren.
+installiert. `install.sh` akzeptiert ausschließlich ein DMG mit angeheftetem
+Notary-Ticket, das Gatekeeper akzeptiert, prüft beide Bundles vor und nach dem
+Kopieren und endet bei jedem Fehler mit Exit-Code 2, ohne `/Applications`
+anzufassen. `./install.sh --verify-only` führt nur die Prüfung aus.
 
 ## Schnellstart (CLI)
 
