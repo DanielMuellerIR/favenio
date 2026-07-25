@@ -180,11 +180,18 @@ Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
 - `open -g` ist kein Beweis, dass FavenioQuick kein Panel öffnet.
 - Finder-Automation kann beim ersten Zugriff einen Systemdialog auslösen. Dieser
   darf weder automatisiert bestätigt noch als Fehler verschleiert werden.
-- Finder-Fenster nur in EINER Abfrage holen (`target of every Finder window as
-  alias list`). Eine Schleife über die Fenster kostet je Fenster einen eigenen
-  Apple-Event: gemessen am 2026-07-25 mit 13 offenen Fenstern 11,6 s gegenüber
-  0,19 s. Solche Laufzeiten schlagen als „falscher Suchordner" durch, weil die
-  Oberfläche längst mit dem Ersatzordner weiterarbeitet.
+- Finder-Fenster nur in EINER Abfrage holen, mit `URL of` und
+  `front Finder window`. Eine Schleife über die Fenster kostet je Fenster einen
+  eigenen Apple-Event: gemessen am 2026-07-25 mit 13 offenen Fenstern 11,6 s
+  gegenüber 147 ms; `as alias` statt `URL of` kostet weitere 38 ms, und
+  `front window` scheitert an geöffneten Info-Fenstern. Solche Laufzeiten
+  schlagen als „falscher Suchordner" durch, weil die Oberfläche längst mit dem
+  Ersatzordner weiterarbeitet. Die volle Herleitung samt Alternativenprüfung
+  steht in `theplan/knowledge/finder-aktueller-ordner.md`.
+- Vor der Abfrage `AEDeterminePermissionToAutomateTarget` fragen (ohne Event,
+  ohne Dialog). Verbotene Automation ist damit sofort bekannt, statt aus einem
+  hängenden Unterprozess erschlossen zu werden. Steht der Freigabedialog offen,
+  nicht abbrechen — sonst wirft die App die Freigabe weg, auf die sie wartet.
 - Eine gescheiterte Finder-Abfrage ist ein meldepflichtiger Zustand, kein
   leeres Ergebnis. `FinderScopeOutcome` unterscheidet verweigerte Automation,
   fehlendes Fenster und Zeitüberschreitung; die Frontends müssen den Grund
