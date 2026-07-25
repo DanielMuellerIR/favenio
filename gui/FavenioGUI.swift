@@ -661,20 +661,10 @@ final class MainController: NSObject, NSApplicationDelegate,
         refreshFinderFoldersAsync()
         let menu = NSMenu()
 
-        // 1) Offene Finder-Fenster. Der erste Eintrag ist das VORDERSTE
-        //    Finder-Fenster. Bewusst „vorderstes" und nicht „aktives": Solange
-        //    Favenio vorn ist, hat kein Finder-Fenster den Tastaturfokus.
-        let windows = cachedFinderFolders
-        for (index, path) in windows.enumerated() {
-            let name = (path as NSString).lastPathComponent
-            let title = index == 0 ? "Vorderstes Finder-Fenster — \(name)"
-                                   : name
-            addFolderItem(to: menu, title: title, path: path)
-        }
-        if !windows.isEmpty { menu.addItem(.separator()) }
-        // Fehlen die Finder-Fenster, den Grund zeigen statt sie stumm
-        // wegzulassen — sonst wirkt der Benutzerordner wie eine bewusste Wahl.
-        if windows.isEmpty, let problem = finderScopeProblem {
+        // 0) Scheiterte die letzte Finder-Abfrage, steht der Grund GANZ OBEN —
+        //    auch wenn unten noch ältere Fenster aus dem Cache stehen. Ohne den
+        //    Hinweis wirkte eine veraltete oder leere Liste wie die Wahrheit.
+        if let problem = finderScopeProblem {
             let info = NSMenuItem(title: problem, action: nil, keyEquivalent: "")
             info.isEnabled = false
             menu.addItem(info)
@@ -687,6 +677,18 @@ final class MainController: NSObject, NSApplicationDelegate,
             }
             menu.addItem(.separator())
         }
+
+        // 1) Offene Finder-Fenster. Der erste Eintrag ist das VORDERSTE
+        //    Finder-Fenster. Bewusst „vorderstes" und nicht „aktives": Solange
+        //    Favenio vorn ist, hat kein Finder-Fenster den Tastaturfokus.
+        let windows = cachedFinderFolders
+        for (index, path) in windows.enumerated() {
+            let name = (path as NSString).lastPathComponent
+            let title = index == 0 ? "Vorderstes Finder-Fenster — \(name)"
+                                   : name
+            addFolderItem(to: menu, title: title, path: path)
+        }
+        if !windows.isEmpty { menu.addItem(.separator()) }
 
         // 2) Wichtige Ordner (feste, verständliche deutsche Namen).
         for (title, path) in commonFolders() {

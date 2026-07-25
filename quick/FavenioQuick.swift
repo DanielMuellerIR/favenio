@@ -359,7 +359,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     // ---------- Suchbereich (Finder-Fenster / Ordner) ----------
 
-    @objc func scopeChanged() { userPickedScope = true }
+    /// Den Platzhalter „wird ermittelt…" auszuwählen ist keine eigene Wahl —
+    /// sonst folgte die App danach nicht mehr dem vordersten Finder-Fenster.
+    @objc func scopeChanged() {
+        userPickedScope = scopePopup.selectedItem?.representedObject != nil
+    }
 
     /// Füllt das Bereichs-Menü aus dem Cache (schnell, kein AppleScript). Die
     /// Finder-Fenster lädt applicationDidBecomeActive nach — der Apple-Event
