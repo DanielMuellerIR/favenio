@@ -614,6 +614,33 @@ func openAutomationSettings() {
     }
 }
 
+// Rückgabewerte von `AEDeterminePermissionToAutomateTarget`. Die Konstanten
+// stehen in Apples Carbon-Headern; hier ausgeschrieben, damit der Code ohne
+// zusätzliche Importe lesbar bleibt.
+private let kAEEventNotPermitted: OSStatus = -1743          // ausdrücklich verboten
+private let kAEEventWouldRequireUserConsent: OSStatus = -1744  // noch nicht gefragt
+
+/// Fragt TCC OHNE Apple-Event und OHNE Dialog, ob wir den Finder steuern dürfen.
+///
+/// Das ist der einzige Weg, „verboten" sofort zu erkennen, statt es aus einem
+/// hängenden Unterprozess zu erschließen: Apple-Events an einen verbotenen
+/// Empfänger können beliebig lange stehen bleiben, und ein Timeout ist dann nur
+/// geraten. `askUserIfNeeded: false` verhindert, dass dieser Aufruf selbst einen
+/// Dialog auslöst — der Consent-Dialog gehört an die echte Abfrage.
+/// Ergebnis: `noErr` = erlaubt, -1743 = verboten, -1744 = noch nicht gefragt.
+func finderAutomationPermission() -> OSStatus {
+    guard let target = NSAppleEventDescriptor(
+        bundleIdentifier: "com.apple.finder").aeDesc else { return noErr }
+    return AEDeterminePermissionToAutomateTarget(
+        target, typeWildCard, typeWildCard, false)
+}
+
+/// Wartet macOS gerade auf die Entscheidung des Nutzers? Dann darf die
+/// Oberfläche nicht „Finder antwortet nicht" behaupten.
+func finderAutomationConsentPending() -> Bool {
+    finderAutomationPermission() == kAEEventWouldRequireUserConsent
+}
+
 /// Ermittelt die offenen Finder-Fenster (Ordner des vorderen Tabs),
 /// VORDERSTES zuerst — ASYNCHRON und ohne den Main-Thread zu blockieren.
 /// `completion` läuft auf dem Main-Thread und bekommt bei Fehlschlag den
@@ -641,40 +668,59 @@ func finderWindowFoldersAsync(
     // Main-Thread nicht anfasst; die eigentliche Apple-Event-Arbeit macht
     // osascript in seinem eigenen Prozess.
     DispatchQueue.global(qos: .userInitiated).async {
-        // VORDERSTES Fenster explizit über `front window` (wie nc_pin) —
-        // `Finder windows` ist nicht zuverlässig front-to-back sortiert. Die
-        // Pfade kommen zeilengetrennt zurück (front zuerst, dann die übrigen).
-        // `with timeout` verhindert ewiges Warten, falls der Finder klemmt.
+        // Zuerst TCC fragen, ohne Event und ohne Dialog. Ist die Automation
+        // verboten, ist das SOFORT klar — kein Unterprozess, kein Warten, kein
+        // geratener Timeout.
+        let permission = finderAutomationPermission()
+        if permission == kAEEventNotPermitted {
+            DispatchQueue.main.async { completion(.denied) }
+            return
+        }
+        // Steht die Entscheidung noch aus, zeigt macOS gleich einen Dialog. Bis
+        // der Nutzer geklickt hat, darf nichts abgebrochen werden; sonst würde
+        // die App genau die Freigabe wegwerfen, auf die sie wartet.
+        let consentPending = permission == kAEEventWouldRequireUserConsent
+        let killAfter: Double = consentPending ? 180 : 6
+
+        // VORDERSTES Fenster über `front Finder window` — die Klasse
+        // `Finder window` schließt Info- und andere Hilfsfenster aus, `front
+        // window` würde an einem geöffneten Info-Fenster scheitern. Die übrigen
+        // Fenster kommen in EINEM Zug; `Finder windows` ist nicht zuverlässig
+        // front-to-back sortiert, deshalb steht das vorderste separat vorn.
+        //
+        // Gemessen am 2026-07-25 (13 offene Finder-Fenster, Median aus 7 Läufen):
+        //   Schleife über die Fenster (je ein Apple-Event)   11 600 ms
+        //   frühere Fassung, `as alias` + `POSIX path of`       185 ms
+        //   diese Fassung, `URL of`                             147 ms
+        //   davon reiner osascript-Prozessstart                  34 ms
+        // Die Fensterliste kostet gegenüber der Einzelabfrage nur ~2 ms: Es
+        // lohnt NICHT, sie wegzulassen — teuer ist der erste Apple-Event, nicht
+        // die Menge. `as alias` kostet dagegen echte Zeit, weil es je Eintrag
+        // zusätzliche Auflösungen auslöst. Diese Abfrage deshalb weder auf eine
+        // Fenster-Schleife noch auf `as alias` zurückbauen.
+        //
         // `text item delimiters` ist eine AppleScript-Eigenschaft und muss
         // AUSSERHALB des `tell application "Finder"`-Blocks gesetzt werden —
         // sonst versucht AppleScript, sie am Finder zu setzen (Fehler -10006).
-        //
-        // Die übrigen Fenster werden in EINEM Zug geholt
-        // (`target of every Finder window as alias list`), nicht in einer
-        // Schleife über die Fenster. Jeder Schleifendurchlauf wäre ein eigener
-        // Apple-Event; gemessen am 2026-07-25 mit 13 offenen Finder-Fenstern:
-        // Schleife 11,6 s, Bulk-Abfrage 0,19 s. Die Schleife lief damit
-        // regelmäßig in den Not-Aus unten — die App fiel auf den Benutzerordner
-        // zurück, während der Nutzer längst tippte. Diese Abfrage deshalb NICHT
-        // wieder auf eine Fenster-Schleife zurückbauen.
         let source = """
-        set out to {}
-        set frontPath to ""
-        set targets to {}
+        set frontURL to ""
+        set allURLs to {}
         tell application "Finder"
-            with timeout of 8 seconds
+            with timeout of 4 seconds
                 try
-                    set frontPath to POSIX path of (target of front window as alias)
+                    set frontURL to URL of (target of front Finder window)
                 end try
                 try
-                    set targets to target of every Finder window as alias list
+                    set allURLs to URL of (target of every Finder window)
                 end try
             end timeout
         end tell
-        if frontPath is not "" then set end of out to frontPath
-        repeat with t in targets
-            set p to POSIX path of t
-            if out does not contain p then set end of out to p
+        if class of allURLs is not list then set allURLs to {allURLs}
+        set out to {}
+        if frontURL is not "" then set end of out to frontURL
+        repeat with u in allURLs
+            set p to u as text
+            if p is not "" and out does not contain p then set end of out to p
         end repeat
         set text item delimiters to linefeed
         return out as text
@@ -693,14 +739,16 @@ func finderWindowFoldersAsync(
         var outcome: FinderScopeOutcome
         do {
             try process.run()
-            // Not-Aus: klemmt osascript trotz AppleScript-Timeout, nach 12 s
-            // abbrechen. Der Abbruch wird gemeldet, nicht stillschweigend zu
-            // „keine Ordner" gemacht.
+            // Not-Aus, falls osascript trotz AppleScript-Timeout klemmt. 6 s
+            // sind gegenüber gemessenen 147 ms reichlich; wartet dagegen ein
+            // Consent-Dialog auf den Nutzer, wird nicht abgebrochen. Der
+            // Abbruch wird gemeldet, nicht zu „keine Ordner" verschwiegen.
             let killed = Atomic(false)
             let killer = DispatchWorkItem {
                 if process.isRunning { killed.set(true); process.terminate() }
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 12, execute: killer)
+            DispatchQueue.global().asyncAfter(deadline: .now() + killAfter,
+                                              execute: killer)
             // Beide Pipes gleichzeitig leeren: Läuft stderr voll, während wir
             // nur stdout lesen, blockiert der Unterprozess.
             let group = DispatchGroup()
@@ -720,12 +768,19 @@ func finderWindowFoldersAsync(
             let errorText = (String(data: err.get(), encoding: .utf8) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             var folders: [String] = []
-            for var line in text.split(separator: "\n",
-                                       omittingEmptySubsequences: true)
-                                .map(String.init) {
-                // „als alias" liefert Ordner mit Schluss-Schrägstrich.
-                if line.count > 1 && line.hasSuffix("/") { line.removeLast() }
-                if !line.isEmpty { folders.append(line) }
+            for line in text.split(separator: "\n",
+                                   omittingEmptySubsequences: true)
+                            .map(String.init) {
+                // Der Finder liefert `file://`-URLs; Sonderzeichen sind darin
+                // prozentkodiert und werden erst von URL richtig aufgelöst.
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { continue }
+                var path = URL(string: trimmed)?.path ?? trimmed
+                // Ordner-URLs enden auf „/"; Pfade im Rest der App nicht.
+                if path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+                if !path.isEmpty && !folders.contains(path) {
+                    folders.append(path)
+                }
             }
 
             if killed.get() {
@@ -759,9 +814,20 @@ func finderWindowFoldersAsync(
 /// Exit-Codes wie im Kern: 0 = Ordner ermittelt, 1 = kein Fenster, 2 = Fehler
 /// (auch verweigerter Zugriff).
 func runFinderScopeDiagnostic() -> Never {
+    // Der Freigabestatus steht getrennt im Ergebnis: Er beantwortet ohne
+    // Rateverfahren, ob ein leeres Ergebnis an TCC oder am Finder liegt.
+    let permission = finderAutomationPermission()
+    let permissionName: String
+    switch permission {
+    case noErr:                          permissionName = "granted"
+    case kAEEventNotPermitted:           permissionName = "denied"
+    case kAEEventWouldRequireUserConsent: permissionName = "pending"
+    default:                             permissionName = "error \(permission)"
+    }
     finderWindowFoldersAsync { outcome in
         var payload: [String: Any] = [
             "status": outcome.statusName,
+            "permission": permissionName,
             "folders": outcome.folders,
         ]
         if let problem = outcome.problemText { payload["problem"] = problem }

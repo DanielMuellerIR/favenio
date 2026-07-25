@@ -73,7 +73,9 @@ final class QuickController: NSObject, NSApplicationDelegate,
     // Öffnet die große Favenio.app mit den Treffern (zum Sortieren / für mehr
     // als die Top 20). Früher sprang Quick automatisch dorthin — jetzt nur
     // noch auf Klick bzw. Cmd+Return.
-    let openButton = NSButton(title: "Alle in Favenio ↗",
+    // Das Kürzel steht IM Titel: AppKit zeigt keinen Hinweis auf den
+    // Tastaturmonitor, der Cmd+Return abfängt.
+    let openButton = NSButton(title: "Alle in Favenio ↗ ⌘↩",
                               target: nil, action: nil)
     let infoLabel = NSTextField(labelWithString: QuickController.hint)
     let spinner = NSProgressIndicator()
@@ -218,8 +220,10 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
         // Suchbereich rechts neben dem Feld, in DERSELBEN Reihe.
         scopePopup.controlSize = .regular
+        // Der Titel endet auf dem Pfad — deshalb VORNE kürzen, damit bei
+        // knappem Platz der Ordner sichtbar bleibt und nicht die Beschriftung.
         (scopePopup.cell as? NSPopUpButtonCell)?.lineBreakMode =
-            .byTruncatingTail
+            .byTruncatingHead
 
         for checkbox in [archivesCheckbox, contentCheckbox, hiddenCheckbox] {
             checkbox.controlSize = .small
@@ -296,7 +300,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
             infoRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: outer.widthAnchor),
             field.heightAnchor.constraint(equalToConstant: 32),
-            scopePopup.widthAnchor.constraint(equalToConstant: 190),
+            // Breiter als früher: Der Suchbereich zeigt jetzt den Pfad.
+            scopePopup.widthAnchor.constraint(equalToConstant: 250),
         ])
 
         // Immer in Default-Größe oben-mittig öffnen (Spotlight-Gefühl).
@@ -391,16 +396,19 @@ final class QuickController: NSObject, NSApplicationDelegate,
             scopePopup.lastItem?.toolTip =
                 "Favenio fragt gerade den Finder nach dem vordersten Fenster."
         }
+        // Jeder Finder-Eintrag trägt den PFAD, nicht nur den Ordnernamen: Erst
+        // damit sieht man, ob wirklich der gemeinte Ordner durchsucht wird —
+        // „git" gibt es unter mehreren Elternordnern.
         for (index, path) in scopeFinderFolders.enumerated() {
-            let name = (path as NSString).lastPathComponent
-            add(index == 0 ? "Vorderstes Finder-Fenster — \(name)" : name, path)
+            let shown = abbreviateHome(path)
+            add(index == 0 ? "Finder-Fenster: \(shown)" : shown, path)
         }
         for (title, path) in commonFolders() { add(title, path) }
         // Ein selbst gewählter Ordner bleibt wählbar, auch wenn sein
         // Finder-Fenster inzwischen zu ist — sonst spränge die Auswahl
         // kommentarlos auf den ersten Eintrag.
         if userPickedScope, let previous, !added.contains(previous) {
-            add((previous as NSString).lastPathComponent, previous)
+            add(abbreviateHome(previous), previous)
         }
         // Hat der Nutzer selbst gewählt, seine Auswahl halten; sonst den
         // ersten Eintrag (= vorderstes Finder-Fenster, sobald geladen).
@@ -461,7 +469,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
         guard queuedQuery else { return }
         queuedQuery = false
         scopeResolved = true      // Platzhalter weg, sonst wartet es ewig
-        scopeProblem = "Finder antwortet nicht — Suchbereich nicht bestätigt."
+        // Wartet macOS gerade auf die Freigabe, ist „antwortet nicht" falsch —
+        // dann steht der Dialog noch offen und die Antwort kommt danach.
+        scopeProblem = finderAutomationConsentPending()
+            ? "macOS fragt gerade nach der Finder-Freigabe."
+            : "Finder-Ordner steht noch aus — Suchbereich nicht bestätigt."
         rebuildScopePopup()
         startSearch()
     }
