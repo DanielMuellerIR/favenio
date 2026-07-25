@@ -105,15 +105,20 @@ Die drei Skripte sind bewusst getrennt und dürfen nicht zusammenwachsen:
 | Skript | Aufgabe | Fasst `/Applications` an |
 | --- | --- | --- |
 | `build-app.sh` | bauen und Selbsttests | nein |
-| `release.sh` | DMG bauen, notarisieren, stapeln | nein |
-| `install.sh` | geprüftes DMG installieren | ja, nur nach Prüfung |
+| `install.sh` | bauen, notarisieren, nach `/Applications` kopieren | ja, nur nach Prüfung |
+| `release.sh` | bauen, notarisieren, DMG bauen und notarisieren | nein |
 
-`install.sh` baut und notarisiert selbst nichts. Es verlangt ein DMG mit
-angeheftetem Notary-Ticket (`stapler validate`) und Gatekeeper-Akzeptanz
-(`spctl`), prüft beide Bundles im DMG, beendet laufende Instanzen freundlich,
-kopiert erst vollständig daneben und tauscht dann — und prüft danach erneut, was
-tatsächlich in `/Applications` liegt. `--verify-only` prüft ohne zu
-installieren; Exit 2 heißt in jedem Fall: nichts installiert.
+Die Notarisierung der Bundles ist EIN Weg für beide: `notarize-lib.sh` wird von
+`install.sh` und `release.sh` eingebunden (nur `source`, nie ausführen). Beide
+Bundles gehen zusammen in einem Zip zu Apple — `notarytool` nimmt kein nacktes
+`.app` — und werden anschließend einzeln gestapelt. Deshalb tragen auch aus dem
+DMG herausgezogene Apps ihr Ticket und starten offline.
+
+`install.sh` prüft vor und nach dem Kopieren (`codesign`, `spctl`,
+`stapler validate`), beendet laufende Instanzen freundlich, kopiert erst
+vollständig daneben und tauscht dann. `--dmg <pfad>` installiert stattdessen aus
+einem fertigen DMG, `--verify-only` prüft ohne zu installieren. Exit 2 heißt in
+jedem Fall: nichts installiert.
 
 Neue Kernfunktionen benötigen Unit-Tests mit temporären Fixtures. Das bestehende
 Fixture deckt normale Dateien, versteckte Dateien, Zip, Tar, verschachtelte Zip-
@@ -228,8 +233,10 @@ behobene Finder-Probleme nicht wieder als offene Arbeit übernehmen.
   synchron halten.
 - [LICENSE](LICENSE) — MIT.
 - [BACKLOG.md](BACKLOG.md) — einzige aktive Projektliste.
-- [install.sh](install.sh) — geprüftes Release-DMG nach `/Applications`
-  installieren; baut und notarisiert selbst nichts.
+- [install.sh](install.sh) — bauen, notarisieren und nach `/Applications`
+  installieren; alternativ aus einem fertigen DMG.
+- [notarize-lib.sh](notarize-lib.sh) — gemeinsame Notarisierungsschritte von
+  `install.sh` und `release.sh`; wird eingebunden, nicht ausgeführt.
 - [release.sh](release.sh) — Release-DMG bauen, notarisieren, stapeln;
   Notary-Profilname kommt über die Umgebungsvariable `NOTARY_PROFILE`
   (nicht eingecheckt).

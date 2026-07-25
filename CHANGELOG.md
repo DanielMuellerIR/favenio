@@ -2,6 +2,16 @@
 
 ## 0.18.0 — 2026-07-25
 
+- Die drei Skripte sind jetzt jedes für sich vollständig: `build-app.sh` baut,
+  `install.sh` baut + notarisiert + installiert nach `/Applications`,
+  `release.sh` baut + notarisiert + packt und notarisiert das DMG. Eine
+  Installation braucht damit kein vorheriges Release mehr.
+- Die Notarisierung der Bundles ist ein gemeinsamer Weg (`notarize-lib.sh`,
+  wird eingebunden, nicht ausgeführt): beide Apps zusammen in einem Zip zu Apple
+  — `notarytool` nimmt kein nacktes `.app` — und anschließend einzeln gestapelt.
+  Dadurch tragen auch aus dem DMG herausgezogene Apps ihr Ticket und starten
+  ohne Netz.
+
 - Neu `--exact` (`-e`): Das Muster muss dem ganzen Namen entsprechen. Ohne die
   Option ist ein Muster ohne Platzhalter ein Teilstring — `release.sh` fand
   deshalb auch `test-github-release.sh`. Mit `--regex` wird aus `search` ein

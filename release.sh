@@ -4,10 +4,13 @@
 # Ablauf:
 #   1. Apps bauen via build-app.sh (signiert dort mit Developer ID + Hardened
 #      Runtime + Automation-Entitlement, führt den Headless-Selbsttest aus).
-#   2. DMG bauen: beide Apps + /Applications-Alias, Hintergrundbild mit
+#   2. Beide Bundles notarisieren und das Ticket ANHEFTEN. Das ist dieselbe
+#      Notarisierung, die install.sh verwendet — dadurch tragen die Apps ihr
+#      Ticket auch dann, wenn jemand sie aus dem DMG herauszieht.
+#   3. DMG bauen: beide Apps + /Applications-Alias, Hintergrundbild mit
 #      Finder-Icon-Layout, Ausgabe dist/Favenio-<version>.dmg.
-#   3. Signaturen im fertigen DMG verifizieren.
-#   4. DMG signieren, bei Apple notarisieren (notarytool --wait, typ. 1-10 Min)
+#   4. Signaturen im fertigen DMG verifizieren.
+#   5. DMG signieren, bei Apple notarisieren (notarytool --wait, typ. 1-10 Min)
 #      und das Ticket anheften (stapler) — Gatekeeper akzeptiert dann offline.
 #
 # Voraussetzungen:
@@ -26,6 +29,7 @@
 # Letzte Zeile bei Erfolg (maschinenlesbar): "RELEASE OK: <pfad-zum-dmg>"
 set -euo pipefail
 cd "$(dirname "$0")"
+source ./notarize-lib.sh
 
 if [ -n "${FAVENIO_SPARKLE_TEST_VERSION:-}" ]; then
     echo "FEHLER: Release mit FAVENIO_SPARKLE_TEST_VERSION ist verboten." >&2
@@ -42,29 +46,17 @@ for arg in "$@"; do
     esac
 done
 
-NOTARY_PROFILE="${NOTARY_PROFILE:-notary}"
-
 # Früh scheitern statt nach dem Build: Identität und Notary-Profil prüfen.
-SIGN_ID="${FAVENIO_SIGN_ID:-}"
-if [ -z "$SIGN_ID" ]; then
-    SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
-        | grep "Developer ID Application" | head -1 \
-        | sed -E 's/^[^"]*"([^"]*)".*/\1/' || true)
-fi
-if [ -z "$SIGN_ID" ]; then
-    echo "FEHLER: keine Developer-ID gefunden — ohne echte Signatur ist keine" >&2
-    echo "Notarisierung möglich (FAVENIO_SIGN_ID setzen oder Zertifikat installieren)." >&2
-    exit 1
-fi
-if ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
-    echo "FEHLER: notarytool-Keychain-Profil '$NOTARY_PROFILE' nicht verwendbar." >&2
-    echo "Einrichten (einmalig pro Mac) oder NOTARY_PROFILE korrekt setzen." >&2
-    exit 1
-fi
+# Setzt NOTARY_PROFILE und SIGN_ID (siehe notarize-lib.sh).
+notarize_require_credentials
 
 # ---------- Schritt 1: Apps bauen (signiert + Selbsttest) ----------
-echo "== Schritt 1/4: Apps bauen =="
+echo "== Schritt 1/5: Apps bauen =="
 ./build-app.sh
+
+# ---------- Schritt 2: Bundles notarisieren und stapeln ----------
+echo "== Schritt 2/5: Bundles notarisieren =="
+notarize_apps
 
 VERSION=$(/usr/bin/python3 -c "import favenio; print(favenio.__version__)")
 DIST="dist"
@@ -72,8 +64,8 @@ DMG_PATH="$DIST/Favenio-${VERSION}.dmg"
 mkdir -p "$DIST"
 rm -f "$DMG_PATH"
 
-# ---------- Schritt 2: DMG mit Hintergrundbild bauen ----------
-echo "== Schritt 2/4: DMG bauen =="
+# ---------- Schritt 3: DMG mit Hintergrundbild bauen ----------
+echo "== Schritt 3/5: DMG bauen =="
 STAGING=$(mktemp -d)
 RW_DMG="$STAGING/favenio_rw.dmg"
 VOL_NAME="Favenio"
@@ -100,8 +92,10 @@ hdiutil create -size 100m -fs HFS+ -volname "$VOL_NAME" -ov -quiet "$RW_DMG"
 hdiutil attach -readwrite -noverify -noautoopen -quiet \
     -mountpoint "$MOUNT_DIR" "$RW_DMG"
 
-cp -R Favenio.app "$MOUNT_DIR/Favenio.app"
-cp -R FavenioQuick.app "$MOUNT_DIR/FavenioQuick.app"
+# ditto statt cp -R: erhält erweiterte Attribute und das in Schritt 2
+# angeheftete Notary-Ticket unverändert.
+ditto Favenio.app "$MOUNT_DIR/Favenio.app"
+ditto FavenioQuick.app "$MOUNT_DIR/FavenioQuick.app"
 ln -s /Applications "$MOUNT_DIR/Applications"
 mkdir "$MOUNT_DIR/.background"
 cp "$STAGING/DmgBackground.tiff" "$MOUNT_DIR/.background/DmgBackground.tiff"
@@ -147,19 +141,23 @@ hdiutil detach "$MOUNT_DIR" -quiet || hdiutil detach -force "$MOUNT_DIR"
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -quiet -o "$DMG_PATH"
 echo "DMG gebaut: $DMG_PATH"
 
-# ---------- Schritt 3: Signaturen im DMG verifizieren ----------
-echo "== Schritt 3/4: Signaturen verifizieren =="
+# ---------- Schritt 4: Signaturen im DMG verifizieren ----------
+echo "== Schritt 4/5: Signaturen verifizieren =="
 VERIFY_MOUNT=$(mktemp -d)
 trap 'hdiutil detach "$VERIFY_MOUNT" -quiet 2>/dev/null || true; \
       hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true; rm -rf "$STAGING"' EXIT
 hdiutil attach "$DMG_PATH" -mountpoint "$VERIFY_MOUNT" -quiet -nobrowse
-codesign --verify --strict "$VERIFY_MOUNT/Favenio.app"
-codesign --verify --strict "$VERIFY_MOUNT/FavenioQuick.app"
+for app in "${FAVENIO_APPS[@]}"; do
+    codesign --verify --strict "$VERIFY_MOUNT/$app"
+    # Das Ticket aus Schritt 2 muss die DMG-Erstellung überlebt haben —
+    # sonst braucht eine herausgezogene App beim ersten Start Netz.
+    xcrun stapler validate "$VERIFY_MOUNT/$app" >/dev/null
+done
 hdiutil detach "$VERIFY_MOUNT" -quiet
-echo "Signaturen im DMG gültig."
+echo "Signaturen und Tickets im DMG gültig."
 
-# ---------- Schritt 4: DMG signieren, notarisieren, stapeln ----------
-echo "== Schritt 4/4: Notarisierung (Profil: $NOTARY_PROFILE) =="
+# ---------- Schritt 5: DMG signieren, notarisieren, stapeln ----------
+echo "== Schritt 5/5: DMG notarisieren (Profil: $NOTARY_PROFILE) =="
 # Apple verlangt, dass auch das DMG selbst signiert ist, nicht nur der Inhalt.
 codesign --force --timestamp --sign "$SIGN_ID" "$DMG_PATH"
 xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait

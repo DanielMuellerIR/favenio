@@ -38,20 +38,20 @@ and install them only after confirmation. The main app also provides
 system profile is sent with update checks. Versions before 0.14.0 have no
 updater, so 0.14.0 must be installed once from the DMG.
 
-Building from source instead — three separate scripts, none of which does the
-others' job:
+Building from source instead — three scripts, each self-contained:
 
 ```bash
 ./build-app.sh      # build and self-test both apps in the repository
-./release.sh        # build the DMG, notarize and staple it (no install)
-./install.sh        # install a verified DMG into /Applications
+./install.sh        # build, notarize, install into /Applications
+./release.sh        # build, notarize, build and notarize the DMG (no install)
 ```
 
 Source builds may be ad-hoc signed and are never installed automatically.
-`install.sh` only accepts a DMG with a stapled notarization ticket that
-Gatekeeper accepts, checks both bundles before and after copying, and exits
-with code 2 without touching `/Applications` if anything fails.
-`./install.sh --verify-only` runs the checks alone.
+Whatever lands in `/Applications` carries a stapled notarization ticket:
+`install.sh` notarizes the bundles itself, verifies them before and after
+copying (`codesign`, `spctl`, `stapler validate`), and exits with code 2 without
+touching `/Applications` if anything fails. `./install.sh --dmg <path>` installs
+from a finished DMG instead; `./install.sh --verify-only` runs the checks alone.
 
 ## Quick start (CLI)
 
