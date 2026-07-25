@@ -62,6 +62,14 @@ anzufassen. `./install.sh --verify-only` führt nur die Prüfung aus.
 # Glob-Muster (matcht den ganzen Namen)
 ./favenio.py "*.sketch" ~/Projekte
 
+# Genauer Dateiname — ohne -e ist „release.sh" ein Teilstring und findet
+# auch „test-github-release.sh"
+./favenio.py -e release.sh ~/git
+
+# Nur zwei Ordnerebenen tief (wie find -maxdepth): welche Projekte haben
+# ein Release-Skript?
+./favenio.py -e --max-depth 2 release.sh ~/git
+
 # Im Dateiinhalt suchen, auch innerhalb von Archiven
 ./favenio.py -c "Kündigungsfrist" ~/Documents
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.18.0 — 2026-07-25
+
+- Neu `--exact` (`-e`): Das Muster muss dem ganzen Namen entsprechen. Ohne die
+  Option ist ein Muster ohne Platzhalter ein Teilstring — `release.sh` fand
+  deshalb auch `test-github-release.sh`. Mit `--regex` wird aus `search` ein
+  `fullmatch`; Glob-Muster matchen ohnehin den ganzen Namen. Beide Apps haben
+  dafür den Schalter „Genauer Name", die Schnellsuche gibt ihn an die Haupt-App
+  weiter.
+- Neu `--max-depth N`: nur N Ordnerebenen tief suchen, deckungsgleich mit
+  `find -maxdepth`. Für „welche Projekte haben ein Release-Skript" fiel die
+  Laufzeit über `~/git` damit von 0,31 s auf 0,07 s.
+- Die Finder-Abfrage nutzt `URL of` statt `as alias` und `front Finder window`
+  statt `front window`. Gemessen mit 13 offenen Fenstern, Median aus sieben
+  Läufen: 185 ms vorher, 147 ms jetzt, davon 34 ms reiner Prozessstart. Die
+  Fensterliste kostet gegenüber der Einzelabfrage nur rund 2 ms; `front Finder
+  window` überspringt Info- und Hilfsfenster.
+- Vor der Abfrage klärt `AEDeterminePermissionToAutomateTarget` ohne Event und
+  ohne Dialog, ob die Automation erlaubt ist. Verbotene Automation wird damit
+  sofort erkannt statt aus einem hängenden Unterprozess erschlossen; der Not-Aus
+  sinkt von 12 s auf 6 s. Steht der Freigabedialog offen, wird gewartet statt
+  abgebrochen — und das auch so gemeldet.
+- Der Suchbereich der Schnellsuche zeigt den Pfad statt nur des Ordnernamens,
+  und der Button „Alle in Favenio" nennt sein Tastenkürzel.
+
 ## 0.17.0 — 2026-07-25
 
 - Die Finder-Ordner werden in einer einzigen Apple-Event-Abfrage geholt statt

@@ -62,6 +62,14 @@ with code 2 without touching `/Applications` if anything fails.
 # Glob pattern (matches the whole name)
 ./favenio.py "*.sketch" ~/Projects
 
+# Exact file name — without -e, "release.sh" is a substring and also
+# matches "test-github-release.sh"
+./favenio.py -e release.sh ~/git
+
+# Only two directory levels deep (like find -maxdepth): which projects
+# have a release script?
+./favenio.py -e --max-depth 2 release.sh ~/git
+
 # Search file contents, including inside archives
 ./favenio.py -c "notice period" ~/Documents
 

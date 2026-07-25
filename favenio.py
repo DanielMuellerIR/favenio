@@ -9,7 +9,8 @@ Grundprinzipien:
 - Standardmäßig wird nach DATEINAMEN gesucht (Ordner zählen mit).
 - Mit --content wird stattdessen im DATEIINHALT gesucht.
 - Ohne Platzhalter (* ? [) gilt „Name enthält den Suchtext";
-  mit Platzhaltern gilt Glob-Matching auf den ganzen Namen.
+  mit Platzhaltern gilt Glob-Matching auf den ganzen Namen. --exact verlangt
+  in jedem Fall den ganzen Namen.
 - Groß-/Kleinschreibung ist standardmäßig egal (--case-sensitive schaltet um).
 - Treffer in Archiven werden als  archiv.zip!/pfad/im/archiv  ausgegeben.
 
@@ -32,7 +33,7 @@ import tempfile
 import time
 import zipfile
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-07-25"
@@ -143,19 +144,27 @@ def classify_archive(name):
     return None
 
 
-def build_matcher(pattern, use_regex, case_sensitive):
+def build_matcher(pattern, use_regex, case_sensitive, exact=False):
     """Baut aus dem Suchmuster eine Funktion  text -> True/False .
 
     Drei Fälle:
     1. --regex:            Muster ist ein regulärer Ausdruck (re.search).
     2. Muster mit * ? [ :  Glob-Matching auf den GANZEN Namen (wie die Shell).
     3. sonst:              einfacher „enthält"-Test (wie EasyFind-Default).
+
+    `exact` verlangt in allen Fällen den GANZEN Namen: aus dem „enthält"-Test
+    wird Gleichheit, aus `re.search` wird `re.fullmatch`. Ein Glob-Muster
+    matcht ohnehin schon den ganzen Namen und bleibt deshalb unverändert.
+    Genau dafür gibt es die Option: `release.sh` ohne Platzhalter ist sonst ein
+    Teilstring und findet auch `test-github-release.sh`.
     """
     flags = 0 if case_sensitive else re.IGNORECASE
 
     if use_regex:
         # Ungültige Regexes fängt main() ab und meldet sie als Fehler.
         compiled = re.compile(pattern, flags)
+        if exact:
+            return lambda text: compiled.fullmatch(text) is not None
         return lambda text: compiled.search(text) is not None
 
     if any(char in pattern for char in "*?["):
@@ -163,6 +172,12 @@ def build_matcher(pattern, use_regex, case_sensitive):
         # der den kompletten String matchen muss.
         compiled = re.compile(fnmatch.translate(pattern), flags)
         return lambda text: compiled.match(text) is not None
+
+    if exact:
+        if case_sensitive:
+            return lambda text: text == pattern
+        lowered_exact = pattern.lower()
+        return lambda text: text.lower() == lowered_exact
 
     if case_sensitive:
         return lambda text: pattern in text
@@ -193,6 +208,7 @@ class Search:
 
     def __init__(self, matcher, content_mode, archive_depth, as_json,
                  progress=False, only="both", include_hidden=False,
+                 max_depth=None,
                  max_archive_member_bytes=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
                  max_archive_total_bytes=DEFAULT_MAX_ARCHIVE_TOTAL_BYTES,
                  max_archive_ratio=DEFAULT_MAX_ARCHIVE_RATIO):
@@ -205,6 +221,9 @@ class Search:
                                               # Treffer auf einen Typ begrenzen
         self.include_hidden = include_hidden  # unsichtbare (Punkt-)Dateien
                                               # und -Ordner mitdurchsuchen?
+        self.max_depth = max_depth            # None = unbegrenzt tief;
+                                              # 1 = nur direkt im Startpfad
+                                              # (zählt wie `find -maxdepth`)
         self.as_json = as_json                # Ausgabeformat JSONL statt Text
         self.progress = progress              # laufend melden, wo wir suchen
         self.found_any = False                # für den Exit-Code (0 vs. 1)
@@ -359,6 +378,13 @@ class Search:
                 # überspringen. dirnames IN PLACE ändern, damit os.walk folgt.
                 dirnames[:] = [d for d in dirnames if not self.is_hidden(d)]
                 filenames = [f for f in filenames if not self.is_hidden(f)]
+            # Was in `dirpath` liegt, hat die Tiefe `depth_of + 1`. Nur wenn
+            # dessen Unterordner noch erlaubt wären, weiter absteigen — sonst
+            # käme eine Ebene zu viel mit (`--max-depth 1` = nur direkt im
+            # Startpfad, wie `find -maxdepth 1`).
+            if self.max_depth is not None \
+                    and self.depth_of(root, dirpath) + 1 >= self.max_depth:
+                dirnames[:] = []
             if not self.content_mode:
                 # Bei Namenssuche zählen auch Ordnernamen als Treffer.
                 for dirname in dirnames:
@@ -366,6 +392,17 @@ class Search:
                         self.emit(os.path.join(dirpath, dirname), "dir")
             for filename in filenames:
                 self.visit_file(os.path.join(dirpath, filename))
+
+    @staticmethod
+    def depth_of(root, dirpath):
+        """Wie viele Ordnerebenen liegt `dirpath` unter `root`?
+
+        Der Startpfad selbst ist 0, ein Unterordner 1. Damit bedeutet
+        `--max-depth 1` genau „nur was direkt im Startpfad liegt"."""
+        relative = os.path.relpath(dirpath, root)
+        if relative == os.curdir:
+            return 0
+        return relative.count(os.sep) + 1
 
     @staticmethod
     def file_size(path):
@@ -657,6 +694,10 @@ def main(argv=None):
                         help="Muster als regulären Ausdruck interpretieren")
     parser.add_argument("-s", "--case-sensitive", action="store_true",
                         help="Groß-/Kleinschreibung beachten")
+    parser.add_argument("-e", "--exact", action="store_true",
+                        help="Muster muss dem GANZEN Namen entsprechen statt "
+                             "nur enthalten zu sein (mit --regex: fullmatch; "
+                             "mit --content gilt es je Zeile)")
     parser.add_argument("--no-archives", action="store_true",
                         help="nicht in Archive hineinschauen")
     parser.add_argument("--only", choices=["both", "files", "dirs"],
@@ -667,6 +708,11 @@ def main(argv=None):
     parser.add_argument("--hidden", action="store_true",
                         help="unsichtbare (Punkt-)Dateien und -Ordner "
                              "mitdurchsuchen (Default: überspringen)")
+    parser.add_argument("--max-depth", type=positive_int, default=None,
+                        metavar="N",
+                        help="nur N Ordnerebenen tief suchen (1 = nur direkt "
+                             "im Startpfad, wie find -maxdepth); Default: "
+                             "unbegrenzt")
     parser.add_argument("--archive-depth", type=int, default=1,
                         metavar="N",
                         help="wie tief in verschachtelte Archive schauen "
@@ -743,7 +789,8 @@ def main(argv=None):
     paths = args.paths if args.paths else ["."]
 
     try:
-        matcher = build_matcher(args.pattern, args.regex, args.case_sensitive)
+        matcher = build_matcher(args.pattern, args.regex, args.case_sensitive,
+                                exact=args.exact)
     except re.error as err:
         print("favenio: fehler: ungültiger regulärer Ausdruck: %s" % err,
               file=sys.stderr)
@@ -752,7 +799,7 @@ def main(argv=None):
     archive_depth = 0 if args.no_archives else args.archive_depth
     search = Search(matcher, args.content, archive_depth, args.json,
                     progress=args.progress, only=args.only,
-                    include_hidden=args.hidden,
+                    include_hidden=args.hidden, max_depth=args.max_depth,
                     max_archive_member_bytes=args.max_archive_member_bytes,
                     max_archive_total_bytes=args.max_archive_total_bytes,
                     max_archive_ratio=args.max_archive_ratio)

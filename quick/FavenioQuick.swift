@@ -70,6 +70,10 @@ final class QuickController: NSObject, NSApplicationDelegate,
                                    target: nil, action: nil)
     let hiddenCheckbox = NSButton(checkboxWithTitle: "Unsichtbare",
                                   target: nil, action: nil)
+    // Ohne diesen Schalter ist ein Muster ohne Platzhalter ein Teilstring:
+    // „release.sh" fände dann auch „test-github-release.sh".
+    let exactCheckbox = NSButton(checkboxWithTitle: "Genauer Name",
+                                 target: nil, action: nil)
     // Öffnet die große Favenio.app mit den Treffern (zum Sortieren / für mehr
     // als die Top 20). Früher sprang Quick automatisch dorthin — jetzt nur
     // noch auf Klick bzw. Cmd+Return.
@@ -225,7 +229,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
         (scopePopup.cell as? NSPopUpButtonCell)?.lineBreakMode =
             .byTruncatingHead
 
-        for checkbox in [archivesCheckbox, contentCheckbox, hiddenCheckbox] {
+        for checkbox in [archivesCheckbox, contentCheckbox, hiddenCheckbox,
+                         exactCheckbox] {
             checkbox.controlSize = .small
             checkbox.font = NSFont.systemFont(ofSize: 11)
             checkbox.state = .off        // Default: schnelle Namenssuche
@@ -266,7 +271,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
         searchRow.spacing = 8
         searchRow.alignment = .centerY
         let optionsRow = NSStackView(views: [archivesCheckbox, contentCheckbox,
-                                             hiddenCheckbox, openButton])
+                                             hiddenCheckbox, exactCheckbox,
+                                             openButton])
         optionsRow.orientation = .horizontal
         optionsRow.spacing = 14
         optionsRow.alignment = .centerY
@@ -608,6 +614,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let searchContent = contentCheckbox.state == .on
         let searchArchives = archivesCheckbox.state == .on
         let searchHidden = hiddenCheckbox.state == .on
+        let searchExact = exactCheckbox.state == .on
 
         // Trefferliste ein paar Mal pro Sekunde nachziehen (nicht bei jedem
         // einzelnen Treffer neu zeichnen).
@@ -621,7 +628,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 pattern: query, root: root, content: searchContent,
                 regex: false, caseSensitive: false,
                 archives: searchArchives, progress: true,
-                includeHidden: searchHidden)
+                includeHidden: searchHidden, exact: searchExact)
             else {
                 DispatchQueue.main.async {
                     guard let self, generation == self.searchGeneration
@@ -762,6 +769,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
                          value: archivesCheckbox.state == .on ? "1" : "0"),
             URLQueryItem(name: "hidden",
                          value: hiddenCheckbox.state == .on ? "1" : "0"),
+            URLQueryItem(name: "exact",
+                         value: exactCheckbox.state == .on ? "1" : "0"),
             URLQueryItem(name: "continue", value: "1"),
         ]
         if let url = components.url, NSWorkspace.shared.open(url) {

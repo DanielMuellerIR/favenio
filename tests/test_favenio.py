@@ -196,6 +196,81 @@ class FavenioTest(TempTreeTest):
         code, _, _ = run(["RECHNUNG", self.root, "--case-sensitive"])
         self.assertEqual(code, 1)
 
+    # ---------- Exakter Name ----------
+
+    def test_exact_name_ignores_substring_hits(self):
+        # Der reale Anlass: „release.sh" fand auch „test-github-release.sh".
+        os.makedirs(os.path.join(self.root, "projekt"))
+        self.write("projekt/release.sh", "#!/bin/sh\n")
+        self.write("test-github-release.sh", "#!/bin/sh\n")
+
+        code, lines, _ = run(["release.sh", self.root, "--only", "files"])
+        self.assertEqual(code, 0)
+        self.assertTrue(any(line.endswith("test-github-release.sh")
+                            for line in lines))
+
+        code, lines, _ = run(["--exact", "release.sh", self.root,
+                              "--only", "files"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].endswith(os.path.join("projekt",
+                                                       "release.sh")))
+
+    def test_exact_stays_case_insensitive_by_default(self):
+        self.write("Release.SH", "#!/bin/sh\n")
+        code, lines, _ = run(["--exact", "release.sh", self.root,
+                              "--only", "files"])
+        self.assertEqual(code, 0)
+        self.assertTrue(any(line.endswith("Release.SH") for line in lines))
+        # Mit -s zählt die Schreibweise wieder.
+        code, _, _ = run(["--exact", "-s", "release.sh", self.root])
+        self.assertEqual(code, 1)
+
+    def test_exact_with_regex_is_fullmatch(self):
+        self.write("release.sh", "#!/bin/sh\n")
+        self.write("test-github-release.sh", "#!/bin/sh\n")
+        code, lines, _ = run(["--exact", "-r", r"release\.sh", self.root,
+                              "--only", "files"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].endswith("release.sh"))
+        self.assertFalse(lines[0].endswith("github-release.sh"))
+
+    def test_exact_leaves_glob_semantics_alone(self):
+        # Ein Glob matcht ohnehin den ganzen Namen; --exact ändert daran nichts.
+        code, plain, _ = run(["*.txt", self.root, "--no-archives"])
+        code_exact, exact_lines, _ = run(["--exact", "*.txt", self.root,
+                                          "--no-archives"])
+        self.assertEqual(code, code_exact)
+        self.assertEqual(sorted(plain), sorted(exact_lines))
+
+    # ---------- Suchtiefe ----------
+
+    def test_max_depth_limits_like_find(self):
+        os.makedirs(os.path.join(self.root, "eins", "zwei", "drei"))
+        self.write("ziel.marker", "oben")
+        self.write("eins/ziel.marker", "ebene 1")
+        self.write("eins/zwei/ziel.marker", "ebene 2")
+        self.write("eins/zwei/drei/ziel.marker", "ebene 3")
+
+        def depths(value):
+            args = ["ziel.marker", self.root, "--only", "files",
+                    "--no-archives"]
+            if value is not None:
+                args += ["--max-depth", str(value)]
+            _, lines, _ = run(args)
+            return len(lines)
+
+        self.assertEqual(depths(1), 1)   # nur direkt im Startpfad
+        self.assertEqual(depths(2), 2)
+        self.assertEqual(depths(3), 3)
+        self.assertEqual(depths(None), 4)   # Default: unbegrenzt
+
+    def test_max_depth_rejects_zero(self):
+        code, _, err = run(["ziel", self.root, "--max-depth", "0"])
+        self.assertEqual(code, 2)
+        self.assertIn("größer als 0", err)
+
     # ---------- Inhaltssuche ----------
 
     def test_content_in_plain_file(self):

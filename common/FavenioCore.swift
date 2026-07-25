@@ -205,12 +205,14 @@ func searchArguments(pattern: String, root: String, content: Bool,
                      regex: Bool, caseSensitive: Bool,
                      archives: Bool, progress: Bool = false,
                      only: String = "both",
-                     includeHidden: Bool = false) -> [String]? {
+                     includeHidden: Bool = false,
+                     exact: Bool = false) -> [String]? {
     guard let cli = findCLI() else { return nil }
     var args = ["-u", cli, "--json"]   // -u = ungepuffert → Treffer streamen
     if content { args.append("--content") }
     if regex { args.append("--regex") }
     if caseSensitive { args.append("--case-sensitive") }
+    if exact { args.append("--exact") }
     if !archives { args.append("--no-archives") }
     if only != "both" { args.append(contentsOf: ["--only", only]) }
     if includeHidden { args.append("--hidden") }

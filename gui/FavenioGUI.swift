@@ -198,6 +198,10 @@ final class MainController: NSObject, NSApplicationDelegate,
                                 target: nil, action: nil)
     let hiddenCheckbox = NSButton(checkboxWithTitle: "Unsichtbare",
                                   target: nil, action: nil)
+    // „Genauer Name": ohne diesen Schalter ist ein Muster ohne Platzhalter ein
+    // Teilstring — „release.sh" fände dann auch „test-github-release.sh".
+    let exactCheckbox = NSButton(checkboxWithTitle: "Genauer Name",
+                                 target: nil, action: nil)
     // Drei-Wege-Umschalter: Dateien & Ordner / nur Dateien / nur Ordner.
     let typeControl = NSSegmentedControl(
         labels: ["Dateien & Ordner", "Dateien", "Ordner"],
@@ -416,6 +420,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         hiddenCheckbox.state = value("hidden") == "1" ? .on : .off
         regexCheckbox.state = value("regex") == "1" ? .on : .off
         caseCheckbox.state = value("case") == "1" ? .on : .off
+        exactCheckbox.state = value("exact") == "1" ? .on : .off
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -494,6 +499,9 @@ final class MainController: NSObject, NSApplicationDelegate,
         // Regex-Umschalten färbt das Feld um (an) bzw. zurück (aus).
         regexCheckbox.target = self
         regexCheckbox.action = #selector(regexToggled)
+        // „Genauer Name" wirkt sofort — sonst müsste man Return nachschieben.
+        exactCheckbox.target = self
+        exactCheckbox.action = #selector(startSearch)
         templatesButton.bezelStyle = .rounded
         templatesButton.target = self
         templatesButton.action = #selector(showTemplatesMenu(_:))
@@ -516,8 +524,8 @@ final class MainController: NSObject, NSApplicationDelegate,
         topRow.orientation = .horizontal
         let optionsRow = NSStackView(views: [typeControl, contentCheckbox,
                                              archivesCheckbox, hiddenCheckbox,
-                                             regexCheckbox, caseCheckbox,
-                                             templatesButton])
+                                             exactCheckbox, regexCheckbox,
+                                             caseCheckbox, templatesButton])
         optionsRow.orientation = .horizontal
         optionsRow.spacing = 12
 
@@ -885,7 +893,8 @@ final class MainController: NSObject, NSApplicationDelegate,
             caseSensitive: caseCheckbox.state == .on,
             archives: archivesCheckbox.state == .on,
             progress: true,
-            only: only, includeHidden: hiddenCheckbox.state == .on)
+            only: only, includeHidden: hiddenCheckbox.state == .on,
+            exact: exactCheckbox.state == .on)
         else {
             statusLabel.stringValue = "favenio.py nicht gefunden."
             return
