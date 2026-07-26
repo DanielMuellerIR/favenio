@@ -28,12 +28,20 @@ notarize_require_credentials() {
         echo "Zertifikat installieren)." >&2
         return 2
     fi
-    if ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" \
-            >/dev/null 2>&1; then
-        echo "FEHLER: notarytool-Keychain-Profil '$NOTARY_PROFILE' nicht" >&2
-        echo "verwendbar. Einmalig einrichten oder NOTARY_PROFILE setzen." >&2
-        return 2
-    fi
+    # Fünf Versuche statt einem: `notarytool history` meldet gelegentlich
+    # fälschlich „No Keychain password item found", obwohl das Profil da ist
+    # (2026-07-26 auf M3 belegt — Versuch 1 fehlgeschlagen, Versuch 2 sofort ok).
+    # Ein einzelner Fehlversuch würde sonst einen ganzen Lauf grundlos abbrechen;
+    # ein wirklich fehlendes Profil scheitert auch nach fünf Versuchen.
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" \
+            >/dev/null 2>&1 && return 0
+        sleep 3
+    done
+    echo "FEHLER: notarytool-Keychain-Profil '$NOTARY_PROFILE' nicht" >&2
+    echo "verwendbar. Einmalig einrichten oder NOTARY_PROFILE setzen." >&2
+    return 2
 }
 
 # Beide App-Bundles bei Apple notarisieren und das Ticket ANHEFTEN.
