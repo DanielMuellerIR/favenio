@@ -19,7 +19,8 @@
 #       xcrun notarytool store-credentials "<profil>" \
 #         --apple-id "<Apple-ID>" --team-id "<Team-ID>"
 #     (App-spezifisches Passwort wird interaktiv abgefragt — nie als Argument.)
-#     Profilname: Default "notary", überschreibbar per NOTARY_PROFILE.
+#     Profilname: kein eingecheckter Default. Er kommt aus NOTARY_PROFILE oder
+#     clone-lokal aus `git config --local favenio.notaryProfile <profil>`.
 #
 # Aufruf:
 #   NOTARY_PROFILE=<profil> ./release.sh

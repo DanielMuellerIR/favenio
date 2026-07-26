@@ -238,8 +238,8 @@ behobene Finder-Probleme nicht wieder als offene Arbeit übernehmen.
 - [notarize-lib.sh](notarize-lib.sh) — gemeinsame Notarisierungsschritte von
   `install.sh` und `release.sh`; wird eingebunden, nicht ausgeführt.
 - [release.sh](release.sh) — Release-DMG bauen, notarisieren, stapeln;
-  Notary-Profilname kommt über die Umgebungsvariable `NOTARY_PROFILE`
-  (nicht eingecheckt).
+  Notary-Profilname kommt über die Umgebungsvariable `NOTARY_PROFILE` oder
+  clone-lokal aus `git config --local favenio.notaryProfile` (nicht eingecheckt).
 - [assets/](assets/) — Signing-Entitlements und DMG-Hintergrund-Generator.
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) — CI auf macOS:
   Kern-Tests mit beiden Interpretern plus App-Build und Selbsttest.

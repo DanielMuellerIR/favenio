@@ -15,7 +15,24 @@ FAVENIO_APPS=("Favenio.app" "FavenioQuick.app")
 # scheitern als nach mehreren Minuten Arbeit.
 # Setzt die globale Variable SIGN_ID.
 notarize_require_credentials() {
-    NOTARY_PROFILE="${NOTARY_PROFILE:-notary}"
+    # Profilnamen bestimmen: Umgebung schlägt clone-lokale Git-Konfiguration.
+    # Kein eingecheckter Default — ein fester Name existiert auf einem fremden
+    # Mac nicht und ließe den Lauf erst nach dem Bauen scheitern. Keychain-
+    # Profile sind ohnehin pro Mac lokal und werden nicht synchronisiert, der
+    # Name gehört daher nicht ins öffentliche Repo.
+    if [ -z "${NOTARY_PROFILE:-}" ]; then
+        NOTARY_PROFILE="$(git config --local --get favenio.notaryProfile 2>/dev/null || true)"
+    fi
+    if [ -z "${NOTARY_PROFILE:-}" ]; then
+        echo "FEHLER: Kein Notary-Profil bekannt." >&2
+        echo "Entweder NOTARY_PROFILE setzen oder einmalig für diesen Clone:" >&2
+        echo "  git config --local favenio.notaryProfile <profil>" >&2
+        echo "Das Profil selbst einmal pro Mac anlegen:" >&2
+        echo "  xcrun notarytool store-credentials <profil> --apple-id <apple-id> --team-id <team-id>" >&2
+        return 2
+    fi
+    export NOTARY_PROFILE
+
     SIGN_ID="${FAVENIO_SIGN_ID:-}"
     if [ -z "$SIGN_ID" ]; then
         SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \

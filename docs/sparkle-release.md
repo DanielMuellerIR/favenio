@@ -39,6 +39,10 @@ its public counterpart is embedded as `SUPublicEDKey`.
    NOTARY_PROFILE=<profile> ./release.sh
    ```
 
+   There is no checked-in default profile name. Either set `NOTARY_PROFILE` per
+   call as above, or store it once per clone with
+   `git config --local favenio.notaryProfile <profile>`.
+
    The script signs Sparkle's nested helpers from the inside out, builds the
    DMG, notarizes it and staples the ticket.
 3. Verify tests, signatures, the stapled ticket, Gatekeeper assessment and the
