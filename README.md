@@ -7,9 +7,10 @@
 Favenio is an index-free file search for macOS in the spirit of EasyFind: it
 scans the file system directly (no index, no Spotlight) for file names or file
 contents. What sets it apart: **Favenio also looks inside archives.** Supported
-are the zip family (zip, jar, whl, epub, docx, xlsx, pptx, odt, ods, odp) and
-the tar family (tar, tar.gz/tgz, tar.bz2/tbz2, tar.xz/txz) — optionally even
-archives nested inside archives.
+are the zip family (zip, jar, whl, epub, docx, xlsx, pptx, odt, ods, odp), the
+tar family (tar, tar.gz/tgz, tar.bz2/tbz2, tar.xz/txz) and singly compressed
+files (gz, bz2, xz — e.g. `notes.txt.gz` contains `notes.txt`) — optionally
+even archives nested inside archives.
 
 The search core is pure Python 3 (standard library only), a single file, no
 installation. Two native macOS apps are built on top of it: a full search

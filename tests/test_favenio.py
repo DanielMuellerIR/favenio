@@ -5,8 +5,11 @@
 # Temp-Ordner: normale Dateien, ein Zip, ein tar.gz und ein Zip,
 # das ein weiteres Zip enthält (für die Verschachtelungs-Tests).
 
+import bz2
+import gzip
 import io
 import json
+import lzma
 import os
 import subprocess
 import sys
@@ -717,6 +720,166 @@ class ContentProbeTest(TempTreeTest):
         self.assertEqual(code, 1)
         self.assertEqual(lines, [])
         self.assertIn("Einzelgrenze", err)
+
+
+class SingleCompressionTest(TempTreeTest):
+    """Einzeln komprimierte Dateien (.gz/.bz2/.xz) — Archive mit genau
+    einem Eintrag: dem entpackten Inhalt unter dem Namen ohne Endung."""
+
+    CONTENT = "erste Zeile\nzweite Zeile mit NADEL\n"
+
+    def write_bytes(self, rel_path, blob):
+        path = os.path.join(self.root, rel_path)
+        with open(path, "wb") as handle:
+            handle.write(blob)
+        return path
+
+    def setUp(self):
+        super().setUp()
+        raw = self.CONTENT.encode("utf-8")
+        self.write_bytes("log.txt.gz", gzip.compress(raw))
+        self.write_bytes("log-b.txt.bz2", bz2.compress(raw))
+        self.write_bytes("log-x.txt.xz", lzma.compress(raw))
+
+    def test_classify_archive_extensions(self):
+        # Die Tar-Familie gewinnt gegen die Einzelkompression.
+        self.assertEqual(favenio.classify_archive("a.tar.gz"), "tar")
+        self.assertEqual(favenio.classify_archive("a.tgz"), "tar")
+        self.assertEqual(favenio.classify_archive("a.tar.bz2"), "tar")
+        self.assertEqual(favenio.classify_archive("a.tbz2"), "tar")
+        self.assertEqual(favenio.classify_archive("a.tar.xz"), "tar")
+        self.assertEqual(favenio.classify_archive("a.txz"), "tar")
+        self.assertEqual(favenio.classify_archive("a.zip"), "zip")
+        self.assertEqual(favenio.classify_archive("a.GZ"), ".gz")
+        self.assertEqual(favenio.classify_archive("a.bz2"), ".bz2")
+        self.assertEqual(favenio.classify_archive("a.xz"), ".xz")
+        self.assertIsNone(favenio.classify_archive("a.txt"))
+
+    def test_content_hit_with_line_number_in_all_three_formats(self):
+        for archive_name, member_name in [
+            ("log.txt.gz", "log.txt"),
+            ("log-b.txt.bz2", "log-b.txt"),
+            ("log-x.txt.xz", "log-x.txt"),
+        ]:
+            with self.subTest(archive=archive_name):
+                path = os.path.join(self.root, archive_name)
+                code, lines, _ = run(["--json", "--content", "NADEL", path])
+                self.assertEqual(code, 0)
+                records = [json.loads(line) for line in lines]
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0]["type"], "member")
+                self.assertTrue(records[0]["path"].endswith(
+                    archive_name + "!/" + member_name))
+                self.assertEqual(records[0]["line"], 2)
+
+    def test_name_search_sees_inner_member(self):
+        # Der entpackte Name ist per Namenssuche und Glob auffindbar.
+        code, lines, _ = run(["--json", "*.txt", self.root])
+        self.assertEqual(code, 0)
+        member_paths = [json.loads(line)["path"] for line in lines
+                        if json.loads(line)["type"] == "member"]
+        self.assertTrue(any(p.endswith("log.txt.gz!/log.txt")
+                            for p in member_paths))
+
+    def test_no_archives_skips_decompression(self):
+        code, lines, _ = run(["--no-archives", "--content", "NADEL",
+                              self.root])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+
+    def test_gz_inside_zip_needs_depth_2(self):
+        archive = os.path.join(self.root, "paket.zip")
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("brief.txt.gz",
+                        gzip.compress("tief drin NADEL\n".encode("utf-8")))
+        code, lines, _ = run(["--json", "--content", "NADEL", archive])
+        self.assertEqual(code, 1)
+        # Option mit Wert VOR dem Muster: der argparse-Wart (BACKLOG 4)
+        # verträgt sie beim System-Python nicht zwischen Muster und Pfad.
+        code, lines, _ = run(["--json", "--content", "--archive-depth", "2",
+                              "NADEL", archive])
+        self.assertEqual(code, 0)
+        record = json.loads(lines[0])
+        self.assertTrue(record["path"].endswith(
+            "paket.zip!/brief.txt.gz!/brief.txt"))
+
+    def test_zip_inside_gz_needs_depth_2(self):
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as zf:
+            zf.writestr("tief/verstecktes.txt", "GEHEIMNIS ganz unten\n")
+        self.write_bytes("innen.zip.gz", gzip.compress(inner.getvalue()))
+        code, _, _ = run(["--content", "GEHEIMNIS",
+                          os.path.join(self.root, "innen.zip.gz")])
+        self.assertEqual(code, 1)
+        code, lines, _ = run(["--json", "--content", "--archive-depth", "2",
+                              "GEHEIMNIS",
+                              os.path.join(self.root, "innen.zip.gz")])
+        self.assertEqual(code, 0)
+        record = json.loads(lines[0])
+        self.assertTrue(record["path"].endswith(
+            "innen.zip.gz!/innen.zip!/tief/verstecktes.txt"))
+
+    def test_extract_single_member(self):
+        result = os.path.join(self.root, "log.txt.gz") + "!/log.txt"
+        code, lines, _ = run(["--extract", result])
+        self.assertEqual(code, 0)
+        self.assertTrue(lines[0].endswith("log.txt"))
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+
+    def test_extract_nested_chain_through_gz(self):
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as zf:
+            zf.writestr("tief/verstecktes.txt", "GEHEIMNIS ganz unten\n")
+        self.write_bytes("innen.zip.gz", gzip.compress(inner.getvalue()))
+        result = (os.path.join(self.root, "innen.zip.gz")
+                  + "!/innen.zip!/tief/verstecktes.txt")
+        code, lines, _ = run(["--extract", result])
+        self.assertEqual(code, 0)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertIn("ganz unten", handle.read())
+
+    def test_extract_wrong_member_name_exits_2(self):
+        # Der einzige gültige Eintrag ist der Name ohne Endung.
+        result = os.path.join(self.root, "log.txt.gz") + "!/anders.txt"
+        code, _, err = run(["--extract", result])
+        self.assertEqual(code, 2)
+        self.assertIn("fehler", err)
+
+    def test_corrupt_gz_warns_and_search_continues(self):
+        self.write_bytes("kaputt.gz", b"das ist kein gzip")
+        self.write("klartext.txt", "hier NADEL im Klartext\n")
+        code, lines, err = run(["--json", "--content", "NADEL", self.root])
+        self.assertEqual(code, 0)   # der Klartext-Treffer bleibt
+        self.assertIn("kaputt.gz", err)
+        paths = [json.loads(line)["path"] for line in lines]
+        self.assertFalse(any("kaputt" in p for p in paths))
+
+    def test_truncated_gz_warns_without_traceback(self):
+        blob = gzip.compress(("NADEL " + "x" * 4096).encode("utf-8"))
+        self.write_bytes("halb.txt.gz", blob[:len(blob) // 2])
+        code, lines, err = run(["--content", "NADEL",
+                                os.path.join(self.root, "halb.txt.gz")])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("halb.txt.gz", err)
+
+    def test_member_budget_applies_to_decompressed_bytes(self):
+        code, lines, err = run([
+            "--content", "NADEL", os.path.join(self.root, "log.txt.gz"),
+            "--max-archive-member-bytes", "8",
+        ])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("Einzelgrenze", err)
+
+    def test_hidden_compressed_file_skipped_by_default(self):
+        self.write_bytes(".geheim.txt.gz",
+                         gzip.compress(b"VERBORGEN\n"))
+        code, _, _ = run(["--content", "VERBORGEN", self.root])
+        self.assertEqual(code, 1)
+        code, _, _ = run(["--hidden", "--content", "VERBORGEN", self.root])
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":

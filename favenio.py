@@ -3,7 +3,8 @@
 
 Dateisuche im Stil von EasyFind (Suche ohne Index, direkt im Dateisystem),
 mit einer zusätzlichen Fähigkeit: Favenio schaut auch IN Archive hinein
-(Zip- und Tar-Familien, auf Wunsch auch Archive in Archiven).
+(Zip- und Tar-Familien, einzeln komprimierte .gz/.bz2/.xz-Dateien, auf
+Wunsch auch Archive in Archiven).
 
 Grundprinzipien:
 - Standardmäßig wird nach DATEINAMEN gesucht (Ordner zählen mit).
@@ -20,10 +21,13 @@ Nur Python-Standardbibliothek, keine Abhängigkeiten.
 """
 
 import argparse
+import bz2
 import codecs
 import fnmatch
+import gzip
 import io
 import json
+import lzma
 import os
 import re
 import shutil
@@ -32,11 +36,12 @@ import tarfile
 import tempfile
 import time
 import zipfile
+import zlib
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-07-28"
+__date__ = "2026-07-29"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -50,6 +55,16 @@ ZIP_EXTENSIONS = (
 TAR_EXTENSIONS = (
     ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz",
 )
+
+# Einzeln komprimierte Dateien: EINE Datei im Kompressionsmantel, kein
+# Container wie Zip oder Tar. Die Endung bestimmt das Entpackwerkzeug aus
+# der Standardbibliothek. Wichtig: classify_archive() prüft die Tar-Familie
+# ZUERST, sonst würde ".tar.gz" hier als einzelnes ".gz" hängenbleiben.
+SINGLE_COMPRESSION_OPENERS = {
+    ".gz": gzip.open,
+    ".bz2": bz2.open,
+    ".xz": lzma.open,
+}
 
 # Häppchengrösse für die Inhaltssuche. Dateien werden nicht am Stück
 # eingelesen, sondern in Portionen dieser Grösse — das hält den Speicher
@@ -131,25 +146,33 @@ class ArchiveBudget:
 
 EXPECTED_ARCHIVE_ERRORS = (
     ArchiveReadError,
-    OSError,
+    OSError,               # deckt auch gzip.BadGzipFile ab
     RuntimeError,          # z. B. verschlüsseltes ZIP-Mitglied
     NotImplementedError,   # nicht unterstützte ZIP-Kompression
     KeyError,
+    EOFError,              # abgeschnittener gzip-/bz2-/xz-Strom
     zipfile.BadZipFile,
     zipfile.LargeZipFile,
     tarfile.TarError,
+    lzma.LZMAError,        # kaputter xz-Strom
+    zlib.error,            # kaputte Deflate-Daten in gzip
 )
 
 
 def classify_archive(name):
-    """Liefert "zip", "tar" oder None — je nachdem, ob der Dateiname
-    wie ein unterstütztes Archiv aussieht (nur anhand der Endung,
-    damit wir nicht jede Datei öffnen müssen)."""
+    """Liefert "zip", "tar", eine Kompressionsendung (".gz", ".bz2", ".xz")
+    oder None — je nachdem, ob der Dateiname wie ein unterstütztes Archiv
+    aussieht (nur anhand der Endung, damit wir nicht jede Datei öffnen
+    müssen). Die Tar-Familie gewinnt gegen die Einzelkompression, damit
+    ".tar.gz" als Tar behandelt wird und nicht als einzelnes ".gz"."""
     lowered = name.lower()
     if lowered.endswith(ZIP_EXTENSIONS):
         return "zip"
     if lowered.endswith(TAR_EXTENSIONS):
         return "tar"
+    for extension in SINGLE_COMPRESSION_OPENERS:
+        if lowered.endswith(extension):
+            return extension
     return None
 
 
@@ -557,7 +580,8 @@ class Search:
                 with zipfile.ZipFile(source) as archive:
                     self.walk_zip(archive, display, depth, archive_path,
                                   archive_members)
-            else:  # "tar" — tarfile erkennt die Kompression selbst ("r:*")
+            elif kind == "tar":
+                # tarfile erkennt die Kompression selbst ("r:*").
                 if fileobj is not None:
                     archive = tarfile.open(fileobj=fileobj, mode="r:*")
                 else:
@@ -565,6 +589,9 @@ class Search:
                 with archive:
                     self.walk_tar(archive, display, depth, archive_path,
                                   archive_members)
+            else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
+                self.walk_single(kind, fs_path, fileobj, display, depth,
+                                 archive_path, archive_members)
         except EXPECTED_ARCHIVE_ERRORS as err:
             self.warn("%s: %s" % (display, err))
 
@@ -684,6 +711,43 @@ class Search:
                               display, depth, archive_path, archive_members,
                               size=member.size)
 
+    def walk_single(self, extension, fs_path, fileobj, display, depth,
+                    archive_path, archive_members):
+        """Behandelt eine einzeln komprimierte Datei (.gz/.bz2/.xz) wie ein
+        Archiv mit genau EINEM Eintrag: dem entpackten Inhalt.
+
+        Der Eintragsname ist der Dateiname ohne die Kompressionsendung
+        („notiz.txt.gz" enthält „notiz.txt"). Dadurch greifen Namenssuche,
+        Inhaltssuche, !/-Notation und Extraktion genauso wie bei Zip und
+        Tar — und ein „inner.zip.gz" wird über die normale Verschachtelung
+        weiter durchsucht (kostet wie jedes Archiv im Archiv eine Stufe
+        --archive-depth).
+
+        Die entpackte Größe ist bei diesen Formaten vorab nicht verlässlich
+        bekannt (size=None); die Byte-Budgets greifen deshalb erst beim
+        Lesen, eine Kompressionsverhältnis-Prüfung ist nicht möglich."""
+        opener = SINGLE_COMPRESSION_OPENERS[extension]
+        name = os.path.basename(display.rstrip("/"))
+        # Endung abschneiden; Sonderfall „.gz" als ganzer Name bleibt er selbst.
+        member_name = name[:-len(extension)] or name
+        if fileobj is not None:
+            # Archiv im Archiv: Die komprimierten Bytes liegen im Speicher.
+            # Für den zweiten Lesedurchlauf (Vortest + Zeilennummer) braucht
+            # open_member() jedes Mal einen frischen Datenstrom.
+            data = fileobj.getvalue()
+            compressed_size = len(data)
+
+            def open_member():
+                return opener(io.BytesIO(data), "rb")
+        else:
+            compressed_size = self.file_size(fs_path)
+
+            def open_member():
+                return opener(fs_path, "rb")
+        self.visit_member(member_name, False, open_member, display, depth,
+                          archive_path, archive_members,
+                          size=None, compressed_size=compressed_size)
+
 
 def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                    max_archive_member_bytes=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
@@ -726,13 +790,16 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
     kind = classify_archive(fs_path)
     data = None    # Bytes des aktuellen Archivs (None = liegt als Datei vor)
     member = members[-1]
+    # Name des Archivs der aktuellen Ebene — bei Einzelkompression bestimmt
+    # er den einzig gültigen Eintragsnamen (Dateiname ohne Endung).
+    container_name = os.path.basename(fs_path.rstrip("/"))
     budget = ArchiveBudget(max_archive_member_bytes,
                            max_archive_total_bytes,
                            max_archive_ratio)
     try:
         # Ebene für Ebene absteigen: erst das Archiv auf der Platte
         # öffnen, dann ggf. innere Archive aus dem Speicher heraus.
-        for index, member in enumerate(members):
+        for member in members:
             if kind is None:
                 print("favenio: fehler: kein unterstütztes Archiv: %s"
                       % display_path, file=sys.stderr)
@@ -745,7 +812,7 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                         data = budget.read_all(
                             handle, display_path, info.file_size,
                             info.compress_size)
-            else:  # "tar"
+            elif kind == "tar":
                 if data is not None:
                     archive = tarfile.open(fileobj=io.BytesIO(data),
                                            mode="r:*")
@@ -759,8 +826,17 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                         tar_member = archive.getmember(member)
                         data = budget.read_all(
                             handle, display_path, tar_member.size)
+            else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
+                expected = container_name[:-len(kind)] or container_name
+                if member != expected:
+                    raise KeyError(member)
+                opener = SINGLE_COMPRESSION_OPENERS[kind]
+                source = io.BytesIO(data) if data is not None else fs_path
+                with opener(source, "rb") as handle:
+                    data = budget.read_all(handle, display_path)
             # Endung des gerade gelesenen Eintrags bestimmt, ob die
             # nächste Ebene wieder ein Archiv ist.
+            container_name = os.path.basename(member.rstrip("/"))
             kind = classify_archive(member)
     except EXPECTED_ARCHIVE_ERRORS as err:
         print("favenio: fehler: %s: %s" % (display_path, err),
@@ -794,7 +870,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="favenio",
         description="Favenio — facile invenio. Dateisuche ohne Index, "
-                    "auch in Archiven (zip/jar/docx/…, tar/tar.gz/…).",
+                    "auch in Archiven (zip/jar/docx/…, tar/tar.gz/…, "
+                    "einzelne gz/bz2/xz).",
         epilog="Exit-Codes: 0 = Treffer gefunden, 1 = keine Treffer, "
                "2 = Fehler. Ausgabeformat für Skripte/Agenten: --json.",
     )
