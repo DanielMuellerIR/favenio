@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.19.0 — 2026-07-28
+
+- Die Inhaltssuche ist deutlich schneller, ohne dass sich ein Ergebnis ändert.
+  Bei festem Suchtext (ohne `--regex`, ohne Platzhalter) prüft ein billiger
+  Vortest zuerst, ob der Text überhaupt vorkommt; die Zeilennummer wird erst
+  bei einem echten Treffer in einem zweiten Durchlauf bestimmt. Gemessen mit dem
+  System-Python auf 72,8 MB Text (2877 Dateien), Bestwert aus drei Läufen,
+  Trefferlisten in allen Fällen identisch:
+
+  | Fall | vorher | jetzt |
+  | --- | --- | --- |
+  | kein Treffer | 0,653 s | 0,339 s |
+  | 219 Treffer | 0,601 s | 0,423 s |
+  | Muster mit Umlaut | 0,684 s | 0,370 s |
+  | `--case-sensitive`, 156 Treffer | 0,519 s | 0,274 s |
+  | dieselben Daten in einem 22-MB-Zip | 0,649 s | 0,354 s |
+  | `--regex` (kein Vortest möglich) | 0,806 s | 0,802 s |
+
+- Der Vortest gilt auch für Archiv-Einträge. Dort wird ein Treffer-Eintrag
+  zweimal entpackt; gegen das Gesamtbudget des Suchlaufs zählt er trotzdem nur
+  einmal, damit ein Treffer nicht teurer ist als ein Nicht-Treffer. Die
+  Einzelgrenze pro Eintrag bleibt in beiden Durchläufen aktiv.
+- Entschieden: Die CRC-Prüfsumme eines ZIP-Eintrags wird nach einem frühen
+  Inhaltstreffer nicht geprüft. Python prüft sie erst am Eintragsende, und
+  vollständiges Durchlesen nur zur Prüfsumme würde den Abbruch beim ersten
+  Treffer aufheben. Ein Treffer ist ein Fund, keine Integritätszusage.
+
 ## 0.18.0 — 2026-07-25
 
 - Die drei Skripte sind jetzt jedes für sich vollständig: `build-app.sh` baut,

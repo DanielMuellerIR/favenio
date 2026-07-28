@@ -54,6 +54,18 @@ Verbindliches CLI-Verhalten:
 - Inhalt wird als UTF-8 mit `errors="replace"` gelesen. Dadurch bleiben Treffer
   in teilweise binären Dateien möglich; andere Textkodierungen werden nicht
   versprochen.
+- Die Inhaltssuche ist zweistufig: `ContentProbe` prüft billig, ob der Suchtext
+  überhaupt vorkommt, `match_content` bestimmt danach die Zeilennummer. Der
+  Vortest darf nie einen Treffer verschlucken — er entscheidet nur „sicher
+  nicht" gegen „nachsehen" — und ist nur bei festem Suchtext möglich, also nicht
+  bei `--regex` und nicht bei Glob-Mustern. Ein Umbau muss Trefferliste und
+  Zeilennummern unverändert lassen; die Tests vergleichen deshalb beide Wege
+  direkt gegeneinander.
+- Ein Treffer sagt nichts über die Unversehrtheit eines Archivs: Weil das Lesen
+  beim ersten Treffer endet und Python die CRC eines ZIP-Eintrags erst am
+  Eintragsende prüft, wird sie bewusst nicht geprüft. Vollständiges Durchlesen
+  nur zum Prüfen der Prüfsumme hebt den Early-Exit auf und ist entschieden
+  abgelehnt.
 - `--archive-depth` begrenzt Rekursion. Verschachtelte Archive werden im Speicher
   verarbeitet; deshalb Größen- und Tiefengrenzen nicht unbemerkt entfernen.
 - `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären
@@ -158,6 +170,16 @@ nicht Reihenfolgen.
 Chunk-Lesen und Early-Exit sind unabhängig von Parallelität sinnvoll, dürfen aber
 die dokumentierte Suche in teilweise binären Dateien nicht durch einen pauschalen
 Binär-Skip verändern.
+
+Nicht das Lesen ist der Engpass der Inhaltssuche, sondern die Arbeit pro Zeile
+(Zerlegen und Matcher-Aufruf). Gemessen am 2026-07-28 mit dem System-Python auf
+72,8 MB Text: 0,07 s reines Lesen, 0,13 s Dekodieren, 0,56 s der gesamte alte
+Weg. Innerhalb eines Zip verhält es sich genauso — dort kostete das Entpacken
+0,12 s von 0,68 s. Wer die Inhaltssuche weiter beschleunigen will, muss deshalb
+an der Arbeit pro Zeile ansetzen, nicht an Puffergrößen oder am Dateizugriff.
+Ein Vorfilter auf Byte-Ebene vor dem Dekodieren wurde gemessen und verworfen: Er
+ist nur bei reinem ASCII zulässig, und die dann nötige zweite Leserunde für
+Dateien mit Nicht-ASCII-Bytes fraß den Gewinn vollständig auf.
 
 ## Änderungs- und Versionsregeln
 

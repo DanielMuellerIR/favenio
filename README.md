@@ -148,6 +148,24 @@ name. (If a *directory* ends in `.md`, additionally use `--only files` or
 
 In name search, directory names count as hits too.
 
+## How content search reads
+
+With `-c`, Favenio reads in chunks and stops at the first hit. For a fixed
+search text (no `-r`, no wildcards) it works in two steps: a cheap check
+whether the text occurs at all, and only for a real hit a second pass that
+determines the line number. That is roughly **1.4× to 1.9× faster** than
+checking every line of every file, inside archives as well, and produces
+exactly the same hits and line numbers.
+
+Two consequences worth knowing:
+
+- Content is read as UTF-8 with `errors="replace"`, so hits in partly binary
+  files remain possible; other text encodings are not promised.
+- Because reading stops at the first hit, the CRC checksum of a ZIP member is
+  **not** verified — Python only checks it at the end of the member. A hit is a
+  find, not a statement about archive integrity. Use an archive tool if you
+  need that.
+
 ## GUI (Favenio.app)
 
 EasyFind-style interface: search field, folder picker, options, results list.

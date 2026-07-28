@@ -574,5 +574,150 @@ class ChunkedContentTest(TempTreeTest):
         self.assertEqual(json.loads(lines[0])["line"], 20001)
 
 
+class ContentProbeTest(TempTreeTest):
+    """Der Vortest (ContentProbe) darf die Inhaltssuche nur beschleunigen,
+    nicht verändern. Diese Tests sichern beides ab: dass er das Ja/Nein
+    korrekt liefert und dass die Suche mit und ohne ihn dasselbe findet."""
+
+    def probe_hits(self, needle, data, case_sensitive=False, chunk_size=8):
+        probe = favenio.ContentProbe(needle, case_sensitive)
+        chunks = [data[i:i + chunk_size]
+                  for i in range(0, len(data), chunk_size)]
+        return probe.hits(iter(chunks))
+
+    def test_probe_finds_needle_across_chunk_boundary(self):
+        # „GEHEIMNIS" wird bei Häppchengröße 8 mitten auseinandergerissen.
+        for chunk_size in (1, 2, 3, 4, 8, 64):
+            self.assertTrue(
+                self.probe_hits("GEHEIMNIS", b"xxxxxxxGEHEIMNISyyyy",
+                                chunk_size=chunk_size),
+                "Häppchengröße %d" % chunk_size)
+
+    def test_probe_is_case_insensitive_by_default(self):
+        self.assertTrue(self.probe_hits("geheimnis", b"das GEHEIMNIS hier"))
+        self.assertFalse(self.probe_hits("geheimnis", b"das GEHEIMNIS hier",
+                                         case_sensitive=True))
+
+    def test_probe_sees_multibyte_and_broken_bytes(self):
+        # Mehrbyte-Zeichen über Häppchengrenzen und errors="replace" müssen
+        # sich genauso verhalten wie in match_content.
+        self.assertTrue(self.probe_hits("Größe", "die Größe passt".encode()))
+        self.assertTrue(self.probe_hits("gut", b"\xff\xfe kaputt aber gut"))
+
+    def test_probe_says_no_when_needle_absent(self):
+        self.assertFalse(self.probe_hits("NADEL", b"nur heu und stroh\n"))
+        self.assertFalse(self.probe_hits("NADEL", b""))
+
+    def test_probe_only_for_fixed_text(self):
+        # Regex und Glob liefern keinen festen Suchtext — dort bleibt es beim
+        # genauen Lauf.
+        self.assertIsNone(favenio.build_content_probe("Zeile.*NADEL", True,
+                                                      False))
+        self.assertIsNone(favenio.build_content_probe("NAD*", False, False))
+        self.assertIsInstance(favenio.build_content_probe("NADEL", False,
+                                                          False),
+                              favenio.ContentProbe)
+
+    def build_world(self):
+        """Ein Ordner mit Treffern in normaler Datei, Zip, Tar und Zip-im-Zip
+        — plus reichlich Dateien ohne Treffer, damit auch der Nein-Pfad läuft.
+        """
+        self.write("klein.txt", "eins\nzwei mit NADEL\ndrei\n")
+        self.write("ohne.txt", "hier steht nichts davon\n")
+        self.write("umlaut.txt", "erste Zeile\nGrößere NADEL im Heu\n")
+        # Treffer erst hinter der Häppchengrenze (CHUNK_SIZE = 64 KiB).
+        self.write("gross.txt", "fuellzeile\n" * 20000 + "spaete NADEL\n")
+        zip_path = os.path.join(self.root, "paket.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("docs/mit.md", "vorspann\nzeile mit NADEL\n")
+            zf.writestr("docs/ohne.md", "nichts hier\n")
+        tar_path = os.path.join(self.root, "backup.tar.gz")
+        with tarfile.open(tar_path, "w:gz") as tf:
+            data = b"kopf\nkoerper mit NADEL\n"
+            info = tarfile.TarInfo("sicherung/alt.txt")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as zf:
+            zf.writestr("tief/unten.txt", "a\nb\nc mit NADEL\n")
+        with zipfile.ZipFile(os.path.join(self.root, "aussen.zip"), "w") as zf:
+            zf.writestr("innen.zip", inner.getvalue())
+
+    def search_with_and_without_probe(self, argv):
+        """Führt dieselbe Suche zweimal aus: einmal normal (mit Vortest) und
+        einmal mit abgeschaltetem Vortest. Liefert beide Trefferlisten."""
+        code_fast, fast, _ = run(argv)
+        original = favenio.build_content_probe
+        favenio.build_content_probe = lambda *args, **kwargs: None
+        try:
+            code_slow, slow, _ = run(argv)
+        finally:
+            favenio.build_content_probe = original
+        self.assertEqual(code_fast, code_slow)
+        return sorted(fast), sorted(slow)
+
+    def test_same_hits_and_lines_with_and_without_probe(self):
+        self.build_world()
+        for argv in (
+            ["--json", "--content", "NADEL", self.root, "--archive-depth", "2"],
+            ["--json", "--content", "nadel", self.root, "--archive-depth", "2"],
+            ["--json", "--content", "-s", "NADEL", self.root],
+            ["--json", "--content", "Größere", self.root],
+            ["--json", "--content", "--exact", "zeile mit NADEL", self.root,
+             "--archive-depth", "2"],
+            ["--json", "--content", "--regex", "NAD.L", self.root],
+            ["--json", "--content", "NAD*L", self.root],
+            ["--json", "--content", "gibtsnicht", self.root],
+        ):
+            with self.subTest(argv=argv):
+                fast, slow = self.search_with_and_without_probe(argv)
+                self.assertEqual(fast, slow)
+
+    def test_line_numbers_stay_exact_in_all_containers(self):
+        self.build_world()
+        code, lines, _ = run(["--json", "--content", "NADEL", self.root,
+                              "--archive-depth", "2"])
+        self.assertEqual(code, 0)
+        by_name = {}
+        for line in lines:
+            record = json.loads(line)
+            by_name[os.path.basename(record["path"])] = record["line"]
+        self.assertEqual(by_name["klein.txt"], 2)
+        self.assertEqual(by_name["umlaut.txt"], 2)
+        self.assertEqual(by_name["gross.txt"], 20001)
+        self.assertEqual(by_name["mit.md"], 2)
+        self.assertEqual(by_name["alt.txt"], 2)
+        self.assertEqual(by_name["unten.txt"], 3)
+
+    def test_probe_does_not_charge_total_budget_twice(self):
+        # Ein Treffer-Mitglied wird zweimal gelesen (Vortest, dann genau).
+        # Das Gesamtbudget des Suchlaufs darf davon nur einmal belastet
+        # werden, sonst wäre ein Treffer teurer als ein Nicht-Treffer.
+        archive = os.path.join(self.root, "budget.zip")
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as zf:
+            zf.writestr("mit.txt", "NADEL" + "x" * 59)
+        code, lines, err = run([
+            "--content", "NADEL", archive,
+            "--max-archive-member-bytes", "128",
+            "--max-archive-total-bytes", "80",
+        ])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertNotIn("Gesamtbudget", err)
+
+    def test_member_budget_still_applies_to_second_pass(self):
+        # Die Einzelgrenze bleibt in beiden Durchläufen aktiv.
+        archive = os.path.join(self.root, "eng.zip")
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as zf:
+            zf.writestr("mit.txt", "NADEL" + "x" * 200)
+        code, lines, err = run([
+            "--content", "NADEL", archive,
+            "--max-archive-member-bytes", "32",
+        ])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("Einzelgrenze", err)
+
+
 if __name__ == "__main__":
     unittest.main()
