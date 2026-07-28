@@ -4,7 +4,8 @@
 Dateisuche im Stil von EasyFind (Suche ohne Index, direkt im Dateisystem),
 mit einer zusätzlichen Fähigkeit: Favenio schaut auch IN Archive hinein
 (Zip- und Tar-Familien, einzeln komprimierte .gz/.bz2/.xz-Dateien, auf
-Wunsch auch Archive in Archiven).
+Wunsch auch Archive in Archiven). Mit den externen Werkzeugen bsdtar
+(macOS-Bordmittel) und zstd kommen 7z, ISO und Zstandard dazu.
 
 Grundprinzipien:
 - Standardmäßig wird nach DATEINAMEN gesucht (Ordner zählen mit).
@@ -31,6 +32,7 @@ import lzma
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -38,7 +40,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-07-29"
@@ -65,6 +67,154 @@ SINGLE_COMPRESSION_OPENERS = {
     ".bz2": bz2.open,
     ".xz": lzma.open,
 }
+
+# --- Optionale Formate über externe Werkzeuge -------------------------------
+# Diese Formate kann die Standardbibliothek nicht lesen. Sie funktionieren
+# nur, wenn die Werkzeuge auf dem System vorhanden sind — sonst verhalten
+# sich die Dateien wie vor dieser Integration (normale Dateien, bei
+# --content wird der rohe Inhalt durchsucht). macOS bringt bsdtar mit;
+# Zstandard braucht zusätzlich ein zstd-Programm (z. B. aus Homebrew).
+
+# Liest bsdtar von Haus aus (auf diesem Weg real geprüft: 7-Zip und ISO-9660).
+BSDTAR_NATIVE_EXTENSIONS = (".7z", ".iso")
+# Tar mit Zstandard-Kompression: bsdtar ruft dafür intern "zstd" auf.
+BSDTAR_ZSTD_TAR_EXTENSIONS = (".tar.zst", ".tzst")
+# Einzeln Zstandard-komprimierte Datei: direkt über das zstd-Programm,
+# denn bsdtar erkennt einen rohen zst-Strom nicht als Archiv.
+ZSTD_SINGLE_EXTENSION = ".zst"
+
+# Orte, an denen zstd liegen kann, wenn es nicht im PATH steht (die Apps
+# starten mit dem knappen launchd-PATH ohne Homebrew).
+ZSTD_FALLBACK_CANDIDATES = (
+    "/opt/homebrew/bin/zstd", "/usr/local/bin/zstd", "/opt/local/bin/zstd",
+)
+
+# Cache der einmaligen Werkzeugsuche: (bsdtar_pfad, zstd_pfad, env).
+# None = noch nicht ermittelt. Tests dürfen den Cache gezielt setzen,
+# um „Werkzeug fehlt" zu simulieren.
+_EXTERNAL_TOOLS = None
+
+
+def external_archive_tools():
+    """Ermittelt einmalig, welche externen Entpackwerkzeuge nutzbar sind.
+
+    Liefert (bsdtar_pfad, zstd_pfad, env): env ist die Umgebung für
+    bsdtar-Unterprozesse, mit dem zstd-Fundort vorn im PATH — bsdtar
+    findet sein zstd-Filterprogramm ausschließlich über den PATH."""
+    global _EXTERNAL_TOOLS
+    if _EXTERNAL_TOOLS is None:
+        bsdtar = shutil.which("bsdtar")
+        zstd = shutil.which("zstd")
+        if zstd is None:
+            for candidate in ZSTD_FALLBACK_CANDIDATES:
+                if os.access(candidate, os.X_OK):
+                    zstd = candidate
+                    break
+        env = None
+        if zstd is not None:
+            env = dict(os.environ)
+            env["PATH"] = (os.path.dirname(zstd) + os.pathsep
+                           + env.get("PATH", ""))
+        _EXTERNAL_TOOLS = (bsdtar, zstd, env)
+    return _EXTERNAL_TOOLS
+
+
+def bsdtar_escape(member):
+    """Entschärft Glob-Zeichen in einem Eintragsnamen.
+
+    bsdtar interpretiert das Eintrags-Argument als Muster; ein
+    unescaptes „a*.txt" würde auch „abc.txt" treffen und beide
+    Inhalte aneinanderhängen. Ein Backslash macht das Zeichen wörtlich
+    (verifiziert am 2026-07-29 mit bsdtar 3.5.3)."""
+    return re.sub(r"([\\*?\[\]])", r"\\\1", member)
+
+
+class ToolStream:
+    """Liest die stdout eines Entpack-Unterprozesses wie eine Datei.
+
+    close() räumt den Prozess in jedem Fall auf. Ein Fehlerstatus des
+    Werkzeugs wird nur gemeldet, wenn der Strom bis zum Ende gelesen
+    wurde — wer nach einem frühen Treffer abbricht, schließt die Pipe,
+    das Werkzeug endet mit SIGPIPE, und das ist KEIN Fehler."""
+
+    def __init__(self, proc, label, cleanup_path=None):
+        self.proc = proc
+        self.label = label
+        self.cleanup_path = cleanup_path
+        self.saw_eof = False
+
+    def read(self, size=-1):
+        chunk = self.proc.stdout.read(size)
+        if not chunk:
+            self.saw_eof = True
+        return chunk
+
+    def close(self):
+        try:
+            self.proc.stdout.close()
+        except OSError:
+            pass
+        returncode = self.proc.wait()
+        if self.cleanup_path is not None:
+            try:
+                os.unlink(self.cleanup_path)
+            except OSError:
+                pass
+            self.cleanup_path = None
+        if self.saw_eof and returncode != 0:
+            raise ArchiveReadError(
+                "%s: Entpackwerkzeug endete mit Status %d"
+                % (self.label, returncode))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is not None:
+            # Es fliegt bereits eine Ausnahme — keine zweite aus close().
+            try:
+                self.close()
+            except ArchiveReadError:
+                pass
+        else:
+            self.close()
+        return False
+
+
+def zstd_open(source, mode="rb"):
+    """Öffnet eine .zst-Datei als entpackten Datenstrom über das externe
+    zstd-Programm (die Standardbibliothek kann Zstandard nicht lesen).
+
+    source ist ein Pfad oder ein BytesIO mit den komprimierten Bytes
+    (Archiv im Archiv). Speicherdaten gehen über eine Temp-Datei statt
+    über stdin: gleichzeitiges Schreiben und Lesen zweier Pipes kann
+    sich gegenseitig blockieren. mode wird nur für die Signatur-
+    Gleichheit mit gzip.open/bz2.open/lzma.open akzeptiert."""
+    _, zstd, _ = external_archive_tools()
+    if zstd is None:
+        raise ArchiveReadError("zstd-Programm nicht gefunden")
+    cleanup_path = None
+    if hasattr(source, "getvalue"):
+        handle = tempfile.NamedTemporaryFile(suffix=".zst", delete=False)
+        with handle:
+            handle.write(source.getvalue())
+        cleanup_path = handle.name
+        label = "zst-Daten im Speicher"
+        path = handle.name
+    else:
+        label = os.fspath(source)
+        path = label
+    proc = subprocess.Popen([zstd, "-dcq", "--", path],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL)
+    return ToolStream(proc, label, cleanup_path=cleanup_path)
+
+
+def single_opener(extension):
+    """Liefert die Öffnen-Funktion für eine Einzelkompressions-Endung."""
+    if extension == ZSTD_SINGLE_EXTENSION:
+        return zstd_open
+    return SINGLE_COMPRESSION_OPENERS[extension]
 
 # Häppchengrösse für die Inhaltssuche. Dateien werden nicht am Stück
 # eingelesen, sondern in Portionen dieser Grösse — das hält den Speicher
@@ -160,11 +310,16 @@ EXPECTED_ARCHIVE_ERRORS = (
 
 
 def classify_archive(name):
-    """Liefert "zip", "tar", eine Kompressionsendung (".gz", ".bz2", ".xz")
-    oder None — je nachdem, ob der Dateiname wie ein unterstütztes Archiv
-    aussieht (nur anhand der Endung, damit wir nicht jede Datei öffnen
-    müssen). Die Tar-Familie gewinnt gegen die Einzelkompression, damit
-    ".tar.gz" als Tar behandelt wird und nicht als einzelnes ".gz"."""
+    """Liefert "zip", "tar", "bsdtar", eine Kompressionsendung (".gz",
+    ".bz2", ".xz", ".zst") oder None — je nachdem, ob der Dateiname wie
+    ein unterstütztes Archiv aussieht (nur anhand der Endung, damit wir
+    nicht jede Datei öffnen müssen). Die Tar-Familie gewinnt gegen die
+    Einzelkompression, damit ".tar.gz" als Tar behandelt wird und nicht
+    als einzelnes ".gz".
+
+    Die bsdtar- und zstd-Formate zählen nur als Archiv, wenn das jeweilige
+    Werkzeug auf dem System gefunden wurde — sonst bleiben diese Dateien
+    normale Dateien wie vor der Integration."""
     lowered = name.lower()
     if lowered.endswith(ZIP_EXTENSIONS):
         return "zip"
@@ -173,6 +328,14 @@ def classify_archive(name):
     for extension in SINGLE_COMPRESSION_OPENERS:
         if lowered.endswith(extension):
             return extension
+    bsdtar, zstd, _ = external_archive_tools()
+    if bsdtar is not None and lowered.endswith(BSDTAR_NATIVE_EXTENSIONS):
+        return "bsdtar"
+    if bsdtar is not None and zstd is not None \
+            and lowered.endswith(BSDTAR_ZSTD_TAR_EXTENSIONS):
+        return "bsdtar"
+    if zstd is not None and lowered.endswith(ZSTD_SINGLE_EXTENSION):
+        return ZSTD_SINGLE_EXTENSION
     return None
 
 
@@ -589,6 +752,9 @@ class Search:
                 with archive:
                     self.walk_tar(archive, display, depth, archive_path,
                                   archive_members)
+            elif kind == "bsdtar":
+                self.walk_bsdtar(fs_path, fileobj, display, depth,
+                                 archive_path, archive_members)
             else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
                 self.walk_single(kind, fs_path, fileobj, display, depth,
                                  archive_path, archive_members)
@@ -726,7 +892,7 @@ class Search:
         Die entpackte Größe ist bei diesen Formaten vorab nicht verlässlich
         bekannt (size=None); die Byte-Budgets greifen deshalb erst beim
         Lesen, eine Kompressionsverhältnis-Prüfung ist nicht möglich."""
-        opener = SINGLE_COMPRESSION_OPENERS[extension]
+        opener = single_opener(extension)
         name = os.path.basename(display.rstrip("/"))
         # Endung abschneiden; Sonderfall „.gz" als ganzer Name bleibt er selbst.
         member_name = name[:-len(extension)] or name
@@ -747,6 +913,79 @@ class Search:
         self.visit_member(member_name, False, open_member, display, depth,
                           archive_path, archive_members,
                           size=None, compressed_size=compressed_size)
+
+    def walk_bsdtar(self, fs_path, fileobj, display, depth, archive_path,
+                    archive_members):
+        """Durchsucht ein Format, das nur das externe bsdtar lesen kann
+        (7z, ISO, tar.zst): Auflistung über `bsdtar -tf`, Inhalt je
+        Eintrag als Datenstrom über `bsdtar -xOf`.
+
+        Liegt das Archiv nur im Speicher (Archiv im Archiv), wird es in
+        eine Temp-Datei geschrieben — 7z und ISO brauchen wahlfreien
+        Zugriff und lassen sich nicht verlässlich von stdin lesen.
+
+        Ordner-Erkennung: 7z listet Ordner mit Schrägstrich am Ende, ISO
+        ohne. Deshalb gilt ein Eintrag auch dann als Ordner, wenn andere
+        Einträge unter ihm liegen; ein LEERER Ordner in einem ISO wird
+        dadurch als Datei geführt (sein Inhalt ist leer — folgenlos).
+        Größen liefert die Auflistung nicht (size=None), die Byte-Budgets
+        greifen beim Lesen."""
+        bsdtar, _, env = external_archive_tools()
+        temp_path = None
+        path = fs_path
+        try:
+            if fileobj is not None:
+                handle = tempfile.NamedTemporaryFile(delete=False)
+                with handle:
+                    handle.write(fileobj.getvalue())
+                temp_path = handle.name
+                path = temp_path
+            listing = subprocess.run(
+                [bsdtar, "-tf", path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+            if listing.returncode != 0:
+                raise ArchiveReadError(
+                    listing.stderr.decode("utf-8", "replace").strip()
+                    or "bsdtar konnte das Archiv nicht lesen")
+            names = []
+            for raw in listing.stdout.decode("utf-8", "replace").splitlines():
+                # ISO listet ein "."-Wurzelelement; "./"-Präfixe würden
+                # als versteckte Komponente gelten — beides normalisieren.
+                if raw.startswith("./"):
+                    raw = raw[2:]
+                if raw in ("", ".", "./"):
+                    continue
+                names.append(raw)
+            dir_names = set()
+            for name in names:
+                clean = name.rstrip("/")
+                if name.endswith("/"):
+                    dir_names.add(clean)
+                parts = clean.split("/")
+                for count in range(1, len(parts)):
+                    dir_names.add("/".join(parts[:count]))
+            seen = set()
+            for name in names:
+                clean = name.rstrip("/")
+                if clean in seen:
+                    continue
+                seen.add(clean)
+
+                def open_member(member=clean):
+                    proc = subprocess.Popen(
+                        [bsdtar, "-xOf", path, "--", bsdtar_escape(member)],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                        env=env)
+                    return ToolStream(proc, display + "!/" + member)
+                self.visit_member(clean, clean in dir_names, open_member,
+                                  display, depth, archive_path,
+                                  archive_members, size=None)
+        finally:
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
 
 
 def extract_result(result_path=None, filesystem_path=None, archive_members=None,
@@ -826,11 +1065,37 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                         tar_member = archive.getmember(member)
                         data = budget.read_all(
                             handle, display_path, tar_member.size)
+            elif kind == "bsdtar":
+                bsdtar, _, env = external_archive_tools()
+                temp_path = None
+                path = fs_path
+                try:
+                    if data is not None:
+                        # Inneres Archiv liegt im Speicher: bsdtar braucht
+                        # eine echte Datei (wahlfreier Zugriff).
+                        temp_handle = tempfile.NamedTemporaryFile(
+                            delete=False)
+                        with temp_handle:
+                            temp_handle.write(data)
+                        temp_path = temp_handle.name
+                        path = temp_path
+                    proc = subprocess.Popen(
+                        [bsdtar, "-xOf", path, "--", bsdtar_escape(member)],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                        env=env)
+                    with ToolStream(proc, display_path) as handle:
+                        data = budget.read_all(handle, display_path)
+                finally:
+                    if temp_path is not None:
+                        try:
+                            os.unlink(temp_path)
+                        except OSError:
+                            pass
             else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
                 expected = container_name[:-len(kind)] or container_name
                 if member != expected:
                     raise KeyError(member)
-                opener = SINGLE_COMPRESSION_OPENERS[kind]
+                opener = single_opener(kind)
                 source = io.BytesIO(data) if data is not None else fs_path
                 with opener(source, "rb") as handle:
                     data = budget.read_all(handle, display_path)
@@ -871,7 +1136,8 @@ def main(argv=None):
         prog="favenio",
         description="Favenio — facile invenio. Dateisuche ohne Index, "
                     "auch in Archiven (zip/jar/docx/…, tar/tar.gz/…, "
-                    "einzelne gz/bz2/xz).",
+                    "einzelne gz/bz2/xz; mit bsdtar/zstd auch 7z, iso "
+                    "und zst).",
         epilog="Exit-Codes: 0 = Treffer gefunden, 1 = keine Treffer, "
                "2 = Fehler. Ausgabeformat für Skripte/Agenten: --json.",
     )

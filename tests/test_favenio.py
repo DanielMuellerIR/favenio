@@ -882,5 +882,248 @@ class SingleCompressionTest(TempTreeTest):
         self.assertEqual(code, 0)
 
 
+def have_bsdtar():
+    return favenio.external_archive_tools()[0] is not None
+
+
+def have_zstd():
+    return favenio.external_archive_tools()[1] is not None
+
+
+@unittest.skipUnless(have_bsdtar(), "bsdtar nicht gefunden")
+class BsdtarFormatsTest(TempTreeTest):
+    """Formate, die nur über das externe bsdtar lesbar sind (7z, ISO,
+    tar.zst) — plus einzelne .zst über das zstd-Programm."""
+
+    CONTENT = "erste Zeile\nzweite Zeile mit NADEL\n"
+
+    def make_archive(self, archive_rel, fmt, tree):
+        """Baut über bsdtar ein Archiv (7zip/iso9660) aus `tree`
+        (rel_pfad -> text) und legt es unter self.root ab."""
+        bsdtar = favenio.external_archive_tools()[0]
+        archive = os.path.join(self.root, archive_rel)
+        with tempfile.TemporaryDirectory() as staging:
+            for rel_path, text in tree.items():
+                full = os.path.join(staging, rel_path)
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(full, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+            # "." packt den ganzen Baum ein — inklusive der expliziten
+            # Ordnereinträge, die 7z mit und ISO ohne Schrägstrich listet.
+            subprocess.run(
+                [bsdtar, "-cf", archive, "--format", fmt, "-C", staging,
+                 "."],
+                check=True)
+        return archive
+
+    def test_7z_content_hit_with_line_number(self):
+        archive = self.make_archive("arch.7z", "7zip",
+                                    {"docs/brief.txt": self.CONTENT})
+        code, lines, _ = run(["--json", "--content", "NADEL", archive])
+        self.assertEqual(code, 0)
+        records = [json.loads(line) for line in lines]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["type"], "member")
+        self.assertTrue(records[0]["path"].endswith(
+            "arch.7z!/docs/brief.txt"))
+        self.assertEqual(records[0]["line"], 2)
+
+    def test_7z_directory_entry_counts_as_dir(self):
+        self.make_archive("arch.7z", "7zip",
+                          {"docs/brief.txt": self.CONTENT})
+        code, lines, _ = run(["--json", "--only", "dirs", "docs",
+                              self.root])
+        self.assertEqual(code, 0)
+        self.assertTrue(any(json.loads(line)["path"].endswith(
+            "arch.7z!/docs") for line in lines))
+
+    def test_iso_content_hit_and_dir_detection(self):
+        # ISO listet Ordner OHNE Schrägstrich; die Ordner-Erkennung läuft
+        # über die darunterliegenden Einträge.
+        archive = self.make_archive("scheibe.iso", "iso9660",
+                                    {"unter/tief.txt": self.CONTENT})
+        code, lines, _ = run(["--json", "--content", "NADEL", archive])
+        self.assertEqual(code, 0)
+        record = json.loads(lines[0])
+        self.assertTrue(record["path"].endswith(
+            "scheibe.iso!/unter/tief.txt"))
+        self.assertEqual(record["line"], 2)
+        code, lines, _ = run(["--json", "--only", "dirs", "unter", archive])
+        self.assertEqual(code, 0)
+        self.assertTrue(any(json.loads(line)["path"].endswith(
+            "scheibe.iso!/unter") for line in lines))
+
+    def test_extract_7z_member(self):
+        archive = self.make_archive("arch.7z", "7zip",
+                                    {"docs/brief.txt": self.CONTENT})
+        code, lines, _ = run(["--extract", archive + "!/docs/brief.txt"])
+        self.assertEqual(code, 0)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+
+    def test_extract_missing_7z_member_exits_2(self):
+        archive = self.make_archive("arch.7z", "7zip",
+                                    {"docs/brief.txt": self.CONTENT})
+        code, _, err = run(["--extract", archive + "!/gibtsnicht.txt"])
+        self.assertEqual(code, 2)
+        self.assertIn("fehler", err)
+
+    def test_glob_characters_in_member_name_stay_literal(self):
+        # Ohne Escaping würde das Muster "a*.txt" auch "abc.txt" treffen
+        # und bsdtar beide Inhalte aneinanderhängen.
+        archive = self.make_archive("stern.7z", "7zip",
+                                    {"a*.txt": "x\n", "abc.txt": "ABC\n"})
+        code, lines, _ = run(["--extract", archive + "!/a*.txt"])
+        self.assertEqual(code, 0)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "x\n")
+
+    def test_zip_inside_7z_needs_depth_2(self):
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as zf:
+            zf.writestr("tief/verstecktes.txt", "GEHEIMNIS ganz unten\n")
+        bsdtar = favenio.external_archive_tools()[0]
+        archive = os.path.join(self.root, "aussen.7z")
+        with tempfile.TemporaryDirectory() as staging:
+            with open(os.path.join(staging, "innen.zip"), "wb") as handle:
+                handle.write(inner.getvalue())
+            subprocess.run([bsdtar, "-cf", archive, "--format", "7zip",
+                            "-C", staging, "innen.zip"], check=True)
+        code, _, _ = run(["--content", "GEHEIMNIS", archive])
+        self.assertEqual(code, 1)
+        code, lines, _ = run(["--json", "--content", "--archive-depth", "2",
+                              "GEHEIMNIS", archive])
+        self.assertEqual(code, 0)
+        self.assertTrue(json.loads(lines[0])["path"].endswith(
+            "aussen.7z!/innen.zip!/tief/verstecktes.txt"))
+
+    def test_7z_inside_zip_needs_depth_2(self):
+        # Das innere 7z liegt nur im Speicher — bsdtar bekommt es über
+        # eine Temp-Datei gereicht.
+        seven = self.make_archive("innen.7z", "7zip",
+                                  {"docs/brief.txt": self.CONTENT})
+        with open(seven, "rb") as handle:
+            seven_bytes = handle.read()
+        os.unlink(seven)
+        outer = os.path.join(self.root, "aussen.zip")
+        with zipfile.ZipFile(outer, "w") as zf:
+            zf.writestr("innen.7z", seven_bytes)
+        code, lines, _ = run(["--json", "--content", "--archive-depth", "2",
+                              "NADEL", outer])
+        self.assertEqual(code, 0)
+        record = json.loads(lines[0])
+        self.assertTrue(record["path"].endswith(
+            "aussen.zip!/innen.7z!/docs/brief.txt"))
+        self.assertEqual(record["line"], 2)
+        # Und die Extraktionskette durch beide Ebenen:
+        code, lines, _ = run(["--extract",
+                              outer + "!/innen.7z!/docs/brief.txt"])
+        self.assertEqual(code, 0)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+
+    def test_corrupt_7z_warns_and_search_continues(self):
+        with open(os.path.join(self.root, "kaputt.7z"), "wb") as handle:
+            handle.write(b"das ist kein 7z")
+        self.write("klartext.txt", "hier NADEL im Klartext\n")
+        code, lines, err = run(["--json", "--content", "NADEL", self.root])
+        self.assertEqual(code, 0)
+        self.assertIn("kaputt.7z", err)
+        paths = [json.loads(line)["path"] for line in lines]
+        self.assertFalse(any("kaputt" in p for p in paths))
+
+    def test_member_budget_applies_to_7z(self):
+        archive = self.make_archive("arch.7z", "7zip",
+                                    {"docs/brief.txt": self.CONTENT})
+        code, lines, err = run([
+            "--content", "NADEL", archive,
+            "--max-archive-member-bytes", "8",
+        ])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("Einzelgrenze", err)
+
+    def test_without_tools_files_stay_plain(self):
+        # Simuliert „Werkzeuge fehlen": die Endungen zählen dann nicht als
+        # Archiv, die Dateien bleiben normale Dateien (Verhalten vor der
+        # Integration).
+        original = favenio._EXTERNAL_TOOLS
+        favenio._EXTERNAL_TOOLS = (None, None, None)
+        try:
+            self.assertIsNone(favenio.classify_archive("a.7z"))
+            self.assertIsNone(favenio.classify_archive("a.iso"))
+            self.assertIsNone(favenio.classify_archive("a.tar.zst"))
+            self.assertIsNone(favenio.classify_archive("a.zst"))
+        finally:
+            favenio._EXTERNAL_TOOLS = original
+
+    def test_tar_zst_needs_both_tools(self):
+        original = favenio.external_archive_tools()
+        favenio._EXTERNAL_TOOLS = (original[0], None, None)
+        try:
+            self.assertIsNone(favenio.classify_archive("a.tar.zst"))
+            self.assertIsNone(favenio.classify_archive("a.zst"))
+            self.assertEqual(favenio.classify_archive("a.7z"), "bsdtar")
+        finally:
+            favenio._EXTERNAL_TOOLS = original
+
+
+@unittest.skipUnless(have_bsdtar() and have_zstd(),
+                     "bsdtar oder zstd nicht gefunden")
+class ZstdFormatsTest(TempTreeTest):
+    """Zstandard-Formate: tar.zst über bsdtar, einzelne .zst über zstd."""
+
+    CONTENT = "erste Zeile\nzweite Zeile mit NADEL\n"
+
+    def setUp(self):
+        super().setUp()
+        self.zstd = favenio.external_archive_tools()[1]
+
+    def compress(self, blob, archive_rel):
+        source = os.path.join(self.root, archive_rel + ".roh")
+        with open(source, "wb") as handle:
+            handle.write(blob)
+        target = os.path.join(self.root, archive_rel)
+        subprocess.run([self.zstd, "-q", "-o", target, source], check=True)
+        os.unlink(source)
+        return target
+
+    def test_tar_zst_content_hit(self):
+        tar_bytes = io.BytesIO()
+        with tarfile.open(fileobj=tar_bytes, mode="w") as tf:
+            data = self.CONTENT.encode("utf-8")
+            info = tarfile.TarInfo("sicherung/alt.txt")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        archive = self.compress(tar_bytes.getvalue(), "backup.tar.zst")
+        code, lines, _ = run(["--json", "--content", "NADEL", archive])
+        self.assertEqual(code, 0)
+        record = json.loads(lines[0])
+        self.assertTrue(record["path"].endswith(
+            "backup.tar.zst!/sicherung/alt.txt"))
+        self.assertEqual(record["line"], 2)
+
+    def test_single_zst_content_hit_and_extract(self):
+        archive = self.compress(self.CONTENT.encode("utf-8"), "log.txt.zst")
+        code, lines, _ = run(["--json", "--content", "NADEL", archive])
+        self.assertEqual(code, 0)
+        record = json.loads(lines[0])
+        self.assertTrue(record["path"].endswith("log.txt.zst!/log.txt"))
+        self.assertEqual(record["line"], 2)
+        code, lines, _ = run(["--extract", archive + "!/log.txt"])
+        self.assertEqual(code, 0)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+
+    def test_corrupt_zst_warns_without_traceback(self):
+        with open(os.path.join(self.root, "kaputt.txt.zst"), "wb") as handle:
+            handle.write(b"kein zstd")
+        code, lines, err = run(["--content", "NADEL",
+                                os.path.join(self.root, "kaputt.txt.zst")])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("kaputt.txt.zst", err)
+
+
 if __name__ == "__main__":
     unittest.main()

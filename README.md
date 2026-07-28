@@ -12,6 +12,12 @@ tar family (tar, tar.gz/tgz, tar.bz2/tbz2, tar.xz/txz) and singly compressed
 files (gz, bz2, xz — e.g. `notes.txt.gz` contains `notes.txt`) — optionally
 even archives nested inside archives.
 
+Two optional integrations extend the list: with the system's `bsdtar`
+(included in macOS) Favenio also reads **7z** and **ISO** images, and if a
+`zstd` program is installed (e.g. via Homebrew, auto-detected) additionally
+**zst** and **tar.zst**. Without these tools the files are simply treated as
+regular files, exactly as before.
+
 The search core is pure Python 3 (standard library only), a single file, no
 installation. Two native macOS apps are built on top of it: a full search
 window and a small quick-search panel for the Finder toolbar.

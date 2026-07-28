@@ -4,9 +4,8 @@ Vor jedem Punkt gegen Code und Git verifizieren. Erledigte Punkte in Changelog
 oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
 1. Größen-/Datumsfilter und Mehrwortmodus als getrennte Produktentscheidungen.
-2. Zusätzliche Archivformate nur als sauber erkannte optionale Integration.
-3. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
-4. CLI-Wart, nachgestellt und bestätigt: eine Option MIT Wert darf nicht
+2. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
+3. CLI-Wart, nachgestellt und bestätigt: eine Option MIT Wert darf nicht
    zwischen Muster und Startpfad stehen. `--content X --archive-depth 2 PFAD`
    bricht mit „unrecognized arguments" und Exit 2 ab — argparse trennt die
    Positionsargumente an der Option auf. Vor dem Muster oder hinter allen
@@ -25,11 +24,17 @@ verifiziert). Kosmetik und bewusste Tradeoffs, keine Bugs.
 - `favenio.py` (~516–528, `walk_tar`): Die Kompressions-Ratio-Heuristik greift
   nur bei ZIP; für TAR schützen allein die Byte-Budgets (per-Member-Ratio bei
   tar nicht ermittelbar). Klarstellenden Kommentar ergänzen.
-- `favenio.py:583`: Ungenutzte Schleifenvariable `index` durch `_` ersetzen
-  (reine Kosmetik, beim nächsten Anfassen miterledigen).
 
 Nicht offen: der frühere Finder-Ordner-Fehler; `osascript` als Unterprozess ist
 die verifizierte Lösung und eine Dauerregel.
+
+Nicht offen — zusätzliche Archivformate: mit 0.20.0/0.21.0 umgesetzt.
+Einzelne .gz/.bz2/.xz liest die Standardbibliothek; 7z, ISO und tar.zst
+kommen über das System-bsdtar, einzelne .zst über ein gefundenes
+zstd-Programm (Homebrew-Pfade werden geprobt). Ohne Werkzeug bleiben die
+Dateien normale Dateien. Einzelne rohe .zst kann bsdtar selbst NICHT lesen
+(„Unrecognized archive format", verifiziert 2026-07-29), deshalb der direkte
+zstd-Weg.
 
 Nicht offen — ZIP-CRC nach frühem Inhaltstreffer: entschieden mit 0.19.0. Die
 CRC bleibt ungeprüft, weil das Lesen beim ersten Treffer endet; ein Treffer ist

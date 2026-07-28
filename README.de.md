@@ -12,6 +12,12 @@ pptx, odt, ods, odp), die Tar-Familie (tar, tar.gz/tgz, tar.bz2/tbz2,
 tar.xz/txz) und einzeln komprimierte Dateien (gz, bz2, xz — `notiz.txt.gz`
 enthält also `notiz.txt`), auf Wunsch auch Archive in Archiven.
 
+Zwei optionale Integrationen erweitern die Liste: Mit dem System-`bsdtar`
+(in macOS enthalten) liest Favenio auch **7z** und **ISO**-Abbilder, und wenn
+ein `zstd`-Programm installiert ist (z. B. über Homebrew, wird automatisch
+gefunden) zusätzlich **zst** und **tar.zst**. Ohne diese Werkzeuge bleiben
+die Dateien einfach normale Dateien — wie bisher.
+
 Der Suchkern ist pures Python 3 (nur Standardbibliothek), eine Datei, keine
 Installation. Darauf aufbauend gibt es zwei native macOS-Apps: ein großes
 Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
