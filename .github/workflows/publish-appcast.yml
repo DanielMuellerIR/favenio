@@ -220,6 +220,21 @@ jobs:
 
           xmllint --noout site/appcast.xml
 
+          # Die Apps verlangen einen signierten Feed (SURequireSignedFeed):
+          # Sparkle prüft die appcast.xml selbst gegen den SUPublicEDKey,
+          # nicht nur das DMG. sign_update bettet die Signatur als
+          # sparkle-signatures-Block am Dateiende ein; ohne diesen Block
+          # meldet die App „The update feed is improperly signed".
+          printf '%s' "$SPARKLE_PRIVATE_KEY" |
+            "$tool" --ed-key-file - --disable-signing-warning \
+              site/appcast.xml
+
+          # Selbsttest: eingebettete Feed-Signatur muss verifizierbar sein,
+          # und die Datei muss gültiges XML bleiben.
+          printf '%s' "$SPARKLE_PRIVATE_KEY" |
+            "$tool" --ed-key-file - --verify site/appcast.xml
+          xmllint --noout site/appcast.xml
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:

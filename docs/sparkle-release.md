@@ -15,6 +15,14 @@ Two independent protections are required:
 - Developer ID signing and Apple notarization for both apps and the DMG.
 - A project-specific Sparkle Ed25519 signature for the update archive and feed.
 
+Both apps set `SURequireSignedFeed`, so the **appcast itself** must carry an
+embedded Ed25519 signature (a `sparkle-signatures` comment block at the end of
+`appcast.xml`, created by `sign_update` on the XML file). An appcast that only
+signs the DMG enclosure fails in the apps with "The update feed is improperly
+signed and could not be validated" — this happened for v0.16.0 through the
+first v0.21.0 feed after the workflow switched from `generate_appcast` to a
+hand-built appcast without re-adding the feed signature (fixed 2026-07-29).
+
 The private Sparkle key must never enter Git, logs or command arguments. Only
 its public counterpart is embedded as `SUPublicEDKey`.
 
