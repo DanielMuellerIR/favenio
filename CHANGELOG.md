@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.21.0 — 2026-07-29
+
+- Neue Archivformate über externe Werkzeuge, sauber erkannt und rein optional:
+  Mit dem System-`bsdtar` (in macOS enthalten) liest Favenio jetzt auch
+  **7z**-Archive und **ISO**-Abbilder; ist zusätzlich ein `zstd`-Programm
+  installiert (z. B. über Homebrew, wird automatisch gefunden — auch ohne
+  Homebrew im PATH), kommen **tar.zst** und einzelne **.zst**-Dateien dazu.
+  Fehlen die Werkzeuge, bleiben diese Dateien einfach normale Dateien.
+- Namenssuche, Inhaltssuche mit Zeilennummer, `!/`-Notation, Verschachtelung
+  und Extraktion funktionieren in den neuen Formaten wie bei Zip und Tar;
+  die Byte-Budgets greifen beim Lesen.
+- Glob-Zeichen in Eintragsnamen werden beim bsdtar-Zugriff entschärft: ein
+  Eintrag `a*.txt` liefert exakt diesen Eintrag, nicht zusätzlich `abc.txt`.
+
+## 0.20.0 — 2026-07-29
+
+- Einzeln komprimierte Dateien (**gz**, **bz2**, **xz** — ohne die weiterhin
+  als Tar behandelten `.tar.gz` & Co.) werden als Archive mit genau einem
+  Eintrag durchsucht: `notiz.txt.gz` enthält `notiz.txt`. Damit greifen
+  Namenssuche, Inhaltssuche mit Zeilennummer, `!/`-Notation, Verschachtelung
+  (`inner.zip.gz` genauso wie `log.gz` in einem Zip) und `--extract` —
+  ausschließlich mit der Python-Standardbibliothek.
+- Kaputte oder abgeschnittene Kompressionsströme erzeugen eine Warnung auf
+  stderr, die Suche läuft weiter. Die entpackte Größe ist bei diesen Formaten
+  vorab unbekannt; die Byte-Budgets greifen deshalb beim Lesen.
+
 ## 0.19.0 — 2026-07-28
 
 - Die Inhaltssuche ist deutlich schneller, ohne dass sich ein Ergebnis ändert.

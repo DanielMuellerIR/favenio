@@ -214,7 +214,7 @@ Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
   `front window` scheitert an geöffneten Info-Fenstern. Solche Laufzeiten
   schlagen als „falscher Suchordner" durch, weil die Oberfläche längst mit dem
   Ersatzordner weiterarbeitet. Die volle Herleitung samt Alternativenprüfung
-  steht in `theplan/knowledge/finder-aktueller-ordner.md`.
+  ist intern dokumentiert (Wissensnotiz „finder-aktueller-ordner").
 - Vor der Abfrage `AEDeterminePermissionToAutomateTarget` fragen (ohne Event,
   ohne Dialog). Verbotene Automation ist damit sofort bekannt, statt aus einem
   hängenden Unterprozess erschlossen zu werden. Steht der Freigabedialog offen,
