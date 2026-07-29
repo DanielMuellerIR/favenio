@@ -70,6 +70,10 @@ Verbindliches CLI-Verhalten:
   verarbeitet; deshalb Größen- und Tiefengrenzen nicht unbemerkt entfernen.
 - `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären
   Ordner. Öffnen, Finder-Anzeige und Drag-and-drop müssen dieselbe Datei sehen.
+- `bsdtar` liest das Eintrags-Argument als **Suchmuster**, nicht als festen Namen.
+  Jeder neue `bsdtar`-Aufruf mit einem echten Eintragsnamen muss deshalb durch
+  `bsdtar_escape()` — sonst trifft ein Eintrag `a*.txt` auch `abc.txt` und beide
+  Inhalte kommen aneinandergehängt zurück, also ein falscher Treffer ohne Fehler.
 
 ## Swift-Frontends
 
