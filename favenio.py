@@ -40,10 +40,10 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.21.0"
+__version__ = "0.21.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-07-29"
+__date__ = "2026-08-03"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -1046,7 +1046,9 @@ class Search:
         Ordner-Erkennung: 7z listet Ordner mit Schrägstrich am Ende, ISO
         ohne. Deshalb gilt ein Eintrag auch dann als Ordner, wenn andere
         Einträge unter ihm liegen; ein LEERER Ordner in einem ISO wird
-        dadurch als Datei geführt (sein Inhalt ist leer — folgenlos).
+        dadurch als Datei geführt. Sein Inhalt ist leer, aber der Typ stimmt
+        nicht: `--only files` zeigt ihn, `--only dirs` nicht. Bekannt und im
+        BACKLOG notiert — sauber wäre eine typtragende bsdtar-Auflistung.
         Größen liefert die Auflistung nicht (size=None), die Byte-Budgets
         greifen beim Lesen."""
         bsdtar, _, env = external_archive_tools()

@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.21.1 — 2026-08-03
+
+Korrekturen aus einer Code-Review-Triage; jeder Punkt mit Repro und
+Regressionstest.
+
+- **Archivbudget:** Der zweite Lesedurchlauf über ein Treffer-Mitglied war
+  komplett von `--max-archive-total-bytes` befreit. Bei `--exact` und einer
+  sehr langen Zeile liest der genaue Lauf weiter als der Vortest — damit ließ
+  sich das Gesamtbudget um Größenordnungen umgehen. Freigestellt bleibt jetzt
+  nur, was der Vortest wirklich gelesen hat.
+- **`--max-depth`:** Ordner genau auf der Grenztiefe fehlten. `--max-depth 1
+  --only dirs` fand gar nichts, obwohl `find -maxdepth 1` die direkten
+  Unterordner listet.
+- **Inhalts-Vortest und griechisches Sigma:** „Σ" wird am Wortende zu „ς",
+  sonst zu „σ". Weil der Vortest Häppchen sieht und der genaue Lauf ganze
+  Zeilen, verschluckte er an der Häppchengrenze einen echten Treffer.
+- **`.tar.zst` ohne bsdtar:** Die Datei fiel in den Zweig für einzelne
+  `.zst`-Dateien, und der entpackte Tar-Strom erschien als ein Mitglied
+  `a.tar`. Ohne das nötige Werkzeug bleibt sie jetzt eine normale Datei.
+- **Eintragsnamen aus bsdtar-Archiven:** `bsdtar -tf` maskiert Steuerzeichen
+  und Backslashes. Betroffene Einträge (7z, ISO, tar.zst) trugen deshalb einen
+  falschen Pfad und ließen sich weder durchsuchen noch extrahieren.
+- **Schnellsuche:** Wartet sie auf den Finder-Ordner, blieb die Trefferliste
+  der vorigen Suche stehen; ⌘↩ übergab der Haupt-App dann alte Treffer unter
+  neuem Suchtext. Außerdem überschrieb der Trefferzähler eine Warnung zum
+  unbestätigten Suchbereich — nach dem Stopp bei 20 Treffern dauerhaft.
+- **`install.sh`:** prüft jetzt auch die Produktidentität (Bundle-IDs und
+  gleiche Version beider Apps), tauscht beide Bundles als eine Transaktion mit
+  Rückholung des alten Stands und endet bei jedem Fehler wirklich mit Exit 2
+  statt mit dem Status des ausgelösten Werkzeugs.
+
 ## 0.21.0 — 2026-07-29
 
 - Neue Archivformate über externe Werkzeuge, sauber erkannt und rein optional:

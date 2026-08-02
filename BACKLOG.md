@@ -12,6 +12,23 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Positionsargumenten funktioniert es. Der Wart ist alt, schon v0.14.0 zeigt
    ihn. Entweder Parsing umbauen oder die Reihenfolge in beiden READMEs
    festschreiben.
+## Offen aus der Code-Review-Triage 2026-08-02
+
+- Leerer Ordner in einem ISO wird als Datei geführt. `bsdtar -tf` listet ihn
+  ohne Schrägstrich, und ohne Kinder greift die Ordner-Erkennung nicht;
+  `--only files --exact <name>` findet ihn deshalb, `--only dirs` nicht. Ein
+  sauberer Fix braucht eine typtragende Auflistung (etwa `bsdtar -tvf`,
+  dessen erste Spalte den Typ nennt) — die ist aber schwerer verlässlich zu
+  zerlegen als die reine Namensliste. Vor der Umsetzung: leeren ISO-Ordner
+  als Fixture ergänzen.
+- Fallback-Start der Schnellsuche verliert die Suchoptionen. Klappt das
+  URL-Schema nicht, startet FavenioQuick die Haupt-App mit `--query` und
+  `--results-file`; Wurzel, „Genauer Name", Inhalt, Archive und Unsichtbare
+  gehen dabei verloren. Die übergebenen Treffer stammen dann aus einer
+  anderen Suche als die, die die Haupt-App danach anzeigt. Entweder
+  Startargumente und Parser um alle Optionen erweitern oder denselben
+  strukturierten Übergabedatensatz wie im URL-Weg verwenden.
+
 ## Niedrigprior (Code-Review-Triage 2026-07-24)
 
 Aus der Review-Triage vom 2026-07-24 (Quelle: MiniMax-Review, von Opus
