@@ -577,6 +577,14 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
 
+        // Treffer der VORIGEN Suche sofort wegräumen — auch wenn es unten
+        // wegen des noch unbekannten Suchbereichs nicht weitergeht. Sonst
+        // stünde die alte Liste neben dem neuen Suchtext, und ⌘↩ übergäbe der
+        // Haupt-App alte Treffer als Startmenge einer anderen Suchanfrage.
+        hits = []
+        openButton.isEnabled = false
+        tableView.reloadData()
+
         // Der ausgewählte Eintrag trägt keinen Pfad → der Finder-Ordner steht
         // noch aus. Dann NICHT ersatzweise im Benutzerordner suchen, sondern
         // kurz warten; das ist sichtbar und endet spätestens nach
@@ -595,9 +603,6 @@ final class QuickController: NSObject, NSApplicationDelegate,
         }
 
         let generation = searchGeneration
-        hits = []
-        openButton.isEnabled = false
-        tableView.reloadData()
         searching = true
         spinner.startAnimation(nil)
         // Immer sagen, WO gesucht wird — und warum es nicht der Finder-Ordner
@@ -704,12 +709,18 @@ final class QuickController: NSObject, NSApplicationDelegate,
             tableView.selectRowIndexes(rows, byExtendingSelection: false)
         }
         openButton.isEnabled = !hits.isEmpty
-        if hits.count >= Self.maxQuickHits {
-            cancelSearch()   // Top 20 erreicht → Suche stoppen
-            infoLabel.stringValue =
-                "Top \(Self.maxQuickHits) — ⌘↩ öffnet alle in Favenio"
+        let reachedTop = hits.count >= Self.maxQuickHits
+        if reachedTop { cancelSearch() }   // Top 20 erreicht → Suche stoppen
+        let summary = reachedTop
+            ? "Top \(Self.maxQuickHits) — ⌘↩ öffnet alle in Favenio"
+            : "\(hits.count) Treffer — Suche läuft…"
+        // Ein unbestätigter Suchbereich bleibt sichtbar: Sonst verschwände die
+        // Warnung beim ersten Trefferpaket — und beim Top-20-Stopp für immer,
+        // weil danach kein finish() mehr kommt, das sie wieder anzeigt.
+        if let problem = scopeProblem {
+            showScopeProblem(summary + " " + problem)
         } else {
-            infoLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
+            infoLabel.stringValue = summary
         }
     }
 

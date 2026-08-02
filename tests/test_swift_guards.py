@@ -47,6 +47,32 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("let resultsFile: URL", QUICK)
         self.assertIn("try writeQuickHandoff(hits)", QUICK)
 
+    def test_quick_drops_old_hits_before_waiting_for_the_finder(self):
+        # Wartet die Schnellsuche auf den Finder-Ordner, kehrt startSearch()
+        # früh zurück. Die Treffer der VORIGEN Suche müssen davor weg sein —
+        # sonst übergibt ⌘↩ der Haupt-App alte Treffer unter neuem Suchtext.
+        start = QUICK[
+            QUICK.index("func startSearch()"):
+            QUICK.index("func showProgress")
+        ]
+        self.assertLess(
+            start.index("hits = []"),
+            start.index("scopePopup.selectedItem?.representedObject"),
+        )
+        self.assertLess(
+            start.index("openButton.isEnabled = false"),
+            start.index("scopePopup.selectedItem?.representedObject"),
+        )
+
+    def test_quick_keeps_the_scope_warning_while_hits_arrive(self):
+        # Eine Warnung zum Suchbereich darf nicht vom Trefferzähler
+        # überschrieben werden — beim Top-20-Stopp käme sie sonst nie wieder.
+        flush = QUICK[
+            QUICK.index("func flushPending()"):
+            QUICK.index("func finish(")
+        ]
+        self.assertIn('showScopeProblem(summary + " " + problem)', flush)
+
     def test_streaming_core_does_not_collect_duplicate_results(self):
         self.assertNotIn("var hitsRaw", COMMON)
         self.assertNotIn("var hits: [Hit] = []\n    var hitsRaw", COMMON)
