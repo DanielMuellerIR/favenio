@@ -269,6 +269,23 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(depths(3), 3)
         self.assertEqual(depths(None), 4)   # Default: unbegrenzt
 
+    def test_max_depth_keeps_dirs_on_the_limit(self):
+        # `find -maxdepth N` listet Ordner GENAU auf Tiefe N noch mit; nur
+        # ihr Inhalt fällt weg. Früher wurde die Ordnerliste abgeschnitten,
+        # BEVOR sie geprüft wurde — dann fand `--max-depth 1 --only dirs`
+        # gar nichts.
+        os.makedirs(os.path.join(self.root, "ziel-eins", "ziel-zwei"))
+
+        def dirs(value):
+            args = ["ziel", self.root, "--only", "dirs", "--no-archives",
+                    "--max-depth", str(value)]
+            _, lines, _ = run(args)
+            return sorted(os.path.relpath(line, self.root) for line in lines)
+
+        self.assertEqual(dirs(1), ["ziel-eins"])
+        self.assertEqual(dirs(2), ["ziel-eins",
+                                   os.path.join("ziel-eins", "ziel-zwei")])
+
     def test_max_depth_rejects_zero(self):
         code, _, err = run(["ziel", self.root, "--max-depth", "0"])
         self.assertEqual(code, 2)
@@ -607,6 +624,30 @@ class ContentProbeTest(TempTreeTest):
         self.assertTrue(self.probe_hits("Größe", "die Größe passt".encode()))
         self.assertTrue(self.probe_hits("gut", b"\xff\xfe kaputt aber gut"))
 
+    def test_probe_survives_greek_sigma_at_chunk_boundary(self):
+        # str.lower() macht aus „Σ" am Wortende ein „ς", sonst ein „σ". Der
+        # Vortest sieht Häppchen, der genaue Lauf ganze Zeilen — an der
+        # Häppchengrenze kam deshalb früher ein anderes Zeichen heraus und der
+        # Vortest verschluckte den Treffer.
+        text = "ΟΣ und mehr"
+        for chunk_size in (1, 2, 3, 4, 8):
+            self.assertTrue(
+                self.probe_hits("ΟΣ", text.encode(), chunk_size=chunk_size),
+                "Häppchengröße %d" % chunk_size)
+            self.assertTrue(
+                self.probe_hits("οσ", text.encode(), chunk_size=chunk_size),
+                "Häppchengröße %d, kleingeschrieben" % chunk_size)
+
+    def test_sigma_hit_survives_the_real_chunk_boundary(self):
+        # Dasselbe an der echten CHUNK_SIZE-Grenze, einmal quer durch die
+        # ganze Suche: mit Vortest muss dasselbe herauskommen wie ohne.
+        filler = "a" * (favenio.CHUNK_SIZE - len("Ο".encode()))
+        self.write("sigma.txt", filler + "ΟΣ und mehr\n")
+        fast, slow = self.search_with_and_without_probe(
+            ["--json", "--content", "ΟΣ", self.root])
+        self.assertEqual(len(fast), 1)
+        self.assertEqual(fast, slow)
+
     def test_probe_says_no_when_needle_absent(self):
         self.assertFalse(self.probe_hits("NADEL", b"nur heu und stroh\n"))
         self.assertFalse(self.probe_hits("NADEL", b""))
@@ -707,6 +748,28 @@ class ContentProbeTest(TempTreeTest):
         self.assertEqual(code, 0)
         self.assertEqual(len(lines), 1)
         self.assertNotIn("Gesamtbudget", err)
+
+    def test_second_pass_pays_for_bytes_the_probe_never_read(self):
+        # Der Vortest hört beim ersten Fund auf; bei --exact liest der genaue
+        # Lauf danach die ganze lange Zeile weiter. Früher war der ZWEITE
+        # Durchlauf komplett vom Gesamtbudget befreit — damit ließ sich
+        # --max-archive-total-bytes um Größenordnungen umgehen. Freigestellt
+        # ist nur, was der Vortest wirklich gelesen hat.
+        archive = os.path.join(self.root, "lang.zip")
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as zf:
+            # Eine einzige sehr lange Zeile, die mit dem Suchtext BEGINNT:
+            # Der Vortest ist nach dem ersten Häppchen fertig, der genaue
+            # Lauf muss die Zeile bis zum Ende lesen.
+            zf.writestr("lang.txt", "NADEL" + "x" * (3 * favenio.CHUNK_SIZE))
+        argv = ["--content", "--exact", "NADEL", archive,
+                "--max-archive-total-bytes", str(favenio.CHUNK_SIZE + 100)]
+        code, lines, err = run(argv)
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("Gesamtbudget", err)
+        # Gegenprobe: ohne Vortest verhält sich der Lauf genauso.
+        fast, slow = self.search_with_and_without_probe(argv)
+        self.assertEqual(fast, slow)
 
     def test_member_budget_still_applies_to_second_pass(self):
         # Die Einzelgrenze bleibt in beiden Durchläufen aktiv.
@@ -873,6 +936,28 @@ class SingleCompressionTest(TempTreeTest):
         self.assertEqual(lines, [])
         self.assertIn("Einzelgrenze", err)
 
+    def test_zstd_start_failure_leaves_no_temp_file(self):
+        # .zst gehört zur Einzelkompression, wird aber vom externen
+        # zstd-Programm gelesen. Für Daten aus dem Speicher legt zstd_open
+        # vorher eine Temp-Datei an. Verschwindet das gemerkte Programm,
+        # scheitert schon der Prozessstart — dann gibt es keinen ToolStream,
+        # der die Temp-Datei später aufräumen würde.
+        original_tools = favenio._EXTERNAL_TOOLS
+        original_tempdir = tempfile.tempdir
+        spool = os.path.join(self.root, "spool")
+        os.makedirs(spool)
+        favenio._EXTERNAL_TOOLS = (None,
+                                   os.path.join(self.root, "gibt-es-nicht"),
+                                   None)
+        tempfile.tempdir = spool
+        try:
+            with self.assertRaises(OSError):
+                favenio.zstd_open(io.BytesIO(b"komprimierte bytes"))
+        finally:
+            tempfile.tempdir = original_tempdir
+            favenio._EXTERNAL_TOOLS = original_tools
+        self.assertEqual(os.listdir(spool), [])
+
     def test_hidden_compressed_file_skipped_by_default(self):
         self.write_bytes(".geheim.txt.gz",
                          gzip.compress(b"VERBORGEN\n"))
@@ -978,6 +1063,42 @@ class BsdtarFormatsTest(TempTreeTest):
         with open(lines[0], encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "x\n")
 
+    def test_control_characters_in_member_names_stay_real(self):
+        # `bsdtar -tf` maskiert Steuerzeichen und Backslashes im Namen (aus
+        # einem Tabulator werden die zwei Zeichen \t). Wird die Auflistung
+        # ungeprüft übernommen, trägt der Treffer einen falschen Pfad und der
+        # zweite bsdtar-Aufruf findet den Eintrag nicht mehr.
+        names = {"tab\tname.txt": self.CONTENT,
+                 "back\\slash.txt": self.CONTENT,
+                 "schlicht.txt": self.CONTENT}
+        archive = self.make_archive("sonder.7z", "7zip", names)
+        code, lines, err = run(["--json", "--content", "NADEL", archive])
+        self.assertEqual(code, 0)
+        found = {json.loads(line)["path"].split("!/", 1)[1]
+                 for line in lines}
+        self.assertEqual(found, set(names))
+        self.assertNotIn("Entpackwerkzeug", err)
+        # Und der Pfad taugt danach auch zum Materialisieren.
+        code, lines, _ = run(["--extract", archive + "!/tab\tname.txt"])
+        self.assertEqual(code, 0)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+
+    def test_bsdtar_unescape_reverses_the_listing_format(self):
+        self.assertEqual(favenio.bsdtar_unescape(rb"tab\tname.txt"),
+                         b"tab\tname.txt")
+        self.assertEqual(favenio.bsdtar_unescape(rb"back\\slash.txt"),
+                         b"back\\slash.txt")
+        # Ein echter Backslash kommt maskiert an; die Ziffern danach bleiben
+        # dadurch Ziffern und werden nicht als Oktalfolge gelesen.
+        self.assertEqual(favenio.bsdtar_unescape(rb"a\\123.txt"),
+                         b"a\\123.txt")
+        # Nicht druckbare Bytes kommen dreistellig oktal (hier UTF-8 für „ä").
+        self.assertEqual(favenio.bsdtar_unescape(rb"gr\303\244n"),
+                         "grän".encode("utf-8"))
+        self.assertEqual(favenio.bsdtar_unescape(b"schlicht.txt"),
+                         b"schlicht.txt")
+
     def test_zip_inside_7z_needs_depth_2(self):
         inner = io.BytesIO()
         with zipfile.ZipFile(inner, "w") as zf:
@@ -1064,6 +1185,20 @@ class BsdtarFormatsTest(TempTreeTest):
             self.assertIsNone(favenio.classify_archive("a.tar.zst"))
             self.assertIsNone(favenio.classify_archive("a.zst"))
             self.assertEqual(favenio.classify_archive("a.7z"), "bsdtar")
+        finally:
+            favenio._EXTERNAL_TOOLS = original
+
+    def test_tar_zst_without_bsdtar_is_no_archive(self):
+        # Die andere Hälfte: zstd da, bsdtar nicht. „a.tar.zst" endet auch auf
+        # „.zst" und wurde früher als einzeln komprimierte Datei behandelt —
+        # der entpackte Tar-Strom erschien dann als Mitglied „a.tar".
+        original = favenio.external_archive_tools()
+        favenio._EXTERNAL_TOOLS = (None, original[1], original[2])
+        try:
+            self.assertIsNone(favenio.classify_archive("a.tar.zst"))
+            self.assertIsNone(favenio.classify_archive("a.tzst"))
+            self.assertIsNone(favenio.classify_archive("a.7z"))
+            self.assertEqual(favenio.classify_archive("a.zst"), ".zst")
         finally:
             favenio._EXTERNAL_TOOLS = original
 

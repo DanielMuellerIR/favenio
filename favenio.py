@@ -129,6 +129,56 @@ def bsdtar_escape(member):
     return re.sub(r"([\\*?\[\]])", r"\\\1", member)
 
 
+# Kurzformen, die bsdtar beim AUFLISTEN für Steuerzeichen ausgibt (libarchive
+# „safe_fprintf"): Aus einem Tabulator im Eintragsnamen wird die Zeichenfolge
+# \t, aus einem Backslash \\. Alles andere nicht Druckbare kommt als \NNN —
+# dreistellig oktal, eine Folge je Byte.
+BSDTAR_LISTING_ESCAPES = {
+    ord("a"): 0x07, ord("b"): 0x08, ord("f"): 0x0C, ord("n"): 0x0A,
+    ord("r"): 0x0D, ord("t"): 0x09, ord("v"): 0x0B, ord("\\"): 0x5C,
+}
+
+
+def bsdtar_unescape(raw_line):
+    """Macht die Maskierung einer `bsdtar -tf`-Zeile rückgängig
+    (Bytes rein, Bytes raus).
+
+    bsdtar gibt Eintragsnamen NICHT wörtlich aus, sondern maskiert
+    Steuerzeichen und den Backslash selbst — auch wenn die Ausgabe in eine
+    Pipe geht. Ohne diese Rückabbildung liefe ein Eintrag mit Tabulator im
+    Namen unter dem maskierten Namen: Der Treffer zeigte einen falschen Pfad,
+    und Inhaltssuche wie Extraktion fänden ihn nicht mehr (verifiziert am
+    2026-08-03 mit bsdtar 3.5.3).
+
+    Die Rückabbildung ist eindeutig, weil ein echter Backslash im Namen selbst
+    schon maskiert ankommt. Oktale Folgen stehen für einzelne Bytes; deshalb
+    arbeitet die Funktion auf Bytes und die UTF-8-Dekodierung passiert erst
+    danach."""
+    out = bytearray()
+    index = 0
+    length = len(raw_line)
+    while index < length:
+        byte = raw_line[index]
+        if byte != 0x5C or index + 1 >= length:   # 0x5C = Backslash
+            out.append(byte)
+            index += 1
+            continue
+        marker = raw_line[index + 1]
+        if marker in BSDTAR_LISTING_ESCAPES:
+            out.append(BSDTAR_LISTING_ESCAPES[marker])
+            index += 2
+            continue
+        digits = raw_line[index + 1:index + 4]
+        if len(digits) == 3 and all(0x30 <= digit <= 0x37 for digit in digits):
+            out.append(int(digits, 8) & 0xFF)
+            index += 4
+            continue
+        # Unbekannte Folge: den Backslash wörtlich nehmen und weitergehen.
+        out.append(byte)
+        index += 1
+    return bytes(out)
+
+
 class ToolStream:
     """Liest die stdout eines Entpack-Unterprozesses wie eine Datei.
 
@@ -204,9 +254,21 @@ def zstd_open(source, mode="rb"):
     else:
         label = os.fspath(source)
         path = label
-    proc = subprocess.Popen([zstd, "-dcq", "--", path],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL)
+    try:
+        proc = subprocess.Popen([zstd, "-dcq", "--", path],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL)
+    except OSError:
+        # Scheitert schon der Start (z. B. weil das gemerkte zstd-Programm
+        # inzwischen weg oder nicht mehr ausführbar ist), gibt es kein
+        # ToolStream — und damit niemanden, der die Temp-Datei später
+        # aufräumt. Deshalb hier selbst löschen und den Fehler weiterreichen.
+        if cleanup_path is not None:
+            try:
+                os.unlink(cleanup_path)
+            except OSError:
+                pass
+        raise
     return ToolStream(proc, label, cleanup_path=cleanup_path)
 
 
@@ -228,6 +290,15 @@ DEFAULT_MAX_ARCHIVE_RATIO = 1000.0
 # auch \r, Seitenvorschub und die Unicode-Trenner). Wir brauchen die Liste,
 # um zu erkennen, ob ein Häppchen mit einer vollständigen Zeile endet.
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+
+
+# Die beiden Kleinformen des griechischen Sigma. Welche davon str.lower() aus
+# einem großen „Σ" macht, hängt davon ab, ob das Zeichen am Wortende steht —
+# der einzige Fall, in dem Kleinschreibung vom Zusammenhang abhängt. Warum das
+# für den Vortest wichtig ist, steht in ContentProbe.
+GREEK_SMALL_SIGMA = "σ"   # σ
+GREEK_FINAL_SIGMA = "ς"   # ς
+GREEK_SIGMAS = GREEK_SMALL_SIGMA + GREEK_FINAL_SIGMA
 
 
 class ArchiveReadError(Exception):
@@ -260,24 +331,31 @@ class ArchiveBudget:
                     % (label, ratio, self.maximum_ratio))
 
     def iter_chunks(self, handle, label, declared_size=None,
-                    compressed_size=None, count_total=True):
+                    compressed_size=None, free_bytes=0):
         """Liefert die entpackten Bytes eines Archiv-Eintrags in Häppchen und
         bricht ab, sobald eine Grenze überschritten wäre.
 
-        count_total=False zählt die Bytes NICHT gegen das Gesamtbudget des
-        Suchlaufs. Das brauchen wir für den zweiten Durchlauf über ein
-        Mitglied, dessen Inhalt der Vortest (ContentProbe) schon gelesen hat:
-        derselbe Eintrag soll das Budget des Suchlaufs nicht doppelt
-        belasten. Die Einzelgrenze pro Eintrag gilt weiterhin."""
+        free_bytes sind die ersten n Bytes DIESES Eintrags, die schon einmal
+        gegen das Gesamtbudget des Suchlaufs gezählt wurden. Das brauchen wir
+        für den zweiten Durchlauf über ein Mitglied, dessen Anfang der Vortest
+        (ContentProbe) bereits gelesen hat: derselbe Eintrag soll das Budget
+        nicht doppelt belasten. Alles, was DARÜBER hinaus gelesen wird, zählt
+        wieder voll — sonst käme ein Mitglied, dessen Vortest früh fertig war,
+        am Gesamtbudget vorbei (der genaue Lauf liest bei --exact und einer
+        sehr langen Zeile weiter als der Vortest). Die Einzelgrenze pro
+        Eintrag gilt in beiden Durchläufen."""
         self.validate(label, declared_size, compressed_size)
         member_bytes = 0
         while True:
             chunk = handle.read(CHUNK_SIZE)
             if not chunk:
                 return
+            start = member_bytes
             member_bytes += len(chunk)
-            if count_total:
-                self.consumed += len(chunk)
+            # Nur der Teil des Häppchens hinter dem schon gezählten Anfang
+            # belastet das Gesamtbudget; ohne free_bytes ist das das ganze
+            # Häppchen.
+            self.consumed += max(0, member_bytes - max(free_bytes, start))
             if member_bytes > self.maximum_member:
                 raise ArchiveLimitError(
                     "%s: Einzelgrenze %d überschritten"
@@ -329,10 +407,16 @@ def classify_archive(name):
         if lowered.endswith(extension):
             return extension
     bsdtar, zstd, _ = external_archive_tools()
+    # Tar-mit-Zstandard zuerst, und zwar mit eigenem Rückgabepunkt: „.tar.zst"
+    # endet auch auf „.zst" und fiele sonst ohne bsdtar in den Roh-.zst-Zweig
+    # darunter. Der entpackte Tar-Strom erschiene dann als EIN Mitglied
+    # „a.tar" — versprochen ist aber, dass die Datei ohne Werkzeug eine
+    # normale Datei bleibt.
+    if lowered.endswith(BSDTAR_ZSTD_TAR_EXTENSIONS):
+        if bsdtar is not None and zstd is not None:
+            return "bsdtar"
+        return None
     if bsdtar is not None and lowered.endswith(BSDTAR_NATIVE_EXTENSIONS):
-        return "bsdtar"
-    if bsdtar is not None and zstd is not None \
-            and lowered.endswith(BSDTAR_ZSTD_TAR_EXTENSIONS):
         return "bsdtar"
     if zstd is not None and lowered.endswith(ZSTD_SINGLE_EXTENSION):
         return ZSTD_SINGLE_EXTENSION
@@ -364,7 +448,22 @@ class ContentProbe:
     def __init__(self, needle, case_sensitive):
         # Bei egaler Groß-/Kleinschreibung vergleichen wir kleingeschrieben —
         # genau wie der Matcher aus build_matcher() es pro Zeile tut.
-        self.needle = needle if case_sensitive else needle.lower()
+        needle = needle if case_sensitive else needle.lower()
+        # str.lower() hängt an genau EINER Stelle vom Zusammenhang ab: Ein
+        # großes Sigma wird am Wortende zu „ς", sonst zu „σ". Der Vortest sieht
+        # Häppchen, der genaue Lauf ganze Zeilen — dieselbe Stelle kann deshalb
+        # unterschiedlich herauskommen, und der Vortest würde einen echten
+        # Treffer verschlucken (verifiziert am 2026-08-03 mit „ΟΣ" an der
+        # Häppchengrenze). Enthält der Suchtext ein Sigma, gleicht der Vortest
+        # deshalb beide Formen an. Er sagt dadurch höchstens einmal zu oft
+        # „ja"; das ist erlaubt, „nein" zu Unrecht dagegen nicht. Ohne Sigma im
+        # Suchtext kann es den Unterschied nicht geben — dann bleibt der heiße
+        # Pfad unverändert.
+        self.fold_sigma = not case_sensitive and any(
+            char in needle for char in GREEK_SIGMAS)
+        if self.fold_sigma:
+            needle = needle.replace(GREEK_FINAL_SIGMA, GREEK_SMALL_SIGMA)
+        self.needle = needle
         self.case_sensitive = case_sensitive
 
     def hits(self, chunks):
@@ -384,6 +483,8 @@ class ContentProbe:
                 continue
             if not self.case_sensitive:
                 text = text.lower()
+                if self.fold_sigma:
+                    text = text.replace(GREEK_FINAL_SIGMA, GREEK_SMALL_SIGMA)
             window = carry + text
             if self.needle in window:
                 return True
@@ -643,6 +744,15 @@ class Search:
                 # überspringen. dirnames IN PLACE ändern, damit os.walk folgt.
                 dirnames[:] = [d for d in dirnames if not self.is_hidden(d)]
                 filenames = [f for f in filenames if not self.is_hidden(f)]
+            if not self.content_mode:
+                # Bei Namenssuche zählen auch Ordnernamen als Treffer. Das
+                # passiert VOR dem Abschneiden unten: Ein Ordner GENAU auf der
+                # Grenztiefe ist selbst noch ein erlaubter Treffer, nur sein
+                # Inhalt nicht mehr (`find -maxdepth 1` listet die direkten
+                # Unterordner ebenfalls).
+                for dirname in dirnames:
+                    if self.matcher(dirname) and self.type_allowed(True):
+                        self.emit(os.path.join(dirpath, dirname), "dir")
             # Was in `dirpath` liegt, hat die Tiefe `depth_of + 1`. Nur wenn
             # dessen Unterordner noch erlaubt wären, weiter absteigen — sonst
             # käme eine Ebene zu viel mit (`--max-depth 1` = nur direkt im
@@ -650,11 +760,6 @@ class Search:
             if self.max_depth is not None \
                     and self.depth_of(root, dirpath) + 1 >= self.max_depth:
                 dirnames[:] = []
-            if not self.content_mode:
-                # Bei Namenssuche zählen auch Ordnernamen als Treffer.
-                for dirname in dirnames:
-                    if self.matcher(dirname) and self.type_allowed(True):
-                        self.emit(os.path.join(dirpath, dirname), "dir")
             for filename in filenames:
                 self.visit_file(os.path.join(dirpath, filename))
 
@@ -838,15 +943,29 @@ class Search:
             with open_member() as handle:
                 return self.match_content(self.archive_budget.iter_chunks(
                     handle, label, size, compressed_size))
+        probed_bytes = 0
+
+        def tally(chunks):
+            """Zählt mit, wie weit der Vortest wirklich gelesen hat. Genau
+            diese Bytes stehen danach schon im Gesamtbudget; er hört beim
+            ersten Fund mitten im Eintrag auf."""
+            nonlocal probed_bytes
+            for chunk in chunks:
+                probed_bytes += len(chunk)
+                yield chunk
+
         with open_member() as handle:
-            if not self.content_probe.hits(self.archive_budget.iter_chunks(
-                    handle, label, size, compressed_size)):
+            if not self.content_probe.hits(tally(
+                    self.archive_budget.iter_chunks(
+                        handle, label, size, compressed_size))):
                 return None
         with open_member() as handle:
-            # count_total=False: Dieses Mitglied hat der Vortest schon
-            # entpackt, es soll das Gesamtbudget nicht zweimal belasten.
+            # free_bytes: genau den Anfang, den der Vortest schon gelesen und
+            # dem Gesamtbudget belastet hat, nicht zweimal zählen. Liest der
+            # genaue Lauf weiter, zählt der Rest wieder mit.
             return self.match_content(self.archive_budget.iter_chunks(
-                handle, label, size, compressed_size, count_total=False))
+                handle, label, size, compressed_size,
+                free_bytes=probed_bytes))
 
     def walk_zip(self, archive, display, depth, archive_path,
                  archive_members):
@@ -948,7 +1067,12 @@ class Search:
                     listing.stderr.decode("utf-8", "replace").strip()
                     or "bsdtar konnte das Archiv nicht lesen")
             names = []
-            for raw in listing.stdout.decode("utf-8", "replace").splitlines():
+            for raw_line in listing.stdout.split(b"\n"):
+                # Erst die Maskierung zurücknehmen (bsdtar schreibt z. B. für
+                # einen Tabulator die zwei Zeichen \t), dann dekodieren. Echte
+                # Zeilenumbrüche im Namen kommen ebenfalls maskiert an, die
+                # Zeilenaufteilung bleibt dadurch heil.
+                raw = bsdtar_unescape(raw_line).decode("utf-8", "replace")
                 # ISO listet ein "."-Wurzelelement; "./"-Präfixe würden
                 # als versteckte Komponente gelten — beides normalisieren.
                 if raw.startswith("./"):
