@@ -57,7 +57,11 @@ Quell-Builds können nur ad hoc signiert sein und werden nie automatisch
 installiert. Was in `/Applications` landet, trägt ein angeheftetes
 Notary-Ticket: `install.sh` notarisiert die Bundles selbst, prüft sie vor und
 nach dem Kopieren (`codesign`, `spctl`, `stapler validate`) und endet bei jedem
-Fehler mit Exit-Code 2, ohne `/Applications` anzufassen.
+Fehler mit Exit-Code 2, ohne `/Applications` anzufassen. Eine gültige Signatur
+allein genügt nicht: Geprüft werden auch die Bundle-IDs und die übereinstimmende
+Version, damit keine fremde notarisierte App unter demselben Dateinamen an die
+Stelle von Favenio treten kann. Beide Apps werden als eine Transaktion
+getauscht — scheitert ein Schritt, kommen beide alten Stände zurück.
 `./install.sh --dmg <pfad>` installiert stattdessen aus einem fertigen DMG,
 `./install.sh --verify-only` führt nur die Prüfung aus.
 

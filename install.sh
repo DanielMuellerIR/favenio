@@ -27,6 +27,21 @@ source ./notarize-lib.sh
 DEST="/Applications"
 DMG=""
 VERIFY_ONLY=0
+MOUNT=""
+
+# Aufräumen UND den Exit-Code auf den zugesagten Wert bringen. Ohne das käme
+# der fremde Status des ausgelösten Werkzeugs durch (`hdiutil`, `ditto`, `mv`,
+# `build-app.sh` …, meist 1) und Aufrufer könnten die im Kopf dokumentierte
+# Schnittstelle „0 oder 2" nicht auswerten.
+cleanup() {
+    local exit_status=$?
+    if [ -n "$MOUNT" ]; then
+        hdiutil detach "$MOUNT" -quiet 2>/dev/null || true
+        rmdir "$MOUNT" 2>/dev/null || true
+    fi
+    [ "$exit_status" -eq 0 ] || exit 2
+}
+trap cleanup EXIT
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -61,9 +76,9 @@ if [ -n "$DMG" ]; then
         echo "FEHLER: Gatekeeper akzeptiert $DMG nicht." >&2; exit 2; }
     echo "DMG notarisiert, gestapelt und von Gatekeeper akzeptiert."
 
+    # MOUNT ist gesetzt, sobald das Abbild eingehängt ist; cleanup() oben
+    # hängt es in jedem Fall wieder aus.
     MOUNT=$(mktemp -d)
-    trap 'hdiutil detach "$MOUNT" -quiet 2>/dev/null || true; \
-          rmdir "$MOUNT" 2>/dev/null || true' EXIT
     hdiutil attach "$DMG" -mountpoint "$MOUNT" -quiet -nobrowse -readonly
     SOURCE_DIR="$MOUNT"
     SOURCE_LABEL="$DMG"
@@ -80,6 +95,7 @@ else
 fi
 
 echo "== Schritt 2/3: Bundles prüfen =="
+VERSION=""
 for app in "${FAVENIO_APPS[@]}"; do
     [ -d "$SOURCE_DIR/$app" ] || { echo "FEHLER: $app fehlt." >&2; exit 2; }
     codesign --verify --strict "$SOURCE_DIR/$app" \
@@ -88,11 +104,26 @@ for app in "${FAVENIO_APPS[@]}"; do
     # entscheidend ist beide Male das Gatekeeper-Urteil.
     spctl --assess --type execute "$SOURCE_DIR/$app" >/dev/null 2>&1 \
         || { echo "FEHLER: Gatekeeper akzeptiert $app nicht." >&2; exit 2; }
-    echo "  $app: Signatur gültig, von Gatekeeper akzeptiert."
+    # Gültig signiert heißt noch nicht „unser Produkt": Ohne diese Prüfung
+    # könnte ein fremdes, ebenfalls notarisiertes Bundle unter demselben
+    # Dateinamen die echte App ersetzen.
+    favenio_verify_identity "$SOURCE_DIR/$app" "$app" || exit 2
+    app_version=$(/usr/libexec/PlistBuddy -c \
+        "Print :CFBundleShortVersionString" \
+        "$SOURCE_DIR/$app/Contents/Info.plist" 2>/dev/null || true)
+    [ -n "$app_version" ] \
+        || { echo "FEHLER: $app nennt keine Version." >&2; exit 2; }
+    # Beide Apps gehören zum selben Stand — sonst stammen sie aus zwei
+    # verschiedenen Quellen und dürfen nicht zusammen installiert werden.
+    if [ -z "$VERSION" ]; then
+        VERSION="$app_version"
+    elif [ "$VERSION" != "$app_version" ]; then
+        echo "FEHLER: $app hat Version $app_version, erwartet war $VERSION." >&2
+        exit 2
+    fi
+    echo "  $app: Signatur gültig, Bundle-ID und Version geprüft," \
+         "von Gatekeeper akzeptiert."
 done
-
-VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
-    "$SOURCE_DIR/Favenio.app/Contents/Info.plist" 2>/dev/null || echo "?")
 
 if [ "$VERIFY_ONLY" = "1" ]; then
     echo "────────────────────────────────────────────"
@@ -125,20 +156,10 @@ for app in "${FAVENIO_APPS[@]}"; do
 done
 
 [ -w "$DEST" ] || { echo "FEHLER: keine Schreibrechte auf $DEST." >&2; exit 2; }
-for app in "${FAVENIO_APPS[@]}"; do
-    rm -rf "$DEST/$app.installing"
-    # Erst vollständig danebenlegen, dann tauschen: Ein Abbruch mittendrin
-    # darf keine halbe App in /Applications hinterlassen.
-    ditto "$SOURCE_DIR/$app" "$DEST/$app.installing"
-    rm -rf "$DEST/$app"
-    mv "$DEST/$app.installing" "$DEST/$app"
-    # Nach dem Kopieren zählt nur noch, was WIRKLICH in /Applications liegt —
-    # inklusive angeheftetem Ticket, damit die App auch offline startet.
-    notarize_verify_installed "$DEST/$app" "$TICKET_REQUIRED" \
-        || { echo "FEHLER: installierte $app ist nicht notarisiert/gültig." >&2
-             exit 2; }
-    echo "  $app installiert und geprüft."
-done
+# Beide Bundles zusammen: erst danebenlegen und prüfen, dann tauschen, und bei
+# jedem Fehler den alten Stand zurückholen (siehe notarize-lib.sh). Ein Lauf
+# mit Exit 2 hinterlässt damit nie eine halb aktualisierte Installation.
+favenio_install_bundles "$SOURCE_DIR" "$DEST" "$TICKET_REQUIRED" || exit 2
 
 echo "────────────────────────────────────────────"
 echo "INSTALL OK: $VERSION → $DEST"

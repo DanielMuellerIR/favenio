@@ -57,8 +57,12 @@ Source builds may be ad-hoc signed and are never installed automatically.
 Whatever lands in `/Applications` carries a stapled notarization ticket:
 `install.sh` notarizes the bundles itself, verifies them before and after
 copying (`codesign`, `spctl`, `stapler validate`), and exits with code 2 without
-touching `/Applications` if anything fails. `./install.sh --dmg <path>` installs
-from a finished DMG instead; `./install.sh --verify-only` runs the checks alone.
+touching `/Applications` if anything fails. A valid signature alone is not
+enough: the bundle identifiers and matching versions are checked as well, so a
+foreign notarized app cannot take Favenio's place under the same file name.
+Both apps are swapped as a single transaction — if any step fails, both
+previous bundles are restored. `./install.sh --dmg <path>` installs from a
+finished DMG instead; `./install.sh --verify-only` runs the checks alone.
 
 ## Quick start (CLI)
 

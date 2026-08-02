@@ -132,9 +132,16 @@ DMG herausgezogene Apps ihr Ticket und starten offline.
 
 `install.sh` prüft vor und nach dem Kopieren (`codesign`, `spctl`,
 `stapler validate`), beendet laufende Instanzen freundlich, kopiert erst
-vollständig daneben und tauscht dann. `--dmg <pfad>` installiert stattdessen aus
-einem fertigen DMG, `--verify-only` prüft ohne zu installieren. Exit 2 heißt in
-jedem Fall: nichts installiert.
+vollständig daneben und tauscht dann. Geprüft wird auch die Produktidentität —
+Bundle-ID je Bundle und gleiche Version in beiden — denn eine gültige Signatur
+belegt nur „notarisiert", nicht „unsere App". Optional kommt das erwartete
+Entwickler-Team aus `FAVENIO_TEAM_ID` oder clone-lokal aus
+`git config --local favenio.teamId` (nicht eingecheckt, wie der Notary-Profilname).
+Der Austausch beider Bundles ist EINE Transaktion mit Rückholung des alten
+Stands; ein halb aktualisiertes `/Applications` darf es nicht geben.
+`--dmg <pfad>` installiert stattdessen aus einem fertigen DMG, `--verify-only`
+prüft ohne zu installieren. Exit 2 heißt in jedem Fall: nichts installiert —
+auch dann, wenn ein Werkzeug mit einem anderen Status abbricht.
 
 Neue Kernfunktionen benötigen Unit-Tests mit temporären Fixtures. Das bestehende
 Fixture deckt normale Dateien, versteckte Dateien, Zip, Tar, verschachtelte Zip-
