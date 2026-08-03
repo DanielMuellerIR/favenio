@@ -30,6 +30,24 @@ Regressionstest.
   gleiche Version beider Apps), tauscht beide Bundles als eine Transaktion mit
   Rückholung des alten Stands und endet bei jedem Fehler wirklich mit Exit 2
   statt mit dem Status des ausgelösten Werkzeugs.
+- **Angeheftetes Notary-Ticket ist Pflicht:** Bisher installierte
+  `./install.sh --dmg <pfad>` auch Bundles ohne eigenes Ticket und meldete das
+  nur als Hinweis — gedacht als Rücksicht auf sehr alte DMGs, bei denen das
+  Ticket am Image hängt. Nach `/Applications` kommen jetzt ausnahmslos
+  notarisierte und gestapelte Bundles; solche DMGs werden abgelehnt.
+- **Update-Feed wird geprüft:** `install.sh` und `release.sh` reichten die
+  Umgebung unverändert an `build-app.sh` weiter. Ein geerbtes
+  `SPARKLE_FEED_URL` — gedacht für lokale Sparkle-Tests — richtete eine
+  installierte oder ausgelieferte App dauerhaft auf einen fremden
+  Update-Feed. Beide Skripte prüfen die erzeugten Info.plists jetzt gegen die
+  Produktions-URL und brechen bei jeder Abweichung ab.
+- **Appcast-Workflow:** Vor dem Signieren des Feeds wurde vom Release-DMG nur
+  „genau zwei Apps mit gleicher Version" geprüft. Jetzt zählen Signatur,
+  Gatekeeper-Urteil, angeheftetes Ticket, die Bundle-IDs, der
+  Update-Schlüssel und die Übereinstimmung mit dem Release-Tag; der
+  anschließende Selbsttest prüft die Feed-Signatur gegen den öffentlichen
+  Schlüssel aus den Bundles statt gegen den privaten, mit dem gerade
+  signiert wurde.
 
 ## 0.21.0 — 2026-07-29
 
