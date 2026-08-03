@@ -29,6 +29,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
       SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+      # Derselbe öffentliche Schlüssel, den build-app.sh als SUPublicEDKey in
+      # beide Bundles schreibt — die Quelle ist build-app.sh, hier steht nur
+      # die Kopie, gegen die das Release-Artefakt geprüft wird. Ein Test
+      # (tests/test_appcast_workflow.py) hält beide Stellen zusammen.
+      SPARKLE_PUBLIC_KEY: "H504COadHZVAKo+/XD0jzXT5PJzghkS2t/DDYmuHPDg="
 
     steps:
       - name: Check out source
@@ -83,31 +88,131 @@ jobs:
           hdiutil attach "$dmg" -nobrowse -readonly \
             -mountpoint "$mountpoint" -quiet
 
-          apps=("$mountpoint"/*.app)
-          if (( ${#apps[@]} != 2 )); then
-            echo "ERROR: release DMG must contain exactly two apps." >&2
-            exit 1
-          fi
+          # ===== BEGIN favenio-check-artifact =====
+          # Hartes Tor VOR jeder Signatur: Was in den Feed kommt, installieren
+          # die Apps nach einem Klick. Geprüft wurden früher nur "genau zwei
+          # .app und gleiche Versionsstrings" — ein versehentlich oder fremd
+          # hochgeladenes DMG wäre damit zur kryptografisch beglaubigten
+          # Aktualisierung geworden. Jetzt zählen Notarisierung (angeheftetes
+          # Ticket), Gatekeeper-Urteil, Produktidentität (Bundle-IDs und der
+          # Update-Schlüssel SUPublicEDKey) und die Zuordnung zum Release-Tag.
+          # Fail-closed: Jeder Fehlschlag beendet den Lauf, bevor sign_update
+          # überhaupt läuft.
+          #
+          # Argumente: <dmg> <mountpoint> <release-tag> <erwarteter Schlüssel>
+          # Setzt bei Erfolg ARTIFACT_VERSION, ARTIFACT_BUILD und
+          # ARTIFACT_PUBLIC_KEY.
+          favenio_check_artifact() {
+            local dmg="$1" mountpoint="$2" tag="$3" expected_key="$4"
+            local app plist bundle_id app_version app_build app_key
+            local main_apps=0 quick_apps=0
+            shopt -s nullglob
 
-          version=""
-          build=""
-          for app in "${apps[@]}"; do
-            plist="$app/Contents/Info.plist"
-            app_version=$(
-              /usr/libexec/PlistBuddy \
-                -c 'Print :CFBundleShortVersionString' "$plist"
-            )
-            app_build=$(
-              /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist"
-            )
-            if [[ -z "$version" ]]; then
-              version="$app_version"
-              build="$app_build"
-            elif [[ "$version" != "$app_version" || "$build" != "$app_build" ]]; then
-              echo "ERROR: app versions in the release DMG differ." >&2
-              exit 1
+            # stapler validate beweist das ANGEHEFTETE Ticket (gilt auch ohne
+            # Netz); spctl fragt zusätzlich das Gatekeeper-Urteil ab.
+            if ! xcrun stapler validate "$dmg" >/dev/null 2>&1; then
+              echo "ERROR: $dmg carries no stapled notarization ticket." >&2
+              return 1
             fi
-          done
+            if ! spctl --assess --type open \
+                --context context:primary-signature "$dmg" >/dev/null 2>&1
+            then
+              echo "ERROR: Gatekeeper rejects $dmg." >&2
+              return 1
+            fi
+
+            local apps=("$mountpoint"/*.app)
+            if (( ${#apps[@]} != 2 )); then
+              echo "ERROR: release DMG must contain exactly two apps." >&2
+              return 1
+            fi
+
+            ARTIFACT_VERSION=""
+            ARTIFACT_BUILD=""
+            ARTIFACT_PUBLIC_KEY=""
+            for app in "${apps[@]}"; do
+              plist="$app/Contents/Info.plist"
+              if ! codesign --verify --strict "$app" >/dev/null 2>&1; then
+                echo "ERROR: invalid code signature: ${app##*/}" >&2
+                return 1
+              fi
+              if ! spctl --assess --type execute "$app" >/dev/null 2>&1; then
+                echo "ERROR: Gatekeeper rejects ${app##*/}." >&2
+                return 1
+              fi
+              # release.sh staplet beide Bundles einzeln. Ohne eigenes Ticket
+              # bräuchte eine aus dem DMG gezogene App beim Start Netz.
+              if ! xcrun stapler validate "$app" >/dev/null 2>&1; then
+                echo "ERROR: ${app##*/} carries no stapled ticket." >&2
+                return 1
+              fi
+
+              # Gültig signiert heißt nur "notarisiert", nicht "unser
+              # Produkt": Bundle-ID und Update-Schlüssel müssen stimmen.
+              bundle_id=$(/usr/libexec/PlistBuddy -c \
+                'Print :CFBundleIdentifier' "$plist" 2>/dev/null || true)
+              case "$bundle_id" in
+                local.favenio) main_apps=$((main_apps + 1)) ;;
+                local.favenio.quick) quick_apps=$((quick_apps + 1)) ;;
+                *)
+                  echo "ERROR: unexpected bundle identifier" \
+                    "'${bundle_id:-none}' in ${app##*/}." >&2
+                  return 1
+                  ;;
+              esac
+
+              app_key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' \
+                "$plist" 2>/dev/null || true)
+              if [[ "$app_key" != "$expected_key" ]]; then
+                echo "ERROR: ${app##*/} trusts update key" \
+                  "'${app_key:-none}' instead of '$expected_key'." >&2
+                return 1
+              fi
+              ARTIFACT_PUBLIC_KEY="$app_key"
+
+              app_version=$(/usr/libexec/PlistBuddy -c \
+                'Print :CFBundleShortVersionString' "$plist" \
+                2>/dev/null || true)
+              app_build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+                "$plist" 2>/dev/null || true)
+              if [[ -z "$app_version" || -z "$app_build" ]]; then
+                echo "ERROR: ${app##*/} carries no version." >&2
+                return 1
+              fi
+              if [[ -z "$ARTIFACT_VERSION" ]]; then
+                ARTIFACT_VERSION="$app_version"
+                ARTIFACT_BUILD="$app_build"
+              elif [[ "$ARTIFACT_VERSION" != "$app_version" ]] ||
+                   [[ "$ARTIFACT_BUILD" != "$app_build" ]]; then
+                echo "ERROR: app versions in the release DMG differ." >&2
+                return 1
+              fi
+            done
+
+            if (( main_apps != 1 || quick_apps != 1 )); then
+              echo "ERROR: release DMG needs Favenio and FavenioQuick once" \
+                "each." >&2
+              return 1
+            fi
+
+            # Der Feed-Eintrag verlinkt das DMG unter dem Tag. Passt die
+            # Version im Bundle nicht zum Tag, hängt das falsche Artefakt am
+            # Release.
+            if [[ "${tag#v}" != "$ARTIFACT_VERSION" ]]; then
+              echo "ERROR: release tag $tag does not match app version" \
+                "$ARTIFACT_VERSION." >&2
+              return 1
+            fi
+
+            echo "Release artifact verified: $ARTIFACT_VERSION" \
+              "(build $ARTIFACT_BUILD), notarized, stapled, tag matched."
+          }
+          # ===== END favenio-check-artifact =====
+
+          favenio_check_artifact "$dmg" "$mountpoint" "$RELEASE_TAG" \
+            "$SPARKLE_PUBLIC_KEY"
+          version="$ARTIFACT_VERSION"
+          build="$ARTIFACT_BUILD"
 
           # sign_update accepts the private key on stdin, so it appears in
           # neither argv, a file nor the log.
@@ -229,10 +334,85 @@ jobs:
             "$tool" --ed-key-file - --disable-signing-warning \
               site/appcast.xml
 
-          # Selbsttest: eingebettete Feed-Signatur muss verifizierbar sein,
-          # und die Datei muss gültiges XML bleiben.
-          printf '%s' "$SPARKLE_PRIVATE_KEY" |
-            "$tool" --ed-key-file - --verify site/appcast.xml
+          # ===== BEGIN favenio-check-feed =====
+          # Selbsttest gegen den öffentlichen Schlüssel AUS DEN BUNDLES.
+          # Früher verifizierte der Selbsttest mit demselben privaten
+          # Schlüssel, mit dem gerade signiert wurde — er konnte deshalb
+          # nichts aufdecken: Ein falsch hinterlegtes SPARKLE_PRIVATE_KEY
+          # bestand Signieren und Prüfen, obwohl die Apps einen anderen
+          # SUPublicEDKey tragen und jedes Update ablehnen würden.
+          #
+          # sign_update kann nur mit dem privaten Schlüssel verifizieren
+          # (`--verify` nimmt keinen öffentlichen), deshalb übernimmt das
+          # CryptoKit. Sparkle hängt den Signaturblock ans Dateiende und nennt
+          # darin die Zahl der signierten Bytes ("length") — das ist genau der
+          # Feed vor dem Anhängen.
+          #
+          # Argumente: <appcast.xml> <erwarteter SUPublicEDKey>
+          favenio_check_feed() {
+            local feed="$1" public_key="$2"
+            local block signature length size work
+            block=$(awk '/^<!-- sparkle-signatures:/ { found = 1 } found' \
+              "$feed")
+            signature=$(printf '%s\n' "$block" | sed -n 's/^edSignature: *//p')
+            length=$(printf '%s\n' "$block" | sed -n 's/^length: *//p')
+            if [[ -z "$signature" || -z "$length" ]]; then
+              echo "ERROR: $feed carries no embedded Sparkle signature." >&2
+              return 1
+            fi
+            if [[ ! "$length" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: $feed declares a non-numeric signed length." >&2
+              return 1
+            fi
+            size=$(wc -c < "$feed" | tr -d ' ')
+            if (( length < 1 || length >= size )); then
+              echo "ERROR: signed length $length does not fit $feed" \
+                "($size bytes)." >&2
+              return 1
+            fi
+
+            work="$(mktemp -d)"
+            head -c "$length" "$feed" > "$work/signed-part.xml"
+            # Der signierte Teil muss der Feed selbst sein, nicht bloß ein
+            # Anfangsstück davon.
+            if ! xmllint --noout "$work/signed-part.xml"; then
+              echo "ERROR: the signed part of $feed is not the feed." >&2
+              return 1
+            fi
+          cat > "$work/verify-ed25519.swift" <<'SWIFT'
+          import CryptoKit
+          import Foundation
+
+          // Prüft eine Ed25519-Signatur (base64) über den Inhalt einer Datei
+          // gegen einen öffentlichen Schlüssel (base64, 32 Byte roh) — genau
+          // die Prüfung, die Sparkle im Client mit SUPublicEDKey macht.
+          // Aufruf: swift verify-ed25519.swift <pubkey> <signatur> <datei>
+          let arguments = CommandLine.arguments
+          guard arguments.count == 4,
+                let keyData = Data(base64Encoded: arguments[1]),
+                let signature = Data(base64Encoded: arguments[2]),
+                let message = FileManager.default.contents(atPath: arguments[3]),
+                let key = try? Curve25519.Signing.PublicKey(
+                  rawRepresentation: keyData)
+          else {
+            FileHandle.standardError.write(
+              Data("ERROR: bad arguments for the signature check\n".utf8))
+            exit(2)
+          }
+          if key.isValidSignature(signature, for: message) {
+            print("Feed signature verified against SUPublicEDKey.")
+            exit(0)
+          }
+          FileHandle.standardError.write(
+            Data("ERROR: feed signature does not match SUPublicEDKey\n".utf8))
+          exit(1)
+          SWIFT
+            swift "$work/verify-ed25519.swift" "$public_key" "$signature" \
+              "$work/signed-part.xml"
+          }
+          # ===== END favenio-check-feed =====
+
+          favenio_check_feed site/appcast.xml "$ARTIFACT_PUBLIC_KEY"
           xmllint --noout site/appcast.xml
 
       - name: Upload Pages artifact
