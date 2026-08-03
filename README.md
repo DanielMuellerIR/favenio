@@ -62,7 +62,9 @@ enough: the bundle identifiers and matching versions are checked as well, so a
 foreign notarized app cannot take Favenio's place under the same file name.
 Both apps are swapped as a single transaction — if any step fails, both
 previous bundles are restored. `./install.sh --dmg <path>` installs from a
-finished DMG instead; `./install.sh --verify-only` runs the checks alone.
+finished DMG instead; `./install.sh --verify-only` runs the checks alone. Both
+bundles inside a DMG need their own stapled ticket as well, so they start
+offline; very old DMGs that carry the ticket only on the image are rejected.
 
 ## Quick start (CLI)
 

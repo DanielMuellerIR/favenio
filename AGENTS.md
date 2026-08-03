@@ -140,8 +140,10 @@ Entwickler-Team aus `FAVENIO_TEAM_ID` oder clone-lokal aus
 Der Austausch beider Bundles ist EINE Transaktion mit Rückholung des alten
 Stands; ein halb aktualisiertes `/Applications` darf es nicht geben.
 `--dmg <pfad>` installiert stattdessen aus einem fertigen DMG, `--verify-only`
-prüft ohne zu installieren. Exit 2 heißt in jedem Fall: nichts installiert —
-auch dann, wenn ein Werkzeug mit einem anderen Status abbricht.
+prüft ohne zu installieren. Das angeheftete Ticket ist auf jedem Weg Pflicht,
+auch aus einem DMG; sehr alte DMGs, die es nur am Image tragen, werden
+abgelehnt (entschieden 2026-08-03). Exit 2 heißt in jedem Fall: nichts
+installiert — auch dann, wenn ein Werkzeug mit einem anderen Status abbricht.
 
 Neue Kernfunktionen benötigen Unit-Tests mit temporären Fixtures. Das bestehende
 Fixture deckt normale Dateien, versteckte Dateien, Zip, Tar, verschachtelte Zip-

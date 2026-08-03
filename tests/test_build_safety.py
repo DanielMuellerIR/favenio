@@ -71,7 +71,7 @@ class InstallTransactionTest(unittest.TestCase):
         notarize_verify_installed() {
         %s
         }
-        if favenio_install_bundles "%s" "%s" ""; then
+        if favenio_install_bundles "%s" "%s"; then
             echo "RC=0"
         else
             echo "RC=$?"
@@ -149,6 +149,110 @@ class InstallIdentityTest(unittest.TestCase):
     def test_foreign_bundle_id_is_rejected(self):
         output = self.check("com.example.trojaner")
         self.assertIn("RC=2", output)
+        self.assertIn("nicht Favenio", output)
+
+
+class InstallFromDmgTest(unittest.TestCase):
+    """Der --dmg-Weg mit vorgeschobenen Werkzeugen: `hdiutil attach` legt zwei
+    Bundle-Gerüste in den Mountpoint, codesign/spctl/xcrun antworten nach
+    Vorgabe. Damit lässt sich `--verify-only` vollständig durchspielen, ohne
+    Notarisierung und ohne /Applications.
+
+    Geprüft wird die Entscheidung vom 2026-08-03: Auch aus einem DMG braucht
+    jedes Bundle sein EIGENES angeheftetes Notary-Ticket."""
+
+    APPS = {"Favenio.app": "local.favenio",
+            "FavenioQuick.app": "local.favenio.quick"}
+    FEED_URL = "https://danielmuellerir.github.io/favenio/appcast.xml"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.plists = self.root / "plists"
+        self.plists.mkdir()
+        self.stubs = self.root / "stubs"
+        self.stubs.mkdir()
+        self.dmg = self.root / "Favenio-0.21.1.dmg"
+        self.dmg.write_bytes(b"kein echtes Abbild")
+        for app, bundle_id in self.APPS.items():
+            self.write_plist(app, bundle_id)
+        self.write_stubs()
+
+    def write_plist(self, app, bundle_id, feed_url=None, version="0.21.1"):
+        info = {
+            "CFBundleIdentifier": bundle_id,
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": version,
+            "SUFeedURL": self.FEED_URL if feed_url is None else feed_url,
+        }
+        with open(self.plists / ("%s.plist" % app), "wb") as handle:
+            plistlib.dump(info, handle)
+
+    def write_stubs(self):
+        # hdiutil attach füllt den Mountpoint mit den vorbereiteten Bundles.
+        (self.stubs / "hdiutil").write_text(
+            "#!/bin/sh\n"
+            'mount=""; prev=""\n'
+            'for arg in "$@"; do\n'
+            '  [ "$prev" = "-mountpoint" ] && mount="$arg"\n'
+            '  prev="$arg"\n'
+            "done\n"
+            '[ "$1" = "attach" ] || exit 0\n'
+            '[ -n "$mount" ] || exit 1\n'
+            "for app in Favenio.app FavenioQuick.app; do\n"
+            '  mkdir -p "$mount/$app/Contents"\n'
+            '  cp "$STUB_PLISTS/$app.plist" "$mount/$app/Contents/Info.plist"\n'
+            "done\n"
+            "exit 0\n",
+            encoding="utf-8")
+        for name in ("xcrun", "spctl", "codesign"):
+            (self.stubs / name).write_text(
+                "#!/bin/sh\n"
+                "for last; do :; done\n"
+                'entry=$(basename "$last")\n'
+                'case " ${STUB_FAIL_%s:-} " in *" $entry "*) exit 1 ;; esac\n'
+                "exit 0\n" % name.upper(),
+                encoding="utf-8")
+        for stub in self.stubs.iterdir():
+            stub.chmod(0o755)
+
+    def run_install(self, *arguments, **fails):
+        environment = dict(os.environ)
+        environment["PATH"] = "%s%s%s" % (self.stubs, os.pathsep,
+                                          environment["PATH"])
+        environment["STUB_PLISTS"] = str(self.plists)
+        for tool, entries in fails.items():
+            environment["STUB_FAIL_%s" % tool.upper()] = entries
+        result = subprocess.run(
+            [str(REPO / "install.sh"), "--dmg", str(self.dmg), "--verify-only",
+             *arguments],
+            cwd=REPO, env=environment,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return result.returncode, result.stdout.decode("utf-8", "replace")
+
+    def test_stapled_bundles_from_a_dmg_pass(self):
+        code, output = self.run_install()
+        self.assertEqual(code, 0, output)
+        self.assertIn("VERIFY OK", output)
+        self.assertIn("Ticket angeheftet", output)
+
+    def test_bundle_without_own_ticket_is_rejected(self):
+        # Genau der alte Sonderfall: Das DMG selbst ist gestapelt, das Bundle
+        # darin nicht. Früher gab es dafür nur einen Hinweis.
+        code, output = self.run_install(xcrun="FavenioQuick.app")
+        self.assertEqual(code, 2, output)
+        self.assertIn("kein angeheftetes Notary-Ticket", output)
+
+    def test_dmg_without_ticket_is_still_rejected(self):
+        code, output = self.run_install(xcrun="Favenio-0.21.1.dmg")
+        self.assertEqual(code, 2, output)
+        self.assertIn("kein angeheftetes Notary-Ticket", output)
+
+    def test_foreign_bundle_id_from_a_dmg_is_rejected(self):
+        self.write_plist("Favenio.app", "com.example.trojaner")
+        code, output = self.run_install()
+        self.assertEqual(code, 2, output)
         self.assertIn("nicht Favenio", output)
 
 

@@ -63,7 +63,9 @@ Version, damit keine fremde notarisierte App unter demselben Dateinamen an die
 Stelle von Favenio treten kann. Beide Apps werden als eine Transaktion
 getauscht — scheitert ein Schritt, kommen beide alten Stände zurück.
 `./install.sh --dmg <pfad>` installiert stattdessen aus einem fertigen DMG,
-`./install.sh --verify-only` führt nur die Prüfung aus.
+`./install.sh --verify-only` führt nur die Prüfung aus. Auch die Bundles in
+einem DMG brauchen ihr eigenes angeheftetes Ticket, damit sie offline starten;
+sehr alte DMGs, die es nur am Image tragen, werden abgelehnt.
 
 ## Schnellstart (CLI)
 

@@ -14,7 +14,9 @@
 # Aufruf:
 #   ./install.sh                    # bauen, notarisieren, installieren
 #   ./install.sh --dmg <pfad>       # stattdessen aus einem fertigen DMG
-#                                   # installieren (z. B. exakt dem Release-Stand)
+#                                   # installieren (z. B. exakt dem Release-Stand);
+#                                   # beide Bundles darin brauchen ein eigenes
+#                                   # angeheftetes Ticket
 #   ./install.sh --verify-only      # nur prüfen, nichts installieren
 #
 # Exit-Codes: 0 = installiert (bzw. Prüfung bestanden), 2 = Fehler.
@@ -50,7 +52,7 @@ while [ $# -gt 0 ]; do
             DMG="$2"; shift 2 ;;
         --verify-only) VERIFY_ONLY=1; shift ;;
         -h|--help)
-            sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "Unbekannte Option: $1" >&2
            echo "Aufruf: ./install.sh [--dmg <pfad>] [--verify-only]" >&2
@@ -82,7 +84,6 @@ if [ -n "$DMG" ]; then
     hdiutil attach "$DMG" -mountpoint "$MOUNT" -quiet -nobrowse -readonly
     SOURCE_DIR="$MOUNT"
     SOURCE_LABEL="$DMG"
-    TICKET_REQUIRED=""      # bei älteren DMGs hängt das Ticket am Image
 else
     # ---------- Quelle B (Default): frisch bauen und notarisieren ----------
     notarize_require_credentials
@@ -91,7 +92,6 @@ else
     notarize_apps
     SOURCE_DIR="."
     SOURCE_LABEL="frischer Build"
-    TICKET_REQUIRED="ticket"
 fi
 
 echo "== Schritt 2/3: Bundles prüfen =="
@@ -100,10 +100,19 @@ for app in "${FAVENIO_APPS[@]}"; do
     [ -d "$SOURCE_DIR/$app" ] || { echo "FEHLER: $app fehlt." >&2; exit 2; }
     codesign --verify --strict "$SOURCE_DIR/$app" \
         || { echo "FEHLER: Signatur von $app ungültig." >&2; exit 2; }
-    # Im DMG hängt das Ticket am Image, im frischen Build am Bundle selbst —
-    # entscheidend ist beide Male das Gatekeeper-Urteil.
     spctl --assess --type execute "$SOURCE_DIR/$app" >/dev/null 2>&1 \
         || { echo "FEHLER: Gatekeeper akzeptiert $app nicht." >&2; exit 2; }
+    # Das ANGEHEFTETE Ticket ist Pflicht, auch aus einem DMG. Nur damit
+    # startet die App offline ohne Gatekeeper-Rückfrage. Sehr alte DMGs
+    # tragen das Ticket bloß am Image; solche Bundles werden bewusst
+    # abgelehnt (Entscheidung 2026-08-03), statt sie mit einem Hinweis
+    # durchzulassen. Früh geprüft, damit auch --verify-only es beantwortet.
+    xcrun stapler validate "$SOURCE_DIR/$app" >/dev/null 2>&1 \
+        || { echo "FEHLER: $app trägt kein angeheftetes Notary-Ticket." >&2
+             echo "Nur notarisierte und gestapelte Bundles dürfen nach $DEST." >&2
+             echo "Ein aktuelles Release-DMG verwenden oder ohne --dmg neu" >&2
+             echo "bauen und notarisieren." >&2
+             exit 2; }
     # Gültig signiert heißt noch nicht „unser Produkt": Ohne diese Prüfung
     # könnte ein fremdes, ebenfalls notarisiertes Bundle unter demselben
     # Dateinamen die echte App ersetzen.
@@ -121,8 +130,8 @@ for app in "${FAVENIO_APPS[@]}"; do
         echo "FEHLER: $app hat Version $app_version, erwartet war $VERSION." >&2
         exit 2
     fi
-    echo "  $app: Signatur gültig, Bundle-ID und Version geprüft," \
-         "von Gatekeeper akzeptiert."
+    echo "  $app: Signatur gültig, Ticket angeheftet, Bundle-ID und Version" \
+         "geprüft, von Gatekeeper akzeptiert."
 done
 
 if [ "$VERIFY_ONLY" = "1" ]; then
@@ -159,7 +168,7 @@ done
 # Beide Bundles zusammen: erst danebenlegen und prüfen, dann tauschen, und bei
 # jedem Fehler den alten Stand zurückholen (siehe notarize-lib.sh). Ein Lauf
 # mit Exit 2 hinterlässt damit nie eine halb aktualisierte Installation.
-favenio_install_bundles "$SOURCE_DIR" "$DEST" "$TICKET_REQUIRED" || exit 2
+favenio_install_bundles "$SOURCE_DIR" "$DEST" || exit 2
 
 echo "────────────────────────────────────────────"
 echo "INSTALL OK: $VERSION → $DEST"

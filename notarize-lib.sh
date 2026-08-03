@@ -114,22 +114,20 @@ notarize_apps() {
 # Prüft ein Bundle so, wie das System es beim Start prüft. Nach dem Kopieren
 # zählt nur noch, was wirklich am Zielort liegt.
 #
-# Zweites Argument „ticket": Das angeheftete Ticket ist Pflicht. Das gilt für
-# frisch notarisierte Bundles. Kommen die Apps dagegen aus einem älteren DMG,
-# hängt das Ticket am Image statt am Bundle; dann bleibt Gatekeeper der Maßstab,
-# und das fehlende Ticket wird nur als Hinweis gemeldet (erster Start braucht
-# dann Netz).
+# Das angeheftete Ticket ist ohne Ausnahme Pflicht. Früher galt das nur für
+# frisch notarisierte Bundles: Bei sehr alten DMGs hing das Ticket am Image
+# statt am Bundle, und ein solches Bundle kam mit einem bloßen Hinweis durch.
+# Das widersprach der Zusage im Kopf von install.sh und in beiden READMEs.
+# Entschieden am 2026-08-03: In /Applications gehören nur notarisierte und
+# gestapelte Builds; Ad-hoc-Builds bleiben im Projektverzeichnis, und ein
+# altes DMG ohne angeheftetes Ticket wird abgelehnt.
 notarize_verify_installed() {
-    local app="$1" require="${2:-}"
+    local app="$1"
     codesign --verify --strict "$app" || return 2
     spctl --assess --type execute "$app" >/dev/null 2>&1 || return 2
     if ! xcrun stapler validate "$app" >/dev/null 2>&1; then
-        if [ "$require" = "ticket" ]; then
-            echo "FEHLER: $app trägt kein angeheftetes Notary-Ticket." >&2
-            return 2
-        fi
-        echo "  Hinweis: $app ohne angeheftetes Ticket — der erste Start" \
-             "braucht Netz."
+        echo "FEHLER: $app trägt kein angeheftetes Notary-Ticket." >&2
+        return 2
     fi
 }
 
@@ -187,10 +185,10 @@ favenio_verify_identity() {
 # Installation, obwohl install.sh für jeden Fehler „nichts installiert"
 # verspricht.
 #
-# Argumente: <quellordner> <zielordner> [ticket]
+# Argumente: <quellordner> <zielordner>
 # Rückgabe: 0 = beide installiert und geprüft, 2 = alter Stand wiederhergestellt.
 favenio_install_bundles() {
-    local source_dir="$1" dest="$2" require="${3:-}"
+    local source_dir="$1" dest="$2"
     local app
     # Ablage- und Sicherungsordner tragen die Prozessnummer, damit zwei Läufe
     # sich nicht ins Gehege kommen. Sie liegen IM Zielordner, denn nur dann
@@ -211,7 +209,7 @@ favenio_install_bundles() {
             _favenio_install_restore "$dest" "$stage" "$backup"
             return 2
         fi
-        if ! notarize_verify_installed "$stage/$app" "$require"; then
+        if ! notarize_verify_installed "$stage/$app"; then
             echo "FEHLER: kopierte $app ist nicht notarisiert/gültig." >&2
             _favenio_install_restore "$dest" "$stage" "$backup"
             return 2
@@ -232,7 +230,7 @@ favenio_install_bundles() {
             return 2
         fi
         # Nach dem Tausch zählt nur noch, was WIRKLICH im Zielordner liegt.
-        if ! notarize_verify_installed "$dest/$app" "$require"; then
+        if ! notarize_verify_installed "$dest/$app"; then
             echo "FEHLER: installierte $app ist nicht notarisiert/gültig." >&2
             _favenio_install_restore "$dest" "$stage" "$backup"
             return 2
