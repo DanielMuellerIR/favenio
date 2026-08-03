@@ -145,6 +145,12 @@ auch aus einem DMG; sehr alte DMGs, die es nur am Image tragen, werden
 abgelehnt (entschieden 2026-08-03). Exit 2 heißt in jedem Fall: nichts
 installiert — auch dann, wenn ein Werkzeug mit einem anderen Status abbricht.
 
+`install.sh` und `release.sh` prüfen zusätzlich den Update-Feed der erzeugten
+Bundles gegen `FAVENIO_FEED_URL` aus `notarize-lib.sh`. `build-app.sh` darf
+über `SPARKLE_FEED_URL` weiterhin einen anderen Feed bauen (Sparkle-E2E-Test
+im Projektverzeichnis); geerbt werden darf diese Variable nicht, sonst hört
+eine installierte oder ausgelieferte App dauerhaft auf einen fremden Feed.
+
 Neue Kernfunktionen benötigen Unit-Tests mit temporären Fixtures. Das bestehende
 Fixture deckt normale Dateien, versteckte Dateien, Zip, Tar, verschachtelte Zip-
 Archive, Inhaltssuche, Regex, JSON, Progress, Extraktion und Einzeldatei-Eingaben

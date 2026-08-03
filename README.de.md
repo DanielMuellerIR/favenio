@@ -65,7 +65,11 @@ getauscht — scheitert ein Schritt, kommen beide alten Stände zurück.
 `./install.sh --dmg <pfad>` installiert stattdessen aus einem fertigen DMG,
 `./install.sh --verify-only` führt nur die Prüfung aus. Auch die Bundles in
 einem DMG brauchen ihr eigenes angeheftetes Ticket, damit sie offline starten;
-sehr alte DMGs, die es nur am Image tragen, werden abgelehnt.
+sehr alte DMGs, die es nur am Image tragen, werden abgelehnt. Beide Skripte
+prüfen außerdem, dass die Bundles auf den Produktions-Update-Feed zeigen:
+`build-app.sh` nimmt für lokale End-to-End-Tests ein abweichendes
+`SPARKLE_FEED_URL` an, eine damit installierte oder ausgelieferte App wird
+abgelehnt.
 
 ## Schnellstart (CLI)
 

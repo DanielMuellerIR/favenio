@@ -22,6 +22,11 @@ FAVENIO_BUNDLE_IDS=(
     "FavenioQuick.app" "local.favenio.quick"
 )
 
+# Der Produktions-Update-Feed. Quelle ist der Default in build-app.sh; hier
+# steht die Kopie, gegen die install.sh und release.sh prüfen. Ein Test
+# (tests/test_build_safety.py) hält beide Stellen zusammen.
+FAVENIO_FEED_URL="https://danielmuellerir.github.io/favenio/appcast.xml"
+
 # Signier-Identität und Notary-Profil FRÜH prüfen: lieber vor dem Build
 # scheitern als nach mehreren Minuten Arbeit.
 # Setzt die globale Variable SIGN_ID.
@@ -171,6 +176,32 @@ favenio_verify_identity() {
             echo "FEHLER: $app stammt nicht vom erwarteten Entwickler-Team." >&2
             return 2
         fi
+    fi
+    return 0
+}
+
+# Prüft, auf welchen Update-Feed ein Bundle zeigt.
+#
+# build-app.sh erlaubt über die Umgebungsvariable SPARKLE_FEED_URL bewusst
+# einen anderen Feed — das braucht der Sparkle-E2E-Test. install.sh und
+# release.sh reichen die Umgebung aber unverändert an build-app.sh weiter,
+# und eine geerbte Variable würde eine notarisiert installierte oder
+# ausgelieferte App dauerhaft auf einen fremden Feed richten. Das wäre nicht
+# nur ein Testartefakt, sondern ein Update-Kanal, den nicht mehr wir
+# bestimmen. Deshalb hier fail-closed: Abweichung = Abbruch. Zum Testen bleibt
+# build-app.sh, dessen Bundles im Projektverzeichnis liegen.
+#
+# Argumente: <bundlepfad> <bundlename, z. B. Favenio.app>
+# Rückgabe: 0 = Produktions-Feed, 2 = fremder oder fehlender Feed.
+favenio_verify_feed_url() {
+    local path="$1" app="$2"
+    local actual
+    actual=$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' \
+        "$path/Contents/Info.plist" 2>/dev/null || true)
+    if [ "$actual" != "$FAVENIO_FEED_URL" ]; then
+        echo "FEHLER: $app sucht Updates unter '${actual:-keiner URL}' statt" >&2
+        echo "'$FAVENIO_FEED_URL' — vermutlich ein geerbtes SPARKLE_FEED_URL." >&2
+        return 2
     fi
     return 0
 }

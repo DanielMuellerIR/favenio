@@ -27,6 +27,22 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertNotIn(" /Applications/Favenio.app", source)
         self.assertNotIn(" /Applications/FavenioQuick.app", source)
 
+    def test_release_checks_the_update_feed_of_both_bundles(self):
+        source = Path("release.sh").read_text(encoding="utf-8")
+        self.assertIn('favenio_verify_feed_url "$VERIFY_MOUNT/$app"', source)
+
+    def test_expected_feed_url_matches_the_build_script(self):
+        """notarize-lib.sh prüft gegen eine Kopie des Defaults aus
+        build-app.sh. Läuft die auseinander, prüft die Installation gegen
+        eine URL, die gar nicht mehr gebaut wird."""
+        build = Path("build-app.sh").read_text(encoding="utf-8")
+        library = Path("notarize-lib.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-%s}"'
+            % InstallFromDmgTest.FEED_URL, build)
+        self.assertIn('FAVENIO_FEED_URL="%s"' % InstallFromDmgTest.FEED_URL,
+                      library)
+
 
 class InstallTransactionTest(unittest.TestCase):
     """Der Austausch beider Bundles ist EINE Transaktion: Entweder liegen
@@ -254,6 +270,59 @@ class InstallFromDmgTest(unittest.TestCase):
         code, output = self.run_install()
         self.assertEqual(code, 2, output)
         self.assertIn("nicht Favenio", output)
+
+    def test_foreign_update_feed_is_rejected(self):
+        # Ein geerbtes SPARKLE_FEED_URL landet über build-app.sh im Bundle
+        # und richtete die installierte App dauerhaft auf einen fremden Feed.
+        self.write_plist("FavenioQuick.app", "local.favenio.quick",
+                         feed_url="https://example.invalid/appcast.xml")
+        code, output = self.run_install()
+        self.assertEqual(code, 2, output)
+        self.assertIn("sucht Updates unter", output)
+
+
+class FeedUrlTest(unittest.TestCase):
+    """favenio_verify_feed_url einzeln: Der Produktions-Feed ist Pflicht,
+    jede Abweichung führt zum Abbruch (fail-closed)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def check(self, feed_url):
+        path = os.path.join(self.tmp.name, "Favenio.app")
+        os.makedirs(os.path.join(path, "Contents"), exist_ok=True)
+        info = {"CFBundleIdentifier": "local.favenio"}
+        if feed_url is not None:
+            info["SUFeedURL"] = feed_url
+        with open(os.path.join(path, "Contents", "Info.plist"), "wb") as handle:
+            plistlib.dump(info, handle)
+        script = """
+        set -uo pipefail
+        source "%s/notarize-lib.sh"
+        if favenio_verify_feed_url "%s" "Favenio.app"; then
+            echo "RC=0"
+        else
+            echo "RC=$?"
+        fi
+        """ % (REPO, path)
+        result = subprocess.run(["zsh", "-c", script], cwd=REPO,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        return result.stdout.decode("utf-8", "replace")
+
+    def test_production_feed_passes(self):
+        self.assertIn("RC=0", self.check(InstallFromDmgTest.FEED_URL))
+
+    def test_foreign_feed_is_rejected(self):
+        output = self.check("http://127.0.0.1:8000/appcast.xml")
+        self.assertIn("RC=2", output)
+        self.assertIn("sucht Updates unter", output)
+
+    def test_missing_feed_is_rejected(self):
+        output = self.check(None)
+        self.assertIn("RC=2", output)
+        self.assertIn("keiner URL", output)
 
 
 class InstallExitCodeTest(unittest.TestCase):

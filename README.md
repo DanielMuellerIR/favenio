@@ -65,6 +65,9 @@ previous bundles are restored. `./install.sh --dmg <path>` installs from a
 finished DMG instead; `./install.sh --verify-only` runs the checks alone. Both
 bundles inside a DMG need their own stapled ticket as well, so they start
 offline; very old DMGs that carry the ticket only on the image are rejected.
+Both scripts also check that the bundles point at the production update feed:
+`build-app.sh` accepts a different `SPARKLE_FEED_URL` for local end-to-end
+tests, but an app installed or shipped with a foreign feed is refused.
 
 ## Quick start (CLI)
 

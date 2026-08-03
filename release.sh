@@ -153,9 +153,13 @@ for app in "${FAVENIO_APPS[@]}"; do
     # Das Ticket aus Schritt 2 muss die DMG-Erstellung überlebt haben —
     # sonst braucht eine herausgezogene App beim ersten Start Netz.
     xcrun stapler validate "$VERIFY_MOUNT/$app" >/dev/null
+    # Ein geerbtes SPARKLE_FEED_URL wäre über build-app.sh in die Bundles
+    # gewandert und richtete jede ausgelieferte App dauerhaft auf einen
+    # fremden Update-Feed. Ein Release darf das nicht mitnehmen.
+    favenio_verify_feed_url "$VERIFY_MOUNT/$app" "$app" || exit 1
 done
 hdiutil detach "$VERIFY_MOUNT" -quiet
-echo "Signaturen und Tickets im DMG gültig."
+echo "Signaturen, Tickets und Update-Feed im DMG gültig."
 
 # ---------- Schritt 5: DMG signieren, notarisieren, stapeln ----------
 echo "== Schritt 5/5: DMG notarisieren (Profil: $NOTARY_PROFILE) =="

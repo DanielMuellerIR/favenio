@@ -117,6 +117,10 @@ for app in "${FAVENIO_APPS[@]}"; do
     # könnte ein fremdes, ebenfalls notarisiertes Bundle unter demselben
     # Dateinamen die echte App ersetzen.
     favenio_verify_identity "$SOURCE_DIR/$app" "$app" || exit 2
+    # Und auf welchen Update-Feed die App danach hört: Ein geerbtes
+    # SPARKLE_FEED_URL aus der Umgebung würde build-app.sh mitgegeben und
+    # richtete die installierte App dauerhaft auf einen fremden Feed.
+    favenio_verify_feed_url "$SOURCE_DIR/$app" "$app" || exit 2
     app_version=$(/usr/libexec/PlistBuddy -c \
         "Print :CFBundleShortVersionString" \
         "$SOURCE_DIR/$app/Contents/Info.plist" 2>/dev/null || true)
@@ -130,8 +134,8 @@ for app in "${FAVENIO_APPS[@]}"; do
         echo "FEHLER: $app hat Version $app_version, erwartet war $VERSION." >&2
         exit 2
     fi
-    echo "  $app: Signatur gültig, Ticket angeheftet, Bundle-ID und Version" \
-         "geprüft, von Gatekeeper akzeptiert."
+    echo "  $app: Signatur gültig, Ticket angeheftet, Bundle-ID, Feed und" \
+         "Version geprüft, von Gatekeeper akzeptiert."
 done
 
 if [ "$VERIFY_ONLY" = "1" ]; then
