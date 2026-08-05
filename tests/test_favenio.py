@@ -1193,7 +1193,12 @@ class BsdtarFormatsTest(TempTreeTest):
         # „.zst" und wurde früher als einzeln komprimierte Datei behandelt —
         # der entpackte Tar-Strom erschien dann als Mitglied „a.tar".
         original = favenio.external_archive_tools()
-        favenio._EXTERNAL_TOOLS = (None, original[1], original[2])
+        # Der Test ordnet nur Dateinamen zu und startet zstd nie. Die Klasse
+        # hängt aber allein an bsdtar: Fehlt zstd auf dem Rechner, wäre
+        # original[1] None und „a.zst" käme als „kein Archiv" zurück. Deshalb
+        # hier ein garantiert nicht leerer Pfad statt des echten Fundorts.
+        zstd = original[1] or "/usr/bin/zstd"
+        favenio._EXTERNAL_TOOLS = (None, zstd, original[2])
         try:
             self.assertIsNone(favenio.classify_archive("a.tar.zst"))
             self.assertIsNone(favenio.classify_archive("a.tzst"))

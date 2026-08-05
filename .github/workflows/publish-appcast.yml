@@ -94,8 +94,9 @@ jobs:
           # .app und gleiche Versionsstrings" — ein versehentlich oder fremd
           # hochgeladenes DMG wäre damit zur kryptografisch beglaubigten
           # Aktualisierung geworden. Jetzt zählen Notarisierung (angeheftetes
-          # Ticket), Gatekeeper-Urteil, Produktidentität (Bundle-IDs und der
-          # Update-Schlüssel SUPublicEDKey) und die Zuordnung zum Release-Tag.
+          # Ticket), Gatekeeper-Urteil, Produktidentität (Bundle-ID je
+          # Dateiname, Update-Schlüssel SUPublicEDKey, Update-Feed SUFeedURL
+          # samt SURequireSignedFeed) und die Zuordnung zum Release-Tag.
           # Fail-closed: Jeder Fehlschlag beendet den Lauf, bevor sign_update
           # überhaupt läuft.
           #
@@ -104,8 +105,13 @@ jobs:
           # ARTIFACT_PUBLIC_KEY.
           favenio_check_artifact() {
             local dmg="$1" mountpoint="$2" tag="$3" expected_key="$4"
-            local app plist bundle_id app_version app_build app_key
-            local main_apps=0 quick_apps=0
+            local app plist bundle_id expected_id app_version app_build
+            local app_key app_feed app_signed_feed
+            # Der Produktions-Update-Feed. Quelle ist der Default in
+            # build-app.sh; hier steht die Kopie, gegen die das Release-
+            # Artefakt geprüft wird. Ein Test (tests/test_appcast_workflow.py)
+            # hält beide Stellen zusammen.
+            local expected_feed="https://danielmuellerir.github.io/favenio/appcast.xml"
             shopt -s nullglob
 
             # stapler validate beweist das ANGEHEFTETE Ticket (gilt auch ohne
@@ -148,18 +154,31 @@ jobs:
               fi
 
               # Gültig signiert heißt nur "notarisiert", nicht "unser
-              # Produkt": Bundle-ID und Update-Schlüssel müssen stimmen.
-              bundle_id=$(/usr/libexec/PlistBuddy -c \
-                'Print :CFBundleIdentifier' "$plist" 2>/dev/null || true)
-              case "$bundle_id" in
-                local.favenio) main_apps=$((main_apps + 1)) ;;
-                local.favenio.quick) quick_apps=$((quick_apps + 1)) ;;
+              # Produkt": Bundle-ID, Update-Schlüssel und Update-Feed müssen
+              # stimmen.
+              #
+              # Die erwartete Bundle-ID kommt aus dem DATEINAMEN. Vorher
+              # wurden nur die Vorkommen gezählt: Zwei vertauschte Bundles
+              # (Favenio.app mit der ID der Schnellsuche und umgekehrt) kamen
+              # damit durch, obwohl danach jede App das falsche Programm
+              # aktualisiert.
+              case "${app##*/}" in
+                Favenio.app) expected_id="local.favenio" ;;
+                FavenioQuick.app) expected_id="local.favenio.quick" ;;
                 *)
-                  echo "ERROR: unexpected bundle identifier" \
-                    "'${bundle_id:-none}' in ${app##*/}." >&2
+                  echo "ERROR: unexpected app '${app##*/}' in the release" \
+                    "DMG." >&2
                   return 1
                   ;;
               esac
+              bundle_id=$(/usr/libexec/PlistBuddy -c \
+                'Print :CFBundleIdentifier' "$plist" 2>/dev/null || true)
+              if [[ "$bundle_id" != "$expected_id" ]]; then
+                echo "ERROR: unexpected bundle identifier" \
+                  "'${bundle_id:-none}' in ${app##*/}, expected" \
+                  "'$expected_id'." >&2
+                return 1
+              fi
 
               app_key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' \
                 "$plist" 2>/dev/null || true)
@@ -169,6 +188,28 @@ jobs:
                 return 1
               fi
               ARTIFACT_PUBLIC_KEY="$app_key"
+
+              # Woher die App ihre Updates holt und ob sie dabei eine
+              # Feed-Signatur verlangt. Der Schlüssel allein reicht nicht: Ein
+              # aus der Umgebung geerbtes SPARKLE_FEED_URL würde jede
+              # ausgelieferte App dauerhaft auf einen fremden Update-Kanal
+              # richten, und ohne SURequireSignedFeed nähme sie auch einen
+              # unsignierten Feed an.
+              app_feed=$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' \
+                "$plist" 2>/dev/null || true)
+              if [[ "$app_feed" != "$expected_feed" ]]; then
+                echo "ERROR: ${app##*/} looks for updates at" \
+                  "'${app_feed:-none}' instead of '$expected_feed'." >&2
+                return 1
+              fi
+              app_signed_feed=$(/usr/libexec/PlistBuddy -c \
+                'Print :SURequireSignedFeed' "$plist" 2>/dev/null || true)
+              if [[ "$app_signed_feed" != "true" ]]; then
+                echo "ERROR: ${app##*/} does not require a signed update" \
+                  "feed (SURequireSignedFeed is" \
+                  "'${app_signed_feed:-none}')." >&2
+                return 1
+              fi
 
               app_version=$(/usr/libexec/PlistBuddy -c \
                 'Print :CFBundleShortVersionString' "$plist" \
@@ -189,18 +230,23 @@ jobs:
               fi
             done
 
-            if (( main_apps != 1 || quick_apps != 1 )); then
-              echo "ERROR: release DMG needs Favenio and FavenioQuick once" \
-                "each." >&2
-              return 1
-            fi
-
             # Der Feed-Eintrag verlinkt das DMG unter dem Tag. Passt die
             # Version im Bundle nicht zum Tag, hängt das falsche Artefakt am
             # Release.
             if [[ "${tag#v}" != "$ARTIFACT_VERSION" ]]; then
               echo "ERROR: release tag $tag does not match app version" \
                 "$ARTIFACT_VERSION." >&2
+              return 1
+            fi
+            # Sparkle vergleicht Updates nach CFBundleVersion, der Tag steht
+            # aber gegen CFBundleShortVersionString. build-app.sh setzt beide
+            # gleich; nur FAVENIO_SPARKLE_TEST_VERSION zieht CFBundleVersion
+            # absichtlich herunter. Ein solcher Test-Build käme sonst mit
+            # passendem Tag durch und böte sich anschließend als "Update" auf
+            # eine ältere Build-Nummer an.
+            if [[ "$ARTIFACT_BUILD" != "$ARTIFACT_VERSION" ]]; then
+              echo "ERROR: build number $ARTIFACT_BUILD does not match app" \
+                "version $ARTIFACT_VERSION — looks like a test build." >&2
               return 1
             fi
 

@@ -73,6 +73,29 @@ class SwiftGuardTests(unittest.TestCase):
         ]
         self.assertIn('showScopeProblem(summary + " " + problem)', flush)
 
+    def test_quick_keeps_the_late_finder_note_for_the_running_search(self):
+        # Meldet sich der Finder erst, während die Suche schon im
+        # Ersatzordner läuft, ist scopeProblem nil — der Hinweis „Suche läuft
+        # in X, Finder-Ordner ist Y" hing deshalb nur bis zum ersten
+        # Trefferpaket in der Info-Zeile. Er wird jetzt in runScopeNote
+        # gemerkt und an allen drei Stellen mitgelesen.
+        self.assertIn("var runScopeNote: String?", QUICK)
+        apply = QUICK[
+            QUICK.index("func applyScopeOutcome("):
+            QUICK.index("func scopeWaitExpired()")
+        ]
+        self.assertIn("runScopeNote = note", apply)
+        for name, following in (("func startSearch()", "func showProgress"),
+                                ("func flushPending()", "func finish("),
+                                ("func finish(", "func openInMainApp")):
+            body = QUICK[QUICK.index(name):QUICK.index(following)]
+            self.assertIn("runScopeNote", body, name)
+        progress = QUICK[
+            QUICK.index("func showProgress"):
+            QUICK.index("func flushPending()")
+        ]
+        self.assertIn("(scopeProblem ?? runScopeNote) == nil", progress)
+
     def test_streaming_core_does_not_collect_duplicate_results(self):
         self.assertNotIn("var hitsRaw", COMMON)
         self.assertNotIn("var hits: [Hit] = []\n    var hitsRaw", COMMON)

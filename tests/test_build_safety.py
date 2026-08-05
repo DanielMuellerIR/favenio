@@ -1,8 +1,10 @@
 import os
 import plistlib
+import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -124,6 +126,24 @@ class InstallTransactionTest(unittest.TestCase):
         self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
         self.assertEqual(self.leftovers(), [])
 
+    def test_first_installation_leaves_nothing_behind_on_failure(self):
+        # Erstinstallation: Der Zielordner ist LEER, es gibt also gar keinen
+        # alten Stand zum Zurückholen. Scheitert die zweite App, muss trotzdem
+        # auch die erste wieder verschwinden — sonst hinterlässt ein Lauf mit
+        # Exit 2 eine halbe Installation, obwohl install.sh "nichts
+        # installiert" zusagt.
+        for app in ("Favenio.app", "FavenioQuick.app"):
+            shutil.rmtree(os.path.join(self.dest, app))
+        body = """
+        case "$1" in
+            */.favenio-install.*) return 0 ;;
+            */FavenioQuick.app) return 2 ;;
+        esac
+        return 0"""
+        output = self.run_install(body)
+        self.assertIn("RC=2", output)
+        self.assertEqual(sorted(os.listdir(self.dest)), [])
+
     def test_bad_copy_never_touches_the_installed_bundles(self):
         # Schon die danebengelegte Kopie fällt durch: Der Zielordner darf
         # dann gar nicht erst angefasst werden.
@@ -154,13 +174,30 @@ class InstallIdentityTest(unittest.TestCase):
             echo "RC=$?"
         fi
         """ % (REPO, path)
-        result = subprocess.run(["zsh", "-c", script], cwd=REPO,
+        # Geprüft wird hier NUR die Bundle-ID. Die zusätzliche Team-Prüfung in
+        # favenio_verify_identity greift, sobald ein Team bekannt ist — und die
+        # Attrappe hier trägt gar keine Signatur. Deshalb FAVENIO_TEAM_ID aus
+        # der Umgebung nehmen und außerhalb des Repos laufen, damit auch
+        # `git config --local favenio.teamId` nicht greift. notarize-lib.sh
+        # kommt ohnehin über den absoluten Repo-Pfad herein.
+        environment = dict(os.environ)
+        environment.pop("FAVENIO_TEAM_ID", None)
+        result = subprocess.run(["zsh", "-c", script], cwd=self.tmp.name,
+                                env=environment,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT)
         return result.stdout.decode("utf-8", "replace")
 
     def test_expected_bundle_id_passes(self):
         self.assertIn("RC=0", self.check("local.favenio"))
+
+    def test_expected_bundle_id_passes_with_a_team_id_in_the_environment(self):
+        # Ohne die Umgebungs-Isolation oben scheiterte dieser Test auf jedem
+        # Mac, auf dem FAVENIO_TEAM_ID gesetzt ist — die Attrappe ist nicht
+        # signiert und fiele durch die Team-Prüfung.
+        with unittest.mock.patch.dict(os.environ,
+                                      {"FAVENIO_TEAM_ID": "TESTTEAM00"}):
+            self.assertIn("RC=0", self.check("local.favenio"))
 
     def test_foreign_bundle_id_is_rejected(self):
         output = self.check("com.example.trojaner")
@@ -195,13 +232,19 @@ class InstallFromDmgTest(unittest.TestCase):
             self.write_plist(app, bundle_id)
         self.write_stubs()
 
-    def write_plist(self, app, bundle_id, feed_url=None, version="0.21.1"):
+    def write_plist(self, app, bundle_id, feed_url=None, version="0.21.1",
+                    build=None):
+        """`build=None` übernimmt die Kurzversion, `build=""` lässt
+        CFBundleVersion ganz weg."""
         info = {
             "CFBundleIdentifier": bundle_id,
             "CFBundleShortVersionString": version,
-            "CFBundleVersion": version,
             "SUFeedURL": self.FEED_URL if feed_url is None else feed_url,
         }
+        if build is None:
+            build = version
+        if build != "":
+            info["CFBundleVersion"] = build
         with open(self.plists / ("%s.plist" % app), "wb") as handle:
             plistlib.dump(info, handle)
 
@@ -279,6 +322,22 @@ class InstallFromDmgTest(unittest.TestCase):
         code, output = self.run_install()
         self.assertEqual(code, 2, output)
         self.assertIn("sucht Updates unter", output)
+
+    def test_differing_build_numbers_are_rejected(self):
+        # Gleiche Kurzversion, verschiedene CFBundleVersion: Sparkle
+        # entscheidet nach der Build-Nummer, die Prüfung sah sie früher gar
+        # nicht an.
+        self.write_plist("FavenioQuick.app", "local.favenio.quick",
+                         build="0.13.9")
+        code, output = self.run_install()
+        self.assertEqual(code, 2, output)
+        self.assertIn("Build 0.13.9", output)
+
+    def test_missing_build_number_is_rejected(self):
+        self.write_plist("Favenio.app", "local.favenio", build="")
+        code, output = self.run_install()
+        self.assertEqual(code, 2, output)
+        self.assertIn("nennt keine Version", output)
 
 
 class FeedUrlTest(unittest.TestCase):

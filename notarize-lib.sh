@@ -221,6 +221,11 @@ favenio_verify_feed_url() {
 favenio_install_bundles() {
     local source_dir="$1" dest="$2"
     local app
+    # Namen der Bundles, die schon im Zielordner liegen. Sie müssen beim
+    # Zurückrollen weg — auch wenn es gar keinen alten Stand gibt. Bei einer
+    # ERSTinstallation existiert kein Backup; ohne diese Liste blieben die
+    # neuen Bundles trotz Fehler und Exit 2 liegen.
+    local installed=()
     # Ablage- und Sicherungsordner tragen die Prozessnummer, damit zwei Läufe
     # sich nicht ins Gehege kommen. Sie liegen IM Zielordner, denn nur dann
     # ist das spätere Umbenennen ein Vorgang innerhalb desselben Dateisystems.
@@ -237,12 +242,14 @@ favenio_install_bundles() {
     for app in "${FAVENIO_APPS[@]}"; do
         if ! ditto "$source_dir/$app" "$stage/$app"; then
             echo "FEHLER: $app ließ sich nicht nach $dest kopieren." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup"
+            _favenio_install_restore "$dest" "$stage" "$backup" \
+                "${installed[@]}"
             return 2
         fi
         if ! notarize_verify_installed "$stage/$app"; then
             echo "FEHLER: kopierte $app ist nicht notarisiert/gültig." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup"
+            _favenio_install_restore "$dest" "$stage" "$backup" \
+                "${installed[@]}"
             return 2
         fi
     done
@@ -252,18 +259,23 @@ favenio_install_bundles() {
     for app in "${FAVENIO_APPS[@]}"; do
         if [ -d "$dest/$app" ] && ! mv "$dest/$app" "$backup/$app"; then
             echo "FEHLER: alte $app ließ sich nicht sichern." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup"
+            _favenio_install_restore "$dest" "$stage" "$backup" \
+                "${installed[@]}"
             return 2
         fi
         if ! mv "$stage/$app" "$dest/$app"; then
             echo "FEHLER: neue $app ließ sich nicht einsetzen." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup"
+            _favenio_install_restore "$dest" "$stage" "$backup" \
+                "${installed[@]}"
             return 2
         fi
+        # Ab hier liegt das neue Bundle am Zielort und gehört ins Rollback.
+        installed+=("$app")
         # Nach dem Tausch zählt nur noch, was WIRKLICH im Zielordner liegt.
         if ! notarize_verify_installed "$dest/$app"; then
             echo "FEHLER: installierte $app ist nicht notarisiert/gültig." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup"
+            _favenio_install_restore "$dest" "$stage" "$backup" \
+                "${installed[@]}"
             return 2
         fi
         echo "  $app installiert und geprüft."
@@ -275,8 +287,21 @@ favenio_install_bundles() {
 
 # Alten Stand zurückholen und die Zwischenordner aufräumen. Wird nur aus
 # favenio_install_bundles gerufen (Unterstrich = intern).
+#
+# Argumente: <zielordner> <ablageordner> <sicherungsordner> [schon eingesetzte
+# Bundle-Namen …]
 _favenio_install_restore() {
-    local dest="$1" stage="$2" backup="$3" app
+    local dest="$1" stage="$2" backup="$3"
+    shift 3
+    local installed=("$@")
+    local app
+    # Zuerst alles wegräumen, was dieser Lauf schon eingesetzt hat. Das gilt
+    # auch für Bundles ohne alten Stand: Bei einer Erstinstallation gibt es
+    # kein Backup, und die Sicherungsschleife unten würde sie überspringen —
+    # dann läge trotz Fehler und Exit 2 ein halb installierter Stand da.
+    for app in "${installed[@]}"; do
+        rm -rf "$dest/$app"
+    done
     for app in "${FAVENIO_APPS[@]}"; do
         [ -d "$backup/$app" ] || continue
         # Der halb eingesetzte neue Stand muss weg, bevor der alte

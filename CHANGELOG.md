@@ -48,6 +48,26 @@ Regressionstest.
   anschließende Selbsttest prüft die Feed-Signatur gegen den öffentlichen
   Schlüssel aus den Bundles statt gegen den privaten, mit dem gerade
   signiert wurde.
+- **Appcast-Workflow, zweite Runde:** Die Bundle-IDs wurden nur gezählt — zwei
+  vertauschte Bundles kamen damit durch, obwohl danach jede App das jeweils
+  andere Programm aktualisiert hätte. Die erwartete ID kommt jetzt aus dem
+  Dateinamen. Zusätzlich geprüft werden `SUFeedURL` gegen die Produktions-URL,
+  `SURequireSignedFeed` und die Übereinstimmung von `CFBundleVersion` mit der
+  Kurzversion — Letzteres fängt ein versehentlich mit
+  `FAVENIO_SPARKLE_TEST_VERSION` gebautes Artefakt ab.
+- **Erstinstallation nach einem Fehler:** Beim Zurückrollen wurden nur Bundles
+  angefasst, für die es einen gesicherten alten Stand gab. Lag noch nichts in
+  `/Applications`, blieben beide neuen Bundles trotz Exit 2 liegen. Der Lauf
+  merkt sich jetzt, was er eingesetzt hat, und räumt es beim Zurückrollen weg.
+- **`install.sh` prüft auch die Build-Nummer:** Verglichen wurde nur
+  `CFBundleShortVersionString`, obwohl Sparkle nach `CFBundleVersion`
+  entscheidet. Beide Werte müssen jetzt vorhanden sein und zwischen den
+  Bundles übereinstimmen.
+- **Schnellsuche, später Finder-Hinweis:** Meldet sich der Finder erst,
+  während die Suche schon im Ersatzordner läuft, stand der Hinweis „Suche
+  läuft in X — Finder-Ordner ist Y" nur bis zum ersten Trefferpaket in der
+  Info-Zeile. Er wird jetzt gemerkt und bleibt bis zum Ende des Suchlaufs
+  sichtbar.
 
 ## 0.21.0 — 2026-07-29
 

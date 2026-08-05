@@ -98,6 +98,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
     // Ordner, ohne es zu sagen).
     var scopeResolved = false
     var scopeProblem: String?               // warum kein Finder-Ordner da ist
+    /// Hinweis zum LAUFENDEN Suchlauf: Der Finder hat sich gemeldet, nachdem
+    /// die Suche schon im Ersatzordner lief. `scopeProblem` ist dann nil (es
+    /// gibt ja kein Problem mehr), der Hinweis muss trotzdem stehen bleiben —
+    /// sonst überschreibt ihn das nächste Trefferpaket und man sieht nie, dass
+    /// woanders gesucht wurde. Wird von startSearch() zurückgesetzt.
+    var runScopeNote: String?
     var scopeDenied = false                 // Automation ausdrücklich verboten
     var deniedAlertShown = false            // Hinweis höchstens einmal pro Start
     var queuedQuery = false                 // Suche wartet auf den Suchbereich
@@ -443,6 +449,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         refreshingScope = false
         scopeResolved = true
         scopeProblem = outcome.problemText
+        runScopeNote = nil
         if case .denied = outcome { scopeDenied = true } else { scopeDenied = false }
         if case .folders(let folders) = outcome { scopeFinderFolders = folders }
         rebuildScopePopup()
@@ -455,9 +462,13 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // NICHT hinter dem Rücken des Nutzers umgehängt.
         if scopeProblem == nil, searching, !userPickedScope,
            let front = scopeFinderFolders.first, front != searchRoot {
-            showScopeProblem("Suche läuft in " + abbreviateHome(searchRoot)
-                             + " — Finder-Ordner ist "
-                             + abbreviateHome(front) + " (Return sucht dort).")
+            // Merken, nicht nur anzeigen: flushPending() und finish() setzen
+            // die Info-Zeile neu und hätten den Hinweis sonst weggewischt.
+            let note = "Suche läuft in " + abbreviateHome(searchRoot)
+                + " — Finder-Ordner ist " + abbreviateHome(front)
+                + " (Return sucht dort)."
+            runScopeNote = note
+            showScopeProblem(note)
         }
         if scopeDenied { maybeReportDeniedAutomation() }
 
@@ -584,6 +595,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
         hits = []
         openButton.isEnabled = false
         tableView.reloadData()
+        // Der Hinweis galt dem VORIGEN Suchlauf; ein neuer Lauf startet ohne.
+        runScopeNote = nil
 
         // Der ausgewählte Eintrag trägt keinen Pfad → der Finder-Ordner steht
         // noch aus. Dann NICHT ersatzweise im Benutzerordner suchen, sondern
@@ -680,7 +693,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// eine Warnung zum Suchbereich, bleibt die stehen — sie ist wichtiger als
     /// der laufende Ort.
     func showProgress(path: String) {
-        guard searching, hits.isEmpty, pending.isEmpty, scopeProblem == nil
+        guard searching, hits.isEmpty, pending.isEmpty,
+              (scopeProblem ?? runScopeNote) == nil
         else { return }
         infoLabel.textColor = .tertiaryLabelColor
         infoLabel.lineBreakMode = .byTruncatingMiddle
@@ -717,7 +731,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // Ein unbestätigter Suchbereich bleibt sichtbar: Sonst verschwände die
         // Warnung beim ersten Trefferpaket — und beim Top-20-Stopp für immer,
         // weil danach kein finish() mehr kommt, das sie wieder anzeigt.
-        if let problem = scopeProblem {
+        if let problem = scopeProblem ?? runScopeNote {
             showScopeProblem(summary + " " + problem)
         } else {
             infoLabel.stringValue = summary
@@ -738,7 +752,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
             : "\(hits.count) Treffer für „\(query)“."
         // Gerade wenn NICHTS gefunden wurde, muss ein unklarer Suchbereich
         // dabeistehen — sonst sucht man den Fehler beim Suchbegriff.
-        if let problem = scopeProblem {
+        if let problem = scopeProblem ?? runScopeNote {
             showScopeProblem(summary + " " + problem)
         } else {
             infoLabel.stringValue = summary

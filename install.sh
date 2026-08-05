@@ -96,6 +96,7 @@ fi
 
 echo "== Schritt 2/3: Bundles prüfen =="
 VERSION=""
+BUILD=""
 for app in "${FAVENIO_APPS[@]}"; do
     [ -d "$SOURCE_DIR/$app" ] || { echo "FEHLER: $app fehlt." >&2; exit 2; }
     codesign --verify --strict "$SOURCE_DIR/$app" \
@@ -124,14 +125,23 @@ for app in "${FAVENIO_APPS[@]}"; do
     app_version=$(/usr/libexec/PlistBuddy -c \
         "Print :CFBundleShortVersionString" \
         "$SOURCE_DIR/$app/Contents/Info.plist" 2>/dev/null || true)
-    [ -n "$app_version" ] \
+    # Auch die Build-Nummer lesen: Sparkle entscheidet über Updates nach
+    # CFBundleVersion, nicht nach der angezeigten Kurzversion. Zwei Bundles
+    # mit gleicher Kurzversion, aber verschiedener Build-Nummer stammen aus
+    # zwei Ständen — und die kleinere Build-Nummer böte sich sofort selbst
+    # ein „Update" an.
+    app_build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" \
+        "$SOURCE_DIR/$app/Contents/Info.plist" 2>/dev/null || true)
+    [ -n "$app_version" ] && [ -n "$app_build" ] \
         || { echo "FEHLER: $app nennt keine Version." >&2; exit 2; }
     # Beide Apps gehören zum selben Stand — sonst stammen sie aus zwei
     # verschiedenen Quellen und dürfen nicht zusammen installiert werden.
     if [ -z "$VERSION" ]; then
         VERSION="$app_version"
-    elif [ "$VERSION" != "$app_version" ]; then
-        echo "FEHLER: $app hat Version $app_version, erwartet war $VERSION." >&2
+        BUILD="$app_build"
+    elif [ "$VERSION" != "$app_version" ] || [ "$BUILD" != "$app_build" ]; then
+        echo "FEHLER: $app hat Version $app_version (Build $app_build)," \
+             "erwartet war $VERSION (Build $BUILD)." >&2
         exit 2
     fi
     echo "  $app: Signatur gültig, Ticket angeheftet, Bundle-ID, Feed und" \

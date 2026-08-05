@@ -25,6 +25,10 @@ BUILD_SCRIPT = REPO / "build-app.sh"
 # in beiden Info.plists).
 PRODUCTION_KEY = "H504COadHZVAKo+/XD0jzXT5PJzghkS2t/DDYmuHPDg="
 
+# Der Produktions-Update-Feed — ebenfalls aus build-app.sh, und die URL, gegen
+# die der Workflow das Release-Artefakt prüft.
+PRODUCTION_FEED = "https://danielmuellerir.github.io/favenio/appcast.xml"
+
 # Ein Testschlüsselpaar und ein damit von Sparkles echtem `sign_update`
 # signierter Mini-Feed. Ed25519 ist deterministisch, deshalb ist die Signatur
 # eine feste Konstante und der Test braucht kein Schlüsselmaterial und keinen
@@ -135,6 +139,17 @@ class WorkflowShellSyntaxTest(unittest.TestCase):
         self.assertIn('SPARKLE_PUBLIC_KEY: "%s"' % PRODUCTION_KEY,
                       WORKFLOW.read_text(encoding="utf-8"))
 
+    def test_expected_feed_url_matches_build_script(self):
+        """Der Workflow prüft gegen eine Kopie des Feed-Defaults aus
+        build-app.sh. Laufen die auseinander, prüft das Release-Tor gegen eine
+        URL, die gar nicht mehr gebaut wird."""
+        build = BUILD_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(
+            'SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-%s}"' % PRODUCTION_FEED,
+            build)
+        self.assertIn('local expected_feed="%s"' % PRODUCTION_FEED,
+                      WORKFLOW.read_text(encoding="utf-8"))
+
 
 class CheckArtifactTest(unittest.TestCase):
     """favenio_check_artifact ist das Tor vor der Signatur: Nur ein
@@ -161,7 +176,9 @@ class CheckArtifactTest(unittest.TestCase):
         self.add_app("FavenioQuick.app", "local.favenio.quick")
 
     def add_app(self, name, bundle_id, version="0.21.1", build="0.21.1",
-                key=PRODUCTION_KEY):
+                key=PRODUCTION_KEY, feed=PRODUCTION_FEED, signed_feed=True):
+        """Legt ein Bundle-Gerüst mit Info.plist an. `key`, `feed` und
+        `signed_feed` auf None lassen den jeweiligen Schlüssel ganz weg."""
         app = self.mount / name
         (app / "Contents").mkdir(parents=True)
         info = {
@@ -171,6 +188,10 @@ class CheckArtifactTest(unittest.TestCase):
         }
         if key is not None:
             info["SUPublicEDKey"] = key
+        if feed is not None:
+            info["SUFeedURL"] = feed
+        if signed_feed is not None:
+            info["SURequireSignedFeed"] = signed_feed
         with open(app / "Contents/Info.plist", "wb") as handle:
             plistlib.dump(info, handle)
         return app
@@ -249,12 +270,82 @@ class CheckArtifactTest(unittest.TestCase):
         self.assertIn("RC=1", output)
         self.assertIn("unexpected bundle identifier", output)
 
-    def test_two_main_apps_are_rejected(self):
+    def test_bundle_identifier_of_the_other_app_is_rejected(self):
+        # Früher wurden die IDs nur gezählt: „einmal local.favenio, einmal
+        # local.favenio.quick" stimmte auch dann, wenn beide am falschen
+        # Bundle hingen. Erwartet wird die ID jetzt je Dateiname.
         shutil.rmtree(self.mount / "FavenioQuick.app")
         self.add_app("FavenioQuick.app", "local.favenio")
         output = self.run_check()
         self.assertIn("RC=1", output)
-        self.assertIn("once each", output)
+        self.assertIn("unexpected bundle identifier", output)
+        self.assertIn("expected 'local.favenio.quick'", output)
+
+    def test_swapped_bundle_identifiers_are_rejected(self):
+        # Der Vertauschungsfall: beide IDs sind da, aber über Kreuz. Die
+        # Zählung von früher hätte ihn durchgelassen; danach hätte jede App
+        # das jeweils andere Programm aktualisiert.
+        for name in ("Favenio.app", "FavenioQuick.app"):
+            shutil.rmtree(self.mount / name)
+        self.add_app("Favenio.app", "local.favenio.quick")
+        self.add_app("FavenioQuick.app", "local.favenio")
+        output = self.run_check()
+        self.assertIn("RC=1", output)
+        self.assertIn("unexpected bundle identifier", output)
+
+    def test_unknown_app_name_is_rejected(self):
+        shutil.rmtree(self.mount / "FavenioQuick.app")
+        self.add_app("Trojaner.app", "local.favenio.quick")
+        output = self.run_check()
+        self.assertIn("RC=1", output)
+        self.assertIn("unexpected app 'Trojaner.app'", output)
+
+    def test_foreign_update_feed_is_rejected(self):
+        # Ein aus der Umgebung geerbtes SPARKLE_FEED_URL landet über
+        # build-app.sh im Bundle und richtete jede ausgelieferte App dauerhaft
+        # auf einen fremden Update-Kanal.
+        shutil.rmtree(self.mount / "FavenioQuick.app")
+        self.add_app("FavenioQuick.app", "local.favenio.quick",
+                     feed="https://example.invalid/appcast.xml")
+        output = self.run_check()
+        self.assertIn("RC=1", output)
+        self.assertIn("looks for updates at", output)
+
+    def test_missing_update_feed_is_rejected(self):
+        shutil.rmtree(self.mount / "Favenio.app")
+        self.add_app("Favenio.app", "local.favenio", feed=None)
+        output = self.run_check()
+        self.assertIn("RC=1", output)
+        self.assertIn("looks for updates at 'none'", output)
+
+    def test_unsigned_feed_setting_is_rejected(self):
+        # Ohne SURequireSignedFeed nähme die App auch einen unsignierten Feed
+        # an — die Feed-Signatur im Workflow wäre dann folgenlos.
+        shutil.rmtree(self.mount / "FavenioQuick.app")
+        self.add_app("FavenioQuick.app", "local.favenio.quick",
+                     signed_feed=False)
+        output = self.run_check()
+        self.assertIn("RC=1", output)
+        self.assertIn("does not require a signed update feed", output)
+
+    def test_missing_signed_feed_setting_is_rejected(self):
+        shutil.rmtree(self.mount / "Favenio.app")
+        self.add_app("Favenio.app", "local.favenio", signed_feed=None)
+        output = self.run_check()
+        self.assertIn("RC=1", output)
+        self.assertIn("SURequireSignedFeed is 'none'", output)
+
+    def test_build_number_below_the_version_is_rejected(self):
+        # Genau ein Build mit FAVENIO_SPARKLE_TEST_VERSION: Der Tag passt zur
+        # Kurzversion, Sparkle vergleicht aber CFBundleVersion.
+        for name, bundle_id in (("Favenio.app", "local.favenio"),
+                                ("FavenioQuick.app", "local.favenio.quick")):
+            shutil.rmtree(self.mount / name)
+            self.add_app(name, bundle_id, build="0.13.9")
+        output = self.run_check()
+        self.assertIn("RC=1", output)
+        self.assertIn("does not match app version", output)
+        self.assertIn("test build", output)
 
     def test_differing_versions_are_rejected(self):
         shutil.rmtree(self.mount / "FavenioQuick.app")

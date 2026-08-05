@@ -12,6 +12,27 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Positionsargumenten funktioniert es. Der Wart ist alt, schon v0.14.0 zeigt
    ihn. Entweder Parsing umbauen oder die Reihenfolge in beiden READMEs
    festschreiben.
+## Offen aus der Code-Review-Triage 2026-08-05
+
+- Team-ID im Release-Tor erzwingen. `codesign --verify --strict` beantwortet
+  nur „gültig signiert", nicht „von uns": Ohne `-R=`-Requirement käme ein
+  fremdes, ebenfalls notarisiertes Bundle durch. Betroffen sind
+  `.github/workflows/publish-appcast.yml` (~140, im Bundle-Loop) und
+  `release.sh` (~152, Schritt 4). `release.sh` ruft außerdem
+  `favenio_verify_identity` überhaupt nicht auf — die Funktion aus
+  `notarize-lib.sh` (~153) nutzt bislang nur `install.sh` (~120). Offen ist
+  auch, woher der Workflow die Team-ID nimmt: Sie steht bewusst nicht im
+  öffentlichen Repo, bräuchte also ein GitHub-Secret oder eine Variable.
+- Kein Rückholpfad, wenn die Umbau-Phase abgebrochen wird.
+  `favenio_install_bundles` (`notarize-lib.sh` ~257–280) sichert und tauscht
+  beide Bundles über mehrere Sekunden; `_favenio_install_restore` läuft nur
+  bei einem Fehler im normalen Ablauf. Ein Ctrl-C oder ein Signal genau in
+  diesem Fenster hinterlässt Ablage- und Sicherungsordner samt halb
+  getauschtem Stand, und `install.sh` (~38–46) räumt in seinem
+  EXIT-`cleanup()` nur den Mountpoint auf. Fehlt: ein Trap auf INT/TERM (bzw.
+  ein Aufräumschritt beim nächsten Start), der die `.favenio-install.*`- und
+  `.favenio-previous.*`-Ordner erkennt und den alten Stand zurückholt.
+
 ## Offen aus der Code-Review-Triage 2026-08-02
 
 - Leerer Ordner in einem ISO wird als Datei geführt. `bsdtar -tf` listet ihn
