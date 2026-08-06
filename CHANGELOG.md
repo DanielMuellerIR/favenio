@@ -68,6 +68,27 @@ Regressionstest.
   läuft in X — Finder-Ordner ist Y" nur bis zum ersten Trefferpaket in der
   Info-Zeile. Er wird jetzt gemerkt und bleibt bis zum Ende des Suchlaufs
   sichtbar.
+- **Zurückrollen der Installation, geprüft statt geraten:** Ein schon
+  eingesetztes Bundle wurde mit `rm -rf` ohne Statusprüfung weggeräumt. Weil
+  `install.sh` die Installationsfunktion in einer `||`-Liste aufruft, greift
+  `set -e` innerhalb der Funktion nicht — ein misslungenes oder halb
+  gelungenes Löschen blieb unbemerkt, und Exit 2 konnte trotz der Zusage
+  „nichts installiert" ein neues oder zerpflücktes Bundle hinterlassen.
+  Weggeräumt wird jetzt per geprüftem `mv`; scheitert das, sagt der Lauf es
+  und schreibt den alten Stand nicht blind darüber.
+- **Zwei Installationen gleichzeitig:** Der Austausch läuft jetzt unter einer
+  Sperre pro Zielordner, und das Zurückrollen löscht nicht mehr allein anhand
+  des Bundle-Namens. Hatte ein paralleler Lauf den Zielpfad inzwischen
+  ersetzt, nahm der erste Lauf beim Zurückrollen dessen frisches Bundle mit.
+  Die beim Einsetzen gemerkte Kennung des Verzeichniseintrags (Gerät und
+  Inode) erkennt das jetzt und lässt ein fremdes Bundle stehen.
+- **Schnellsuche, Statuszeile nach dem Ende:** Der gemerkte Hinweis war ein
+  fertig formulierter Satz im Präsens. `finish()` und der Stopp bei 20
+  Treffern beenden die Suche aber, bevor sie die Zeile neu setzen — die
+  fertige Suche meldete deshalb weiter „Suche läuft in …". Und „Return sucht
+  dort" stimmte nicht mehr, sobald der Suchbereich selbst gewählt worden war.
+  Gemerkt werden jetzt nur die beiden Pfade; der Satz entsteht aus dem
+  aktuellen Zustand.
 
 ## 0.21.0 — 2026-07-29
 

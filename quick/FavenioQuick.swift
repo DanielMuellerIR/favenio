@@ -103,7 +103,13 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// gibt ja kein Problem mehr), der Hinweis muss trotzdem stehen bleiben —
     /// sonst überschreibt ihn das nächste Trefferpaket und man sieht nie, dass
     /// woanders gesucht wurde. Wird von startSearch() zurückgesetzt.
-    var runScopeNote: String?
+    ///
+    /// Gemerkt werden nur die beiden Pfade, NICHT der fertige Satz: Die Zeile
+    /// wird auch nach dem Ende der Suche noch einmal gezeigt (finish() und der
+    /// Top-20-Stopp beenden die Suche vorher), und ein gespeichertes „Suche
+    /// läuft in …" behauptete dort weiter, es liefe noch. Den Text baut
+    /// runScopeNoteText() aus dem aktuellen Zustand.
+    var runScopeMismatch: (searched: String, finder: String)?
     var scopeDenied = false                 // Automation ausdrücklich verboten
     var deniedAlertShown = false            // Hinweis höchstens einmal pro Start
     var queuedQuery = false                 // Suche wartet auf den Suchbereich
@@ -449,7 +455,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         refreshingScope = false
         scopeResolved = true
         scopeProblem = outcome.problemText
-        runScopeNote = nil
+        runScopeMismatch = nil
         if case .denied = outcome { scopeDenied = true } else { scopeDenied = false }
         if case .folders(let folders) = outcome { scopeFinderFolders = folders }
         rebuildScopePopup()
@@ -464,11 +470,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
            let front = scopeFinderFolders.first, front != searchRoot {
             // Merken, nicht nur anzeigen: flushPending() und finish() setzen
             // die Info-Zeile neu und hätten den Hinweis sonst weggewischt.
-            let note = "Suche läuft in " + abbreviateHome(searchRoot)
-                + " — Finder-Ordner ist " + abbreviateHome(front)
-                + " (Return sucht dort)."
-            runScopeNote = note
-            showScopeProblem(note)
+            runScopeMismatch = (searched: searchRoot, finder: front)
+            if let note = runScopeNoteText() { showScopeProblem(note) }
         }
         if scopeDenied { maybeReportDeniedAutomation() }
 
@@ -493,6 +496,23 @@ final class QuickController: NSObject, NSApplicationDelegate,
             : "Finder-Ordner steht noch aus — Suchbereich nicht bestätigt."
         rebuildScopePopup()
         startSearch()
+    }
+
+    /// Der Hinweis auf den abweichenden Suchbereich — immer frisch aus dem
+    /// AKTUELLEN Zustand formuliert, nie aus einem gemerkten Satz:
+    ///
+    /// * „Suche läuft" gilt nur, solange sie läuft. finish() und der
+    ///   Top-20-Stopp beenden den Lauf, bevor sie die Zeile neu setzen.
+    /// * „Return sucht dort" gilt nur, solange der Suchbereich dem vordersten
+    ///   Finder-Fenster folgt. Hat der Nutzer inzwischen selbst einen Ordner
+    ///   gewählt, sucht Return dort — dann entfällt der Hinweis ganz.
+    func runScopeNoteText() -> String? {
+        guard let mismatch = runScopeMismatch, !userPickedScope
+        else { return nil }
+        return (searching ? "Suche läuft in " : "Gesucht wurde in ")
+            + abbreviateHome(mismatch.searched)
+            + " — Finder-Ordner ist " + abbreviateHome(mismatch.finder)
+            + " (Return sucht dort)."
     }
 
     /// Problemtext sichtbar (nicht grau) in die Info-Zeile schreiben.
@@ -596,7 +616,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         openButton.isEnabled = false
         tableView.reloadData()
         // Der Hinweis galt dem VORIGEN Suchlauf; ein neuer Lauf startet ohne.
-        runScopeNote = nil
+        runScopeMismatch = nil
 
         // Der ausgewählte Eintrag trägt keinen Pfad → der Finder-Ordner steht
         // noch aus. Dann NICHT ersatzweise im Benutzerordner suchen, sondern
@@ -694,7 +714,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// der laufende Ort.
     func showProgress(path: String) {
         guard searching, hits.isEmpty, pending.isEmpty,
-              (scopeProblem ?? runScopeNote) == nil
+              (scopeProblem ?? runScopeNoteText()) == nil
         else { return }
         infoLabel.textColor = .tertiaryLabelColor
         infoLabel.lineBreakMode = .byTruncatingMiddle
@@ -731,7 +751,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // Ein unbestätigter Suchbereich bleibt sichtbar: Sonst verschwände die
         // Warnung beim ersten Trefferpaket — und beim Top-20-Stopp für immer,
         // weil danach kein finish() mehr kommt, das sie wieder anzeigt.
-        if let problem = scopeProblem ?? runScopeNote {
+        if let problem = scopeProblem ?? runScopeNoteText() {
             showScopeProblem(summary + " " + problem)
         } else {
             infoLabel.stringValue = summary
@@ -752,7 +772,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
             : "\(hits.count) Treffer für „\(query)“."
         // Gerade wenn NICHTS gefunden wurde, muss ein unklarer Suchbereich
         // dabeistehen — sonst sucht man den Fehler beim Suchbegriff.
-        if let problem = scopeProblem ?? runScopeNote {
+        if let problem = scopeProblem ?? runScopeNoteText() {
             showScopeProblem(summary + " " + problem)
         } else {
             infoLabel.stringValue = summary

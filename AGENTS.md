@@ -249,6 +249,24 @@ Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
   Syntax und argparse-Varianten immer mit `/usr/bin/python3` prüfen.
 - Streaming-Ergebnisse dürfen eine aktuelle Auswahl nicht bei jedem Append
   zurücksetzen.
+- Persistente Zustände der Oberfläche speichern Daten oder zeitneutrale Sätze,
+  nie eine fertig formulierte Präsensmeldung: `finish()` und der Top-20-Pfad in
+  FavenioQuick beenden die Suche über `cancelSearch()` und setzen die Infozeile
+  DANACH. `runScopeMismatch` hält deshalb nur die beiden Pfade,
+  `runScopeNoteText()` formuliert daraus je nach Zustand — vorher stand dort
+  „Suche läuft in …", obwohl die Suche fertig war.
+- `set -e` schützt die Befehle innerhalb einer Shell-Funktion NICHT, wenn die
+  Funktion in einer `||`-Liste aufgerufen wird — genau so ruft `install.sh`
+  `favenio_install_bundles` auf. Kritische Rollback-Schritte müssen ihren Fehler
+  deshalb selbst behandeln: `_favenio_install_restore` nimmt ein schon
+  eingesetztes Bundle per geprüftem `mv` weg statt per ungeprüftem `rm -rf`, das
+  obendrein halb gelingen und ein zerpflücktes Bundle hinterlassen kann.
+- Austausch und Rollback eines gemeinsamen Installationsziels sind pro Zielordner
+  serialisiert (Sperrverzeichnis `.favenio-install.lock`; `install.sh` nimmt sie
+  auch bei Abbruch wieder ab). Der Rollback löscht nie allein anhand des
+  Bundle-Namens: Hat ein paralleler Lauf den Zielpfad inzwischen ersetzt, erkennt
+  die beim Einsetzen gemerkte Kennung des Verzeichniseintrags (Gerät und Inode)
+  das fremde Bundle und lässt es stehen.
 
 ## Offene Arbeit
 

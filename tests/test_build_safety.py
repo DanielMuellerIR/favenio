@@ -80,12 +80,14 @@ class InstallTransactionTest(unittest.TestCase):
                   encoding="utf-8") as handle:
             return handle.read()
 
-    def run_install(self, verify_body):
+    def run_install(self, verify_body, prelude=""):
         """Ruft favenio_install_bundles mit einer gestellten Prüffunktion auf
-        (die echte fragt codesign/spctl/stapler). Liefert (rc, ausgabe)."""
+        (die echte fragt codesign/spctl/stapler). `prelude` läuft davor und
+        kann zusätzlich Werkzeuge unterschieben. Liefert die Ausgabe."""
         script = """
         set -euo pipefail
         source "%s/notarize-lib.sh"
+        %s
         notarize_verify_installed() {
         %s
         }
@@ -94,7 +96,7 @@ class InstallTransactionTest(unittest.TestCase):
         else
             echo "RC=$?"
         fi
-        """ % (REPO, verify_body, self.source, self.dest)
+        """ % (REPO, prelude, verify_body, self.source, self.dest)
         result = subprocess.run(["zsh", "-c", script], cwd=REPO,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT)
@@ -143,6 +145,85 @@ class InstallTransactionTest(unittest.TestCase):
         output = self.run_install(body)
         self.assertIn("RC=2", output)
         self.assertEqual(sorted(os.listdir(self.dest)), [])
+
+    # Die zweite App fällt am ZIELORT durch die Prüfung — der Auslöser für
+    # jeden Rollback-Test hier.
+    FAIL_ON_SECOND = """
+        case "$1" in
+            */.favenio-install.*) return 0 ;;
+            */FavenioQuick.app) return 2 ;;
+        esac
+        return 0"""
+
+    def previous_folder(self):
+        """Der Sicherungsordner dieses Laufs, falls er liegen geblieben ist."""
+        folders = [name for name in self.leftovers()
+                   if name.startswith(".favenio-previous.")]
+        self.assertEqual(len(folders), 1, folders)
+        return os.path.join(self.dest, folders[0])
+
+    def test_a_failed_rollback_is_reported_and_overwrites_nothing(self):
+        # `set -e` schützt die Befehle in favenio_install_bundles NICHT:
+        # install.sh ruft die Funktion in einer ||-Liste auf, dort ist errexit
+        # abgeschaltet. Ein gescheitertes Wegräumen des schon eingesetzten
+        # Bundles muss deshalb selbst geprüft werden — früher lief der Rollback
+        # nach einem ungeprüften `rm -rf` stillschweigend weiter und der Lauf
+        # meldete nur den allgemeinen Exit 2.
+        prelude = """
+        mv() {
+            case "$2" in
+                */rollback-Favenio.app) return 1 ;;
+            esac
+            command mv "$@"
+        }"""
+        output = self.run_install(self.FAIL_ON_SECOND, prelude=prelude)
+        self.assertIn("RC=2", output)
+        self.assertIn("ließ sich nicht wieder aus", output)
+        # Das neue Bundle liegt noch am Zielort — genau das muss der Lauf
+        # sagen, statt es zu verschweigen.
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "neu")
+        # Und der alte Stand wird dann nicht blind darübergeschrieben, sondern
+        # bleibt im Sicherungsordner erhalten.
+        self.assertIn("belegt", output)
+        self.assertEqual(self.marker(self.previous_folder(), "Favenio.app"),
+                         "alt")
+        # Die zweite App war wegräumbar und ist sauber zurückgerollt.
+        self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
+
+    def test_rollback_leaves_a_bundle_of_another_run_alone(self):
+        # Ein zweiter Lauf hat den Zielpfad inzwischen durch sein eigenes
+        # Bundle ersetzt. Ein Rollback nach dem bloßen NAMEN nähme ihm dieses
+        # Bundle weg; erkannt wird der Unterschied an der Kennung des
+        # Verzeichniseintrags (Gerät und Inode).
+        body = """
+        case "$1" in
+            */.favenio-install.*) return 0 ;;
+            */FavenioQuick.app)
+                rm -rf "{dest}/Favenio.app"
+                mkdir -p "{dest}/Favenio.app/Contents/MacOS"
+                printf fremd > "{dest}/Favenio.app/Contents/MacOS/marker"
+                return 2 ;;
+        esac
+        return 0""".format(dest=self.dest)
+        output = self.run_install(body)
+        self.assertIn("RC=2", output)
+        self.assertIn("nicht mehr das Bundle dieses Laufs", output)
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "fremd")
+        self.assertEqual(self.marker(self.previous_folder(), "Favenio.app"),
+                         "alt")
+
+    def test_a_second_run_in_the_same_target_is_refused(self):
+        # Austausch und Rollback teilen sich den Zielordner und müssen deshalb
+        # pro Ziel serialisiert laufen.
+        lock = os.path.join(self.dest, ".favenio-install.lock")
+        os.makedirs(lock)
+        output = self.run_install("    return 0")
+        self.assertIn("RC=2", output)
+        self.assertIn("läuft bereits eine Favenio-Installation", output)
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
+        # Die fremde Sperre bleibt stehen — der abgewiesene Lauf räumt sie nicht
+        # weg, sonst könnte er den anderen Lauf gleich mit freigeben.
+        self.assertTrue(os.path.isdir(lock))
 
     def test_bad_copy_never_touches_the_installed_bundles(self):
         # Schon die danebengelegte Kopie fällt durch: Der Zielordner darf

@@ -11,6 +11,11 @@
 # hier ergänzt werden müsste.
 FAVENIO_APPS=("Favenio.app" "FavenioQuick.app")
 
+# Sperrverzeichnis des laufenden Austauschs, solange eines gehalten wird (siehe
+# _favenio_install_lock). Der Aufräum-Trap von install.sh liest es, damit ein
+# Abbruch die Sperre nicht im Zielordner liegen lässt.
+FAVENIO_INSTALL_LOCK=""
+
 # Die erwartete Produktidentität je Bundle. Der Dateiname beweist nichts: Ein
 # beliebiges fremdes, ebenfalls notarisiertes Bundle unter dem Namen
 # "Favenio.app" käme durch Signatur- und Gatekeeper-Prüfung und ersetzte die
@@ -206,6 +211,62 @@ favenio_verify_feed_url() {
     return 0
 }
 
+# Kennung eines Verzeichniseintrags: Gerätenummer und Inode.
+#
+# Der Name eines Bundles beweist nichts darüber, WELCHES Bundle gerade unter
+# diesem Namen liegt. Diese Kennung schon: Sie bleibt beim Umbenennen erhalten
+# und ändert sich, sobald ein anderer Ordner an denselben Platz kommt.
+# Leere Ausgabe heißt: Da liegt (nichts mehr) — der Aufrufer entscheidet.
+_favenio_dir_id() {
+    /usr/bin/stat -f '%d:%i' "$1" 2>/dev/null || true
+}
+
+# Den Zielordner für die Dauer des Austauschs für andere Läufe sperren.
+#
+# `mkdir` ist der klassische atomare Test-und-Setz-Schritt: Entweder legt genau
+# ein Lauf das Verzeichnis an, oder er weiß sicher, dass schon einer arbeitet.
+# Ohne diese Sperre könnten zwei gleichzeitige Installationen ineinander
+# laufen — der Rollback des ersten träfe dann das frisch eingesetzte Bundle des
+# zweiten. Absichtlich keine automatische Übernahme einer liegen gebliebenen
+# Sperre: Das wäre selbst wieder ein Rennen. install.sh räumt seine eigene
+# Sperre auch bei Abbruch weg (Aufräum-Trap); bleibt sie nach einem harten
+# Abschuss liegen, nennt die Meldung den Weg von Hand.
+#
+# Argumente: <sperrverzeichnis>
+# Rückgabe: 0 = Sperre gehört uns, 2 = ein anderer Lauf arbeitet dort.
+_favenio_install_lock() {
+    local lock="$1"
+    if mkdir "$lock" 2>/dev/null; then
+        echo $$ >"$lock/pid" 2>/dev/null || true
+        return 0
+    fi
+    # mkdir kann auch an fehlenden Schreibrechten scheitern — dann läuft dort
+    # kein zweiter Lauf, und die Meldung darf das nicht behaupten.
+    if [ ! -d "$lock" ]; then
+        echo "FEHLER: Sperrverzeichnis $lock nicht anlegbar." >&2
+        return 2
+    fi
+    local owner
+    owner=$(cat "$lock/pid" 2>/dev/null || true)
+    echo "FEHLER: Es läuft bereits eine Favenio-Installation in denselben" >&2
+    echo "Zielordner${owner:+ (Prozess $owner)} — deren Ende abwarten." >&2
+    echo "Sperre: $lock (nach hartem Abbruch von Hand entfernen)." >&2
+    return 2
+}
+
+# Sperre wieder abnehmen. Ein Fehler dabei kostet keine Installation, blockiert
+# aber den nächsten Lauf — deshalb wird er gemeldet und nicht verschluckt.
+_favenio_install_unlock() {
+    local lock="$1"
+    [ -n "$lock" ] || return 0
+    if ! rm -rf "$lock"; then
+        echo "WARNUNG: Sperre $lock ließ sich nicht abnehmen." >&2
+    fi
+    # Der Aufräum-Trap von install.sh darf sie später nicht noch einmal
+    # entfernen — dann träfe er womöglich die Sperre eines anderen Laufs.
+    FAVENIO_INSTALL_LOCK=""
+}
+
 # Beide Bundles als EINE Transaktion nach <zielordner> bringen.
 #
 # Ablauf: erst BEIDE Bundles vollständig daneben kopieren und dort prüfen,
@@ -216,24 +277,35 @@ favenio_verify_feed_url() {
 # Installation, obwohl install.sh für jeden Fehler „nichts installiert"
 # verspricht.
 #
+# Der ganze Austausch läuft unter einer Sperre auf den Zielordner, damit zwei
+# Läufe sich nicht abwechselnd dasselbe Bundle wegnehmen.
+#
 # Argumente: <quellordner> <zielordner>
 # Rückgabe: 0 = beide installiert und geprüft, 2 = alter Stand wiederhergestellt.
 favenio_install_bundles() {
     local source_dir="$1" dest="$2"
     local app
-    # Namen der Bundles, die schon im Zielordner liegen. Sie müssen beim
-    # Zurückrollen weg — auch wenn es gar keinen alten Stand gibt. Bei einer
-    # ERSTinstallation existiert kein Backup; ohne diese Liste blieben die
-    # neuen Bundles trotz Fehler und Exit 2 liegen.
+    # Was dieser Lauf schon eingesetzt hat, je Eintrag "Name|Kennung". Diese
+    # Bundles müssen beim Zurückrollen weg — auch wenn es gar keinen alten
+    # Stand gibt: Bei einer ERSTinstallation existiert kein Backup, und ohne
+    # diese Liste blieben die neuen Bundles trotz Fehler und Exit 2 liegen.
+    # Die Kennung gehört dazu, weil der Name allein nicht beweist, dass dort
+    # noch UNSER Bundle liegt.
     local installed=()
     # Ablage- und Sicherungsordner tragen die Prozessnummer, damit zwei Läufe
     # sich nicht ins Gehege kommen. Sie liegen IM Zielordner, denn nur dann
     # ist das spätere Umbenennen ein Vorgang innerhalb desselben Dateisystems.
     local stage="$dest/.favenio-install.$$"
     local backup="$dest/.favenio-previous.$$"
+    local lock="$dest/.favenio-install.lock"
+    _favenio_install_lock "$lock" || return 2
+    # Damit der Aufräum-Trap von install.sh die Sperre auch bei Ctrl-C wieder
+    # abnimmt; die Funktion selbst räumt sie auf jedem eigenen Weg weg.
+    FAVENIO_INSTALL_LOCK="$lock"
     rm -rf "$stage" "$backup"
     if ! mkdir -p "$stage" "$backup"; then
         echo "FEHLER: Ablageordner in $dest nicht anlegbar." >&2
+        _favenio_install_restore "$dest" "$stage" "$backup" "$lock"
         return 2
     fi
 
@@ -242,13 +314,13 @@ favenio_install_bundles() {
     for app in "${FAVENIO_APPS[@]}"; do
         if ! ditto "$source_dir/$app" "$stage/$app"; then
             echo "FEHLER: $app ließ sich nicht nach $dest kopieren." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" \
+            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
             return 2
         fi
         if ! notarize_verify_installed "$stage/$app"; then
             echo "FEHLER: kopierte $app ist nicht notarisiert/gültig." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" \
+            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
             return 2
         fi
@@ -259,22 +331,23 @@ favenio_install_bundles() {
     for app in "${FAVENIO_APPS[@]}"; do
         if [ -d "$dest/$app" ] && ! mv "$dest/$app" "$backup/$app"; then
             echo "FEHLER: alte $app ließ sich nicht sichern." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" \
+            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
             return 2
         fi
         if ! mv "$stage/$app" "$dest/$app"; then
             echo "FEHLER: neue $app ließ sich nicht einsetzen." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" \
+            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
             return 2
         fi
-        # Ab hier liegt das neue Bundle am Zielort und gehört ins Rollback.
-        installed+=("$app")
+        # Ab hier liegt das neue Bundle am Zielort und gehört ins Rollback —
+        # samt Kennung des eingesetzten Verzeichniseintrags.
+        installed+=("$app|$(_favenio_dir_id "$dest/$app")")
         # Nach dem Tausch zählt nur noch, was WIRKLICH im Zielordner liegt.
         if ! notarize_verify_installed "$dest/$app"; then
             echo "FEHLER: installierte $app ist nicht notarisiert/gültig." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" \
+            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
             return 2
         fi
@@ -282,38 +355,76 @@ favenio_install_bundles() {
     done
 
     rm -rf "$stage" "$backup"
+    _favenio_install_unlock "$lock"
     return 0
 }
 
 # Alten Stand zurückholen und die Zwischenordner aufräumen. Wird nur aus
 # favenio_install_bundles gerufen (Unterstrich = intern).
 #
-# Argumente: <zielordner> <ablageordner> <sicherungsordner> [schon eingesetzte
-# Bundle-Namen …]
+# Argumente: <zielordner> <ablageordner> <sicherungsordner> <sperre>
+#            [schon eingesetzte Bundles als "Name|Kennung" …]
+# Rückgabe: 0 = alter Stand steht wieder, 2 = Rollback unvollständig. Der
+# Aufrufer meldet ohnehin Exit 2; der Status ist für Tests und künftige
+# Aufrufer da, die Begründung steht auf stderr.
 _favenio_install_restore() {
-    local dest="$1" stage="$2" backup="$3"
-    shift 3
+    local dest="$1" stage="$2" backup="$3" lock="$4"
+    shift 4
     local installed=("$@")
-    local app
+    local app entry expected current
+    local failed=0
     # Zuerst alles wegräumen, was dieser Lauf schon eingesetzt hat. Das gilt
     # auch für Bundles ohne alten Stand: Bei einer Erstinstallation gibt es
     # kein Backup, und die Sicherungsschleife unten würde sie überspringen —
     # dann läge trotz Fehler und Exit 2 ein halb installierter Stand da.
-    for app in "${installed[@]}"; do
-        rm -rf "$dest/$app"
+    for entry in "${installed[@]}"; do
+        app="${entry%%|*}"
+        expected="${entry#*|}"
+        current=$(_favenio_dir_id "$dest/$app")
+        # Da liegt nichts mehr — nichts zurückzunehmen.
+        [ -n "$current" ] || continue
+        # Nach dem NAMEN zu löschen wäre falsch: Hat ein zweiter Lauf den
+        # Zielpfad inzwischen ersetzt, nähmen wir ihm sein frisches Bundle weg.
+        if [ "$current" != "$expected" ]; then
+            echo "FEHLER: $dest/$app ist nicht mehr das Bundle dieses Laufs" \
+                 "— vermutlich hat eine zweite Installation es ersetzt." \
+                 "Es bleibt unangetastet." >&2
+            failed=2
+            continue
+        fi
+        # Geprüftes Umbenennen statt ungeprüftem `rm -rf`: Umbenennen im
+        # selben Ordner gelingt ganz oder gar nicht, und ein Fehlschlag wird
+        # hier gemeldet. `set -e` fängt ihn nicht auf — install.sh ruft
+        # favenio_install_bundles in einer ||-Liste, dort ist errexit aus und
+        # gilt auch in allen von dort gerufenen Funktionen nicht.
+        if ! mv "$dest/$app" "$stage/rollback-$app"; then
+            echo "FEHLER: eingesetzte $app ließ sich nicht wieder aus $dest" \
+                 "entfernen — die Installation ist NICHT sauber" \
+                 "zurückgenommen." >&2
+            failed=2
+        fi
     done
     for app in "${FAVENIO_APPS[@]}"; do
         [ -d "$backup/$app" ] || continue
-        # Der halb eingesetzte neue Stand muss weg, bevor der alte
-        # zurückkommt; deshalb hier ausnahmsweise löschen vor umbenennen.
-        rm -rf "$dest/$app"
+        # Der Platz muss frei sein. Ist er belegt, gehört er nicht mehr uns
+        # (oder das Wegräumen oben ist gescheitert) — dann lieber melden als
+        # etwas Fremdes überschreiben.
+        if [ -e "$dest/$app" ]; then
+            echo "FEHLER: alte $app kann nicht zurück, weil $dest/$app belegt" \
+                 "ist. Sie liegt weiter unter $backup." >&2
+            failed=2
+            continue
+        fi
         if ! mv "$backup/$app" "$dest/$app"; then
             echo "FEHLER: $app ließ sich nicht zurückholen und liegt noch" \
                  "unter $backup." >&2
+            failed=2
         fi
     done
     rm -rf "$stage"
     # rmdir statt rm -rf: Was hier noch liegt, ist ein nicht zurückgeholter
     # alter Stand — der darf nicht auch noch verschwinden.
     rmdir "$backup" 2>/dev/null || true
+    _favenio_install_unlock "$lock"
+    return $failed
 }

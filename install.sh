@@ -41,6 +41,12 @@ cleanup() {
         hdiutil detach "$MOUNT" -quiet 2>/dev/null || true
         rmdir "$MOUNT" 2>/dev/null || true
     fi
+    # Eine Installationssperre dieses Laufs nie liegen lassen: Sonst blockiert
+    # ein Ctrl-C mitten im Austausch jede weitere Installation, bis jemand den
+    # Ordner von Hand entfernt (siehe notarize-lib.sh).
+    if [ -n "${FAVENIO_INSTALL_LOCK:-}" ]; then
+        rm -rf "$FAVENIO_INSTALL_LOCK" 2>/dev/null || true
+    fi
     [ "$exit_status" -eq 0 ] || exit 2
 }
 trap cleanup EXIT

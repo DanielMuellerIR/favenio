@@ -28,10 +28,11 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
   beide Bundles über mehrere Sekunden; `_favenio_install_restore` läuft nur
   bei einem Fehler im normalen Ablauf. Ein Ctrl-C oder ein Signal genau in
   diesem Fenster hinterlässt Ablage- und Sicherungsordner samt halb
-  getauschtem Stand, und `install.sh` (~38–46) räumt in seinem
-  EXIT-`cleanup()` nur den Mountpoint auf. Fehlt: ein Trap auf INT/TERM (bzw.
-  ein Aufräumschritt beim nächsten Start), der die `.favenio-install.*`- und
-  `.favenio-previous.*`-Ordner erkennt und den alten Stand zurückholt.
+  getauschtem Stand; `install.sh` räumt in seinem EXIT-`cleanup()` nur den
+  Mountpoint und die eigene Installationssperre auf. Fehlt: ein Trap auf
+  INT/TERM (bzw. ein Aufräumschritt beim nächsten Start), der die
+  `.favenio-install.*`- und `.favenio-previous.*`-Ordner erkennt und den alten
+  Stand zurückholt.
 
 ## Offen aus der Code-Review-Triage 2026-08-02
 

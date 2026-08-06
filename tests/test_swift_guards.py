@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -5,6 +8,23 @@ from pathlib import Path
 COMMON = Path("common/FavenioCore.swift").read_text(encoding="utf-8")
 GUI = Path("gui/FavenioGUI.swift").read_text(encoding="utf-8")
 QUICK = Path("quick/FavenioQuick.swift").read_text(encoding="utf-8")
+
+
+def swift_function(source, signature):
+    """Schneidet eine Swift-Funktion samt Rumpf aus dem Quelltext: von der
+    Signatur bis zur passenden schließenden Klammer. Gezählt werden schlicht
+    die geschweiften Klammern — das trägt, solange im Rumpf keine in einem
+    Text steht."""
+    start = source.index(signature)
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError("Funktion %r ist nicht abgeschlossen" % signature)
 
 
 class SwiftGuardTests(unittest.TestCase):
@@ -77,29 +97,120 @@ class SwiftGuardTests(unittest.TestCase):
         # Meldet sich der Finder erst, während die Suche schon im
         # Ersatzordner läuft, ist scopeProblem nil — der Hinweis „Suche läuft
         # in X, Finder-Ordner ist Y" hing deshalb nur bis zum ersten
-        # Trefferpaket in der Info-Zeile. Er wird jetzt in runScopeNote
-        # gemerkt und an allen drei Stellen mitgelesen.
-        self.assertIn("var runScopeNote: String?", QUICK)
+        # Trefferpaket in der Info-Zeile. Er wird jetzt gemerkt und an allen
+        # drei Stellen mitgelesen.
         apply = QUICK[
             QUICK.index("func applyScopeOutcome("):
             QUICK.index("func scopeWaitExpired()")
         ]
-        self.assertIn("runScopeNote = note", apply)
-        for name, following in (("func startSearch()", "func showProgress"),
-                                ("func flushPending()", "func finish("),
-                                ("func finish(", "func openInMainApp")):
+        self.assertIn(
+            "runScopeMismatch = (searched: searchRoot, finder: front)", apply)
+        for name, following, expected in (
+                ("func startSearch()", "func showProgress",
+                 "runScopeMismatch = nil"),
+                ("func flushPending()", "func finish(", "runScopeNoteText()"),
+                ("func finish(", "func openInMainApp", "runScopeNoteText()")):
             body = QUICK[QUICK.index(name):QUICK.index(following)]
-            self.assertIn("runScopeNote", body, name)
+            self.assertIn(expected, body, name)
         progress = QUICK[
             QUICK.index("func showProgress"):
             QUICK.index("func flushPending()")
         ]
-        self.assertIn("(scopeProblem ?? runScopeNote) == nil", progress)
+        self.assertIn("(scopeProblem ?? runScopeNoteText()) == nil", progress)
+
+    def test_quick_builds_the_scope_note_from_the_current_state(self):
+        # Der Hinweis war ein fertig formulierter Präsens-Satz im Zustand.
+        # finish() und der Top-20-Stopp rufen aber zuerst cancelSearch() und
+        # zeigen die Zeile DANACH — die fertige Suche behauptete dort weiter
+        # „Suche läuft in …". Und „Return sucht dort" stimmte nicht mehr,
+        # sobald der Nutzer den Bereich selbst gewählt hatte. Gespeichert
+        # werden deshalb nur die Pfade, formuliert wird aus dem Zustand.
+        self.assertNotIn("var runScopeNote: String?", QUICK)
+        self.assertIn(
+            "var runScopeMismatch: (searched: String, finder: String)?", QUICK)
+        note = QUICK[
+            QUICK.index("func runScopeNoteText()"):
+            QUICK.index("func showScopeProblem")
+        ]
+        self.assertIn(
+            'searching ? "Suche läuft in " : "Gesucht wurde in "', note)
+        self.assertIn("!userPickedScope", note)
 
     def test_streaming_core_does_not_collect_duplicate_results(self):
         self.assertNotIn("var hitsRaw", COMMON)
         self.assertNotIn("var hits: [Hit] = []\n    var hitsRaw", COMMON)
         self.assertIn("-> Int32", COMMON)
+
+
+@unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")
+class QuickScopeNoteBehaviourTest(unittest.TestCase):
+    """runScopeNoteText() hängt nur vom Zustand ab und lässt sich deshalb
+    wirklich AUSFÜHREN: Die Funktion wird unverändert aus
+    quick/FavenioQuick.swift geschnitten, in eine Attrappe mit denselben
+    Zustandsfeldern gesetzt und übersetzt. So ist der sichtbare Satz geprüft
+    und nicht nur die Schreibweise im Quelltext."""
+
+    HARNESS = """
+// Von tests/test_swift_guards.py erzeugt — kein Bestandteil der Apps.
+func abbreviateHome(_ path: String) -> String { path }
+
+final class Attrappe {
+    var searching = false
+    var userPickedScope = false
+    var runScopeMismatch: (searched: String, finder: String)?
+%s
+}
+
+let zustand = Attrappe()
+zustand.runScopeMismatch = (searched: "/eins", finder: "/zwei")
+zustand.searching = true
+print("LAEUFT|" + (zustand.runScopeNoteText() ?? "nil"))
+zustand.searching = false
+print("FERTIG|" + (zustand.runScopeNoteText() ?? "nil"))
+zustand.userPickedScope = true
+print("GEWAEHLT|" + (zustand.runScopeNoteText() ?? "nil"))
+zustand.userPickedScope = false
+zustand.runScopeMismatch = nil
+print("OHNE|" + (zustand.runScopeNoteText() ?? "nil"))
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        body = swift_function(QUICK, "func runScopeNoteText() -> String? {")
+        with tempfile.TemporaryDirectory() as tmp:
+            # Top-Level-Code erlaubt Swift nur in einer Datei namens main.swift.
+            source = Path(tmp) / "main.swift"
+            source.write_text(cls.HARNESS % body, encoding="utf-8")
+            binary = Path(tmp) / "notetest"
+            subprocess.run(["swiftc", "-o", str(binary), str(source)],
+                           check=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+            result = subprocess.run([str(binary)], check=True,
+                                    stdout=subprocess.PIPE)
+        cls.lines = dict(
+            line.split("|", 1)
+            for line in result.stdout.decode("utf-8").splitlines() if line)
+
+    def test_the_note_speaks_in_the_present_only_while_searching(self):
+        self.assertEqual(
+            self.lines["LAEUFT"],
+            "Suche läuft in /eins — Finder-Ordner ist /zwei "
+            "(Return sucht dort).")
+
+    def test_a_finished_search_is_not_called_running(self):
+        # finish() und der Top-20-Stopp zeigen die Zeile NACH cancelSearch().
+        self.assertEqual(
+            self.lines["FERTIG"],
+            "Gesucht wurde in /eins — Finder-Ordner ist /zwei "
+            "(Return sucht dort).")
+
+    def test_an_own_choice_drops_the_note_about_the_finder_folder(self):
+        # „Return sucht dort" stimmte nach einer eigenen Bereichswahl nicht
+        # mehr: Return sucht dann im selbst gewählten Ordner.
+        self.assertEqual(self.lines["GEWAEHLT"], "nil")
+
+    def test_without_a_mismatch_there_is_no_note(self):
+        self.assertEqual(self.lines["OHNE"], "nil")
 
 
 if __name__ == "__main__":
