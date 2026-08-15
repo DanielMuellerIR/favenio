@@ -6,7 +6,7 @@
     "token_budget": 2000000,
     "status": "active",
     "started_at": "2026-08-15T13:45:38+02:00",
-    "tokens_spent": 128208
+    "tokens_spent": 244398
   },
   "campaign_history": [],
   "scope": {
@@ -50,18 +50,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T13:53:24+02:00",
-        "observed_head": "c8064197ea6f678fb16feda00522900f6699a512",
-        "content_sha256": "69bd4136534933379ac03501397bad0eea55e428896b1c0492823d73950958f4",
+        "completed_at": "2026-08-15T14:04:58+02:00",
+        "observed_head": "b434849309c143561301ef866e6d6ffffbbe8d60",
+        "content_sha256": "eb351487c1594938e2a71394c99de9b95d74e2a0056594f3c85d22695d33ac1d",
         "file_count": 3,
-        "review": "full",
+        "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Weiche Abbruchsignale rollen den Zweibundle-Tausch vollständig zurück; Bundle-Kennung wird vor dem atomaren mv erfasst und Rollback gegen wiederholte Signale geschützt",
+        "summary": "Querschnitts-Delta nachgebucht: gemeinsame Team-ID-Auflösung und Korrektur der zsh-PATH-Schattenvariable machen die bestehende optionale Installationsprüfung tatsächlich ausführbar",
         "tests": [
-          "python3 -m unittest discover -s tests: 169 passed",
-          "/usr/bin/python3 -m unittest discover -s tests: 169 passed",
-          "python3 und /usr/bin/python3 -m unittest tests.test_build_safety: jeweils 27 passed",
-          "zsh -n install.sh notarize-lib.sh release.sh: passed"
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 178 passed; echte codesign-Teamprüfung beider gebauten Bundles: passed"
         ]
       }
     },
@@ -88,7 +85,13 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Öffentliche Lieferkette, Signatur-, Notarisierungs- und Update-Feed-Tore",
-      "state": "pending"
+      "state": "in_progress",
+      "active_run": {
+        "campaign_id": "20260815T134538404716+0200",
+        "started_at": "2026-08-15T14:05:30+02:00",
+        "required_review": "full",
+        "status_at_start": "pending"
+      }
     },
     {
       "id": "build-packaging",
@@ -158,10 +161,19 @@
         ".github/workflows/publish-appcast.yml"
       ],
       "priority": 1,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-08-15T13:53:53+02:00",
       "campaign_id": "20260815T134538404716+0200",
-      "started_at": "2026-08-15T13:53:53+02:00"
+      "started_at": "2026-08-15T13:53:53+02:00",
+      "completed": {
+        "campaign_id": "20260815T134538404716+0200",
+        "completed_at": "2026-08-15T14:04:31+02:00",
+        "observed_head": "b434849309c143561301ef866e6d6ffffbbe8d60",
+        "summary": "Lokaler Release und Appcast-Tor verlangen eine validierte, nicht eingecheckte Team-ID und prüfen beide Bundles per codesign-Requirement; zsh-PATH-Schattenfehler der gemeinsamen Identitätsprüfung behoben",
+        "tests": [
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 178 passed; reale codesign-Teamprüfung beider gebauten Bundles: passed; zsh- und Workflow-Bash-Syntax: passed"
+        ]
+      }
     }
   ]
 }

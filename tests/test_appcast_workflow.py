@@ -168,6 +168,68 @@ class WorkflowShellSyntaxTest(unittest.TestCase):
         self.assertIn("FAVENIO_TEAM_ID: ${{ vars.FAVENIO_TEAM_ID }}", workflow)
         self.assertIn('"$SPARKLE_PUBLIC_KEY" "$FAVENIO_TEAM_ID"', workflow)
 
+    def test_dmg_is_verified_before_it_is_mounted(self):
+        script = extract_run_block("Generate signed appcast")
+        verify = script.index('favenio_check_dmg "$dmg"')
+        mount = script.index('hdiutil attach "$dmg"')
+        self.assertLess(verify, mount)
+
+
+class CheckDmgTest(unittest.TestCase):
+    """Das heruntergeladene Release-DMG wird vor dem Mounten geprüft."""
+
+    BLOCK = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.BLOCK = extract_marked_block("favenio-check-dmg")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.stubs = self.tmp / "stubs"
+        self.stubs.mkdir()
+        for tool in ("xcrun", "spctl"):
+            make_stub(self.stubs, tool)
+        self.dmg = self.tmp / "Favenio-0.21.1.dmg"
+        self.dmg.write_bytes(b"kein echtes Abbild")
+
+    def run_check(self, **fails):
+        script = (
+            "set -euo pipefail\n"
+            + self.BLOCK
+            + "\n"
+            'if favenio_check_dmg "$1"; then\n'
+            '  echo "RC=0"\n'
+            "else\n"
+            '  echo "RC=$?"\n'
+            "fi\n"
+        )
+        path = self.tmp / "harness.sh"
+        path.write_text(script, encoding="utf-8")
+        environment = dict(os.environ)
+        environment["PATH"] = "%s%s%s" % (self.stubs, os.pathsep,
+                                          environment["PATH"])
+        for tool, entries in fails.items():
+            environment["STUB_FAIL_%s" % tool.upper()] = entries
+        result = subprocess.run(
+            ["bash", str(path), str(self.dmg)], cwd=REPO, env=environment,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return result.stdout.decode("utf-8", "replace")
+
+    def test_valid_dmg_passes(self):
+        self.assertIn("RC=0", self.run_check())
+
+    def test_dmg_without_stapled_ticket_is_rejected(self):
+        output = self.run_check(xcrun="Favenio-0.21.1.dmg")
+        self.assertIn("RC=1", output)
+        self.assertIn("no stapled notarization ticket", output)
+
+    def test_dmg_rejected_by_gatekeeper_is_rejected(self):
+        output = self.run_check(spctl="Favenio-0.21.1.dmg")
+        self.assertIn("RC=1", output)
+        self.assertIn("Gatekeeper rejects", output)
+
 
 class CheckArtifactTest(unittest.TestCase):
     """favenio_check_artifact ist das Tor vor der Signatur: Nur ein
@@ -188,8 +250,6 @@ class CheckArtifactTest(unittest.TestCase):
             make_stub(self.stubs, tool)
         self.mount = self.tmp / "mount"
         self.mount.mkdir()
-        self.dmg = self.tmp / "Favenio-0.21.1.dmg"
-        self.dmg.write_bytes(b"kein echtes Abbild")
         self.add_app("Favenio.app", "local.favenio")
         self.add_app("FavenioQuick.app", "local.favenio.quick")
 
@@ -220,7 +280,7 @@ class CheckArtifactTest(unittest.TestCase):
             "set -euo pipefail\n"
             + self.BLOCK
             + "\n"
-            "if favenio_check_artifact \"$1\" \"$2\" \"$3\" \"$4\" \"$5\"; then\n"
+            "if favenio_check_artifact \"$1\" \"$2\" \"$3\" \"$4\"; then\n"
             '  echo "RC=0"\n'
             "else\n"
             '  echo "RC=$?"\n'
@@ -238,8 +298,8 @@ class CheckArtifactTest(unittest.TestCase):
         for tool, entries in fails.items():
             environment["STUB_FAIL_%s" % tool.upper()] = entries
         result = subprocess.run(
-            ["bash", str(path), str(self.dmg), str(self.mount), tag,
-             expected_key, expected_team],
+            ["bash", str(path), str(self.mount), tag, expected_key,
+             expected_team],
             cwd=REPO, env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return result.stdout.decode("utf-8", "replace")
@@ -267,16 +327,6 @@ class CheckArtifactTest(unittest.TestCase):
         self.assertIn("developer team ID is invalid", output)
 
     # ---------- schlechte Fälle ----------
-
-    def test_dmg_without_stapled_ticket_is_rejected(self):
-        output = self.run_check(xcrun="Favenio-0.21.1.dmg")
-        self.assertIn("RC=1", output)
-        self.assertIn("no stapled notarization ticket", output)
-
-    def test_dmg_rejected_by_gatekeeper_is_rejected(self):
-        output = self.run_check(spctl="Favenio-0.21.1.dmg")
-        self.assertIn("RC=1", output)
-        self.assertIn("Gatekeeper rejects", output)
 
     def test_bundle_with_broken_signature_is_rejected(self):
         output = self.run_check(codesign="FavenioQuick.app")

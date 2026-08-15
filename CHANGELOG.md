@@ -96,6 +96,11 @@ Regressionstest.
   Sparkle signiert wird. Die bisher optionale Installationsprüfung erreicht
   `codesign` nun ebenfalls wirklich: Ihre lokale zsh-Variable `path` hatte
   unbemerkt den gleichnamigen Suchpfad der Shell überschrieben.
+- **Release-DMG vor dem Mounten geprüft:** Das Appcast-Tor validierte Ticket
+  und Gatekeeper-Urteil bisher erst, nachdem `hdiutil` das heruntergeladene
+  Release-DMG bereits eingehängt hatte. Die Container-Prüfung ist jetzt ein
+  eigener getesteter Schritt vor dem Mounten; erst danach werden die beiden
+  enthaltenen Apps geprüft und für Sparkle signiert.
 - **Schnellsuche, Statuszeile nach dem Ende:** Der gemerkte Hinweis war ein
   fertig formulierter Satz im Präsens. `finish()` und der Stopp bei 20
   Treffern beenden die Suche aber, bevor sie die Zeile neu setzen — die

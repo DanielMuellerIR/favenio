@@ -86,9 +86,32 @@ jobs:
           dmgs=(update/*.dmg)
           dmg="${dmgs[0]}"
           notes="${dmg%.dmg}.md"
+
+          # ===== BEGIN favenio-check-dmg =====
+          # Das heruntergeladene Abbild prüfen, BEVOR macOS dessen
+          # Dateisystem einhängt. Das Bundle-Tor unten kommt erst danach an
+          # die Apps heran; Notary-Ticket und Gatekeeper-Urteil des Containers
+          # müssen die Disk-Image-Angriffsfläche schon vorher absichern.
+          favenio_check_dmg() {
+            local dmg="$1"
+            if ! xcrun stapler validate "$dmg" >/dev/null 2>&1; then
+              echo "ERROR: $dmg carries no stapled notarization ticket." >&2
+              return 1
+            fi
+            if ! spctl --assess --type open \
+                --context context:primary-signature "$dmg" >/dev/null 2>&1
+            then
+              echo "ERROR: Gatekeeper rejects $dmg." >&2
+              return 1
+            fi
+          }
+          # ===== END favenio-check-dmg =====
+
+          favenio_check_dmg "$dmg"
           mountpoint="$(mktemp -d)"
           cleanup() {
             hdiutil detach "$mountpoint" -quiet || true
+            rmdir "$mountpoint" 2>/dev/null || true
           }
           trap cleanup EXIT
           hdiutil attach "$dmg" -nobrowse -readonly \
@@ -107,13 +130,13 @@ jobs:
           # Fail-closed: Jeder Fehlschlag beendet den Lauf, bevor sign_update
           # überhaupt läuft.
           #
-          # Argumente: <dmg> <mountpoint> <release-tag> <erwarteter Schlüssel>
+          # Argumente: <mountpoint> <release-tag> <erwarteter Schlüssel>
           #            <erwartete Entwickler-Team-ID>
           # Setzt bei Erfolg ARTIFACT_VERSION, ARTIFACT_BUILD und
           # ARTIFACT_PUBLIC_KEY.
           favenio_check_artifact() {
-            local dmg="$1" mountpoint="$2" tag="$3" expected_key="$4"
-            local expected_team="$5"
+            local mountpoint="$1" tag="$2" expected_key="$3"
+            local expected_team="$4"
             local app plist bundle_id expected_id app_version app_build
             local app_key app_feed app_signed_feed team_requirement
             # Der Produktions-Update-Feed. Quelle ist der Default in
@@ -132,19 +155,6 @@ jobs:
               return 1
             fi
             team_requirement="anchor apple generic and certificate leaf[subject.OU] = \"$expected_team\""
-
-            # stapler validate beweist das ANGEHEFTETE Ticket (gilt auch ohne
-            # Netz); spctl fragt zusätzlich das Gatekeeper-Urteil ab.
-            if ! xcrun stapler validate "$dmg" >/dev/null 2>&1; then
-              echo "ERROR: $dmg carries no stapled notarization ticket." >&2
-              return 1
-            fi
-            if ! spctl --assess --type open \
-                --context context:primary-signature "$dmg" >/dev/null 2>&1
-            then
-              echo "ERROR: Gatekeeper rejects $dmg." >&2
-              return 1
-            fi
 
             local apps=("$mountpoint"/*.app)
             if (( ${#apps[@]} != 2 )); then
@@ -278,7 +288,7 @@ jobs:
           }
           # ===== END favenio-check-artifact =====
 
-          favenio_check_artifact "$dmg" "$mountpoint" "$RELEASE_TAG" \
+          favenio_check_artifact "$mountpoint" "$RELEASE_TAG" \
             "$SPARKLE_PUBLIC_KEY" "$FAVENIO_TEAM_ID"
           version="$ARTIFACT_VERSION"
           build="$ARTIFACT_BUILD"

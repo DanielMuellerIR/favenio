@@ -65,7 +65,9 @@ its public counterpart is embedded as `SUPublicEDKey`.
 4. Create a draft GitHub Release with exactly one DMG and complete release
    notes, then publish it.
 5. `.github/workflows/publish-appcast.yml` signs the archive for Sparkle and
-   deploys `appcast.xml` through GitHub Pages.
+   deploys `appcast.xml` through GitHub Pages. It validates the downloaded
+   DMG's stapled ticket and Gatekeeper verdict before mounting the image, then
+   applies the per-app identity and update checks to its contents.
 6. Verify the workflow, feed and a real update from an older notarized,
    Sparkle-enabled test build. Use `FAVENIO_SPARKLE_TEST_VERSION` only for this
    test; `release.sh` refuses to publish such a build.

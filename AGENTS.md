@@ -154,6 +154,11 @@ Bundles gegen `FAVENIO_FEED_URL` aus `notarize-lib.sh`. `build-app.sh` darf
 im Projektverzeichnis); geerbt werden darf diese Variable nicht, sonst hört
 eine installierte oder ausgelieferte App dauerhaft auf einen fremden Feed.
 
+Das Appcast-Tor prüft ein heruntergeladenes Release-DMG auf angeheftetes
+Notary-Ticket und Gatekeeper-Akzeptanz, **bevor** `hdiutil` es einhängt. Erst
+danach werden Bundle-Signaturen, Entwickler-Team, IDs, Versionen, Update-
+Schlüssel und Feed des Inhalts geprüft. Diese Reihenfolge nicht zurückbauen.
+
 Neue Kernfunktionen benötigen Unit-Tests mit temporären Fixtures. Das bestehende
 Fixture deckt normale Dateien, versteckte Dateien, Zip, Tar, verschachtelte Zip-
 Archive, Inhaltssuche, Regex, JSON, Progress, Extraktion und Einzeldatei-Eingaben
