@@ -181,6 +181,19 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn("var hits: [Hit] = []\n    var hitsRaw", COMMON)
         self.assertIn("-> Int32", COMMON)
 
+    def test_open_finder_consent_is_never_timed_out(self):
+        # Ein noch offener TCC-Dialog gehört dem Nutzer. Ein künstlicher
+        # Timeout würde den osascript-Prozess und damit die wartende Freigabe
+        # verwerfen; der Notaus gilt nur bei bereits entschiedenem Zugriff.
+        finder = COMMON[
+            COMMON.index("func finderWindowFoldersAsync("):
+            COMMON.index("func runFinderScopeDiagnostic()")
+        ]
+        self.assertNotIn("consentPending ? 180", finder)
+        self.assertIn("if !consentPending {", finder)
+        self.assertIn("deadline: .now() + 6", finder)
+        self.assertIn("killer = nil", finder)
+
 
 @unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")
 class QuickScopeNoteBehaviourTest(unittest.TestCase):

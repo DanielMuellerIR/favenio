@@ -20,10 +20,6 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 Aus der Review-Triage vom 2026-07-24 (Quelle: MiniMax-Review, von Opus
 verifiziert). Kosmetik und bewusste Tradeoffs, keine Bugs.
 
-- `common/FavenioCore.swift` (~344–360): Materialisierung liest die
-  Unterprozess-Ausgabe synchron auf dem Main-Thread (`readDataToEndOfFile`).
-  Bewusster Tradeoff — entweder als solchen kommentieren oder später auf
-  `Task.detached` umstellen.
 - `favenio.py` (~516–528, `walk_tar`): Die Kompressions-Ratio-Heuristik greift
   nur bei ZIP; für TAR schützen allein die Byte-Budgets (per-Member-Ratio bei
   tar nicht ermittelbar). Klarstellenden Kommentar ergänzen.

@@ -121,6 +121,11 @@ Regressionstest.
   der URL-Weg. Außerdem werden alte Finder-Ordner vor jeder neuen Abfrage aus
   dem Cache entfernt, damit Timeout oder verweigerte Automation nicht im
   Ordner der vorigen Aktivierung suchen.
+- **Offener Finder-Freigabedialog:** Trotz der Zusage, die wartende
+  macOS-Automationsfreigabe nicht abzubrechen, beendete der gemeinsame
+  Finder-Unterprozess sie nach 180 Sekunden. Der Sechs-Sekunden-Notaus gilt
+  jetzt nur bei bereits entschiedenem Zugriff; ein offener Systemdialog hat
+  kein künstliches Zeitlimit mehr.
 - **Schnellsuche, Statuszeile nach dem Ende:** Der gemerkte Hinweis war ein
   fertig formulierter Satz im Präsens. `finish()` und der Stopp bei 20
   Treffern beenden die Suche aber, bevor sie die Zeile neu setzen — die

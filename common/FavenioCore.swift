@@ -324,6 +324,11 @@ final class MaterializationManager {
         }
     }
 
+    /// Bewusst synchron: Öffnen, Quick Look und besonders Drag-and-drop
+    /// brauchen in ihren AppKit-Callbacks sofort die fertige URL. Der
+    /// Python-Kern begrenzt die dabei entpackten Daten durch Mitglieds- und
+    /// Gesamtbudget. Ein Wechsel auf Task.detached müsste deshalb zuerst die
+    /// Aktionsschnittstellen beider Frontends asynchron machen.
     func materialize(_ hit: Hit) -> URL? {
         if !hit.isMember {
             return URL(fileURLWithPath: hit.filesystemPath)
@@ -682,7 +687,6 @@ func finderWindowFoldersAsync(
         // der Nutzer geklickt hat, darf nichts abgebrochen werden; sonst würde
         // die App genau die Freigabe wegwerfen, auf die sie wartet.
         let consentPending = permission == kAEEventWouldRequireUserConsent
-        let killAfter: Double = consentPending ? 180 : 6
 
         // VORDERSTES Fenster über `front Finder window` — die Klasse
         // `Finder window` schließt Info- und andere Hilfsfenster aus, `front
@@ -746,11 +750,23 @@ func finderWindowFoldersAsync(
             // Consent-Dialog auf den Nutzer, wird nicht abgebrochen. Der
             // Abbruch wird gemeldet, nicht zu „keine Ordner" verschwiegen.
             let killed = Atomic(false)
-            let killer = DispatchWorkItem {
-                if process.isRunning { killed.set(true); process.terminate() }
+            let killer: DispatchWorkItem?
+            if !consentPending {
+                let work = DispatchWorkItem {
+                    if process.isRunning {
+                        killed.set(true)
+                        process.terminate()
+                    }
+                }
+                killer = work
+                DispatchQueue.global().asyncAfter(deadline: .now() + 6,
+                                                  execute: work)
+            } else {
+                // Ein offener Systemdialog hat bewusst KEIN Zeitlimit. Nur
+                // der Nutzer darf diese TCC-Entscheidung beenden; ein Notaus
+                // würde die wartende Freigabe verwerfen.
+                killer = nil
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + killAfter,
-                                              execute: killer)
             // Beide Pipes gleichzeitig leeren: Läuft stderr voll, während wir
             // nur stdout lesen, blockiert der Unterprozess.
             let group = DispatchGroup()
@@ -764,7 +780,7 @@ func finderWindowFoldersAsync(
             }
             group.wait()
             process.waitUntilExit()
-            killer.cancel()
+            killer?.cancel()
 
             let text = String(data: out.get(), encoding: .utf8) ?? ""
             let errorText = (String(data: err.get(), encoding: .utf8) ?? "")
