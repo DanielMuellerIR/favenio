@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "project": "favenio",
+  "campaign": {
+    "id": "20260815T134538404716+0200",
+    "token_budget": 2000000,
+    "status": "active",
+    "started_at": "2026-08-15T13:45:38+02:00"
+  },
+  "campaign_history": [],
+  "scope": {
+    "paths": [
+      "favenio.py",
+      "tests/test_favenio.py",
+      "install.sh",
+      "notarize-lib.sh",
+      "tests/test_build_safety.py",
+      "release.sh",
+      ".github/workflows/publish-appcast.yml",
+      "tests/test_appcast_workflow.py",
+      "docs/sparkle-release.md",
+      "assets/generate-dmg-background.swift",
+      "common/FavenioCore.swift",
+      "gui/FavenioGUI.swift",
+      "quick/FavenioQuick.swift",
+      "tests/test_swift_guards.py",
+      "build-app.sh",
+      "Package.swift",
+      "Package.resolved",
+      "swiftpm/FavenioSparkleDependency.swift",
+      "assets/favenio.entitlements",
+      "icons/make-icons.swift",
+      ".github/workflows/ci.yml",
+      "THIRD-PARTY.md"
+    ],
+    "exclusions": []
+  },
+  "areas": [
+    {
+      "id": "install-transaction",
+      "paths": [
+        "install.sh",
+        "notarize-lib.sh",
+        "tests/test_build_safety.py"
+      ],
+      "risk": "critical",
+      "priority": 1,
+      "reason": "Schreibt nach /Applications; Identitätsprüfung, atomarer Austausch und Rollback schützen Nutzerdaten",
+      "state": "pending"
+    },
+    {
+      "id": "python-search-core",
+      "paths": [
+        "favenio.py",
+        "tests/test_favenio.py"
+      ],
+      "risk": "critical",
+      "priority": 1,
+      "reason": "Einzige Suchsemantik; Traversierung, Archive, Extraktion und JSONL-Vertrag",
+      "state": "pending"
+    },
+    {
+      "id": "release-appcast",
+      "paths": [
+        "release.sh",
+        ".github/workflows/publish-appcast.yml",
+        "tests/test_appcast_workflow.py",
+        "docs/sparkle-release.md",
+        "assets/generate-dmg-background.swift"
+      ],
+      "risk": "critical",
+      "priority": 1,
+      "reason": "Öffentliche Lieferkette, Signatur-, Notarisierungs- und Update-Feed-Tore",
+      "state": "pending"
+    },
+    {
+      "id": "build-packaging",
+      "paths": [
+        "build-app.sh",
+        "Package.swift",
+        "Package.resolved",
+        "swiftpm/FavenioSparkleDependency.swift",
+        "assets/favenio.entitlements",
+        "icons/make-icons.swift",
+        ".github/workflows/ci.yml",
+        "THIRD-PARTY.md"
+      ],
+      "risk": "high",
+      "priority": 2,
+      "reason": "Reproduzierbarer App-Aufbau, gepinnte Updater-Abhängigkeit, Signierung und CI",
+      "state": "pending"
+    },
+    {
+      "id": "quick-app",
+      "paths": [
+        "quick/FavenioQuick.swift",
+        "tests/test_swift_guards.py"
+      ],
+      "risk": "high",
+      "priority": 2,
+      "reason": "Finder-naher asynchroner Suchlauf, Bereichsauflösung und Übergabe an die Haupt-App",
+      "state": "pending"
+    },
+    {
+      "id": "swift-common-runtime",
+      "paths": [
+        "common/FavenioCore.swift"
+      ],
+      "risk": "high",
+      "priority": 2,
+      "reason": "Gemeinsame Prozess-, JSONL-, Materialisierungs-, Übergabe- und Finder/TCC-Grenze beider Apps",
+      "state": "pending"
+    },
+    {
+      "id": "main-app",
+      "paths": [
+        "gui/FavenioGUI.swift"
+      ],
+      "risk": "high",
+      "priority": 3,
+      "reason": "Streaming-Suchlauf, Auswahlzustand und Dateiaktionen der Haupt-App",
+      "state": "pending"
+    }
+  ],
+  "architecture": {
+    "campaign_id": "20260815T134538404716+0200",
+    "recorded_at": "2026-08-15T13:45:47+02:00",
+    "observed_head": "c9b8f41e886cedddf4cf97eab6da82349d891273",
+    "summary": "favenio.py besitzt die gesamte Suchsemantik; FavenioCore übersetzt Prozess und JSONL; Haupt-App und Schnellsuche bleiben AppKit-Adapter; Build und Release bilden eine getrennte Sicherheitsgrenze",
+    "paradigm": "Schichtenmodell mit einem gemeinsamen Suchkern und dünnen AppKit-Adaptern",
+    "fit": "passt",
+    "recommendation": "Architektur beibehalten; lokale Duplikation in den Frontends bereichsweise reduzieren und die Sicherheitsgrenzen der Lieferpipeline weiter durch Tests härten, kein Paradigmenwechsel"
+  }
+}
