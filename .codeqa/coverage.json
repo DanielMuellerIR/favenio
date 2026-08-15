@@ -6,7 +6,7 @@
     "token_budget": 2000000,
     "status": "active",
     "started_at": "2026-08-15T13:45:38+02:00",
-    "tokens_spent": 527553
+    "tokens_spent": 575664
   },
   "campaign_history": [],
   "scope": {
@@ -163,18 +163,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T14:27:20+02:00",
-        "observed_head": "5293abf74ea06ee4336cef7614a58daca6a75af8",
-        "content_sha256": "dbc5f6e4f9a00882d87c9d5d465b7626152d82be15d260fdc3698d5ea65b5dee",
+        "completed_at": "2026-08-15T14:31:49+02:00",
+        "observed_head": "69f27666f27c0133cef34602500c124c9f746190",
+        "content_sha256": "6245687f01b37a6032d7149436b5f89827b4102ea1d175823511b1bd37fff62d",
         "file_count": 2,
-        "review": "full",
+        "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Direkter Fallback zur Haupt-App übergibt denselben validierten Handoff-URL-Datensatz samt Wurzel, Optionen und continue; alte Finder-Ordner werden vor und nach jeder neuen Abfrage sicher verworfen",
+        "summary": "Gemeinsame Swift-Guard-Datei um die von Quick genutzte Finder-Freigabegrenze ergänzt; Quick bleibt am Main-Thread-Callback und am fehlerfreien Finder-Gerätetest unverändert",
         "tests": [
-          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 186 passed",
-          "Swift-Guard-Suite unter beiden Interpretern: jeweils 15 passed; beide neuen Regressionen vor dem Fix rot",
-          "./build-app.sh: beide signierten Bundles und beide Headless-Selbsttests bestanden",
-          "FavenioQuick --finder-scope auf M5: permission=granted, status=folders, reale Finder-Ordner geliefert"
+          "Swift-Guard-Suite und Gesamtsuite unter beiden Interpretern grün; App-Build und Quick-Finderdiagnose grün"
         ]
       }
     },
@@ -186,12 +183,22 @@
       "risk": "high",
       "priority": 2,
       "reason": "Gemeinsame Prozess-, JSONL-, Materialisierungs-, Übergabe- und Finder/TCC-Grenze beider Apps",
-      "state": "in_progress",
-      "active_run": {
+      "state": "completed",
+      "last_run": {
         "campaign_id": "20260815T134538404716+0200",
-        "started_at": "2026-08-15T14:27:28+02:00",
-        "required_review": "full",
-        "status_at_start": "pending"
+        "completed_at": "2026-08-15T14:31:36+02:00",
+        "observed_head": "69f27666f27c0133cef34602500c124c9f746190",
+        "content_sha256": "4aac9a6e0746bf66c8a16421bb43645716134ff99cca6c77866b53adb0e08e50",
+        "file_count": 1,
+        "review": "full",
+        "outcome": "improved",
+        "summary": "Finder-Unterprozess beendet einen offenen macOS-Automationsdialog nicht mehr nach 180 Sekunden; Notaus bleibt auf bereits entschiedene Zugriffe begrenzt; synchrone Materialisierung als AppKit-Vertrag dokumentiert",
+        "tests": [
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 187 passed",
+          "Regressionstest zum offenen Consent-Dialog war vor dem Fix unter beiden Interpretern rot und ist danach grün",
+          "./build-app.sh: beide signierten Bundles und beide Headless-Selbsttests bestanden",
+          "Favenio und FavenioQuick --finder-scope auf M5: jeweils permission=granted, status=folders"
+        ]
       }
     },
     {
@@ -202,7 +209,13 @@
       "risk": "high",
       "priority": 3,
       "reason": "Streaming-Suchlauf, Auswahlzustand und Dateiaktionen der Haupt-App",
-      "state": "pending"
+      "state": "in_progress",
+      "active_run": {
+        "campaign_id": "20260815T134538404716+0200",
+        "started_at": "2026-08-15T14:31:58+02:00",
+        "required_review": "full",
+        "status_at_start": "pending"
+      }
     }
   ],
   "architecture": {
@@ -237,6 +250,19 @@
           "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 178 passed; reale codesign-Teamprüfung beider gebauten Bundles: passed; zsh- und Workflow-Bash-Syntax: passed"
         ]
       }
+    },
+    {
+      "id": "unexpected-search-exit",
+      "summary": "Haupt-App und Schnellsuche melden unerwartete Prozess-Exit-Codes als normalen Suchabschluss, obwohl der CLI-Vertrag nur 0 und 1 als normal definiert",
+      "evidence": [
+        "gui/FavenioGUI.swift",
+        "quick/FavenioQuick.swift",
+        "common/FavenioCore.swift"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-08-15T14:33:29+02:00",
+      "campaign_id": "20260815T134538404716+0200"
     }
   ]
 }

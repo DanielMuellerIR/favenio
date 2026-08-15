@@ -53,6 +53,11 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: \(error)")
         return 1
     }
+    guard !searchExitIsError(0), !searchExitIsError(1),
+          searchExitIsError(2), searchExitIsError(15) else {
+        print("SELFTEST FEHLER: Such-Exit-Codes falsch eingeordnet")
+        return 1
+    }
     // Eigene kleine Test-Welt in einem Temp-Ordner bauen.
     let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("favenio-selftest-\(ProcessInfo.processInfo.processIdentifier)")
@@ -1045,7 +1050,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         run.process.terminationHandler = nil
         activeSearchRun = nil
         stopButton.isEnabled = false
-        if status == 2 {
+        if searchExitIsError(status) {
             statusLabel.stringValue = "Suche fehlgeschlagen."
         } else {
             statusLabel.stringValue = hits.isEmpty

@@ -181,6 +181,13 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn("var hits: [Hit] = []\n    var hitsRaw", COMMON)
         self.assertIn("-> Int32", COMMON)
 
+    def test_frontends_reject_every_unexpected_search_exit(self):
+        # grep-Semantik: Nur 0 (Treffer) und 1 (keine Treffer) sind normal.
+        # Signalstatus und sonstige Werte dürfen nicht als Erfolg erscheinen.
+        self.assertIn("func searchExitIsError(_ status: Int32)", COMMON)
+        self.assertIn("if searchExitIsError(status)", GUI)
+        self.assertIn("searchExitIsError(exitCode)", QUICK)
+
     def test_open_finder_consent_is_never_timed_out(self):
         # Ein noch offener TCC-Dialog gehört dem Nutzer. Ein künstlicher
         # Timeout würde den osascript-Prozess und damit die wartende Freigabe

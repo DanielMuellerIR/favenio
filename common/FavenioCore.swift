@@ -223,6 +223,13 @@ func searchArguments(pattern: String, root: String, content: Bool,
     return args
 }
 
+/// grep-Semantik des Python-Kerns: 0 = Treffer und 1 = keine Treffer sind
+/// normale Abschlüsse. Jeder andere Status — auch ein Signalstatus — ist ein
+/// Fehler und muss in beiden Frontends sichtbar werden.
+func searchExitIsError(_ status: Int32) -> Bool {
+    status != 0 && status != 1
+}
+
 /// Führt eine Suche BLOCKIEREND aus und liefert Treffer.
 /// Für die Schnellsuche und den Selbsttest; die große GUI streamt
 /// stattdessen asynchron (siehe MainController in FavenioGUI.swift).

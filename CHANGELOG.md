@@ -126,6 +126,11 @@ Regressionstest.
   Finder-Unterprozess sie nach 180 Sekunden. Der Sechs-Sekunden-Notaus gilt
   jetzt nur bei bereits entschiedenem Zugriff; ein offener Systemdialog hat
   kein künstliches Zeitlimit mehr.
+- **Unerwarteter Suchprozess-Abbruch:** Haupt-App und Schnellsuche behandelten
+  nur Exit 2 als Fehler. Ein Signalabbruch oder jeder andere unerwartete Status
+  erschien deshalb als normaler Abschluss mit Treffern oder „keine Treffer".
+  Beide Frontends verwenden jetzt gemeinsam den CLI-Vertrag: Nur 0 und 1 sind
+  normale Enden.
 - **Schnellsuche, Statuszeile nach dem Ende:** Der gemerkte Hinweis war ein
   fertig formulierter Satz im Präsens. `finish()` und der Stopp bei 20
   Treffern beenden die Suche aber, bevor sie die Zeile neu setzen — die

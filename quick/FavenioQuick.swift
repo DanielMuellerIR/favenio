@@ -708,7 +708,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 guard let self, generation == self.searchGeneration
                 else { return }   // abgebrochen/übergeben → verwerfen
                 self.runningProcess = nil
-                let errorText = exitCode == 2
+                let errorText = searchExitIsError(exitCode)
                     ? "Suche fehlgeschlagen. Bitte Favenio erneut installieren."
                     : nil
                 self.finish(query: query, errorText: errorText)
