@@ -184,6 +184,10 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// als unbekannt.
     func applicationDidBecomeActive(_ notification: Notification) {
         scopeResolved = false
+        // Ein Finder-Ordner der vorigen Aktivierung ist keine gültige
+        // Antwort für die neue. Bleibt die Abfrage aus oder scheitert sie,
+        // muss das Menü auf die gemeinsamen Ersatzordner fallen.
+        scopeFinderFolders = []
         refreshFinderFoldersAsync()
         rebuildScopePopup()
     }
@@ -457,7 +461,10 @@ final class QuickController: NSObject, NSApplicationDelegate,
         scopeProblem = outcome.problemText
         runScopeMismatch = nil
         if case .denied = outcome { scopeDenied = true } else { scopeDenied = false }
-        if case .folders(let folders) = outcome { scopeFinderFolders = folders }
+        // FinderScopeOutcome liefert bei JEDEM Fehlschlag eine leere Liste.
+        // So kann weder Timeout noch verweigerte Automation einen alten
+        // Finder-Ordner aus einer früheren Aktivierung stehen lassen.
+        scopeFinderFolders = outcome.folders
         rebuildScopePopup()
 
         if let problem = scopeProblem, !searching {
@@ -818,11 +825,18 @@ final class QuickController: NSObject, NSApplicationDelegate,
                          value: exactCheckbox.state == .on ? "1" : "0"),
             URLQueryItem(name: "continue", value: "1"),
         ]
-        if let url = components.url, NSWorkspace.shared.open(url) {
+        guard let handoffURL = components.url else {
+            try? FileManager.default.removeItem(at: resultsFile)
+            infoLabel.stringValue = "Konnte Ergebnisübergabe nicht erzeugen."
+            return
+        }
+        if NSWorkspace.shared.open(handoffURL) {
             NSApp.terminate(nil)
             return
         }
-        // Weg 2 (Fallback): Favenio.app direkt starten (ohne Weitersuchen).
+        // Weg 2 (Fallback): Favenio.app direkt starten. Derselbe strukturierte
+        // URL-Datensatz reist als Argument mit; dadurch bleiben Wurzel,
+        // Optionen und das Fortsetzen der Suche exakt wie im primären Weg.
         guard let appURL = locateMainApp() else {
             try? FileManager.default.removeItem(at: resultsFile)
             infoLabel.stringValue =
@@ -830,8 +844,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
             return
         }
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.arguments = ["--query", query,
-                                   "--results-file", resultsFile.path]
+        // Argumente erreichen zuverlässig nur eine neue App-Instanz. Der
+        // Fallback wird ausschließlich gebraucht, wenn die registrierte
+        // URL-Zuordnung versagt hat; eine zweite Instanz ist dann der sichere
+        // Weg, den Datensatz trotzdem zuzustellen.
+        configuration.createsNewApplicationInstance = true
+        configuration.arguments = ["--handoff-url", handoffURL.absoluteString]
         NSWorkspace.shared.openApplication(at: appURL,
                                            configuration: configuration) {
             _, error in

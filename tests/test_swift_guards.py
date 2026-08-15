@@ -67,6 +67,46 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("let resultsFile: URL", QUICK)
         self.assertIn("try writeQuickHandoff(hits)", QUICK)
 
+    def test_quick_fallback_reuses_the_structured_handoff_url(self):
+        # Schlägt die LaunchServices-Zuordnung des URL-Schemas fehl, darf der
+        # direkte App-Start nicht nur Suchtext und Trefferdatei übergeben. Der
+        # identische URL-Datensatz enthält auch Wurzel und Suchoptionen.
+        fallback = QUICK[
+            QUICK.index("func openMainApp("):
+            QUICK.index("func locateMainApp()")
+        ]
+        self.assertIn("guard let handoffURL = components.url", fallback)
+        self.assertIn(
+            'configuration.arguments = ["--handoff-url", '
+            "handoffURL.absoluteString]", fallback)
+        self.assertIn("configuration.createsNewApplicationInstance = true",
+                      fallback)
+        self.assertNotIn('configuration.arguments = ["--query"', fallback)
+
+        startup = GUI[
+            GUI.index("func applicationDidFinishLaunching"):
+            GUI.index("func applicationDidBecomeActive")
+        ]
+        self.assertIn('arguments.firstIndex(of: "--handoff-url")', startup)
+        self.assertIn("handleFavenioURL(handoffURL)", startup)
+
+    def test_quick_drops_stale_finder_folders_before_refresh(self):
+        # Ein Timeout oder eine verweigerte Abfrage darf nicht den Finder-
+        # Ordner der VORIGEN Aktivierung als aktuellen Bereich stehen lassen.
+        became_active = QUICK[
+            QUICK.index("func applicationDidBecomeActive"):
+            QUICK.index("func windowWillClose")
+        ]
+        self.assertLess(
+            became_active.index("scopeFinderFolders = []"),
+            became_active.index("refreshFinderFoldersAsync()"),
+        )
+        apply = QUICK[
+            QUICK.index("func applyScopeOutcome("):
+            QUICK.index("func scopeWaitExpired()")
+        ]
+        self.assertIn("scopeFinderFolders = outcome.folders", apply)
+
     def test_quick_drops_old_hits_before_waiting_for_the_finder(self):
         # Wartet die Schnellsuche auf den Finder-Ordner, kehrt startSearch()
         # früh zurück. Die Treffer der VORIGEN Suche müssen davor weg sein —

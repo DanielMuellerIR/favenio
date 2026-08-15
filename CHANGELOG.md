@@ -113,6 +113,14 @@ Regressionstest.
   mit Developer-ID behalten sie. Außerdem schreibt `plutil` eine abweichende
   `SPARKLE_FEED_URL` sicher in beide Plists, sodass gültige URLs mit `&` das
   XML nicht mehr beschädigen.
+- **Schnellsuche, vollständiger Fallback:** Scheiterte das registrierte
+  URL-Schema, startete Quick die Haupt-App nur mit Suchtext und Trefferdatei.
+  Suchwurzel, Inhalt, Archive, Unsichtbare und „Genauer Name" gingen verloren,
+  die fortgesetzte Suche passte nicht mehr zu den schon gezeigten Treffern.
+  Der direkte App-Start übergibt jetzt denselben strukturierten Datensatz wie
+  der URL-Weg. Außerdem werden alte Finder-Ordner vor jeder neuen Abfrage aus
+  dem Cache entfernt, damit Timeout oder verweigerte Automation nicht im
+  Ordner der vorigen Aktivierung suchen.
 - **Schnellsuche, Statuszeile nach dem Ende:** Der gemerkte Hinweis war ein
   fertig formulierter Satz im Präsens. `finish()` und der Stopp bei 20
   Treffern beenden die Suche aber, bevor sie die Zeile neu setzen — die

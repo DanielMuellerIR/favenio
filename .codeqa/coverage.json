@@ -6,7 +6,7 @@
     "token_budget": 2000000,
     "status": "active",
     "started_at": "2026-08-15T13:45:38+02:00",
-    "tokens_spent": 375941
+    "tokens_spent": 453149
   },
   "campaign_history": [],
   "scope": {
@@ -50,15 +50,16 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T14:04:58+02:00",
-        "observed_head": "b434849309c143561301ef866e6d6ffffbbe8d60",
-        "content_sha256": "eb351487c1594938e2a71394c99de9b95d74e2a0056594f3c85d22695d33ac1d",
+        "completed_at": "2026-08-15T14:20:40+02:00",
+        "observed_head": "8c30083b9bcd7009fb82c86736f80ffea431ea2f",
+        "content_sha256": "75902544f2ffbe8ec50868f22bc5ce42352bc8500f1fe59b62482433ff219778",
         "file_count": 3,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Querschnitts-Delta nachgebucht: gemeinsame Team-ID-Auflösung und Korrektur der zsh-PATH-Schattenvariable machen die bestehende optionale Installationsprüfung tatsächlich ausführbar",
+        "summary": "Gemeinsame Build-Sicherheitsdatei um Regressionen für XML-sichere Feed-URLs, funktionsfähige Ad-hoc-Signierung und den ausdrücklich ausgeübten CI-Fallback ergänzt; Installationsgrenzen unverändert",
         "tests": [
-          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 178 passed; echte codesign-Teamprüfung beider gebauten Bundles: passed"
+          "BuildSafetyTest unter python3 und /usr/bin/python3: jeweils 8 passed",
+          "Gesamtsuite unter beiden Interpretern: jeweils 184 passed; beide realen Signierzweige mit Headless-Selbsttests geprüft"
         ]
       }
     },
@@ -132,12 +133,22 @@
       "risk": "high",
       "priority": 2,
       "reason": "Reproduzierbarer App-Aufbau, gepinnte Updater-Abhängigkeit, Signierung und CI",
-      "state": "in_progress",
-      "active_run": {
+      "state": "completed",
+      "last_run": {
         "campaign_id": "20260815T134538404716+0200",
-        "started_at": "2026-08-15T14:14:04+02:00",
-        "required_review": "full",
-        "status_at_start": "pending"
+        "completed_at": "2026-08-15T14:20:24+02:00",
+        "observed_head": "8c30083b9bcd7009fb82c86736f80ffea431ea2f",
+        "content_sha256": "01ee606358d826f0986708765125ac11800cc5543daec2d32dfcc9926f0c91f8",
+        "file_count": 8,
+        "review": "full",
+        "outcome": "improved",
+        "summary": "Ad-hoc-Builds ohne Developer-ID laden Sparkle wieder, CI erzwingt diesen Pfad; frei gesetzte Feed-URLs werden per plutil XML-sicher in beide Info.plists geschrieben",
+        "tests": [
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 184 passed",
+          "Ad-hoc-Build mit URL samt & erfolgreich; beide Headless-Selbsttests, Plist-Lint und exakter Feedwert bestanden",
+          "Developer-ID-Build erfolgreich; beide Headless-Selbsttests, Team-ID, Hardened Runtime und Automation-Entitlement bestätigt",
+          "Icon-Generator isoliert: je 10 PNGs und gültiges ICNS; Entitlement-Plist, Package.resolved und swift package resolve geprüft"
+        ]
       }
     },
     {
@@ -149,7 +160,13 @@
       "risk": "high",
       "priority": 2,
       "reason": "Finder-naher asynchroner Suchlauf, Bereichsauflösung und Übergabe an die Haupt-App",
-      "state": "pending"
+      "state": "in_progress",
+      "active_run": {
+        "campaign_id": "20260815T134538404716+0200",
+        "started_at": "2026-08-15T14:20:48+02:00",
+        "required_review": "full",
+        "status_at_start": "pending"
+      }
     },
     {
       "id": "swift-common-runtime",
