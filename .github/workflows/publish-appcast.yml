@@ -29,6 +29,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
       SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+      # Nicht eingecheckt: Repository- oder github-pages-Umgebungsvariable.
+      FAVENIO_TEAM_ID: ${{ vars.FAVENIO_TEAM_ID }}
       # Derselbe öffentliche Schlüssel, den build-app.sh als SUPublicEDKey in
       # beide Bundles schreibt — die Quelle ist build-app.sh, hier steht nur
       # die Kopie, gegen die das Release-Artefakt geprüft wird. Ein Test
@@ -67,6 +69,10 @@ jobs:
             echo "ERROR: GitHub secret SPARKLE_PRIVATE_KEY is missing." >&2
             exit 1
           fi
+          if [[ -z "$FAVENIO_TEAM_ID" ]]; then
+            echo "ERROR: GitHub Actions variable FAVENIO_TEAM_ID is missing." >&2
+            exit 1
+          fi
 
           swift package resolve
           tool="$(find .build/artifacts/sparkle -type f \
@@ -96,23 +102,36 @@ jobs:
           # Aktualisierung geworden. Jetzt zählen Notarisierung (angeheftetes
           # Ticket), Gatekeeper-Urteil, Produktidentität (Bundle-ID je
           # Dateiname, Update-Schlüssel SUPublicEDKey, Update-Feed SUFeedURL
-          # samt SURequireSignedFeed) und die Zuordnung zum Release-Tag.
+          # samt SURequireSignedFeed, Apple-Entwickler-Team) und die Zuordnung
+          # zum Release-Tag.
           # Fail-closed: Jeder Fehlschlag beendet den Lauf, bevor sign_update
           # überhaupt läuft.
           #
           # Argumente: <dmg> <mountpoint> <release-tag> <erwarteter Schlüssel>
+          #            <erwartete Entwickler-Team-ID>
           # Setzt bei Erfolg ARTIFACT_VERSION, ARTIFACT_BUILD und
           # ARTIFACT_PUBLIC_KEY.
           favenio_check_artifact() {
             local dmg="$1" mountpoint="$2" tag="$3" expected_key="$4"
+            local expected_team="$5"
             local app plist bundle_id expected_id app_version app_build
-            local app_key app_feed app_signed_feed
+            local app_key app_feed app_signed_feed team_requirement
             # Der Produktions-Update-Feed. Quelle ist der Default in
             # build-app.sh; hier steht die Kopie, gegen die das Release-
             # Artefakt geprüft wird. Ein Test (tests/test_appcast_workflow.py)
             # hält beide Stellen zusammen.
             local expected_feed="https://danielmuellerir.github.io/favenio/appcast.xml"
             shopt -s nullglob
+
+            if [[ -z "$expected_team" ]]; then
+              echo "ERROR: expected developer team ID is missing." >&2
+              return 1
+            fi
+            if [[ ! "$expected_team" =~ ^[A-Z0-9]{10}$ ]]; then
+              echo "ERROR: expected developer team ID is invalid." >&2
+              return 1
+            fi
+            team_requirement="anchor apple generic and certificate leaf[subject.OU] = \"$expected_team\""
 
             # stapler validate beweist das ANGEHEFTETE Ticket (gilt auch ohne
             # Netz); spctl fragt zusätzlich das Gatekeeper-Urteil ab.
@@ -138,8 +157,12 @@ jobs:
             ARTIFACT_PUBLIC_KEY=""
             for app in "${apps[@]}"; do
               plist="$app/Contents/Info.plist"
-              if ! codesign --verify --strict "$app" >/dev/null 2>&1; then
-                echo "ERROR: invalid code signature: ${app##*/}" >&2
+              if ! codesign --verify --strict \
+                  -R="$team_requirement" \
+                  "$app" >/dev/null 2>&1
+              then
+                echo "ERROR: invalid code signature or wrong developer team:" \
+                  "${app##*/}." >&2
                 return 1
               fi
               if ! spctl --assess --type execute "$app" >/dev/null 2>&1; then
@@ -256,7 +279,7 @@ jobs:
           # ===== END favenio-check-artifact =====
 
           favenio_check_artifact "$dmg" "$mountpoint" "$RELEASE_TAG" \
-            "$SPARKLE_PUBLIC_KEY"
+            "$SPARKLE_PUBLIC_KEY" "$FAVENIO_TEAM_ID"
           version="$ARTIFACT_VERSION"
           build="$ARTIFACT_BUILD"
 

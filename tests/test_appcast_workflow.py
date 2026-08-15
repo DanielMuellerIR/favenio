@@ -29,6 +29,9 @@ PRODUCTION_KEY = "H504COadHZVAKo+/XD0jzXT5PJzghkS2t/DDYmuHPDg="
 # die der Workflow das Release-Artefakt prüft.
 PRODUCTION_FEED = "https://danielmuellerir.github.io/favenio/appcast.xml"
 
+# Keine echte Projekt-ID, sondern die feste Herausgeber-ID der Test-Stubs.
+TEST_TEAM_ID = "TESTTEAM00"
+
 # Ein Testschlüsselpaar und ein damit von Sparkles echtem `sign_update`
 # signierter Mini-Feed. Ed25519 ist deterministisch, deshalb ist die Signatur
 # eine feste Konstante und der Test braucht kein Schlüsselmaterial und keinen
@@ -101,9 +104,19 @@ def make_stub(folder, name):
     so lassen sich fehlendes Ticket, Gatekeeper-Ablehnung und kaputte
     Signatur einzeln nachstellen."""
     path = folder / name
+    team_check = ""
+    if name == "codesign":
+        team_check = (
+            'if [ -n "${STUB_EXPECT_TEAM:-}" ]; then\n'
+            '  printf \'%s\\n\' "$@" | /usr/bin/grep -F '
+            '\'certificate leaf[subject.OU] = "\'"$STUB_EXPECT_TEAM"\'"\' '
+            ">/dev/null || exit 3\n"
+            "fi\n"
+        )
     path.write_text(
         "#!/bin/sh\n"
-        "for last; do :; done\n"
+        + team_check
+        + "for last; do :; done\n"
         'entry=$(basename "$last")\n'
         'case " ${STUB_FAIL_%s:-} " in *" $entry "*) exit 1 ;; esac\n'
         "exit 0\n" % name.upper(),
@@ -149,6 +162,11 @@ class WorkflowShellSyntaxTest(unittest.TestCase):
             build)
         self.assertIn('local expected_feed="%s"' % PRODUCTION_FEED,
                       WORKFLOW.read_text(encoding="utf-8"))
+
+    def test_team_id_comes_from_an_actions_variable(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("FAVENIO_TEAM_ID: ${{ vars.FAVENIO_TEAM_ID }}", workflow)
+        self.assertIn('"$SPARKLE_PUBLIC_KEY" "$FAVENIO_TEAM_ID"', workflow)
 
 
 class CheckArtifactTest(unittest.TestCase):
@@ -196,12 +214,13 @@ class CheckArtifactTest(unittest.TestCase):
             plistlib.dump(info, handle)
         return app
 
-    def run_check(self, tag="v0.21.1", expected_key=PRODUCTION_KEY, **fails):
+    def run_check(self, tag="v0.21.1", expected_key=PRODUCTION_KEY,
+                  expected_team=TEST_TEAM_ID, **fails):
         script = (
             "set -euo pipefail\n"
             + self.BLOCK
             + "\n"
-            "if favenio_check_artifact \"$1\" \"$2\" \"$3\" \"$4\"; then\n"
+            "if favenio_check_artifact \"$1\" \"$2\" \"$3\" \"$4\" \"$5\"; then\n"
             '  echo "RC=0"\n'
             "else\n"
             '  echo "RC=$?"\n'
@@ -215,11 +234,12 @@ class CheckArtifactTest(unittest.TestCase):
         environment = dict(os.environ)
         environment["PATH"] = "%s%s%s" % (self.stubs, os.pathsep,
                                           environment["PATH"])
+        environment["STUB_EXPECT_TEAM"] = expected_team
         for tool, entries in fails.items():
             environment["STUB_FAIL_%s" % tool.upper()] = entries
         result = subprocess.run(
             ["bash", str(path), str(self.dmg), str(self.mount), tag,
-             expected_key],
+             expected_key, expected_team],
             cwd=REPO, env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return result.stdout.decode("utf-8", "replace")
@@ -235,6 +255,16 @@ class CheckArtifactTest(unittest.TestCase):
 
     def test_tag_without_v_prefix_is_accepted(self):
         self.assertIn("RC=0", self.run_check(tag="0.21.1"))
+
+    def test_missing_expected_team_is_rejected(self):
+        output = self.run_check(expected_team="")
+        self.assertIn("RC=1", output)
+        self.assertIn("developer team ID is missing", output)
+
+    def test_malformed_expected_team_is_rejected(self):
+        output = self.run_check(expected_team='BAD" or true')
+        self.assertIn("RC=1", output)
+        self.assertIn("developer team ID is invalid", output)
 
     # ---------- schlechte Fälle ----------
 

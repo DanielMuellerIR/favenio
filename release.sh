@@ -21,6 +21,8 @@
 #     (App-spezifisches Passwort wird interaktiv abgefragt — nie als Argument.)
 #     Profilname: kein eingecheckter Default. Er kommt aus NOTARY_PROFILE oder
 #     clone-lokal aus `git config --local favenio.notaryProfile <profil>`.
+#   - Erwartete Entwickler-Team-ID aus FAVENIO_TEAM_ID oder clone-lokal aus
+#     `git config --local favenio.teamId <team-id>`.
 #
 # Aufruf:
 #   NOTARY_PROFILE=<profil> ./release.sh
@@ -48,8 +50,9 @@ for arg in "$@"; do
 done
 
 # Früh scheitern statt nach dem Build: Identität und Notary-Profil prüfen.
-# Setzt NOTARY_PROFILE und SIGN_ID (siehe notarize-lib.sh).
+# Setzt NOTARY_PROFILE, SIGN_ID und FAVENIO_TEAM_ID (siehe notarize-lib.sh).
 notarize_require_credentials
+favenio_require_team_id
 
 # ---------- Schritt 1: Apps bauen (signiert + Selbsttest) ----------
 echo "== Schritt 1/5: Apps bauen =="
@@ -157,9 +160,13 @@ for app in "${FAVENIO_APPS[@]}"; do
     # gewandert und richtete jede ausgelieferte App dauerhaft auf einen
     # fremden Update-Feed. Ein Release darf das nicht mitnehmen.
     favenio_verify_feed_url "$VERIFY_MOUNT/$app" "$app" || exit 1
+    # Die Bundle-ID allein kann ein fremder Entwickler nachbauen. Für einen
+    # Release ist deshalb zusätzlich das oben zwingend konfigurierte Apple-
+    # Entwickler-Team Teil der Produktidentität.
+    favenio_verify_identity "$VERIFY_MOUNT/$app" "$app" || exit 1
 done
 hdiutil detach "$VERIFY_MOUNT" -quiet
-echo "Signaturen, Tickets und Update-Feed im DMG gültig."
+echo "Signaturen, Tickets, Entwickler-Team und Update-Feed im DMG gültig."
 
 # ---------- Schritt 5: DMG signieren, notarisieren, stapeln ----------
 echo "== Schritt 5/5: DMG notarisieren (Profil: $NOTARY_PROFILE) =="

@@ -35,6 +35,12 @@ class BuildSafetyTest(unittest.TestCase):
         source = Path("release.sh").read_text(encoding="utf-8")
         self.assertIn('favenio_verify_feed_url "$VERIFY_MOUNT/$app"', source)
 
+    def test_release_requires_and_checks_the_developer_team(self):
+        source = Path("release.sh").read_text(encoding="utf-8")
+        self.assertIn("favenio_require_team_id", source)
+        self.assertIn(
+            'favenio_verify_identity "$VERIFY_MOUNT/$app" "$app"', source)
+
     def test_expected_feed_url_matches_the_build_script(self):
         """notarize-lib.sh prüft gegen eine Kopie des Defaults aus
         build-app.sh. Läuft die auseinander, prüft die Installation gegen
@@ -331,6 +337,97 @@ class InstallIdentityTest(unittest.TestCase):
         output = self.check("com.example.trojaner")
         self.assertIn("RC=2", output)
         self.assertIn("nicht Favenio", output)
+
+    def test_team_requirement_reaches_codesign(self):
+        # `path` ist in zsh an PATH gekoppelt. Eine lokale Variable dieses
+        # Namens ließ die Team-Prüfung deshalb ihr `codesign` nicht finden;
+        # ohne konfigurierte Team-ID blieb der Fehler unsichtbar.
+        bundle = os.path.join(self.tmp.name, "Favenio.app")
+        InstallTransactionTest.make_bundle(
+            bundle, "x", bundle_id="local.favenio")
+        stubs = os.path.join(self.tmp.name, "stubs")
+        os.makedirs(stubs)
+        log = os.path.join(self.tmp.name, "codesign-args")
+        codesign = os.path.join(stubs, "codesign")
+        with open(codesign, "w", encoding="utf-8") as handle:
+            handle.write('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CODESIGN_LOG"\n')
+        os.chmod(codesign, 0o755)
+        script = """
+        set -uo pipefail
+        source "%s/notarize-lib.sh"
+        if favenio_verify_identity "%s" "Favenio.app"; then
+            echo "RC=0"
+        else
+            echo "RC=$?"
+        fi
+        """ % (REPO, bundle)
+        environment = dict(os.environ)
+        environment["PATH"] = stubs + os.pathsep + environment["PATH"]
+        environment["FAVENIO_TEAM_ID"] = "TESTTEAM00"
+        environment["CODESIGN_LOG"] = log
+        result = subprocess.run(["zsh", "-c", script], cwd=self.tmp.name,
+                                env=environment, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        output = result.stdout.decode("utf-8", "replace")
+        self.assertIn("RC=0", output)
+        requirement = Path(log).read_text(encoding="utf-8")
+        self.assertIn('certificate leaf[subject.OU] = "TESTTEAM00"',
+                      requirement)
+
+
+class RequiredTeamIdentityTest(unittest.TestCase):
+    """Ein Release braucht die Team-ID zwingend; Installation darf sie nach
+    dem bestehenden Vertrag weiterhin optional aus Umgebung oder Clone lesen."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def check(self, environment_team=None, configured_team=None):
+        if configured_team is not None:
+            subprocess.run(["git", "init", "-q"], cwd=self.tmp.name,
+                           check=True)
+            subprocess.run(
+                ["git", "config", "--local", "favenio.teamId",
+                 configured_team], cwd=self.tmp.name, check=True)
+        script = """
+        set -uo pipefail
+        source "%s/notarize-lib.sh"
+        if favenio_require_team_id; then
+            echo "RC=0"
+            echo "TEAM=$FAVENIO_TEAM_ID"
+        else
+            echo "RC=$?"
+        fi
+        """ % REPO
+        environment = dict(os.environ)
+        environment.pop("FAVENIO_TEAM_ID", None)
+        if environment_team is not None:
+            environment["FAVENIO_TEAM_ID"] = environment_team
+        result = subprocess.run(["zsh", "-c", script], cwd=self.tmp.name,
+                                env=environment, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        return result.stdout.decode("utf-8", "replace")
+
+    def test_missing_team_is_rejected(self):
+        output = self.check()
+        self.assertIn("RC=2", output)
+        self.assertIn("Entwickler-Team-ID", output)
+
+    def test_environment_team_is_exported(self):
+        output = self.check(environment_team="TESTTEAM00")
+        self.assertIn("RC=0", output)
+        self.assertIn("TEAM=TESTTEAM00", output)
+
+    def test_malformed_environment_team_is_rejected(self):
+        output = self.check(environment_team='BAD" or true')
+        self.assertIn("RC=2", output)
+        self.assertIn("zehn", output)
+
+    def test_clone_local_team_is_exported(self):
+        output = self.check(configured_team="LOCALTEAM0")
+        self.assertIn("RC=0", output)
+        self.assertIn("TEAM=LOCALTEAM0", output)
 
 
 class InstallFromDmgTest(unittest.TestCase):

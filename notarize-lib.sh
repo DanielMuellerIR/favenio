@@ -141,6 +141,40 @@ notarize_verify_installed() {
     fi
 }
 
+# Liest die erwartete Entwickler-Team-ID aus Umgebung oder Clone. Die
+# Installationsprüfung verwendet sie weiterhin optional; ein Release ruft
+# favenio_require_team_id auf und macht sie damit zum harten Tor.
+favenio_configured_team_id() {
+    local team="${FAVENIO_TEAM_ID:-}"
+    if [ -z "$team" ]; then
+        team="$(git config --local --get favenio.teamId 2>/dev/null || true)"
+    fi
+    printf '%s\n' "$team"
+}
+
+favenio_team_id_is_valid() {
+    local team="$1"
+    [ "${#team}" -eq 10 ] && [[ "$team" != *[^A-Z0-9]* ]]
+}
+
+favenio_require_team_id() {
+    local team
+    team="$(favenio_configured_team_id)"
+    if [ -z "$team" ]; then
+        echo "FEHLER: Keine Entwickler-Team-ID für den Release bekannt." >&2
+        echo "Entweder FAVENIO_TEAM_ID setzen oder einmalig für diesen Clone:" >&2
+        echo "  git config --local favenio.teamId <team-id>" >&2
+        return 2
+    fi
+    if ! favenio_team_id_is_valid "$team"; then
+        echo "FEHLER: Die Entwickler-Team-ID muss aus genau zehn" >&2
+        echo "Großbuchstaben oder Ziffern bestehen." >&2
+        return 2
+    fi
+    FAVENIO_TEAM_ID="$team"
+    export FAVENIO_TEAM_ID
+}
+
 # Prüft, ob ein Bundle wirklich das Favenio-Bundle dieses Namens ist.
 #
 # Gatekeeper und `codesign --verify` beantworten nur „gültig signiert und
@@ -156,7 +190,10 @@ notarize_verify_installed() {
 # Argumente: <bundlepfad> <bundlename, z. B. Favenio.app>
 # Rückgabe: 0 = passt, 2 = fremdes Bundle.
 favenio_verify_identity() {
-    local path="$1" app="$2"
+    # `path` ist in zsh ein Spezialparameter und an PATH gekoppelt. Deshalb
+    # hier ein ausdrücklicher Name: Sonst würde die lokale Variable genau das
+    # anschließend benötigte `codesign` aus dem Suchpfad entfernen.
+    local bundle_path="$1" app="$2"
     local expected="${FAVENIO_BUNDLE_IDS[$app]:-}"
     if [ -z "$expected" ]; then
         echo "FEHLER: keine erwartete Bundle-ID für $app hinterlegt." >&2
@@ -164,20 +201,22 @@ favenio_verify_identity() {
     fi
     local actual
     actual=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
-        "$path/Contents/Info.plist" 2>/dev/null || true)
+        "$bundle_path/Contents/Info.plist" 2>/dev/null || true)
     if [ "$actual" != "$expected" ]; then
         echo "FEHLER: $app trägt die Bundle-ID '${actual:-keine}' statt" \
              "'$expected' — das ist nicht Favenio." >&2
         return 2
     fi
-    local team="${FAVENIO_TEAM_ID:-}"
-    if [ -z "$team" ]; then
-        team="$(git config --local --get favenio.teamId 2>/dev/null || true)"
-    fi
+    local team
+    team="$(favenio_configured_team_id)"
     if [ -n "$team" ]; then
+        if ! favenio_team_id_is_valid "$team"; then
+            echo "FEHLER: Ungültige Entwickler-Team-ID konfiguriert." >&2
+            return 2
+        fi
         if ! codesign --verify \
             -R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"" \
-            "$path" 2>/dev/null; then
+            "$bundle_path" 2>/dev/null; then
             echo "FEHLER: $app stammt nicht vom erwarteten Entwickler-Team." >&2
             return 2
         fi
@@ -199,10 +238,10 @@ favenio_verify_identity() {
 # Argumente: <bundlepfad> <bundlename, z. B. Favenio.app>
 # Rückgabe: 0 = Produktions-Feed, 2 = fremder oder fehlender Feed.
 favenio_verify_feed_url() {
-    local path="$1" app="$2"
+    local bundle_path="$1" app="$2"
     local actual
     actual=$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' \
-        "$path/Contents/Info.plist" 2>/dev/null || true)
+        "$bundle_path/Contents/Info.plist" 2>/dev/null || true)
     if [ "$actual" != "$FAVENIO_FEED_URL" ]; then
         echo "FEHLER: $app sucht Updates unter '${actual:-keiner URL}' statt" >&2
         echo "'$FAVENIO_FEED_URL' — vermutlich ein geerbtes SPARKLE_FEED_URL." >&2

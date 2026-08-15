@@ -88,6 +88,14 @@ Regressionstest.
   halber Stand zurück. Die Transaktion fängt diese Signale jetzt selbst ab,
   holt beide alten Bundles zurück und schützt den Rollback vor einem zweiten
   Abbruchsignal. Reale Signaltests decken `SIGINT` und `SIGTERM` ab.
+- **Release-Herausgeber wird erzwungen:** Gültige Signatur und Notarisierung
+  allein beweisen nicht, dass ein Bundle von Favenios Entwickler-Team stammt.
+  Der lokale Release und das Appcast-Tor verlangen jetzt eine außerhalb des
+  Repos konfigurierte Team-ID und prüfen beide Apps mit einer `codesign`-
+  Anforderung gegen genau dieses Team, bevor ein DMG ausgeliefert oder für
+  Sparkle signiert wird. Die bisher optionale Installationsprüfung erreicht
+  `codesign` nun ebenfalls wirklich: Ihre lokale zsh-Variable `path` hatte
+  unbemerkt den gleichnamigen Suchpfad der Shell überschrieben.
 - **Schnellsuche, Statuszeile nach dem Ende:** Der gemerkte Hinweis war ein
   fertig formulierter Satz im Präsens. `finish()` und der Stopp bei 20
   Treffern beenden die Suche aber, bevor sie die Zeile neu setzen — die

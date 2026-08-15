@@ -29,11 +29,14 @@ its public counterpart is embedded as `SUPublicEDKey`.
 ## One-time GitHub setup
 
 1. Configure GitHub Pages to use **GitHub Actions** as its source.
-2. Store the private key as the Actions secret `SPARKLE_PRIVATE_KEY`. Export it
+2. Store the expected Apple developer team as the Actions variable
+   `FAVENIO_TEAM_ID`, either for the repository or the `github-pages`
+   environment. It is deliberately not committed to the public repository.
+3. Store the private key as the Actions secret `SPARKLE_PRIVATE_KEY`. Export it
    temporarily with Sparkle's `generate_keys -x`, pass the file to
    `gh secret set SPARKLE_PRIVATE_KEY` through stdin, and securely remove the
    temporary file.
-3. Keep a separate encrypted backup. Losing the key requires a controlled key
+4. Keep a separate encrypted backup. Losing the key requires a controlled key
    rotation delivered in a Developer ID-signed DMG.
 
 ## Release procedure
@@ -50,6 +53,10 @@ its public counterpart is embedded as `SUPublicEDKey`.
    There is no checked-in default profile name. Either set `NOTARY_PROFILE` per
    call as above, or store it once per clone with
    `git config --local favenio.notaryProfile <profile>`.
+
+   The developer team is also mandatory for a release. Set
+   `FAVENIO_TEAM_ID` for the command or store it once per clone with
+   `git config --local favenio.teamId <team-id>`.
 
    The script signs Sparkle's nested helpers from the inside out, builds the
    DMG, notarizes it and staples the ticket.

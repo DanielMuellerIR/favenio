@@ -136,7 +136,10 @@ vollständig daneben und tauscht dann. Geprüft wird auch die Produktidentität 
 Bundle-ID je Bundle und gleiche Version in beiden — denn eine gültige Signatur
 belegt nur „notarisiert", nicht „unsere App". Optional kommt das erwartete
 Entwickler-Team aus `FAVENIO_TEAM_ID` oder clone-lokal aus
-`git config --local favenio.teamId` (nicht eingecheckt, wie der Notary-Profilname).
+`git config --local favenio.teamId` (nicht eingecheckt, wie der
+Notary-Profilname). Für `release.sh` ist diese Team-ID Pflicht; das Appcast-Tor
+erhält sie aus der GitHub-Actions-Variable `FAVENIO_TEAM_ID`. Beide Release-
+Wege prüfen jedes Bundle mit einer `codesign`-Anforderung auf genau dieses Team.
 Der Austausch beider Bundles ist EINE Transaktion mit Rückholung des alten
 Stands; ein halb aktualisiertes `/Applications` darf es nicht geben.
 `--dmg <pfad>` installiert stattdessen aus einem fertigen DMG, `--verify-only`

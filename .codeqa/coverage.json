@@ -5,7 +5,8 @@
     "id": "20260815T134538404716+0200",
     "token_budget": 2000000,
     "status": "active",
-    "started_at": "2026-08-15T13:45:38+02:00"
+    "started_at": "2026-08-15T13:45:38+02:00",
+    "tokens_spent": 128208
   },
   "campaign_history": [],
   "scope": {
@@ -46,12 +47,22 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Schreibt nach /Applications; Identitätsprüfung, atomarer Austausch und Rollback schützen Nutzerdaten",
-      "state": "in_progress",
-      "active_run": {
+      "state": "completed",
+      "last_run": {
         "campaign_id": "20260815T134538404716+0200",
-        "started_at": "2026-08-15T13:46:18+02:00",
-        "required_review": "full",
-        "status_at_start": "pending"
+        "completed_at": "2026-08-15T13:53:24+02:00",
+        "observed_head": "c8064197ea6f678fb16feda00522900f6699a512",
+        "content_sha256": "69bd4136534933379ac03501397bad0eea55e428896b1c0492823d73950958f4",
+        "file_count": 3,
+        "review": "full",
+        "outcome": "improved",
+        "summary": "Weiche Abbruchsignale rollen den Zweibundle-Tausch vollständig zurück; Bundle-Kennung wird vor dem atomaren mv erfasst und Rollback gegen wiederholte Signale geschützt",
+        "tests": [
+          "python3 -m unittest discover -s tests: 169 passed",
+          "/usr/bin/python3 -m unittest discover -s tests: 169 passed",
+          "python3 und /usr/bin/python3 -m unittest tests.test_build_safety: jeweils 27 passed",
+          "zsh -n install.sh notarize-lib.sh release.sh: passed"
+        ]
       }
     },
     {
@@ -136,5 +147,21 @@
     "paradigm": "Schichtenmodell mit einem gemeinsamen Suchkern und dünnen AppKit-Adaptern",
     "fit": "passt",
     "recommendation": "Architektur beibehalten; lokale Duplikation in den Frontends bereichsweise reduzieren und die Sicherheitsgrenzen der Lieferpipeline weiter durch Tests härten, kein Paradigmenwechsel"
-  }
+  },
+  "themes": [
+    {
+      "id": "release-team-identity",
+      "summary": "Lokaler Release und Appcast-Workflow akzeptieren gültig signierte fremde Bundles, weil die Entwickler-Team-ID nicht verpflichtend geprüft wird",
+      "evidence": [
+        "notarize-lib.sh",
+        "release.sh",
+        ".github/workflows/publish-appcast.yml"
+      ],
+      "priority": 1,
+      "state": "in_progress",
+      "noted_at": "2026-08-15T13:53:53+02:00",
+      "campaign_id": "20260815T134538404716+0200",
+      "started_at": "2026-08-15T13:53:53+02:00"
+    }
+  ]
 }
