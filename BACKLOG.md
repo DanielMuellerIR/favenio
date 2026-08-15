@@ -5,13 +5,6 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
 1. Größen-/Datumsfilter und Mehrwortmodus als getrennte Produktentscheidungen.
 2. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
-3. CLI-Wart, nachgestellt und bestätigt: eine Option MIT Wert darf nicht
-   zwischen Muster und Startpfad stehen. `--content X --archive-depth 2 PFAD`
-   bricht mit „unrecognized arguments" und Exit 2 ab — argparse trennt die
-   Positionsargumente an der Option auf. Vor dem Muster oder hinter allen
-   Positionsargumenten funktioniert es. Der Wart ist alt, schon v0.14.0 zeigt
-   ihn. Entweder Parsing umbauen oder die Reihenfolge in beiden READMEs
-   festschreiben.
 
 ## Offen aus der Code-Review-Triage 2026-08-02
 

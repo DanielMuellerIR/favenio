@@ -521,6 +521,20 @@ class FavenioTest(TempTreeTest):
         code, _, _ = run([])
         self.assertEqual(code, 2)
 
+    def test_option_with_value_between_pattern_and_path(self):
+        # Optionen dürfen wie bei üblichen CLI-Werkzeugen zwischen den
+        # Positionsargumenten stehen. Das ist besonders praktisch, wenn ein
+        # vorhandener Aufruf nachträglich um eine Suchoption ergänzt wird.
+        code, lines, err = run([
+            "--json", "--content", "GEHEIMNIS",
+            "--archive-depth", "2", self.root,
+        ])
+        self.assertEqual(code, 0, err)
+        paths = [json.loads(line)["path"] for line in lines]
+        self.assertTrue(any(path.endswith(
+            "aussen.zip!/innen.zip!/tief/verstecktes.txt")
+            for path in paths))
+
     def test_single_file_as_start_path(self):
         # Auch eine einzelne Datei (statt Ordner) ist ein gültiger Startpfad.
         code, lines, _ = run(["notiz", os.path.join(self.root, "notiz.txt")])
@@ -857,8 +871,6 @@ class SingleCompressionTest(TempTreeTest):
                         gzip.compress("tief drin NADEL\n".encode("utf-8")))
         code, lines, _ = run(["--json", "--content", "NADEL", archive])
         self.assertEqual(code, 1)
-        # Option mit Wert VOR dem Muster: der argparse-Wart (BACKLOG 4)
-        # verträgt sie beim System-Python nicht zwischen Muster und Pfad.
         code, lines, _ = run(["--json", "--content", "--archive-depth", "2",
                               "NADEL", archive])
         self.assertEqual(code, 0)

@@ -43,7 +43,7 @@ import zlib
 __version__ = "0.21.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-08-03"
+__date__ = "2026-08-15"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -1333,7 +1333,10 @@ def main(argv=None):
                         help="app-eigener Temp-Root für Materialisierung")
     parser.add_argument("--version", action="version",
                         version="favenio " + __version__)
-    args = parser.parse_args(argv)
+    # Optionen mit Wert dürfen zwischen Muster und Startpfaden stehen. Das
+    # klassische parse_args() trennt bei nargs="*" auf älteren Python-
+    # Versionen die Positionsargumente an einer solchen Option auf.
+    args = parser.parse_intermixed_args(argv)
 
     # Extraktions-Modus: kein Suchlauf, nur einen Treffer auspacken.
     extract_options = {

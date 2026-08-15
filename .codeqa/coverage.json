@@ -6,7 +6,7 @@
     "token_budget": 2000000,
     "status": "active",
     "started_at": "2026-08-15T13:45:38+02:00",
-    "tokens_spent": 244398
+    "tokens_spent": 290696
   },
   "campaign_history": [],
   "scope": {
@@ -71,7 +71,13 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Einzige Suchsemantik; Traversierung, Archive, Extraktion und JSONL-Vertrag",
-      "state": "pending"
+      "state": "in_progress",
+      "active_run": {
+        "campaign_id": "20260815T134538404716+0200",
+        "started_at": "2026-08-15T14:09:37+02:00",
+        "required_review": "full",
+        "status_at_start": "pending"
+      }
     },
     {
       "id": "release-appcast",
@@ -85,12 +91,21 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Öffentliche Lieferkette, Signatur-, Notarisierungs- und Update-Feed-Tore",
-      "state": "in_progress",
-      "active_run": {
+      "state": "completed",
+      "last_run": {
         "campaign_id": "20260815T134538404716+0200",
-        "started_at": "2026-08-15T14:05:30+02:00",
-        "required_review": "full",
-        "status_at_start": "pending"
+        "completed_at": "2026-08-15T14:09:25+02:00",
+        "observed_head": "11253b1d194312126d3e70d7b43146e4fea9607f",
+        "content_sha256": "5f3c43ba1450e6c7bed33d709400f81c7edf52181190144a765a2f08cfa1b2b6",
+        "file_count": 5,
+        "review": "full",
+        "outcome": "improved",
+        "summary": "Appcast-Tor in Container- und Bundle-Prüfung getrennt; Notary-Ticket und Gatekeeper-Urteil des heruntergeladenen DMG werden vor hdiutil attach geprüft",
+        "tests": [
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 180 passed",
+          "Workflow-Bash-Syntax: 6 passed; zsh -n release.sh notarize-lib.sh: passed",
+          "assets/generate-dmg-background.swift real ausgeführt: 1200x840 PNG"
+        ]
       }
     },
     {

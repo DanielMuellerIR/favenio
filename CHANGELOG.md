@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.21.1 — 2026-08-03
+## 0.21.1 — 2026-08-15
 
 Korrekturen aus einer Code-Review-Triage; jeder Punkt mit Repro und
 Regressionstest.
@@ -101,6 +101,11 @@ Regressionstest.
   Release-DMG bereits eingehängt hatte. Die Container-Prüfung ist jetzt ein
   eigener getesteter Schritt vor dem Mounten; erst danach werden die beiden
   enthaltenen Apps geprüft und für Sparkle signiert.
+- **Freie Reihenfolge der CLI-Optionen:** Beim macOS-System-Python brach ein
+  Aufruf wie `--content X --archive-depth 2 PFAD` mit Exit 2 ab, weil eine
+  Option mit Wert zwischen Muster und Startpfad stand. Optionen und
+  Positionsargumente lassen sich jetzt wie bei üblichen CLI-Werkzeugen
+  mischen.
 - **Schnellsuche, Statuszeile nach dem Ende:** Der gemerkte Hinweis war ein
   fertig formulierter Satz im Präsens. `finish()` und der Stopp bei 20
   Treffern beenden die Suche aber, bevor sie die Zeile neu setzen — die
