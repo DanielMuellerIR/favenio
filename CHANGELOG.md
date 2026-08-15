@@ -82,6 +82,12 @@ Regressionstest.
   ersetzt, nahm der erste Lauf beim Zurückrollen dessen frisches Bundle mit.
   Die beim Einsetzen gemerkte Kennung des Verzeichniseintrags (Gerät und
   Inode) erkennt das jetzt und lässt ein fremdes Bundle stehen.
+- **Abbruch während der Installation:** `INT`, `TERM` und `HUP` konnten den
+  Zweibundle-Tausch bisher zwischen den Apps beenden. Die Sperre verschwand,
+  aber neue und alte Bundles sowie Ablage- und Sicherungsordner blieben als
+  halber Stand zurück. Die Transaktion fängt diese Signale jetzt selbst ab,
+  holt beide alten Bundles zurück und schützt den Rollback vor einem zweiten
+  Abbruchsignal. Reale Signaltests decken `SIGINT` und `SIGTERM` ab.
 - **Schnellsuche, Statuszeile nach dem Ende:** Der gemerkte Hinweis war ein
   fertig formulierter Satz im Präsens. `finish()` und der Stopp bei 20
   Treffern beenden die Suche aber, bevor sie die Zeile neu setzen — die

@@ -23,17 +23,6 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
   `notarize-lib.sh` (~153) nutzt bislang nur `install.sh` (~120). Offen ist
   auch, woher der Workflow die Team-ID nimmt: Sie steht bewusst nicht im
   öffentlichen Repo, bräuchte also ein GitHub-Secret oder eine Variable.
-- Kein Rückholpfad, wenn die Umbau-Phase abgebrochen wird.
-  `favenio_install_bundles` (`notarize-lib.sh` ~257–280) sichert und tauscht
-  beide Bundles über mehrere Sekunden; `_favenio_install_restore` läuft nur
-  bei einem Fehler im normalen Ablauf. Ein Ctrl-C oder ein Signal genau in
-  diesem Fenster hinterlässt Ablage- und Sicherungsordner samt halb
-  getauschtem Stand; `install.sh` räumt in seinem EXIT-`cleanup()` nur den
-  Mountpoint und die eigene Installationssperre auf. Fehlt: ein Trap auf
-  INT/TERM (bzw. ein Aufräumschritt beim nächsten Start), der die
-  `.favenio-install.*`- und `.favenio-previous.*`-Ordner erkennt und den alten
-  Stand zurückholt.
-
 ## Offen aus der Code-Review-Triage 2026-08-02
 
 - Leerer Ordner in einem ISO wird als Datei geführt. `bsdtar -tf` listet ihn

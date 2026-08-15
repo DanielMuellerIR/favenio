@@ -267,6 +267,25 @@ _favenio_install_unlock() {
     FAVENIO_INSTALL_LOCK=""
 }
 
+# Ein weiches Abbruchsignal darf die Transaktion nicht zwischen den beiden
+# Bundles stehen lassen. Die lokalen Werte aus favenio_install_bundles sind in
+# zsh auch für diesen dynamisch aufgerufenen Handler sichtbar. Nach dem
+# Rollback endet der ganze Installationsprozess mit dem zugesagten Fehlercode;
+# ein bloßes `return` aus einem zsh-Trap würde den Aufrufer dagegen mit Status
+# 0 weiterlaufen lassen.
+_favenio_install_interrupted() {
+    local dest="$1" stage="$2" backup="$3" lock="$4"
+    shift 4
+    # Nach einem bereits abgeschlossenen Rollback ist die globale Sperre leer.
+    # In diesem winzigen Rückkehrfenster darf ein spätes Signal keine Sperre
+    # entfernen, die inzwischen schon einem neuen Lauf gehört.
+    [ "${FAVENIO_INSTALL_LOCK:-}" = "$lock" ] || exit 2
+    echo "FEHLER: Installation abgebrochen; alter Stand wird zurückgeholt." >&2
+    _favenio_install_restore "$dest" "$stage" "$backup" "$lock" "$@" \
+        || true
+    exit 2
+}
+
 # Beide Bundles als EINE Transaktion nach <zielordner> bringen.
 #
 # Ablauf: erst BEIDE Bundles vollständig daneben kopieren und dort prüfen,
@@ -283,8 +302,11 @@ _favenio_install_unlock() {
 # Argumente: <quellordner> <zielordner>
 # Rückgabe: 0 = beide installiert und geprüft, 2 = alter Stand wiederhergestellt.
 favenio_install_bundles() {
+    # Signal-Traps gelten nur für diesen Funktionsaufruf. Ein aufrufendes
+    # Skript behält danach seine eigenen Handler.
+    setopt localoptions localtraps
     local source_dir="$1" dest="$2"
-    local app
+    local app staged_id
     # Was dieser Lauf schon eingesetzt hat, je Eintrag "Name|Kennung". Diese
     # Bundles müssen beim Zurückrollen weg — auch wenn es gar keinen alten
     # Stand gibt: Bei einer ERSTinstallation existiert kein Backup, und ohne
@@ -302,6 +324,12 @@ favenio_install_bundles() {
     # Damit der Aufräum-Trap von install.sh die Sperre auch bei Ctrl-C wieder
     # abnimmt; die Funktion selbst räumt sie auf jedem eigenen Weg weg.
     FAVENIO_INSTALL_LOCK="$lock"
+    # Erst NACH erfolgreichem Sperren installieren: Sonst könnte ein Signal
+    # beim abgewiesenen zweiten Lauf dessen fremde Sperre wegräumen. Ab hier
+    # räumen INT, TERM und HUP Ablage, Sicherung und eingesetzte Bundles
+    # gemeinsam auf; die Variablen sehen beim Signal die aktuelle Liste.
+    trap '_favenio_install_interrupted "$dest" "$stage" "$backup" "$lock" "${installed[@]}"' \
+        HUP INT TERM
     rm -rf "$stage" "$backup"
     if ! mkdir -p "$stage" "$backup"; then
         echo "FEHLER: Ablageordner in $dest nicht anlegbar." >&2
@@ -335,15 +363,24 @@ favenio_install_bundles() {
                 "${installed[@]}"
             return 2
         fi
+        # Die Kennung VOR dem Umbenennen notieren: Sie bleibt beim atomaren mv
+        # erhalten. Trifft ein Signal direkt nach dem mv ein, kennt der
+        # Rollback das neue Bundle damit schon und verwechselt es nicht mit
+        # einem fremden, parallel eingesetzten Verzeichniseintrag.
+        staged_id=$(_favenio_dir_id "$stage/$app")
+        if [ -z "$staged_id" ]; then
+            echo "FEHLER: Kennung der neuen $app ließ sich nicht lesen." >&2
+            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
+                "${installed[@]}"
+            return 2
+        fi
+        installed+=("$app|$staged_id")
         if ! mv "$stage/$app" "$dest/$app"; then
             echo "FEHLER: neue $app ließ sich nicht einsetzen." >&2
             _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
             return 2
         fi
-        # Ab hier liegt das neue Bundle am Zielort und gehört ins Rollback —
-        # samt Kennung des eingesetzten Verzeichniseintrags.
-        installed+=("$app|$(_favenio_dir_id "$dest/$app")")
         # Nach dem Tausch zählt nur noch, was WIRKLICH im Zielordner liegt.
         if ! notarize_verify_installed "$dest/$app"; then
             echo "FEHLER: installierte $app ist nicht notarisiert/gültig." >&2
@@ -354,6 +391,11 @@ favenio_install_bundles() {
         echo "  $app installiert und geprüft."
     done
 
+    # Beide Bundles sind jetzt eingesetzt und am Ziel geprüft: Die Transaktion
+    # ist fachlich abgeschlossen. Während des kurzen Entfernens der alten
+    # Kopien wird ein Signal ignoriert, denn ein Rollback ohne die womöglich
+    # schon gelöschte Sicherung würde gerade erst einen halben Stand erzeugen.
+    trap '' HUP INT TERM
     rm -rf "$stage" "$backup"
     _favenio_install_unlock "$lock"
     return 0
@@ -368,6 +410,11 @@ favenio_install_bundles() {
 # Aufrufer meldet ohnehin Exit 2; der Status ist für Tests und künftige
 # Aufrufer da, die Begründung steht auf stderr.
 _favenio_install_restore() {
+    # Ein einmal begonnener Rollback ist die Datenrettung. Weitere weiche
+    # Abbruchsignale werden für diese kurze kritische Phase ignoriert, damit
+    # beide alten Bundles vollständig zurückkehren.
+    setopt localoptions localtraps
+    trap '' HUP INT TERM
     local dest="$1" stage="$2" backup="$3" lock="$4"
     shift 4
     local installed=("$@")

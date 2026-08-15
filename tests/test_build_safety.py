@@ -1,8 +1,10 @@
 import os
 import plistlib
+import signal
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -80,11 +82,9 @@ class InstallTransactionTest(unittest.TestCase):
                   encoding="utf-8") as handle:
             return handle.read()
 
-    def run_install(self, verify_body, prelude=""):
-        """Ruft favenio_install_bundles mit einer gestellten Prüffunktion auf
-        (die echte fragt codesign/spctl/stapler). `prelude` läuft davor und
-        kann zusätzlich Werkzeuge unterschieben. Liefert die Ausgabe."""
-        script = """
+    def install_script(self, verify_body, prelude=""):
+        """Baut ein Testskript mit einer gestellten Bundle-Prüfung."""
+        return """
         set -euo pipefail
         source "%s/notarize-lib.sh"
         %s
@@ -97,6 +97,10 @@ class InstallTransactionTest(unittest.TestCase):
             echo "RC=$?"
         fi
         """ % (REPO, prelude, verify_body, self.source, self.dest)
+
+    def run_install(self, verify_body, prelude=""):
+        """Führt das Testskript aus und liefert seine gemeinsame Ausgabe."""
+        script = self.install_script(verify_body, prelude)
         result = subprocess.run(["zsh", "-c", script], cwd=REPO,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT)
@@ -233,6 +237,49 @@ class InstallTransactionTest(unittest.TestCase):
         self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
         self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
         self.assertEqual(self.leftovers(), [])
+
+    def assert_signal_during_swap_restores_both_bundles(self, signum):
+        # Beim Einsetzen der zweiten App ist die erste bereits neu und die
+        # zweite alte App liegt im Sicherungsordner. INT oder TERM darf diesen
+        # Zwischenstand weder liegen lassen noch nur die Sperre entfernen.
+        prelude = r'''
+        mv() {
+            if [[ "$1" == */.favenio-install.*/FavenioQuick.app &&
+                  "$2" == "$FAVENIO_TEST_DEST/FavenioQuick.app" ]]; then
+                print -r -- bereit > "$FAVENIO_TEST_READY"
+                while true; do :; done
+            fi
+            command mv "$@"
+        }'''
+        ready = Path(self.tmp.name) / ("ready-%s" % signum)
+        environment = dict(os.environ)
+        environment["FAVENIO_TEST_DEST"] = self.dest
+        environment["FAVENIO_TEST_READY"] = str(ready)
+        process = subprocess.Popen(
+            ["zsh", "-c", self.install_script("    return 0", prelude)],
+            cwd=REPO, env=environment, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT)
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            if process.poll() is not None:
+                break
+            time.sleep(0.01)
+        if not ready.exists():
+            process.kill()
+            output = process.communicate()[0].decode("utf-8", "replace")
+            self.fail("Tauschphase nicht erreicht:\n%s" % output)
+        process.send_signal(signum)
+        output = process.communicate(timeout=5)[0].decode("utf-8", "replace")
+        self.assertEqual(process.returncode, 2, output)
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
+        self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
+        self.assertEqual(self.leftovers(), [])
+
+    def test_sigint_during_the_swap_restores_both_bundles(self):
+        self.assert_signal_during_swap_restores_both_bundles(signal.SIGINT)
+
+    def test_sigterm_during_the_swap_restores_both_bundles(self):
+        self.assert_signal_during_swap_restores_both_bundles(signal.SIGTERM)
 
 
 class InstallIdentityTest(unittest.TestCase):
