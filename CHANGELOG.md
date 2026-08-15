@@ -106,6 +106,13 @@ Regressionstest.
   Option mit Wert zwischen Muster und Startpfad stand. Optionen und
   Positionsargumente lassen sich jetzt wie bei üblichen CLI-Werkzeugen
   mischen.
+- **Lokale und CI-Builds:** Der Ad-hoc-Fallback aktivierte Hardened Runtime,
+  obwohl App und Sparkle-Framework ohne Developer-ID keine gemeinsame Team-ID
+  haben. macOS verweigerte deshalb beim Headless-Test das Laden von Sparkle.
+  Ad-hoc-Builds bleiben jetzt bewusst ohne Hardened Runtime; Release-Builds
+  mit Developer-ID behalten sie. Außerdem schreibt `plutil` eine abweichende
+  `SPARKLE_FEED_URL` sicher in beide Plists, sodass gültige URLs mit `&` das
+  XML nicht mehr beschädigen.
 - **Schnellsuche, Statuszeile nach dem Ende:** Der gemerkte Hinweis war ein
   fertig formulierter Satz im Präsens. `finish()` und der Stopp bei 20
   Treffern beenden die Suche aber, bevor sie die Zeile neu setzen — die

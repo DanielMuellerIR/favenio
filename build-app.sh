@@ -55,11 +55,12 @@ EOF
 # Builds hinweg — Ad-hoc (-s -) ändert bei JEDEM Build den cdhash und setzt
 # alle Freigaben zurück. Identität automatisch aus der Login-Keychain lesen
 # (überschreibbar per FAVENIO_SIGN_ID); ohne Developer-ID Rückfall auf Ad-hoc.
-# --options runtime (Hardened Runtime) ist Pflicht für die Notarisierung
-# (release.sh). Damit die Finder-AppleScripts dabei erlaubt bleiben, wird das
-# Automation-Entitlement aus assets/favenio.entitlements mitsigniert.
-# --timestamp hält die Signatur nach Zertifikatsablauf gültig (bei Ad-hoc
-# wird es von codesign ignoriert).
+# --options runtime (Hardened Runtime) ist Pflicht für die Notarisierung und
+# wird deshalb bei Developer-ID-Builds gesetzt. Ad-hoc-signierte App und
+# Framework haben keine gemeinsame Team-ID; mit Hardened Runtime würde macOS
+# das Framework beim Start ablehnen. Der lokale/CI-Fallback bleibt deshalb
+# bewusst ohne Hardened Runtime und ist nicht für Releases geeignet.
+# Das Automation-Entitlement wird in beiden Fällen mitgegeben.
 SIGN_ID="${FAVENIO_SIGN_ID:-}"
 if [ -z "$SIGN_ID" ]; then
     # `|| true`: Ohne Developer-ID (z. B. auf CI-Runnern) findet grep nichts
@@ -69,15 +70,14 @@ if [ -z "$SIGN_ID" ]; then
         | grep "Developer ID Application" | head -1 \
         | sed -E 's/^[^"]*"([^"]*)".*/\1/' || true)
 fi
-if [ -n "$SIGN_ID" ]; then
+if [ -n "$SIGN_ID" ] && [ "$SIGN_ID" != "-" ]; then
     NESTED_SIGN=(--force --options runtime --timestamp --sign "$SIGN_ID")
     APP_SIGN=(--force --options runtime --timestamp \
           --entitlements assets/favenio.entitlements --sign "$SIGN_ID")
     echo "Signiere mit stabiler Identität: $SIGN_ID"
 else
-    NESTED_SIGN=(--force --options runtime --sign -)
-    APP_SIGN=(--force --options runtime \
-          --entitlements assets/favenio.entitlements --sign -)
+    NESTED_SIGN=(--force --sign -)
+    APP_SIGN=(--force --entitlements assets/favenio.entitlements --sign -)
     echo "WARNUNG: keine Developer-ID gefunden → Ad-hoc-Signatur " \
          "(TCC-Freigaben überleben KEINEN Rebuild)."
 fi
@@ -104,6 +104,15 @@ embed_sparkle_and_licenses() {
     cp "$SPARKLE_LICENSE" \
         "$app/Contents/Resources/Sparkle-LICENSE.txt"
     sign_sparkle_framework "$framework"
+}
+
+set_sparkle_feed_url() {
+    local app="$1"
+    # Die dokumentiert überschreibbare URL kann XML-Zeichen wie `&`
+    # enthalten. plutil serialisiert sie sicher; rohe Interpolation in das
+    # Here-Dokument würde eine ungültige Info.plist erzeugen.
+    /usr/bin/plutil -replace SUFeedURL -string "$SPARKLE_FEED_URL" \
+        "$app/Contents/Info.plist"
 }
 
 # Deployment-Target festnageln: Ohne -target erbt das Binary das macOS der
@@ -142,7 +151,7 @@ cat > Favenio.app/Contents/Info.plist <<EOF
     <key>NSHighResolutionCapable</key><true/>
     <!-- Automatisch prüfen, aber nur nach ausdrücklicher Zustimmung
          installieren. Feed und Archiv müssen Sparkle-signiert sein. -->
-    <key>SUFeedURL</key><string>${SPARKLE_FEED_URL}</string>
+    <key>SUFeedURL</key><string></string>
     <key>SUPublicEDKey</key><string>${SPARKLE_PUBLIC_KEY}</string>
     <key>SUEnableAutomaticChecks</key><true/>
     <key>SUAutomaticallyUpdate</key><false/>
@@ -163,6 +172,7 @@ cat > Favenio.app/Contents/Info.plist <<EOF
 </dict>
 </plist>
 EOF
+set_sparkle_feed_url Favenio.app
 embed_sparkle_and_licenses Favenio.app
 codesign "${APP_SIGN[@]}" Favenio.app
 codesign --verify --deep --strict Favenio.app
@@ -196,7 +206,7 @@ cat > FavenioQuick.app/Contents/Info.plist <<EOF
     <key>LSUIElement</key><true/>
     <!-- Eigenes App-Bundle: prüft denselben signierten Produkt-Feed und
          aktualisiert sich aus demselben Release-DMG wie die Haupt-App. -->
-    <key>SUFeedURL</key><string>${SPARKLE_FEED_URL}</string>
+    <key>SUFeedURL</key><string></string>
     <key>SUPublicEDKey</key><string>${SPARKLE_PUBLIC_KEY}</string>
     <key>SUEnableAutomaticChecks</key><true/>
     <key>SUAutomaticallyUpdate</key><false/>
@@ -209,6 +219,7 @@ cat > FavenioQuick.app/Contents/Info.plist <<EOF
 </dict>
 </plist>
 EOF
+set_sparkle_feed_url FavenioQuick.app
 embed_sparkle_and_licenses FavenioQuick.app
 codesign "${APP_SIGN[@]}" FavenioQuick.app
 codesign --verify --deep --strict FavenioQuick.app

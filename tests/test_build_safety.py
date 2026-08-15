@@ -53,6 +53,33 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertIn('FAVENIO_FEED_URL="%s"' % InstallFromDmgTest.FEED_URL,
                       library)
 
+    def test_feed_url_is_not_interpolated_into_plist_xml(self):
+        """Eine URL darf XML-Zeichen wie `&` enthalten. Der Wert muss daher
+        vom Plist-Werkzeug serialisiert werden statt roh im Here-Dokument zu
+        landen."""
+        source = Path("build-app.sh").read_text(encoding="utf-8")
+        self.assertNotIn("<string>${SPARKLE_FEED_URL}</string>", source)
+        self.assertIn(
+            '/usr/bin/plutil -replace SUFeedURL -string "$SPARKLE_FEED_URL"',
+            source)
+        self.assertIn("set_sparkle_feed_url Favenio.app", source)
+        self.assertIn("set_sparkle_feed_url FavenioQuick.app", source)
+
+    def test_ad_hoc_build_omits_hardened_runtime(self):
+        """Ohne Developer-ID haben App und Framework keine gemeinsame
+        Team-ID. Hardened Runtime würde Sparkle dann beim Laden ablehnen."""
+        source = Path("build-app.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'if [ -n "$SIGN_ID" ] && [ "$SIGN_ID" != "-" ]; then', source)
+        self.assertIn('NESTED_SIGN=(--force --sign -)', source)
+        self.assertIn(
+            'APP_SIGN=(--force --entitlements assets/favenio.entitlements '
+            '--sign -)', source)
+
+    def test_ci_explicitly_exercises_ad_hoc_build(self):
+        workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn('FAVENIO_SIGN_ID: "-"', workflow)
+
 
 class InstallTransactionTest(unittest.TestCase):
     """Der Austausch beider Bundles ist EINE Transaktion: Entweder liegen

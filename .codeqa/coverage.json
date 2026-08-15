@@ -6,7 +6,7 @@
     "token_budget": 2000000,
     "status": "active",
     "started_at": "2026-08-15T13:45:38+02:00",
-    "tokens_spent": 290696
+    "tokens_spent": 375941
   },
   "campaign_history": [],
   "scope": {
@@ -71,12 +71,21 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Einzige Suchsemantik; Traversierung, Archive, Extraktion und JSONL-Vertrag",
-      "state": "in_progress",
-      "active_run": {
+      "state": "completed",
+      "last_run": {
         "campaign_id": "20260815T134538404716+0200",
-        "started_at": "2026-08-15T14:09:37+02:00",
-        "required_review": "full",
-        "status_at_start": "pending"
+        "completed_at": "2026-08-15T14:13:57+02:00",
+        "observed_head": "1910db01cf8f12f0e577dade9cf9cdfa07f030ed",
+        "content_sha256": "1ad922d583e2856081e10cf346d979b3ccdf408df8bdd0663abae8458c672496",
+        "file_count": 2,
+        "review": "full",
+        "outcome": "improved",
+        "summary": "CLI-Parsing auf parse_intermixed_args umgestellt; Optionen mit Wert dürfen nun auch unter macOS-System-Python zwischen Muster und Startpfad stehen",
+        "tests": [
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 181 passed",
+          "Gezielter Regressionstest war vor dem Fix unter /usr/bin/python3 rot und ist danach unter beiden Interpretern grün",
+          "./build-app.sh: beide signierten Bundles gebaut; beide Headless-Selbsttests bestanden"
+        ]
       }
     },
     {
@@ -123,7 +132,13 @@
       "risk": "high",
       "priority": 2,
       "reason": "Reproduzierbarer App-Aufbau, gepinnte Updater-Abhängigkeit, Signierung und CI",
-      "state": "pending"
+      "state": "in_progress",
+      "active_run": {
+        "campaign_id": "20260815T134538404716+0200",
+        "started_at": "2026-08-15T14:14:04+02:00",
+        "required_review": "full",
+        "status_at_start": "pending"
+      }
     },
     {
       "id": "quick-app",
