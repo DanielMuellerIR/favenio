@@ -205,13 +205,15 @@ The GUI is only a frontend: searching always happens through `favenio.py`.
 A Spotlight alternative for the Finder toolbar: drag `FavenioQuick.app` into
 the header of a Finder window while holding **Cmd**.
 
-- One click on the icon opens a small floating search field (no Dock icon)
+- One click on the icon opens a small regular app window (no Dock icon)
 - **Return** starts the name search (including archives) in the search scope
   shown next to the field — by default the folder of the frontmost Finder
   window
-- With hits, the main app opens with the finished list (hits are handed
-  over, nothing is searched twice); without hits, only the small field with
-  a message remains
+- The type switch limits hits to files and folders, files only, or folders only
+- The result columns are sortable and resizable; horizontal scrolling exposes
+  long source paths
+- Quick search shows up to 20 hits. **All in Favenio** (or **Cmd-Return**) hands
+  them to the main app, which continues the same search without duplicates
 - **Esc** (with an empty field) quits the quick search
 
 The search scope is never guessed silently. While the Finder is being asked,

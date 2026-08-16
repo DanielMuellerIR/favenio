@@ -211,14 +211,17 @@ Die GUI ist nur ein Frontend: Gesucht wird immer über `favenio.py`.
 Spotlight-Ersatz für die Finder-Toolbar: `FavenioQuick.app` bei
 gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
 
-- Ein Klick aufs Icon öffnet ein kleines schwebendes Suchfeld
-  (kein Dock-Icon)
+- Ein Klick aufs Icon öffnet ein kleines normales App-Fenster (kein Dock-Icon)
 - **Return** startet die Namenssuche (inkl. Archive) in dem Suchbereich, der
   neben dem Feld steht — voreingestellt ist der Ordner des vordersten
   Finder-Fensters
-- Bei Treffern öffnet sich die große GUI mit der fertigen Liste
-  (die Treffer werden übergeben, es wird nicht doppelt gesucht);
-  ohne Treffer bleibt nur das kleine Feld mit einer Meldung
+- Der Typ-Umschalter begrenzt Treffer auf Dateien und Ordner, nur Dateien oder
+  nur Ordner
+- Die Ergebnisspalten sind sortierbar und verschiebbar; horizontales Scrollen
+  macht lange Quellpfade zugänglich
+- Die Schnellsuche zeigt bis zu 20 Treffer. **Alle in Favenio** oder
+  **Cmd-Return** übergibt sie an die Haupt-App, die dieselbe Suche ohne
+  Duplikate fortsetzt
 - **Esc** (bei leerem Feld) beendet die Schnellsuche
 
 Der Suchbereich wird nie stillschweigend geraten. Solange der Finder befragt

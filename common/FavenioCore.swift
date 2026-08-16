@@ -149,6 +149,41 @@ struct Hit: Hashable {
     }
 }
 
+/// Gemeinsame, strikte Sortierordnung für beide Trefferlisten. Der feste
+/// Pfad-Tie-Breaker verhindert, dass zwei verschiedene Treffer einander in
+/// beiden Richtungen als „kleiner“ ansehen.
+func compareHits(_ lhs: Hit, _ rhs: Hit, key: String,
+                 ascending: Bool) -> Bool {
+    let primary: ComparisonResult
+    switch key {
+    case "size":
+        primary = (lhs.size ?? -1) < (rhs.size ?? -1) ? .orderedAscending
+            : (lhs.size ?? -1) > (rhs.size ?? -1) ? .orderedDescending
+            : .orderedSame
+    case "type":
+        primary = lhs.typeDescription.localizedCaseInsensitiveCompare(
+            rhs.typeDescription)
+    case "line":
+        primary = (lhs.line ?? -1) < (rhs.line ?? -1) ? .orderedAscending
+            : (lhs.line ?? -1) > (rhs.line ?? -1) ? .orderedDescending
+            : .orderedSame
+    case "path":
+        primary = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
+    default:
+        primary = lhs.displayName.localizedCaseInsensitiveCompare(
+            rhs.displayName)
+    }
+    if primary != .orderedSame {
+        return ascending ? primary == .orderedAscending
+                         : primary == .orderedDescending
+    }
+    let pathOrder = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
+    if pathOrder != .orderedSame { return pathOrder == .orderedAscending }
+    if lhs.kind != rhs.kind { return lhs.kind < rhs.kind }
+    if lhs.line != rhs.line { return (lhs.line ?? -1) < (rhs.line ?? -1) }
+    return false
+}
+
 /// Findet den Python-Kern: zuerst im App-Bundle (Resources), sonst im
 /// Arbeitsverzeichnis (Entwicklungs-Fallback beim Direktstart des Binarys).
 func findCLI() -> String? {

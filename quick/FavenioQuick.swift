@@ -3,19 +3,18 @@
 // Gedacht als Spotlight-Ersatz zum In-die-Toolbar-Ziehen (Cmd-Drag der
 // App in die Finder-Kopfleiste):
 //
-//   Klick aufs Toolbar-Icon  → schwebendes Suchfenster (über allem)
+//   Klick aufs Toolbar-Icon  → normales Suchfenster ohne Dock-Icon
 //   0,6 s Pause / Return     → Suche läuft (Namenssuche; Archive/Inhalt
 //                              per Umschalter, Default AUS = schnell)
 //   Treffer                  → erscheinen LIVE in der Liste (max. 20).
 //                              Doppelklick öffnet, Rechtsklick „Öffnen mit".
-//   ab dem 20. Treffer       → die große Favenio.app übernimmt: zeigt die
-//                              20 sofort und sucht dort live weiter.
+//   ab dem 20. Treffer       → Quick stoppt; der Button übergibt die 20 an
+//                              Favenio, das dort live weitersucht.
 //   Esc (bei leerem Feld)    → App beendet sich
 //
-// Die App ist ein „Accessory" (LSUIElement): kein Dock-Icon. Anders als ein
-// klassisches Panel bleibt sie sichtbar, wenn eine andere App nach vorn kommt
-// (hidesOnDeactivate = false) — sonst verschwände sie bei jeder macOS-
-// Berechtigungsfrage mitten in der Suche.
+// Die App ist ein „Accessory" (LSUIElement): kein Dock-Icon. Ihr Fenster ist
+// trotzdem ein normales NSWindow wie das Fastra-Hauptfenster und kein ständig
+// schwebendes Panel.
 
 import AppKit
 import Quartz   // QLPreviewPanel (QuickLook-Vorschau)
@@ -61,9 +60,13 @@ final class QuickController: NSObject, NSApplicationDelegate,
     static let windowWidth: CGFloat = 560
     static let windowHeight: CGFloat = 420   // Default; Fenster ist resizable
 
-    var panel: NSPanel!
+    var window: NSWindow!
     let field = NSSearchField()
     let scopePopup = NSPopUpButton()    // Suchbereich (Finder-Fenster / Ordner)
+    // Dateien & Ordner / nur Dateien / nur Ordner.
+    let typeControl = NSSegmentedControl(
+        labels: ["Beides", "Dateien", "Ordner"],
+        trackingMode: .selectOne, target: nil, action: nil)
     let archivesCheckbox = NSButton(checkboxWithTitle: "In Archiven",
                                     target: nil, action: nil)
     let contentCheckbox = NSButton(checkboxWithTitle: "Inhalt",
@@ -82,6 +85,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
     let openButton = NSButton(title: "Alle in Favenio ↗ ⌘↩",
                               target: nil, action: nil)
     let infoLabel = NSTextField(labelWithString: QuickController.hint)
+    var infoRow: NSStackView!
     let spinner = NSProgressIndicator()
     let tableView = NSTableView()
     let scrollView = NSScrollView()
@@ -141,12 +145,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu(appName: "Favenio Schnellsuche", includeClose: true)
         installUpdateMenuItem(updaterController: updaterController)
-        buildPanel()
-        showPanel()
+        buildWindow()
+        showWindow()
         // Beim allerersten Start ist die App noch im Launch-Handshake —
         // NSApp.activate verpufft dann. Ein zweites Aktivieren im nächsten
         // Runloop-Durchlauf holt das Fenster zuverlässig nach vorn.
-        DispatchQueue.main.async { [weak self] in self?.showPanel() }
+        DispatchQueue.main.async { [weak self] in self?.showWindow() }
 
         // Tastatur: Esc (leeres Feld) beendet; Cmd+Return öffnet die Haupt-App;
         // Leertaste in der Trefferliste zeigt die QuickLook-Vorschau.
@@ -163,7 +167,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 return nil
             }
             if event.keyCode == 49,                        // 49 = Leertaste
-               self.panel.firstResponder === self.tableView {
+               self.window.firstResponder === self.tableView {
                 self.togglePreview()
                 return nil
             }
@@ -178,7 +182,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// Erneuter Klick aufs Toolbar-Icon, während die App schon läuft.
     func applicationShouldHandleReopen(_ sender: NSApplication,
                                        hasVisibleWindows: Bool) -> Bool {
-        showPanel()
+        showWindow()
         return true
     }
 
@@ -210,23 +214,21 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     // ---------- Aufbau ----------
 
-    func buildPanel() {
-        panel = NSPanel(
+    func buildWindow() {
+        window = NSWindow(
             contentRect: NSRect(x: 0, y: 0,
                                 width: Self.windowWidth,
                                 height: Self.windowHeight),
-            styleMask: [.titled, .closable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        panel.minSize = NSSize(width: 420, height: 200)
+        window.minSize = NSSize(width: 520, height: 240)
         // Titel zeigt Version + Datum dieser Version.
-        panel.title = "FavenioQuick \(favenioVersion) — \(favenioDate)"
-        panel.titleVisibility = .visible
-        panel.isMovableByWindowBackground = true
-        panel.level = .floating              // schwebt über allen Fenstern
-        panel.hidesOnDeactivate = false      // NICHT verschwinden bei App-Wechsel
-        panel.isReleasedWhenClosed = false
-        panel.delegate = self
-        guard let content = panel.contentView else { return }
+        window.title = "FavenioQuick \(favenioVersion) — \(favenioDate)"
+        window.titleVisibility = .visible
+        window.isMovableByWindowBackground = true
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        guard let content = window.contentView else { return }
 
         // Suchfeld: höher, eingefärbt, ohne Fokusrahmen.
         field.placeholderString = "Favenio-Schnellsuche…"
@@ -250,6 +252,16 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // knappem Platz der Ordner sichtbar bleibt und nicht die Beschriftung.
         (scopePopup.cell as? NSPopUpButtonCell)?.lineBreakMode =
             .byTruncatingHead
+        scopePopup.setContentHuggingPriority(NSLayoutConstraint.Priority(1),
+                                             for: .horizontal)
+        scopePopup.setContentCompressionResistancePriority(.defaultLow,
+                                                           for: .horizontal)
+
+        typeControl.controlSize = .small
+        typeControl.font = NSFont.systemFont(ofSize: 11)
+        typeControl.selectedSegment = 0
+        typeControl.target = self
+        typeControl.action = #selector(optionsChanged)
 
         for checkbox in [archivesCheckbox, contentCheckbox, hiddenCheckbox,
                          exactCheckbox] {
@@ -271,6 +283,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
         openButton.target = self
         openButton.action = #selector(openInMainApp)
         openButton.isEnabled = false        // erst wenn es Treffer gibt
+        openButton.toolTip = "Favenio übernimmt die ersten 20 Treffer und "
+            + "setzt die Suche für alle weiteren fort (⌘↩)."
 
         infoLabel.font = NSFont.systemFont(ofSize: 11)
         infoLabel.textColor = .secondaryLabelColor
@@ -292,13 +306,13 @@ final class QuickController: NSObject, NSApplicationDelegate,
         searchRow.orientation = .horizontal
         searchRow.spacing = 8
         searchRow.alignment = .centerY
-        let optionsRow = NSStackView(views: [archivesCheckbox, contentCheckbox,
-                                             hiddenCheckbox, exactCheckbox,
-                                             openButton])
+        let optionsRow = NSStackView(views: [typeControl, archivesCheckbox,
+                                             contentCheckbox, hiddenCheckbox,
+                                             exactCheckbox])
         optionsRow.orientation = .horizontal
-        optionsRow.spacing = 14
+        optionsRow.spacing = 10
         optionsRow.alignment = .centerY
-        let infoRow = NSStackView(views: [spinner, infoLabel])
+        infoRow = NSStackView(views: [spinner, infoLabel, openButton])
         infoRow.orientation = .horizontal
         infoRow.spacing = 6
         infoRow.alignment = .centerY
@@ -328,33 +342,45 @@ final class QuickController: NSObject, NSApplicationDelegate,
             infoRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: outer.widthAnchor),
             field.heightAnchor.constraint(equalToConstant: 32),
-            // Breiter als früher: Der Suchbereich zeigt jetzt den Pfad.
-            scopePopup.widthAnchor.constraint(equalToConstant: 250),
+            // Beide Felder teilen sich die nutzbare Zeile exakt zur Hälfte.
+            // Der Suchbereich gewinnt damit Platz für längere Ordnerpfade.
+            field.widthAnchor.constraint(equalTo: scopePopup.widthAnchor),
         ])
 
         // Immer in Default-Größe oben-mittig öffnen (Spotlight-Gefühl).
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
-            panel.setFrameTopLeftPoint(NSPoint(
+            window.setFrameTopLeftPoint(NSPoint(
                 x: visible.midX - Self.windowWidth / 2,
                 y: visible.maxY - 120))
         }
     }
 
     func buildTable() {
+        let visibleWidth = Self.windowWidth - 24
         let nameColumn = NSTableColumn(
             identifier: NSUserInterfaceItemIdentifier("name"))
         nameColumn.title = "Name"
-        nameColumn.width = 200
+        // Der Splitter steht anfangs bei 65 % der sichtbaren Tabellenbreite.
+        nameColumn.width = floor(visibleWidth * 0.65)
+        nameColumn.minWidth = 120
+        nameColumn.sortDescriptorPrototype =
+            NSSortDescriptor(key: "name", ascending: true)
         let pathColumn = NSTableColumn(
             identifier: NSUserInterfaceItemIdentifier("path"))
         pathColumn.title = "Ort"
-        pathColumn.width = 320
+        // Der Ort reicht bewusst über das Fenster hinaus. So zeigt der
+        // horizontale Balken den vollständigen Quellordner statt nur eine
+        // anders gekürzte Fassung desselben Texts.
+        pathColumn.width = max(520, floor(visibleWidth * 0.35))
+        pathColumn.minWidth = 140
+        pathColumn.sortDescriptorPrototype =
+            NSSortDescriptor(key: "path", ascending: true)
         tableView.addTableColumn(nameColumn)
         tableView.addTableColumn(pathColumn)
-        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.rowHeight = 20
-        tableView.headerView = nil          // schlichte Liste, keine Spaltenköpfe
+        tableView.allowsColumnResizing = true
         tableView.dataSource = self
         tableView.delegate = self
         tableView.allowsMultipleSelection = true
@@ -368,6 +394,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = false
         scrollView.borderType = .bezelBorder
     }
 
@@ -382,12 +410,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
         }
     }
 
-    func showPanel() {
+    func showWindow() {
         updateScope()
         NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-        panel.orderFrontRegardless()
-        panel.makeFirstResponder(field)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        window.makeFirstResponder(field)
     }
 
     // ---------- Suchbereich (Finder-Fenster / Ordner) ----------
@@ -606,11 +634,17 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// Return/Enter (oder Klick auf die Lupe): sofort suchen.
     @objc func fire() { startSearch() }
 
-    /// Umschalten von Archive/Inhalt startet dieselbe Suche neu.
+    /// Umschalten einer Suchoption startet dieselbe Suche neu.
     @objc func optionsChanged() {
         if !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty {
             startSearch()
         }
+    }
+
+    /// CLI-Wert des sichtbaren Drei-Wege-Umschalters.
+    var selectedOnly: String {
+        ["both", "files", "dirs"][max(0, min(2,
+            typeControl.selectedSegment))]
     }
 
     /// Bricht Debounce-Timer, laufenden Suchprozess und Flush-Timer ab und
@@ -681,6 +715,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let searchArchives = archivesCheckbox.state == .on
         let searchHidden = hiddenCheckbox.state == .on
         let searchExact = exactCheckbox.state == .on
+        let only = selectedOnly
 
         // Trefferliste ein paar Mal pro Sekunde nachziehen (nicht bei jedem
         // einzelnen Treffer neu zeichnen).
@@ -694,6 +729,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 pattern: query, root: root, content: searchContent,
                 regex: false, caseSensitive: false,
                 archives: searchArchives, progress: true,
+                only: only,
                 includeHidden: searchHidden, exact: searchExact)
             else {
                 DispatchQueue.main.async {
@@ -764,6 +800,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         pending = []
         infoLabel.textColor = .secondaryLabelColor
         infoLabel.lineBreakMode = .byTruncatingTail
+        sortHits()
         tableView.reloadData()
         if !selectedPaths.isEmpty {
             let rows = IndexSet(hits.indices.filter {
@@ -774,16 +811,20 @@ final class QuickController: NSObject, NSApplicationDelegate,
         openButton.isEnabled = !hits.isEmpty
         let reachedTop = hits.count >= Self.maxQuickHits
         if reachedTop { cancelSearch() }   // Top 20 erreicht → Suche stoppen
-        let summary = reachedTop
-            ? "Top \(Self.maxQuickHits) — ⌘↩ öffnet alle in Favenio"
-            : "\(hits.count) Treffer — Suche läuft…"
         // Ein unbestätigter Suchbereich bleibt sichtbar: Sonst verschwände die
         // Warnung beim ersten Trefferpaket — und beim Top-20-Stopp für immer,
         // weil danach kein finish() mehr kommt, das sie wieder anzeigt.
         if let problem = scopeProblem ?? runScopeNoteText() {
-            showScopeProblem(summary + " " + problem)
+            let summary = reachedTop
+                ? "" : "\(hits.count) Treffer — Suche läuft… "
+            showScopeProblem(summary + problem)
+        } else if reachedTop {
+            // Die Erklärung der 20er-Grenze steht am zugehörigen Button. Eine
+            // eigene „Top 20"-Zeile würde nur Tabellenhöhe verbrauchen.
+            infoLabel.stringValue = ""
+            infoLabel.toolTip = nil
         } else {
-            infoLabel.stringValue = summary
+            infoLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
         }
     }
 
@@ -845,6 +886,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
                          value: hiddenCheckbox.state == .on ? "1" : "0"),
             URLQueryItem(name: "exact",
                          value: exactCheckbox.state == .on ? "1" : "0"),
+            URLQueryItem(name: "only", value: selectedOnly),
             URLQueryItem(name: "continue", value: "1"),
         ]
         guard let handoffURL = components.url else {
@@ -933,6 +975,21 @@ final class QuickController: NSObject, NSApplicationDelegate,
         cell?.textField?.stringValue =
             column.identifier.rawValue == "name" ? hit.displayName : hit.path
         return cell
+    }
+
+    /// Header-Klick: Trefferliste nach Name oder Ort sortieren.
+    func tableView(_ tableView: NSTableView,
+                   sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        sortHits()
+        tableView.reloadData()
+    }
+
+    /// Hält die gewählte Sortierung auch beim Streaming neuer Treffer ein.
+    func sortHits() {
+        guard let descriptor = tableView.sortDescriptors.first,
+              let key = descriptor.key else { return }
+        let ascending = descriptor.ascending
+        hits.sort { compareHits($0, $1, key: key, ascending: ascending) }
     }
 
     /// Zeilen, auf die sich eine Aktion bezieht: die geklickte Zeile, sonst

@@ -40,7 +40,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.21.2"
+__version__ = "0.22.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-08-16"

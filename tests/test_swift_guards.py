@@ -35,9 +35,59 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn("var searchProcess: Process?", GUI)
 
     def test_descending_comparator_is_strict(self):
-        self.assertIn("func compareHits", GUI)
-        self.assertNotIn("return ascending ? result : !result", GUI)
-        self.assertIn("return false", GUI)
+        self.assertIn("func compareHits", COMMON)
+        self.assertNotIn("return ascending ? result : !result", COMMON)
+        self.assertIn("return false", COMMON)
+        self.assertIn("compareHits($0, $1", GUI)
+        self.assertIn("compareHits($0, $1", QUICK)
+
+    def test_quick_uses_a_regular_window_and_balances_the_search_row(self):
+        build = QUICK[
+            QUICK.index("func buildWindow()"):
+            QUICK.index("func buildTable()")
+        ]
+        self.assertIn("window = NSWindow(", build)
+        self.assertIn(".miniaturizable", build)
+        self.assertNotIn("NSPanel(", build)
+        self.assertNotIn("level = .floating", build)
+        self.assertIn(
+            "field.widthAnchor.constraint(equalTo: scopePopup.widthAnchor)",
+            build)
+
+    def test_quick_table_is_resizable_sortable_and_scrolls_horizontally(self):
+        table = swift_function(QUICK, "func buildTable()")
+        self.assertIn("visibleWidth * 0.65", table)
+        self.assertIn('NSSortDescriptor(key: "name"', table)
+        self.assertIn('NSSortDescriptor(key: "path"', table)
+        self.assertIn("allowsColumnResizing = true", table)
+        self.assertIn("hasHorizontalScroller = true", table)
+        self.assertIn(".noColumnAutoresizing", table)
+        self.assertNotIn("headerView = nil", table)
+
+    def test_quick_type_filter_reaches_search_and_main_handoff(self):
+        start = QUICK[
+            QUICK.index("func startSearch()"):
+            QUICK.index("func showProgress")
+        ]
+        self.assertIn("let only = selectedOnly", start)
+        self.assertIn("only: only", start)
+        handoff = QUICK[
+            QUICK.index("func openMainApp("):
+            QUICK.index("func locateMainApp()")
+        ]
+        self.assertIn('URLQueryItem(name: "only", value: selectedOnly)',
+                      handoff)
+        handler = GUI[
+            GUI.index("func handleFavenioURL"):
+            GUI.index("func loadResults")
+        ]
+        self.assertIn('value("only") ?? "both"', handler)
+        continuation = QUICK[
+            QUICK.index("func flushPending()"):
+            QUICK.index("func finish(")
+        ]
+        self.assertNotIn('"Top \\(Self.maxQuickHits)', continuation)
+        self.assertIn("openButton.toolTip", QUICK)
 
     def test_structured_hits_and_materialization_cache_are_used(self):
         self.assertIn("let filesystemPath: String", COMMON)
@@ -145,7 +195,7 @@ class SwiftGuardTests(unittest.TestCase):
             QUICK.index("func flushPending()"):
             QUICK.index("func finish(")
         ]
-        self.assertIn('showScopeProblem(summary + " " + problem)', flush)
+        self.assertIn("showScopeProblem(summary + problem)", flush)
 
     def test_quick_keeps_the_late_finder_note_for_the_running_search(self):
         # Meldet sich der Finder erst, während die Suche schon im

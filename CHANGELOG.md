@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.22.0 — 2026-08-16
+
+- **Schnellsuche:** Das normale, minimierbare App-Fenster ersetzt das stets
+  schwebende Panel. Suchfeld und Ordnerbereich teilen die obere Zeile
+  gleichmäßig.
+- **Trefferliste:** Die Namensspalte beginnt bei 65 Prozent, beide Spalten sind
+  per Kopfzeile sortierbar und der verschiebbare Trenner sowie horizontales
+  Scrollen machen lange Quellpfade zugänglich.
+- **Treffertyp:** Die Schnellsuche kann Dateien und Ordner, nur Dateien oder nur
+  Ordner finden; die Auswahl bleibt bei der Übergabe an Favenio erhalten.
+- Die Erklärung der Grenze von 20 Schnellsuche-Treffern steht im Tooltip von
+  „Alle in Favenio“ statt in einer eigenen Statuszeile.
+
 ## 0.21.2 — 2026-08-16
 
 Korrekturen aus dem Nacht-Review vom 2026-08-16:

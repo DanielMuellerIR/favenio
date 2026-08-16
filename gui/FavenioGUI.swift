@@ -166,40 +166,6 @@ final class ActiveSearchRun {
     }
 }
 
-func compareHits(_ lhs: Hit, _ rhs: Hit, key: String,
-                 ascending: Bool) -> Bool {
-    let primary: ComparisonResult
-    switch key {
-    case "size":
-        primary = (lhs.size ?? -1) < (rhs.size ?? -1) ? .orderedAscending
-            : (lhs.size ?? -1) > (rhs.size ?? -1) ? .orderedDescending
-            : .orderedSame
-    case "type":
-        primary = lhs.typeDescription.localizedCaseInsensitiveCompare(
-            rhs.typeDescription)
-    case "line":
-        primary = (lhs.line ?? -1) < (rhs.line ?? -1) ? .orderedAscending
-            : (lhs.line ?? -1) > (rhs.line ?? -1) ? .orderedDescending
-            : .orderedSame
-    case "path":
-        primary = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
-    default:
-        primary = lhs.displayName.localizedCaseInsensitiveCompare(
-            rhs.displayName)
-    }
-    if primary != .orderedSame {
-        return ascending ? primary == .orderedAscending
-                         : primary == .orderedDescending
-    }
-    // Deterministischer Tie-Breaker, unabhängig von der Sortierrichtung.
-    // Vollständig gleiche Treffer vergleichen in beiden Richtungen false.
-    let pathOrder = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
-    if pathOrder != .orderedSame { return pathOrder == .orderedAscending }
-    if lhs.kind != rhs.kind { return lhs.kind < rhs.kind }
-    if lhs.line != rhs.line { return (lhs.line ?? -1) < (rhs.line ?? -1) }
-    return false
-}
-
 final class MainController: NSObject, NSApplicationDelegate,
                             NSTableViewDataSource, NSTableViewDelegate,
                             NSMenuDelegate, NSSearchFieldDelegate,
@@ -457,6 +423,8 @@ final class MainController: NSObject, NSApplicationDelegate,
         regexCheckbox.state = value("regex") == "1" ? .on : .off
         caseCheckbox.state = value("case") == "1" ? .on : .off
         exactCheckbox.state = value("exact") == "1" ? .on : .off
+        typeControl.selectedSegment = ["both": 0, "files": 1, "dirs": 2][
+            value("only") ?? "both"] ?? 0
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -904,8 +872,6 @@ final class MainController: NSObject, NSApplicationDelegate,
         hits = seed
         pending = []
         seenPaths = Set(seed.map { $0.path })
-        // Die Schnellsuche findet Dateien & Ordner → hier ebenso weitersuchen.
-        typeControl.selectedSegment = 0
         tableView.reloadData()
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
