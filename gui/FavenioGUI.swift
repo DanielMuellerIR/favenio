@@ -53,9 +53,27 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: \(error)")
         return 1
     }
-    guard !searchExitIsError(0), !searchExitIsError(1),
-          searchExitIsError(2), searchExitIsError(15) else {
+    guard !searchExitIsError(0, reason: .exit),
+          !searchExitIsError(1, reason: .exit),
+          searchExitIsError(2, reason: .exit),
+          searchExitIsError(1, reason: .uncaughtSignal) else {
         print("SELFTEST FEHLER: Such-Exit-Codes falsch eingeordnet")
+        return 1
+    }
+    // Nicht nur eine nachgebaute Enum-Konstellation prüfen: Foundation muss
+    // einen wirklich per SIGHUP beendeten Prozess als Signalabbruch melden.
+    let signalProbe = Process()
+    signalProbe.executableURL = URL(fileURLWithPath: "/bin/sh")
+    signalProbe.arguments = ["-c", "kill -HUP $$"]
+    do { try signalProbe.run() } catch {
+        print("SELFTEST FEHLER: Signalprobe nicht startbar")
+        return 1
+    }
+    signalProbe.waitUntilExit()
+    guard signalProbe.terminationReason == .uncaughtSignal,
+          searchExitIsError(signalProbe.terminationStatus,
+                            reason: signalProbe.terminationReason) else {
+        print("SELFTEST FEHLER: echter Signalabbruch nicht erkannt")
         return 1
     }
     // Eigene kleine Test-Welt in einem Temp-Ordner bauen.
@@ -140,6 +158,7 @@ final class ActiveSearchRun {
     var lineBuffer = Data()
     var reachedEOF = false
     var terminationStatus: Int32?
+    var terminationReason: Process.TerminationReason?
 
     init(process: Process, pipe: Pipe) {
         self.process = process
@@ -951,6 +970,7 @@ final class MainController: NSObject, NSApplicationDelegate,
             DispatchQueue.main.async {
                 guard let self, self.activeSearchRun === run else { return }
                 run.terminationStatus = process.terminationStatus
+                run.terminationReason = process.terminationReason
                 self.finishSearchRunIfReady(run)
             }
         }
@@ -1038,7 +1058,8 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     func finishSearchRunIfReady(_ run: ActiveSearchRun) {
         guard activeSearchRun === run, run.reachedEOF,
-              let status = run.terminationStatus else { return }
+              let status = run.terminationStatus,
+              let reason = run.terminationReason else { return }
         if !run.lineBuffer.isEmpty {
             consumeSearchLine(run.lineBuffer)
             run.lineBuffer.removeAll()
@@ -1050,7 +1071,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         run.process.terminationHandler = nil
         activeSearchRun = nil
         stopButton.isEnabled = false
-        if searchExitIsError(status) {
+        if searchExitIsError(status, reason: reason) {
             statusLabel.stringValue = "Suche fehlgeschlagen."
         } else {
             statusLabel.stringValue = hits.isEmpty

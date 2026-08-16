@@ -92,13 +92,15 @@ registrierte URL-Schema verwendet, als Fallback Startargumente und eine
 temporäre JSONL-Datei. Übergabedateien müssen eindeutig, atomar geschrieben und
 nach Gebrauch bereinigt werden.
 
-Finder-Ordner werden ausschließlich über einen zeitbegrenzten
-`/usr/bin/osascript`-Unterprozess abgefragt. In einer laufenden `NSApplication`
-kann synchrones `NSAppleScript` auf Main- wie Hintergrundthread deadlocken, weil
-die AppleEvent-Antwort am Main-Thread zugestellt wird. Dies nicht als vermeintlich
-sauberere In-Prozess-Lösung zurückbauen. Lehnt der Nutzer Automation ab oder ist
-kein Finder-Fenster offen, fällt die App kontrolliert auf den Benutzerordner
-zurück.
+Finder-Ordner werden ausschließlich über einen `/usr/bin/osascript`-
+Unterprozess abgefragt. Bei bereits entschiedenem Automationszugriff gilt ein
+Notaus von sechs Sekunden; solange der TCC-Freigabedialog auf die Entscheidung
+des Nutzers wartet, gibt es bewusst kein künstliches Zeitlimit. In einer
+laufenden `NSApplication` kann synchrones `NSAppleScript` auf Main- wie
+Hintergrundthread deadlocken, weil die AppleEvent-Antwort am Main-Thread
+zugestellt wird. Dies nicht als vermeintlich sauberere In-Prozess-Lösung
+zurückbauen. Lehnt der Nutzer Automation ab oder ist kein Finder-Fenster offen,
+fällt die App kontrolliert auf den Benutzerordner zurück.
 
 ## Bauen und testen
 
@@ -141,12 +143,16 @@ Notary-Profilname). Für `release.sh` ist diese Team-ID Pflicht; das Appcast-Tor
 erhält sie aus der GitHub-Actions-Variable `FAVENIO_TEAM_ID`. Beide Release-
 Wege prüfen jedes Bundle mit einer `codesign`-Anforderung auf genau dieses Team.
 Der Austausch beider Bundles ist EINE Transaktion mit Rückholung des alten
-Stands; ein halb aktualisiertes `/Applications` darf es nicht geben.
+Stands. Ein normaler Fehler darf keinen halb aktualisierten Stand hinterlassen;
+scheitert die Rückholung selbst auf Dateisystemebene, muss dieser Ausnahmezustand
+mit eigenem Status und den verbleibenden Pfaden sichtbar werden.
 `--dmg <pfad>` installiert stattdessen aus einem fertigen DMG, `--verify-only`
 prüft ohne zu installieren. Das angeheftete Ticket ist auf jedem Weg Pflicht,
 auch aus einem DMG; sehr alte DMGs, die es nur am Image tragen, werden
-abgelehnt (entschieden 2026-08-03). Exit 2 heißt in jedem Fall: nichts
-installiert — auch dann, wenn ein Werkzeug mit einem anderen Status abbricht.
+abgelehnt (entschieden 2026-08-03). Exit 2 heißt in jedem Fall: installierter
+Stand unverändert — auch dann, wenn ein Werkzeug mit einem anderen Status
+abbricht. Exit 3 heißt: Der Rollback blieb unvollständig; stderr nennt die
+verbleibenden Pfade und den Zustand, der manuell geklärt werden muss.
 
 `install.sh` und `release.sh` prüfen zusätzlich den Update-Feed der erzeugten
 Bundles gegen `FAVENIO_FEED_URL` aus `notarize-lib.sh`. `build-app.sh` darf
@@ -264,9 +270,10 @@ Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
   `runScopeNoteText()` formuliert daraus je nach Zustand — vorher stand dort
   „Suche läuft in …", obwohl die Suche fertig war.
 - `set -e` schützt die Befehle innerhalb einer Shell-Funktion NICHT, wenn die
-  Funktion in einer `||`-Liste aufgerufen wird — genau so ruft `install.sh`
-  `favenio_install_bundles` auf. Kritische Rollback-Schritte müssen ihren Fehler
-  deshalb selbst behandeln: `_favenio_install_restore` nimmt ein schon
+  Funktion als Bedingung eines `if` aufgerufen wird — genau so übernimmt
+  `install.sh` den unterscheidbaren Status von `favenio_install_bundles`.
+  Kritische Rollback-Schritte müssen ihren Fehler deshalb selbst behandeln:
+  `_favenio_install_restore` nimmt ein schon
   eingesetztes Bundle per geprüftem `mv` weg statt per ungeprüftem `rm -rf`, das
   obendrein halb gelingen und ein zerpflücktes Bundle hinterlassen kann.
 - Austausch und Rollback eines gemeinsamen Installationsziels sind pro Zielordner

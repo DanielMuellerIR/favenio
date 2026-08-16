@@ -41,6 +41,12 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertIn(
             'favenio_verify_identity "$VERIFY_MOUNT/$app" "$app"', source)
 
+    def test_install_distinguishes_an_incomplete_rollback(self):
+        install = Path("install.sh").read_text(encoding="utf-8")
+        library = Path("notarize-lib.sh").read_text(encoding="utf-8")
+        self.assertIn("3 = Rollback unvollständig", install)
+        self.assertIn("return 3", library)
+
     def test_expected_feed_url_matches_the_build_script(self):
         """notarize-lib.sh prüft gegen eine Kopie des Defaults aus
         build-app.sh. Läuft die auseinander, prüft die Installation gegen
@@ -214,7 +220,7 @@ class InstallTransactionTest(unittest.TestCase):
             command mv "$@"
         }"""
         output = self.run_install(self.FAIL_ON_SECOND, prelude=prelude)
-        self.assertIn("RC=2", output)
+        self.assertIn("RC=3", output)
         self.assertIn("ließ sich nicht wieder aus", output)
         # Das neue Bundle liegt noch am Zielort — genau das muss der Lauf
         # sagen, statt es zu verschweigen.
@@ -243,7 +249,7 @@ class InstallTransactionTest(unittest.TestCase):
         esac
         return 0""".format(dest=self.dest)
         output = self.run_install(body)
-        self.assertIn("RC=2", output)
+        self.assertIn("RC=3", output)
         self.assertIn("nicht mehr das Bundle dieses Laufs", output)
         self.assertEqual(self.marker(self.dest, "Favenio.app"), "fremd")
         self.assertEqual(self.marker(self.previous_folder(), "Favenio.app"),

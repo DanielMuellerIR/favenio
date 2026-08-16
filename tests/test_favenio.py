@@ -101,6 +101,16 @@ class FavenioTest(TempTreeTest):
         self.assertIn("rechnung-2026.pdf", joined)
         self.assertIn("Rechnungen", joined)
 
+    def test_separator_allows_pattern_with_leading_hyphen(self):
+        # Die Swift-Apps setzen vor Muster und Pfad immer `--`. Besonders das
+        # macOS-System-Python 3.9 muss danach ein führendes Minus als Text und
+        # nicht wieder als Option behandeln.
+        self.write("-entwurf.txt", "probe")
+        code, lines, err = run(["--json", "--", "-entwurf", self.root])
+        self.assertEqual(code, 0, err)
+        self.assertEqual([json.loads(line)["path"] for line in lines],
+                         [os.path.join(self.root, "-entwurf.txt")])
+
     def test_only_files_and_dirs_default_both(self):
         # Ohne --only kommen Datei „rechnung-2026.pdf" UND Ordner „Rechnungen".
         code, lines, _ = run(["--json", "rechnung", self.root])

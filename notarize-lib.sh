@@ -309,20 +309,32 @@ _favenio_install_unlock() {
 # Ein weiches Abbruchsignal darf die Transaktion nicht zwischen den beiden
 # Bundles stehen lassen. Die lokalen Werte aus favenio_install_bundles sind in
 # zsh auch für diesen dynamisch aufgerufenen Handler sichtbar. Nach dem
-# Rollback endet der ganze Installationsprozess mit dem zugesagten Fehlercode;
-# ein bloßes `return` aus einem zsh-Trap würde den Aufrufer dagegen mit Status
-# 0 weiterlaufen lassen.
+# Rollback endet der ganze Installationsprozess mit dem passenden
+# Vertragsstatus; ein bloßes `return` aus einem zsh-Trap würde den Aufrufer
+# dagegen mit Status 0 weiterlaufen lassen.
 _favenio_install_interrupted() {
     local dest="$1" stage="$2" backup="$3" lock="$4"
     shift 4
     # Nach einem bereits abgeschlossenen Rollback ist die globale Sperre leer.
     # In diesem winzigen Rückkehrfenster darf ein spätes Signal keine Sperre
     # entfernen, die inzwischen schon einem neuen Lauf gehört.
-    [ "${FAVENIO_INSTALL_LOCK:-}" = "$lock" ] || exit 2
+    [ "${FAVENIO_INSTALL_LOCK:-}" = "$lock" ] || exit 3
     echo "FEHLER: Installation abgebrochen; alter Stand wird zurückgeholt." >&2
-    _favenio_install_restore "$dest" "$stage" "$backup" "$lock" "$@" \
-        || true
-    exit 2
+    if _favenio_install_restore "$dest" "$stage" "$backup" "$lock" "$@"; then
+        exit 2
+    fi
+    exit 3
+}
+
+# Einheitliche Fehlerantwort nach einem begonnenen Installationsversuch:
+# 2, wenn der alte Stand vollständig zurückkam; 3, wenn die Rückholung selbst
+# scheiterte und der auf stderr genannte verbleibende Zustand manuell geklärt
+# werden muss. So kann Exit 2 weiterhin zuverlässig „nichts geändert" bedeuten.
+_favenio_install_failure() {
+    if _favenio_install_restore "$@"; then
+        return 2
+    fi
+    return 3
 }
 
 # Beide Bundles als EINE Transaktion nach <zielordner> bringen.
@@ -339,7 +351,8 @@ _favenio_install_interrupted() {
 # Läufe sich nicht abwechselnd dasselbe Bundle wegnehmen.
 #
 # Argumente: <quellordner> <zielordner>
-# Rückgabe: 0 = beide installiert und geprüft, 2 = alter Stand wiederhergestellt.
+# Rückgabe: 0 = beide installiert und geprüft, 2 = alter Stand wiederhergestellt,
+#           3 = Rollback unvollständig (verbleibende Pfade auf stderr).
 favenio_install_bundles() {
     # Signal-Traps gelten nur für diesen Funktionsaufruf. Ein aufrufendes
     # Skript behält danach seine eigenen Handler.
@@ -372,8 +385,8 @@ favenio_install_bundles() {
     rm -rf "$stage" "$backup"
     if ! mkdir -p "$stage" "$backup"; then
         echo "FEHLER: Ablageordner in $dest nicht anlegbar." >&2
-        _favenio_install_restore "$dest" "$stage" "$backup" "$lock"
-        return 2
+        _favenio_install_failure "$dest" "$stage" "$backup" "$lock"
+        return $?
     fi
 
     # 1. Danebenlegen und dort schon prüfen: Vor dem ersten Eingriff steht
@@ -381,15 +394,15 @@ favenio_install_bundles() {
     for app in "${FAVENIO_APPS[@]}"; do
         if ! ditto "$source_dir/$app" "$stage/$app"; then
             echo "FEHLER: $app ließ sich nicht nach $dest kopieren." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
+            _favenio_install_failure "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
-            return 2
+            return $?
         fi
         if ! notarize_verify_installed "$stage/$app"; then
             echo "FEHLER: kopierte $app ist nicht notarisiert/gültig." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
+            _favenio_install_failure "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
-            return 2
+            return $?
         fi
     done
 
@@ -398,9 +411,9 @@ favenio_install_bundles() {
     for app in "${FAVENIO_APPS[@]}"; do
         if [ -d "$dest/$app" ] && ! mv "$dest/$app" "$backup/$app"; then
             echo "FEHLER: alte $app ließ sich nicht sichern." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
+            _favenio_install_failure "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
-            return 2
+            return $?
         fi
         # Die Kennung VOR dem Umbenennen notieren: Sie bleibt beim atomaren mv
         # erhalten. Trifft ein Signal direkt nach dem mv ein, kennt der
@@ -409,23 +422,23 @@ favenio_install_bundles() {
         staged_id=$(_favenio_dir_id "$stage/$app")
         if [ -z "$staged_id" ]; then
             echo "FEHLER: Kennung der neuen $app ließ sich nicht lesen." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
+            _favenio_install_failure "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
-            return 2
+            return $?
         fi
         installed+=("$app|$staged_id")
         if ! mv "$stage/$app" "$dest/$app"; then
             echo "FEHLER: neue $app ließ sich nicht einsetzen." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
+            _favenio_install_failure "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
-            return 2
+            return $?
         fi
         # Nach dem Tausch zählt nur noch, was WIRKLICH im Zielordner liegt.
         if ! notarize_verify_installed "$dest/$app"; then
             echo "FEHLER: installierte $app ist nicht notarisiert/gültig." >&2
-            _favenio_install_restore "$dest" "$stage" "$backup" "$lock" \
+            _favenio_install_failure "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
-            return 2
+            return $?
         fi
         echo "  $app installiert und geprüft."
     done
@@ -446,8 +459,8 @@ favenio_install_bundles() {
 # Argumente: <zielordner> <ablageordner> <sicherungsordner> <sperre>
 #            [schon eingesetzte Bundles als "Name|Kennung" …]
 # Rückgabe: 0 = alter Stand steht wieder, 2 = Rollback unvollständig. Der
-# Aufrufer meldet ohnehin Exit 2; der Status ist für Tests und künftige
-# Aufrufer da, die Begründung steht auf stderr.
+# Aufrufer übersetzt Letzteres in den öffentlichen Exit 3; die Begründung steht
+# auf stderr.
 _favenio_install_restore() {
     # Ein einmal begonnener Rollback ist die Datenrettung. Weitere weiche
     # Abbruchsignale werden für diese kurze kritische Phase ignoriert, damit

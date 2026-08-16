@@ -19,7 +19,9 @@
 #                                   # angeheftetes Ticket
 #   ./install.sh --verify-only      # nur prüfen, nichts installieren
 #
-# Exit-Codes: 0 = installiert (bzw. Prüfung bestanden), 2 = Fehler.
+# Exit-Codes: 0 = installiert (bzw. Prüfung bestanden),
+#             2 = Fehler ohne Änderung am installierten Stand,
+#             3 = Rollback unvollständig; verbleibender Zustand auf stderr.
 # Letzte Zeile bei Erfolg (maschinenlesbar):
 #   "INSTALL OK: <version> → /Applications"  bzw.  "VERIFY OK: <quelle>"
 set -euo pipefail
@@ -31,10 +33,9 @@ DMG=""
 VERIFY_ONLY=0
 MOUNT=""
 
-# Aufräumen UND den Exit-Code auf den zugesagten Wert bringen. Ohne das käme
-# der fremde Status des ausgelösten Werkzeugs durch (`hdiutil`, `ditto`, `mv`,
-# `build-app.sh` …, meist 1) und Aufrufer könnten die im Kopf dokumentierte
-# Schnittstelle „0 oder 2" nicht auswerten.
+# Aufräumen UND fremde Werkzeug-Status auf den zugesagten Fehlercode 2 bringen.
+# Der eigene Status 3 bleibt erhalten: Er meldet ausdrücklich, dass die
+# Rückholung des alten Installationsstands selbst unvollständig war.
 cleanup() {
     local exit_status=$?
     if [ -n "$MOUNT" ]; then
@@ -47,7 +48,11 @@ cleanup() {
     if [ -n "${FAVENIO_INSTALL_LOCK:-}" ]; then
         rm -rf "$FAVENIO_INSTALL_LOCK" 2>/dev/null || true
     fi
-    [ "$exit_status" -eq 0 ] || exit 2
+    case "$exit_status" in
+        0) ;;
+        3) exit 3 ;;
+        *) exit 2 ;;
+    esac
 }
 trap cleanup EXIT
 
@@ -186,9 +191,16 @@ done
 
 [ -w "$DEST" ] || { echo "FEHLER: keine Schreibrechte auf $DEST." >&2; exit 2; }
 # Beide Bundles zusammen: erst danebenlegen und prüfen, dann tauschen, und bei
-# jedem Fehler den alten Stand zurückholen (siehe notarize-lib.sh). Ein Lauf
-# mit Exit 2 hinterlässt damit nie eine halb aktualisierte Installation.
-favenio_install_bundles "$SOURCE_DIR" "$DEST" || exit 2
+# jedem Fehler den alten Stand zurückholen (siehe notarize-lib.sh). Exit 2
+# garantiert den unveränderten alten Stand; Exit 3 meldet einen unvollständigen
+# Rollback samt verbleibenden Pfaden, statt dieselbe Garantie fälschlich zu
+# geben.
+if favenio_install_bundles "$SOURCE_DIR" "$DEST"; then
+    :
+else
+    install_status=$?
+    exit "$install_status"
+fi
 
 echo "────────────────────────────────────────────"
 echo "INSTALL OK: $VERSION → $DEST"

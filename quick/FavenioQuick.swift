@@ -91,6 +91,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     var scopeFinderFolders: [String] = []   // Finder-Fenster (async geladen)
     var refreshingScope = false
+    // Jede Aktivierung braucht eine eigene Finder-Antwort. Läuft die vorige
+    // Abfrage noch, wird die jüngste Generation vorgemerkt und anschließend
+    // wirklich neu abgefragt; ihre alte Antwort darf nicht übernommen werden.
+    var scopeRefreshGeneration = 0
+    var queuedScopeRefreshGeneration: Int?
     var userPickedScope = false             // hat der Nutzer selbst gewählt?
     // Steht die Antwort des Finders für DIESE Aktivierung schon fest? Solange
     // nicht, ist der Suchbereich unbekannt — und eine Suche darf nicht
@@ -183,6 +188,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// Finder-Fenster vorn sein; bis die Antwort da ist, gilt der Suchbereich
     /// als unbekannt.
     func applicationDidBecomeActive(_ notification: Notification) {
+        scopeRefreshGeneration += 1
         scopeResolved = false
         // Ein Finder-Ordner der vorigen Aktivierung ist keine gültige
         // Antwort für die neue. Bleibt die Abfrage aus oder scheitert sie,
@@ -444,19 +450,34 @@ final class QuickController: NSObject, NSApplicationDelegate,
     }
 
     func refreshFinderFoldersAsync() {
-        guard !refreshingScope else { return }
+        let generation = scopeRefreshGeneration
+        guard !refreshingScope else {
+            queuedScopeRefreshGeneration = generation
+            return
+        }
         refreshingScope = true
         // Läuft im Hintergrund (osascript-Unterprozess) — der Main-Thread
         // blockiert NIE.
         finderWindowFoldersAsync { [weak self] outcome in
-            self?.applyScopeOutcome(outcome)
+            guard let self else { return }
+            self.refreshingScope = false
+            // Nur die Antwort der aktuellen Aktivierung darf den Suchbereich
+            // setzen. Eine inzwischen vorgemerkte Aktivierung wird danach mit
+            // einer frischen Finder-Abfrage bedient.
+            if generation == self.scopeRefreshGeneration {
+                self.applyScopeOutcome(outcome)
+            }
+            guard let queued = self.queuedScopeRefreshGeneration else { return }
+            self.queuedScopeRefreshGeneration = nil
+            if queued == self.scopeRefreshGeneration {
+                self.refreshFinderFoldersAsync()
+            }
         }
     }
 
     /// Antwort des Finders verarbeiten. Wichtig: Ein Fehlschlag wird GEMELDET
     /// statt stillschweigend auf den Benutzerordner zurückzufallen.
     func applyScopeOutcome(_ outcome: FinderScopeOutcome) {
-        refreshingScope = false
         scopeResolved = true
         scopeProblem = outcome.problemText
         runScopeMismatch = nil
@@ -683,7 +704,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 }
                 return
             }
-            let exitCode = runSearchStreaming(arguments: arguments,
+            let searchExit = runSearchStreaming(arguments: arguments,
                 register: { [weak self] process in
                     DispatchQueue.main.async {
                         guard let self else { return }
@@ -708,7 +729,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 guard let self, generation == self.searchGeneration
                 else { return }   // abgebrochen/übergeben → verwerfen
                 self.runningProcess = nil
-                let errorText = searchExitIsError(exitCode)
+                let errorText = searchExitIsError(searchExit.status,
+                                                  reason: searchExit.reason)
                     ? "Suche fehlgeschlagen. Bitte Favenio erneut installieren."
                     : nil
                 self.finish(query: query, errorText: errorText)

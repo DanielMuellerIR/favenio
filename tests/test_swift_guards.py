@@ -107,6 +107,20 @@ class SwiftGuardTests(unittest.TestCase):
         ]
         self.assertIn("scopeFinderFolders = outcome.folders", apply)
 
+    def test_quick_restarts_finder_refresh_for_the_latest_activation(self):
+        # Läuft beim erneuten Aktivieren noch die Finder-Abfrage der vorigen
+        # Aktivierung, muss deren Antwort verworfen und danach eine aktuelle
+        # Abfrage gestartet werden.
+        became_active = QUICK[
+            QUICK.index("func applicationDidBecomeActive"):
+            QUICK.index("func windowWillClose")
+        ]
+        self.assertIn("scopeRefreshGeneration += 1", became_active)
+        refresh = swift_function(QUICK, "func refreshFinderFoldersAsync()")
+        self.assertIn("queuedScopeRefreshGeneration", refresh)
+        self.assertIn("generation == self.scopeRefreshGeneration", refresh)
+        self.assertGreaterEqual(refresh.count("refreshFinderFoldersAsync()"), 2)
+
     def test_quick_drops_old_hits_before_waiting_for_the_finder(self):
         # Wartet die Schnellsuche auf den Finder-Ordner, kehrt startSearch()
         # früh zurück. Die Treffer der VORIGEN Suche müssen davor weg sein —
@@ -179,14 +193,20 @@ class SwiftGuardTests(unittest.TestCase):
     def test_streaming_core_does_not_collect_duplicate_results(self):
         self.assertNotIn("var hitsRaw", COMMON)
         self.assertNotIn("var hits: [Hit] = []\n    var hitsRaw", COMMON)
-        self.assertIn("-> Int32", COMMON)
+        self.assertIn("-> SearchExit", COMMON)
 
     def test_frontends_reject_every_unexpected_search_exit(self):
-        # grep-Semantik: Nur 0 (Treffer) und 1 (keine Treffer) sind normal.
-        # Signalstatus und sonstige Werte dürfen nicht als Erfolg erscheinen.
-        self.assertIn("func searchExitIsError(_ status: Int32)", COMMON)
-        self.assertIn("if searchExitIsError(status)", GUI)
-        self.assertIn("searchExitIsError(exitCode)", QUICK)
+        # grep-Semantik: Nur reguläre Exits 0 (Treffer) und 1 (keine Treffer)
+        # sind normal. Ein Signal kann ebenfalls Status 1 tragen; deshalb muss
+        # der Foundation-Abbruchgrund bis in beide Frontends gelangen.
+        self.assertIn("let reason: Process.TerminationReason", COMMON)
+        self.assertIn("process.terminationReason", COMMON)
+        self.assertIn("var terminationReason: Process.TerminationReason?", GUI)
+        self.assertIn("run.terminationReason = process.terminationReason", GUI)
+        self.assertIn("searchExitIsError(status, reason: reason)", GUI)
+        self.assertIn("searchExitIsError(searchExit.status", QUICK)
+        self.assertIn("reason: searchExit.reason", QUICK)
+        self.assertIn(".uncaughtSignal", GUI)
 
     def test_open_finder_consent_is_never_timed_out(self):
         # Ein noch offener TCC-Dialog gehört dem Nutzer. Ein künstlicher
@@ -200,6 +220,110 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("if !consentPending {", finder)
         self.assertIn("deadline: .now() + 6", finder)
         self.assertIn("killer = nil", finder)
+
+
+@unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")
+class QuickScopeRefreshBehaviourTest(unittest.TestCase):
+    """Führt die echten Refresh- und Apply-Funktionen in einer kleinen
+    Attrappe aus. So lassen sich überlappende Finder-Antworten und verweigerte
+    Automation deterministisch prüfen, ohne die TCC-Einstellungen des Macs zu
+    verändern."""
+
+    HARNESS = r'''
+// Von tests/test_swift_guards.py erzeugt — kein Bestandteil der Apps.
+enum FinderScopeOutcome {
+    case folders([String])
+    case denied
+
+    var folders: [String] {
+        if case .folders(let value) = self { return value }
+        return []
+    }
+    var problemText: String? {
+        if case .denied = self { return "Finder-Zugriff nicht erlaubt" }
+        return nil
+    }
+}
+
+var finderCallbacks: [(FinderScopeOutcome) -> Void] = []
+func finderWindowFoldersAsync(
+    completion: @escaping (FinderScopeOutcome) -> Void
+) {
+    finderCallbacks.append(completion)
+}
+
+final class TimerStub { func invalidate() {} }
+
+final class Attrappe {
+    var scopeFinderFolders: [String] = []
+    var refreshingScope = false
+    var scopeRefreshGeneration = 0
+    var queuedScopeRefreshGeneration: Int?
+    var scopeResolved = false
+    var scopeProblem: String?
+    var runScopeMismatch: (searched: String, finder: String)?
+    var scopeDenied = false
+    var searching = false
+    var userPickedScope = false
+    var searchRoot = "/ersatz"
+    var queuedQuery = false
+    var scopeWaitTimer: TimerStub?
+    var rebuilds = 0
+    var shownProblems: [String] = []
+    var deniedReports = 0
+
+    func rebuildScopePopup() { rebuilds += 1 }
+    func showScopeProblem(_ text: String) { shownProblems.append(text) }
+    func runScopeNoteText() -> String? { nil }
+    func maybeReportDeniedAutomation() { deniedReports += 1 }
+    func startSearch() {}
+
+%s
+
+%s
+}
+
+let state = Attrappe()
+state.scopeRefreshGeneration = 1
+state.refreshFinderFoldersAsync()
+state.scopeRefreshGeneration = 2
+state.refreshFinderFoldersAsync()
+let old = finderCallbacks.removeFirst()
+old(.folders(["/alt"]))
+print("NACH_ALT|\(state.scopeFinderFolders)|\(state.scopeResolved)|"
+      + "\(finderCallbacks.count)|\(state.refreshingScope)")
+let current = finderCallbacks.removeFirst()
+current(.denied)
+print("NACH_DENIED|\(state.scopeFinderFolders)|\(state.scopeResolved)|"
+      + "\(state.scopeDenied)|\(state.rebuilds)|\(state.deniedReports)|"
+      + "\(state.shownProblems.count)|\(state.refreshingScope)")
+'''
+
+    @classmethod
+    def setUpClass(cls):
+        refresh = swift_function(
+            QUICK, "func refreshFinderFoldersAsync() {")
+        apply = swift_function(
+            QUICK, "func applyScopeOutcome(_ outcome: FinderScopeOutcome) {")
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "main.swift"
+            source.write_text(cls.HARNESS % (refresh, apply), encoding="utf-8")
+            binary = Path(tmp) / "refreshtest"
+            subprocess.run(["swiftc", "-o", str(binary), str(source)],
+                           check=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+            result = subprocess.run([str(binary)], check=True,
+                                    stdout=subprocess.PIPE)
+        cls.lines = dict(
+            line.split("|", 1)
+            for line in result.stdout.decode("utf-8").splitlines() if line)
+
+    def test_old_answer_is_dropped_and_latest_refresh_is_started(self):
+        self.assertEqual(self.lines["NACH_ALT"], "[]|false|1|true")
+
+    def test_denied_answer_uses_the_visible_fallback_state(self):
+        self.assertEqual(
+            self.lines["NACH_DENIED"], "[]|true|true|1|1|1|false")
 
 
 @unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")

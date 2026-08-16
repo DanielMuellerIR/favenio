@@ -127,6 +127,9 @@ Favenio ist bewusst maschinenfreundlich gebaut:
 ./favenio.py --json -c "TODO" src/ | jq -r .path | sort -u
 ```
 
+Beginnt das Suchmuster mit `-`, steht davor `--`, damit es nicht als Option
+gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
+
 ## Optionen
 
 | Option | Wirkung |

@@ -40,10 +40,10 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.21.1"
+__version__ = "0.21.2"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-08-15"
+__date__ = "2026-08-16"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -1270,7 +1270,7 @@ def main(argv=None):
     parser.add_argument("pattern", nargs="?",
                         help="Suchmuster: „enthält“-Text, Glob (* ? [) "
                              "oder mit --regex ein regulärer Ausdruck")
-    parser.add_argument("paths", nargs="*", default=["."],
+    parser.add_argument("paths", nargs="*", default=[],
                         help="Startpfade (Default: aktueller Ordner)")
     parser.add_argument("-c", "--content", action="store_true",
                         help="im Dateiinhalt suchen statt in Dateinamen")
@@ -1336,7 +1336,24 @@ def main(argv=None):
     # Optionen mit Wert dürfen zwischen Muster und Startpfaden stehen. Das
     # klassische parse_args() trennt bei nargs="*" auf älteren Python-
     # Versionen die Positionsargumente an einer solchen Option auf.
-    args = parser.parse_intermixed_args(argv)
+    #
+    # Python 3.9 behandelt `--` in parse_intermixed_args() jedoch nicht
+    # zuverlässig als Ende der Optionen: Ein folgendes Muster wie `-entwurf`
+    # wird erneut als Option gelesen. Deshalb den Trenner selbst abnehmen und
+    # alles dahinter ausdrücklich an die Positionsargumente hängen.
+    parse_argv = list(sys.argv[1:] if argv is None else argv)
+    if "--" in parse_argv:
+        separator = parse_argv.index("--")
+        positional_tail = parse_argv[separator + 1:]
+        args = parser.parse_intermixed_args(parse_argv[:separator])
+        positionals = []
+        if args.pattern is not None:
+            positionals = [args.pattern] + args.paths
+        positionals.extend(positional_tail)
+        args.pattern = positionals[0] if positionals else None
+        args.paths = positionals[1:]
+    else:
+        args = parser.parse_intermixed_args(parse_argv)
 
     # Extraktions-Modus: kein Suchlauf, nur einen Treffer auspacken.
     extract_options = {

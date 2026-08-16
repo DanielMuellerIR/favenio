@@ -125,6 +125,9 @@ Favenio is deliberately machine-friendly:
 ./favenio.py --json -c "TODO" src/ | jq -r .path | sort -u
 ```
 
+If the search pattern begins with `-`, put `--` before it so it cannot be
+mistaken for an option: `./favenio.py -- -draft ~/Documents`.
+
 ## Options
 
 | Option | Effect |

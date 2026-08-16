@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.21.2 — 2026-08-16
+
+Korrekturen aus dem Nacht-Review vom 2026-08-16:
+
+- Suchmuster mit führendem `-` funktionieren hinter dem üblichen Trenner `--`
+  jetzt auch mit dem macOS-System-Python 3.9 und damit in beiden Apps.
+- Die Frontends unterscheiden regulären Exit 1 („keine Treffer") von einem
+  Signalabbruch mit derselben Nummer; der Headless-Selbsttest beendet dafür
+  einen echten Probeprozess per SIGHUP.
+- FavenioQuick verwirft Finder-Antworten einer früheren Aktivierung und startet
+  eine vorgemerkte aktuelle Abfrage, sobald die alte beendet ist.
+- `install.sh` garantiert bei Exit 2 wieder den unveränderten installierten
+  Stand. Scheitert der Rollback selbst, meldet Exit 3 den Ausnahmezustand und
+  stderr nennt die verbleibenden Pfade.
+- Die Architekturregel zur Finder-Abfrage nennt die zwingende Ausnahme vom
+  Sechs-Sekunden-Notaus, solange der TCC-Freigabedialog offen ist.
+
 ## 0.21.1 — 2026-08-15
 
 Korrekturen aus einer Code-Review-Triage; jeder Punkt mit Repro und

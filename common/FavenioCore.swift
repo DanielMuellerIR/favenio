@@ -223,11 +223,20 @@ func searchArguments(pattern: String, root: String, content: Bool,
     return args
 }
 
-/// grep-Semantik des Python-Kerns: 0 = Treffer und 1 = keine Treffer sind
-/// normale Abschlüsse. Jeder andere Status — auch ein Signalstatus — ist ein
+/// Vollständiges Ende eines Suchprozesses. `status` allein reicht nicht:
+/// Foundation meldet bei einem Signal dessen Nummer, sodass etwa SIGHUP und
+/// der reguläre grep-Status „keine Treffer" beide den Zahlenwert 1 tragen.
+struct SearchExit {
+    let status: Int32
+    let reason: Process.TerminationReason
+}
+
+/// grep-Semantik des Python-Kerns: Nur ein REGULÄRER Exit 0 (Treffer) oder 1
+/// (keine Treffer) ist normal. Ein Signal ist unabhängig von seiner Nummer ein
 /// Fehler und muss in beiden Frontends sichtbar werden.
-func searchExitIsError(_ status: Int32) -> Bool {
-    status != 0 && status != 1
+func searchExitIsError(_ status: Int32,
+                       reason: Process.TerminationReason) -> Bool {
+    reason != .exit || (status != 0 && status != 1)
 }
 
 /// Führt eine Suche BLOCKIEREND aus und liefert Treffer.
@@ -260,7 +269,7 @@ func runSearchSync(arguments: [String]) -> [Hit] {
 /// damit der Aufrufer ihn abbrechen kann (`process.terminate()`) — z. B. die
 /// Schnellsuche, wenn der Nutzer weitertippt. Nach dem Abbruch bricht die
 /// Lese-Schleife ab (die Pipe schließt) und die Funktion kehrt zurück; der
-/// exitCode ist dann der Signal-Status, nicht 0 — der Aufrufer verwirft das
+/// Ergebnis trägt dann Status UND Signalgrund — der Aufrufer verwirft das
 /// veraltete Ergebnis ohnehin über seinen Generations-Zähler.
 ///
 /// `onHit` (falls gesetzt) meldet JEDEN Treffer sofort auf dem Main-Thread —
@@ -270,14 +279,16 @@ func runSearchStreaming(arguments: [String],
                         register: ((Process) -> Void)? = nil,
                         onHit: ((Hit) -> Void)? = nil,
                         onProgress: @escaping (String) -> Void)
-    -> Int32 {
+    -> SearchExit {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: pythonPath)
     process.arguments = arguments
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = FileHandle.nullDevice
-    do { try process.run() } catch { return 2 }
+    do { try process.run() } catch {
+        return SearchExit(status: 2, reason: .exit)
+    }
     register?(process)   // Aufrufer kann den Lauf ab jetzt abbrechen
 
     var buffer = Data()    // noch unvollständige Zeile vom Pipe-Ende
@@ -304,7 +315,8 @@ func runSearchStreaming(arguments: [String],
     }
     handleLine(buffer)   // letzte Zeile, falls ohne Zeilenumbruch
     process.waitUntilExit()
-    return process.terminationStatus
+    return SearchExit(status: process.terminationStatus,
+                      reason: process.terminationReason)
 }
 
 /// Appweiter Cache: jede Aktion auf denselben Archivtreffer verwendet dieselbe
