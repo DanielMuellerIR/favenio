@@ -431,7 +431,7 @@ jobs:
           favenio_check_feed() {
             local feed="$1" public_key="$2"
             local block signature length size work
-            block=$(awk '/^<!-- sparkle-signatures:/ { found = 1 } found' \
+            block=$(awk '/<!-- sparkle-signatures:/ { found = 1 } found' \
               "$feed")
             signature=$(printf '%s\n' "$block" | sed -n 's/^edSignature: *//p')
             length=$(printf '%s\n' "$block" | sed -n 's/^length: *//p')

@@ -32,19 +32,20 @@ PRODUCTION_FEED = "https://danielmuellerir.github.io/favenio/appcast.xml"
 # Keine echte Projekt-ID, sondern die feste Herausgeber-ID der Test-Stubs.
 TEST_TEAM_ID = "TESTTEAM00"
 
-# Ein Testschlüsselpaar und ein damit von Sparkles echtem `sign_update`
-# signierter Mini-Feed. Ed25519 ist deterministisch, deshalb ist die Signatur
+# Ein öffentlicher Testschlüssel und ein damit von Sparkles echtem
+# `sign_update` signierter Mini-Feed. Das Werkzeug hängt den Signaturblock
+# direkt an `</rss>` an. Ed25519 ist deterministisch, deshalb ist die Signatur
 # eine feste Konstante und der Test braucht kein Schlüsselmaterial und keinen
 # Sparkle-Download.
-FIXTURE_KEY = "ST0l90wC+OhTJQo+OgWMXC5b2Btj6T8BbS1995Bs/4E="
+FIXTURE_KEY = "Fv6jwB9CT7NsfnVzII4LNyTly5IPudZeMk6ERLMYiFA="
 FIXTURE_BODY = (
     '<?xml version="1.0" encoding="utf-8"?>\n'
     '<rss version="2.0"><channel><title>Favenio Updates</title>'
-    "</channel></rss>\n"
+    "</channel></rss>"
 )
 FIXTURE_SIGNATURE = (
-    "0tLyPE4fiPz56xMuhxYbUD3QIOmF5ZauX+AWfkwhZV26HXnWVP1V/Lgb1Q5+nIH3/"
-    "BhkBOBWNJBbCaFui8IbCw=="
+    "A4rC66eyLoTNa1ykiKoKhiesvLqTquyUr+w4BMvmH2OJjtB/1CSM+PFXY8dd4bEVE"
+    "Fg/rBR+/vIXZU/C8XeIDg=="
 )
 
 
@@ -508,7 +509,10 @@ class CheckFeedTest(unittest.TestCase):
         return result.stdout.decode("utf-8", "replace")
 
     def test_signature_matching_the_bundle_key_passes(self):
-        output = self.run_check(self.write_feed())
+        feed = self.write_feed()
+        self.assertIn("</rss><!-- sparkle-signatures:",
+                      feed.read_text(encoding="utf-8"))
+        output = self.run_check(feed)
         self.assertIn("RC=0", output)
         self.assertIn("verified against SUPublicEDKey", output)
 
