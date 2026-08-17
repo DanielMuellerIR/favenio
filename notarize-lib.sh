@@ -31,6 +31,13 @@ FAVENIO_BUNDLE_IDS=(
 # steht die Kopie, gegen die install.sh und release.sh prüfen. Ein Test
 # (tests/test_build_safety.py) hält beide Stellen zusammen.
 FAVENIO_FEED_URL="https://danielmuellerir.github.io/favenio/appcast.xml"
+# Der öffentliche Sparkle-Schlüssel, gegen den die App den Appcast prüft, und
+# die Pflicht zur Feed-Signatur. Beide gehören zum Update-Kanal genauso dazu wie
+# die Feed-URL: Ein gültig signiertes DMG mit falschem Schlüssel oder
+# abgeschalteter Signaturpflicht würde Updates ablehnen bzw. einen unsignierten
+# Feed akzeptieren (Review-Fund 2026-08-17). Muss zu SPARKLE_PUBLIC_KEY in
+# build-app.sh passen.
+FAVENIO_SPARKLE_PUBLIC_KEY="H504COadHZVAKo+/XD0jzXT5PJzghkS2t/DDYmuHPDg="
 
 # Signier-Identität und Notary-Profil FRÜH prüfen: lieber vor dem Build
 # scheitern als nach mehreren Minuten Arbeit.
@@ -235,16 +242,37 @@ favenio_verify_identity() {
 # bestimmen. Deshalb hier fail-closed: Abweichung = Abbruch. Zum Testen bleibt
 # build-app.sh, dessen Bundles im Projektverzeichnis liegen.
 #
+# Geprüft wird der GESAMTE Update-Kanal: Feed-URL, öffentlicher Schlüssel und
+# die Pflicht zur Feed-Signatur. Die drei Werte ergeben nur zusammen einen
+# Update-Weg, den wir bestimmen.
+#
 # Argumente: <bundlepfad> <bundlename, z. B. Favenio.app>
-# Rückgabe: 0 = Produktions-Feed, 2 = fremder oder fehlender Feed.
+# Rückgabe: 0 = Produktions-Kanal, 2 = abweichender oder fehlender Wert.
 favenio_verify_feed_url() {
     local bundle_path="$1" app="$2"
-    local actual
+    local plist="$bundle_path/Contents/Info.plist"
+    local actual key signed
     actual=$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' \
-        "$bundle_path/Contents/Info.plist" 2>/dev/null || true)
+        "$plist" 2>/dev/null || true)
     if [ "$actual" != "$FAVENIO_FEED_URL" ]; then
         echo "FEHLER: $app sucht Updates unter '${actual:-keiner URL}' statt" >&2
         echo "'$FAVENIO_FEED_URL' — vermutlich ein geerbtes SPARKLE_FEED_URL." >&2
+        return 2
+    fi
+    key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' \
+        "$plist" 2>/dev/null || true)
+    if [ "$key" != "$FAVENIO_SPARKLE_PUBLIC_KEY" ]; then
+        echo "FEHLER: $app prüft den Appcast mit '${key:-keinem Schlüssel}'" >&2
+        echo "statt mit dem Produktionsschlüssel — Updates würden abgelehnt." >&2
+        return 2
+    fi
+    # PlistBuddy schreibt einen Boolean als "true"/"false".
+    signed=$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' \
+        "$plist" 2>/dev/null || true)
+    if [ "$signed" != "true" ]; then
+        echo "FEHLER: $app verlangt keine signierte Appcast-Datei" >&2
+        echo "(SURequireSignedFeed = '${signed:-fehlt}') — ein unsignierter" >&2
+        echo "Feed wäre damit akzeptabel." >&2
         return 2
     fi
     return 0
@@ -271,6 +299,18 @@ _favenio_dir_id() {
 # Sperre auch bei Abbruch weg (Aufräum-Trap); bleibt sie nach einem harten
 # Abschuss liegen, nennt die Meldung den Weg von Hand.
 #
+# Eine für diesen Lauf eindeutige Kennung für Ablage- und Sicherungsordner.
+#
+# Die Prozessnummer allein reicht nicht: macOS vergibt PIDs wieder, und ein
+# liegen gebliebener Ordner aus einem hart abgebrochenen Lauf kann denselben
+# Namen tragen (Review-Fund 2026-08-17). Mit Zeitstempel und Zufallsanteil
+# kollidiert ein neuer Lauf praktisch nie — und wenn doch, scheitert `mkdir`
+# und der alte Stand bleibt unangetastet.
+_favenio_install_token() {
+    printf '%s-%s-%s' "$$" "$(/bin/date +%s)" \
+        "$(/usr/bin/hexdump -n 4 -e '"%08x"' /dev/urandom)"
+}
+
 # Argumente: <sperrverzeichnis>
 # Rückgabe: 0 = Sperre gehört uns, 2 = ein anderer Lauf arbeitet dort.
 _favenio_install_lock() {
@@ -318,7 +358,18 @@ _favenio_install_interrupted() {
     # Nach einem bereits abgeschlossenen Rollback ist die globale Sperre leer.
     # In diesem winzigen Rückkehrfenster darf ein spätes Signal keine Sperre
     # entfernen, die inzwischen schon einem neuen Lauf gehört.
-    [ "${FAVENIO_INSTALL_LOCK:-}" = "$lock" ] || exit 3
+    if [ "${FAVENIO_INSTALL_LOCK:-}" != "$lock" ]; then
+        # Der alte Stand kam zuvor vollständig zurück — das ist Exit 2
+        # („nichts geändert"), nicht Exit 3. Exit 3 verspricht auf stderr
+        # verbliebene Pfade, und die gibt es hier gerade nicht
+        # (Review-Fund 2026-08-17).
+        if [ "${FAVENIO_INSTALL_ROLLED_BACK:-}" = "$lock" ]; then
+            echo "FEHLER: Installation abgebrochen; alter Stand ist" \
+                 "vollständig zurückgeholt." >&2
+            exit 2
+        fi
+        exit 3
+    fi
     echo "FEHLER: Installation abgebrochen; alter Stand wird zurückgeholt." >&2
     if _favenio_install_restore "$dest" "$stage" "$backup" "$lock" "$@"; then
         exit 2
@@ -366,13 +417,23 @@ favenio_install_bundles() {
     # Die Kennung gehört dazu, weil der Name allein nicht beweist, dass dort
     # noch UNSER Bundle liegt.
     local installed=()
-    # Ablage- und Sicherungsordner tragen die Prozessnummer, damit zwei Läufe
-    # sich nicht ins Gehege kommen. Sie liegen IM Zielordner, denn nur dann
-    # ist das spätere Umbenennen ein Vorgang innerhalb desselben Dateisystems.
-    local stage="$dest/.favenio-install.$$"
-    local backup="$dest/.favenio-previous.$$"
+    # Ablage- und Sicherungsordner liegen IM Zielordner, denn nur dann ist das
+    # spätere Umbenennen ein Vorgang innerhalb desselben Dateisystems.
+    #
+    # Ihr Name kam früher allein aus der Prozessnummer, und vorhandene
+    # gleichnamige Pfade wurden blind gelöscht. Nach einem harten Abbruch, dem
+    # dokumentierten manuellen Entfernen der Sperre und einer später
+    # wiederverwendeten PID konnte dort noch der NICHT zurückgeholte alte Stand
+    # liegen — ein neuer Lauf hätte ihn gelöscht (Review-Fund 2026-08-17).
+    # Deshalb: exklusiv erzeugte, zufällig benannte Ordner. `mkdir` scheitert,
+    # wenn der Name schon existiert; ein unbekannter Altpfad wird nie
+    # automatisch entfernt.
     local lock="$dest/.favenio-install.lock"
     _favenio_install_lock "$lock" || return 2
+    local token stage backup
+    token=$(_favenio_install_token)
+    stage="$dest/.favenio-install.$token"
+    backup="$dest/.favenio-previous.$token"
     # Damit der Aufräum-Trap von install.sh die Sperre auch bei Ctrl-C wieder
     # abnimmt; die Funktion selbst räumt sie auf jedem eigenen Weg weg.
     FAVENIO_INSTALL_LOCK="$lock"
@@ -382,8 +443,9 @@ favenio_install_bundles() {
     # gemeinsam auf; die Variablen sehen beim Signal die aktuelle Liste.
     trap '_favenio_install_interrupted "$dest" "$stage" "$backup" "$lock" "${installed[@]}"' \
         HUP INT TERM
-    rm -rf "$stage" "$backup"
-    if ! mkdir -p "$stage" "$backup"; then
+    # KEIN `rm -rf` vorweg: `mkdir` ohne -p scheitert, wenn der Pfad schon da
+    # ist, und genau das ist hier die gewünschte Antwort.
+    if ! mkdir "$stage" "$backup"; then
         echo "FEHLER: Ablageordner in $dest nicht anlegbar." >&2
         _favenio_install_failure "$dest" "$stage" "$backup" "$lock"
         return $?
@@ -524,6 +586,15 @@ _favenio_install_restore() {
     # rmdir statt rm -rf: Was hier noch liegt, ist ein nicht zurückgeholter
     # alter Stand — der darf nicht auch noch verschwinden.
     rmdir "$backup" 2>/dev/null || true
+    # Ergebnis dieses Rollbacks festhalten, BEVOR die Sperre fällt: Ein spätes
+    # weiches Signal im Rückkehrfenster sieht danach nur noch die leere globale
+    # Sperre und könnte einen vollständigen Rollback sonst als unvollständig
+    # melden (Review-Fund 2026-08-17).
+    if [ "$failed" -eq 0 ]; then
+        FAVENIO_INSTALL_ROLLED_BACK="$lock"
+    else
+        FAVENIO_INSTALL_ROLLED_BACK=""
+    fi
     _favenio_install_unlock "$lock"
     return $failed
 }

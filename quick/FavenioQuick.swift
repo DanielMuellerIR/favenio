@@ -789,25 +789,47 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// Gebündelt anzeigen. Bei 20 Treffern STOPPT die Suche (Top 20 reichen
     /// meist) — der Rest bzw. das Sortieren läuft auf Wunsch in der Haupt-App
     /// (Button „Alle in Favenio ↗" oder Cmd+Return), nicht mehr automatisch.
+    /// Die ausgewählten Treffer als Pfade — also modellbezogen statt über
+    /// Zeilennummern, die ein `reloadData()` nicht überleben.
+    func selectedHitPaths() -> Set<String> {
+        Set(tableView.selectedRowIndexes.compactMap {
+            $0 < hits.count ? hits[$0].path : nil
+        })
+    }
+
+    /// Neu laden und dabei dieselben Treffer wieder auswählen.
+    ///
+    /// AppKit hält die Auswahl bei `reloadData()` einer view-basierten Tabelle
+    /// NICHT. Vorher tat das nur `flushPending()`; der Sortierklick lud einfach
+    /// neu, und die Auswahl verschwand oder zeigte danach auf einen anderen
+    /// Treffer — samt einer offenen Vorschau, die beim alten Treffer blieb
+    /// (Review-Fund 2026-08-17).
+    func reloadKeepingSelection(_ selectedPaths: Set<String>) {
+        tableView.reloadData()
+        guard !selectedPaths.isEmpty else { return }
+        let rows = IndexSet(hits.indices.filter {
+            selectedPaths.contains(hits[$0].path)
+        })
+        tableView.selectRowIndexes(rows, byExtendingSelection: false)
+        // Eine offene Vorschau zeigt sonst weiter den Treffer der alten Zeile.
+        if QLPreviewPanel.sharedPreviewPanelExists(),
+           QLPreviewPanel.shared().isVisible {
+            rebuildPreviewURLs()
+            QLPreviewPanel.shared().reloadData()
+        }
+    }
+
     func flushPending() {
         guard !pending.isEmpty else { return }
         // Auswahl über den reloadData hinweg festhalten (fürs QuickLook).
-        let selectedPaths = Set(tableView.selectedRowIndexes.compactMap {
-            $0 < hits.count ? hits[$0].path : nil
-        })
+        let selectedPaths = selectedHitPaths()
         let room = Self.maxQuickHits - hits.count
         if room > 0 { hits.append(contentsOf: pending.prefix(room)) }
         pending = []
         infoLabel.textColor = .secondaryLabelColor
         infoLabel.lineBreakMode = .byTruncatingTail
         sortHits()
-        tableView.reloadData()
-        if !selectedPaths.isEmpty {
-            let rows = IndexSet(hits.indices.filter {
-                selectedPaths.contains(hits[$0].path)
-            })
-            tableView.selectRowIndexes(rows, byExtendingSelection: false)
-        }
+        reloadKeepingSelection(selectedPaths)
         openButton.isEnabled = !hits.isEmpty
         let reachedTop = hits.count >= Self.maxQuickHits
         if reachedTop { cancelSearch() }   // Top 20 erreicht → Suche stoppen
@@ -980,8 +1002,9 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// Header-Klick: Trefferliste nach Name oder Ort sortieren.
     func tableView(_ tableView: NSTableView,
                    sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        let selectedPaths = selectedHitPaths()
         sortHits()
-        tableView.reloadData()
+        reloadKeepingSelection(selectedPaths)
     }
 
     /// Hält die gewählte Sortierung auch beim Streaming neuer Treffer ein.

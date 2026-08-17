@@ -124,6 +124,11 @@ struct Hit: Hashable {
     let size: Int?     // Dateigröße in Bytes; bei Ordnern nil
     let filesystemPath: String
     let archiveMembers: [String]
+    /// Ist der Treffer ein Verzeichnis? Der `kind` allein genügt dafür nicht:
+    /// Ein Ordner INNERHALB eines Archivs kommt als `member` an und sah damit
+    /// aus wie eine Datei (Review-Fund 2026-08-17). Der Kern schickt das
+    /// Merkmal jetzt als `isDirectory` mit.
+    let isDirectory: Bool
 
     /// Liegt der Treffer INNERHALB eines Archivs?
     var isMember: Bool { !archiveMembers.isEmpty }
@@ -138,7 +143,7 @@ struct Hit: Hashable {
     /// sonst die lokalisierte Typbeschreibung der Endung (z. B. „PDF-Dokument"),
     /// ersatzweise die Endung groß bzw. „Datei" ohne Endung.
     var typeDescription: String {
-        if kind == "dir" { return "Ordner" }
+        if isDirectory { return "Ordner" }
         let ext = (displayName as NSString).pathExtension
         if ext.isEmpty { return "Datei" }
         if let type = UTType(filenameExtension: ext.lowercased()),
@@ -214,10 +219,14 @@ func parseHit(_ lineData: Data) -> Hit? {
         ?? (kind == "member"
             ? Array(path.components(separatedBy: "!/").dropFirst())
             : [])
+    // Ältere Kern-Ausgaben kennen `isDirectory` nicht; dort bleibt der
+    // Rückfall auf den Typ, der wenigstens Dateisystem-Ordner richtig erkennt.
+    let isDirectory = dict["isDirectory"] as? Bool ?? (kind == "dir")
     return Hit(path: path, kind: kind, line: dict["line"] as? Int,
                size: dict["size"] as? Int,
                filesystemPath: filesystemPath,
-               archiveMembers: archiveMembers)
+               archiveMembers: archiveMembers,
+               isDirectory: isDirectory)
 }
 
 /// Übersetzt eine JSONL-Zeile in einen Fortschritts-Pfad (der Ordner bzw.
@@ -387,6 +396,13 @@ final class MaterializationManager {
         if !hit.isMember {
             return URL(fileURLWithPath: hit.filesystemPath)
         }
+        // Ein ORDNER im Archiv hat keinen Inhalt zum Herausschreiben: Bei ZIP
+        // entstand dabei eine leere Datei, bei TAR scheiterte die Extraktion
+        // (Review-Fund 2026-08-17). Dateiaktionen gibt es dafür deshalb nicht;
+        // sichtbar bleibt der Treffer trotzdem.
+        if hit.isDirectory {
+            return nil
+        }
         if let cached = cache[hit],
            FileManager.default.fileExists(atPath: cached.path) {
             return cached
@@ -444,7 +460,8 @@ func cleanupMaterializedHits() {
 func jsonlData(for hits: [Hit]) -> Data {
     var data = Data()
     for hit in hits {
-        var object: [String: Any] = ["path": hit.path, "type": hit.kind]
+        var object: [String: Any] = ["path": hit.path, "type": hit.kind,
+                                     "isDirectory": hit.isDirectory]
         object["filesystemPath"] = hit.filesystemPath
         object["archiveMembers"] = hit.archiveMembers
         if let line = hit.line { object["line"] = line }

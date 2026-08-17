@@ -118,10 +118,10 @@ func runSelfTest() -> Int32 {
     }
     let tied = Hit(path: "/tmp/b/same.txt", kind: "file", line: 7,
                    size: 42, filesystemPath: "/tmp/b/same.txt",
-                   archiveMembers: [])
+                   archiveMembers: [], isDirectory: false)
     let tiedEarlier = Hit(path: "/tmp/a/same.txt", kind: "file", line: 7,
                           size: 42, filesystemPath: "/tmp/a/same.txt",
-                          archiveMembers: [])
+                          archiveMembers: [], isDirectory: false)
     for key in ["name", "type", "size", "line", "path"] {
         for ascending in [true, false] {
             guard !compareHits(tied, tied, key: key, ascending: ascending),
@@ -207,6 +207,15 @@ final class MainController: NSObject, NSApplicationDelegate,
     var seenPaths = Set<String>()   // schon gezeigte Pfade → keine Doppelten
     var cachedFinderFolders: [String] = []   // Finder-Fenster (async geladen)
     var refreshingFinder = false
+    /// Zählt die Aktivierungen des Fensters. Nur die Antwort der AKTUELLEN
+    /// Aktivierung darf das Ordner-Menü setzen; eine währenddessen
+    /// eingetroffene neue Aktivierung wird vorgemerkt und danach mit einer
+    /// frischen Finder-Abfrage bedient. Vorher verwarf ein laufender Lauf jede
+    /// neue Aktivierung ersatzlos, und das Menü zeigte die Fenster oder den
+    /// TCC-Zustand der vorigen Aktivierung (Review-Fund 2026-08-17). Dieselbe
+    /// Mechanik steckt in QuickController.refreshFinderFoldersAsync().
+    var finderRefreshGeneration = 0
+    var queuedFinderRefreshGeneration: Int?
     // Warum die Finder-Fenster fehlen (verweigerte Automation, kein Fenster,
     // Zeitüberschreitung). Steht im Ordner-Menü, statt kommentarlos zu fehlen.
     var finderScopeProblem: String?
@@ -374,6 +383,10 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// App vorderste → Finder-Fenster (neu) laden. Nur wenn die App aktiv
     /// ist, zeigt TCC den Automations-Consent-Dialog. Läuft im Hintergrund.
     func applicationDidBecomeActive(_ notification: Notification) {
+        finderRefreshGeneration += 1
+        // Finder-Fenster der vorigen Aktivierung sind keine gültige Antwort
+        // für die neue: Bis die frische Abfrage da ist, bleibt die Liste leer.
+        cachedFinderFolders = []
         refreshFinderFoldersAsync()
     }
 
@@ -449,7 +462,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         stopSearch()
         hits = loaded
         pending = []
-        tableView.reloadData()
+        applyHitsToTable(keepingSelection: [])
         statusLabel.stringValue = "\(hits.count) Treffer (aus Schnellsuche)."
     }
 
@@ -646,19 +659,31 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// osascript-Unterprozess, der den Main-Thread NIE blockiert (siehe
     /// finderWindowFoldersAsync). Das Ordner-Popup nimmt danach den Cache.
     func refreshFinderFoldersAsync() {
-        guard !refreshingFinder else { return }
+        let generation = finderRefreshGeneration
+        guard !refreshingFinder else {
+            queuedFinderRefreshGeneration = generation
+            return
+        }
         refreshingFinder = true
         finderWindowFoldersAsync { [weak self] outcome in
             guard let self else { return }
             self.refreshingFinder = false
-            self.finderScopeProblem = outcome.problemText
-            if case .denied = outcome {
-                self.finderScopeDenied = true
-            } else {
-                self.finderScopeDenied = false
+            // Eine Antwort aus einer überholten Aktivierung wird verworfen.
+            if generation == self.finderRefreshGeneration {
+                self.finderScopeProblem = outcome.problemText
+                if case .denied = outcome {
+                    self.finderScopeDenied = true
+                } else {
+                    self.finderScopeDenied = false
+                }
+                if case .folders(let folders) = outcome {
+                    self.cachedFinderFolders = folders
+                }
             }
-            if case .folders(let folders) = outcome {
-                self.cachedFinderFolders = folders
+            guard let queued = self.queuedFinderRefreshGeneration else { return }
+            self.queuedFinderRefreshGeneration = nil
+            if queued == self.finderRefreshGeneration {
+                self.refreshFinderFoldersAsync()
             }
         }
     }
@@ -872,7 +897,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         hits = seed
         pending = []
         seenPaths = Set(seed.map { $0.path })
-        tableView.reloadData()
+        applyHitsToTable(keepingSelection: [])
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
         guard !pattern.isEmpty else {
@@ -1001,24 +1026,41 @@ final class MainController: NSObject, NSApplicationDelegate,
         }
     }
 
+    /// Die ausgewählten Treffer als Pfade — modellbezogen statt über
+    /// Zeilennummern, die ein `reloadData()` nicht überlebt.
+    func selectedHitPaths() -> Set<String> {
+        Set(tableView.selectedRowIndexes.compactMap {
+            $0 < hits.count ? hits[$0].path : nil
+        })
+    }
+
+    /// Sortieren, neu laden und dieselben Treffer wieder auswählen.
+    ///
+    /// Jede Trefferübernahme muss hier durch: `continueSearch()` und
+    /// `loadResults()` luden vorher einfach neu und wandten eine bereits
+    /// aktive Sortierung nicht an. Enthielt der fortgesetzte Lauf nur die
+    /// übergebenen Treffer, blieb `pending` leer, `flushPending()` lief nie —
+    /// und die Kopfzeile zeigte eine Sortierung, der die Liste nicht folgte
+    /// (Review-Fund 2026-08-17).
+    func applyHitsToTable(keepingSelection selectedPaths: Set<String>) {
+        sortHits()
+        tableView.reloadData()
+        guard !selectedPaths.isEmpty else { return }
+        let rows = IndexSet(hits.indices.filter {
+            selectedPaths.contains(hits[$0].path)
+        })
+        tableView.selectRowIndexes(rows, byExtendingSelection: false)
+    }
+
     func flushPending() {
         guard !pending.isEmpty else { return }
         // Auswahl über den reloadData hinweg festhalten (sonst verliert man
         // beim Streamen sofort wieder die markierte Zeile — etwa fürs
         // QuickLook). Wir merken die Pfade und stellen sie danach wieder her.
-        let selectedPaths = Set(tableView.selectedRowIndexes.compactMap {
-            $0 < hits.count ? hits[$0].path : nil
-        })
+        let selectedPaths = selectedHitPaths()
         hits.append(contentsOf: pending)
         pending = []
-        sortHits()   // aktive Sortierung auch auf frische Treffer anwenden
-        tableView.reloadData()
-        if !selectedPaths.isEmpty {
-            let rows = IndexSet(hits.indices.filter {
-                selectedPaths.contains(hits[$0].path)
-            })
-            tableView.selectRowIndexes(rows, byExtendingSelection: false)
-        }
+        applyHitsToTable(keepingSelection: selectedPaths)
         statusLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
     }
 
@@ -1104,8 +1146,7 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// Header-Klick: Trefferliste nach der gewählten Spalte sortieren.
     func tableView(_ tableView: NSTableView,
                    sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-        sortHits()
-        tableView.reloadData()
+        applyHitsToTable(keepingSelection: selectedHitPaths())
     }
 
     /// Sortiert `hits` nach dem aktiven Sortierkriterium (oder lässt die

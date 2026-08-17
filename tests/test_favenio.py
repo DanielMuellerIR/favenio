@@ -1287,5 +1287,52 @@ class ZstdFormatsTest(TempTreeTest):
         self.assertIn("kaputt.txt.zst", err)
 
 
+class ArchiveDirectoryFlagTest(TempTreeTest):
+    """Review-Fund 2026-08-17: Ein ORDNER im Archiv kam als `type: "member"`
+    ohne jedes Verzeichnismerkmal an. Die Oberfläche zeigte ihn deshalb als
+    Datei, und beim Öffnen entstand eine leere Datei (ZIP) bzw. die Extraktion
+    scheiterte (TAR). Das JSONL trägt das Merkmal jetzt als `isDirectory`."""
+
+    def setUp(self):
+        super().setUp()
+        self.archive = os.path.join(self.root, "paket.zip")
+        with zipfile.ZipFile(self.archive, "w") as zf:
+            zf.writestr("nadel/", "")                 # Verzeichniseintrag
+            zf.writestr("nadel/datei.txt", "inhalt")
+
+    def records(self, argv):
+        code, lines, _ = run(argv)
+        return code, [json.loads(line) for line in lines]
+
+    def test_archive_directory_is_marked_as_directory(self):
+        code, records = self.records(["--json", "nadel", self.root])
+        self.assertEqual(code, 0)
+        directories = [r for r in records if r.get("isDirectory")]
+        self.assertEqual(len(directories), 1, records)
+        self.assertEqual(directories[0]["type"], "member")
+        self.assertTrue(directories[0]["path"].endswith("!/nadel"))
+
+    def test_archive_file_is_not_marked_as_directory(self):
+        code, records = self.records(["--json", "datei", self.root])
+        self.assertEqual(code, 0)
+        self.assertTrue(records)
+        self.assertFalse(any(r.get("isDirectory") for r in records), records)
+
+    def test_only_dirs_keeps_the_archive_directory(self):
+        code, records = self.records(
+            ["--json", "--only", "dirs", "nadel", self.root])
+        self.assertEqual(code, 0)
+        self.assertTrue(records)
+        self.assertTrue(all(r.get("isDirectory") for r in records), records)
+
+    def test_filesystem_directory_is_marked_too(self):
+        os.makedirs(os.path.join(self.root, "nadelordner"))
+        code, records = self.records(
+            ["--json", "--only", "dirs", "nadelordner", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual([r["type"] for r in records], ["dir"])
+        self.assertTrue(records[0]["isDirectory"])
+
+
 if __name__ == "__main__":
     unittest.main()

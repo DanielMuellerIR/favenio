@@ -73,9 +73,32 @@ echo "== Schritt 3/5: DMG bauen =="
 STAGING=$(mktemp -d)
 RW_DMG="$STAGING/favenio_rw.dmg"
 VOL_NAME="Favenio"
-MOUNT_DIR="/Volumes/$VOL_NAME"
-# Aufräumen auch bei Fehlern: Volume aushängen, Arbeitsverzeichnis löschen.
-trap 'hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true; rm -rf "$STAGING"' EXIT
+# Eigener Mountpoint statt des festen /Volumes/Favenio: Diesen Pfad kann schon
+# ein FREMDES Volume gleichen Namens belegen, und der Aufräumpfad hängte ihn
+# aus, ohne ihn selbst eingehängt zu haben — auch dann, wenn der Build vor dem
+# eigenen Attach abbrach (Review-Fund 2026-08-17).
+MOUNT_DIR="$STAGING/mnt"
+mkdir "$MOUNT_DIR"
+# Ausgehängt wird nur ein nachweislich EIGENER Attach.
+BUILD_MOUNTED=0
+VERIFY_MOUNT=""
+VERIFY_MOUNTED=0
+favenio_release_cleanup() {
+    if [ "$VERIFY_MOUNTED" = "1" ]; then
+        hdiutil detach "$VERIFY_MOUNT" -quiet 2>/dev/null || true
+        VERIFY_MOUNTED=0
+    fi
+    if [ "$BUILD_MOUNTED" = "1" ]; then
+        hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true
+        BUILD_MOUNTED=0
+    fi
+    # Die leeren Mountpoints gehören uns und dürfen nicht liegen bleiben.
+    if [ -n "$VERIFY_MOUNT" ]; then
+        rmdir "$VERIFY_MOUNT" 2>/dev/null || true
+    fi
+    rm -rf "$STAGING"
+}
+trap favenio_release_cleanup EXIT
 
 # Hintergrundbild reproduzierbar erzeugen und als HiDPI-TIFF aufbereiten:
 # Retina-scharf zeigt der Finder es nur, wenn das TIFF 1x UND 2x enthält.
@@ -89,12 +112,19 @@ tiffutil -cathidpicheck "$STAGING/DmgBg_1x.png" "$STAGING/DmgBg_2x.png" \
 
 # HFS+ statt APFS: AppleScript-Fenster-Bounds sind in APFS-DMGs auf älteren
 # macOS-Versionen unzuverlässig. Größe großzügig; UDZO komprimiert später.
-if [ -d "$MOUNT_DIR" ]; then
-    hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true
+# Ein fremdes Volume gleichen Namens wird NICHT ausgehängt: Das Finder-Skript
+# unten spricht die Platte über ihren Namen an und träfe sonst die falsche.
+# Lieber abbrechen und Daniel entscheiden lassen.
+if [ -d "/Volumes/$VOL_NAME" ]; then
+    echo "FEHLER: /Volumes/$VOL_NAME ist bereits eingehängt." >&2
+    echo "Dieses Volume gehört nicht diesem Lauf. Erst selbst auswerfen," >&2
+    echo "dann den Release erneut starten." >&2
+    exit 1
 fi
 hdiutil create -size 100m -fs HFS+ -volname "$VOL_NAME" -ov -quiet "$RW_DMG"
 hdiutil attach -readwrite -noverify -noautoopen -quiet \
     -mountpoint "$MOUNT_DIR" "$RW_DMG"
+BUILD_MOUNTED=1
 
 # ditto statt cp -R: erhält erweiterte Attribute und das in Schritt 2
 # angeheftete Notary-Ticket unverändert.
@@ -142,15 +172,15 @@ fi
 # Volume ausgehängt und eingefroren wird.
 sleep 2
 hdiutil detach "$MOUNT_DIR" -quiet || hdiutil detach -force "$MOUNT_DIR"
+BUILD_MOUNTED=0
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -quiet -o "$DMG_PATH"
 echo "DMG gebaut: $DMG_PATH"
 
 # ---------- Schritt 4: Signaturen im DMG verifizieren ----------
 echo "== Schritt 4/5: Signaturen verifizieren =="
 VERIFY_MOUNT=$(mktemp -d)
-trap 'hdiutil detach "$VERIFY_MOUNT" -quiet 2>/dev/null || true; \
-      hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true; rm -rf "$STAGING"' EXIT
 hdiutil attach "$DMG_PATH" -mountpoint "$VERIFY_MOUNT" -quiet -nobrowse
+VERIFY_MOUNTED=1
 for app in "${FAVENIO_APPS[@]}"; do
     codesign --verify --strict "$VERIFY_MOUNT/$app"
     # Das Ticket aus Schritt 2 muss die DMG-Erstellung überlebt haben —
@@ -166,6 +196,7 @@ for app in "${FAVENIO_APPS[@]}"; do
     favenio_verify_identity "$VERIFY_MOUNT/$app" "$app" || exit 1
 done
 hdiutil detach "$VERIFY_MOUNT" -quiet
+VERIFY_MOUNTED=0
 echo "Signaturen, Tickets, Entwickler-Team und Update-Feed im DMG gültig."
 
 # ---------- Schritt 5: DMG signieren, notarisieren, stapeln ----------

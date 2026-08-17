@@ -475,6 +475,8 @@ class InstallFromDmgTest(unittest.TestCase):
     APPS = {"Favenio.app": "local.favenio",
             "FavenioQuick.app": "local.favenio.quick"}
     FEED_URL = "https://danielmuellerir.github.io/favenio/appcast.xml"
+    # Der Update-Kanal besteht aus drei Werten; alle drei prueft install.sh.
+    SPARKLE_KEY = "H504COadHZVAKo+/XD0jzXT5PJzghkS2t/DDYmuHPDg="
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -491,14 +493,20 @@ class InstallFromDmgTest(unittest.TestCase):
         self.write_stubs()
 
     def write_plist(self, app, bundle_id, feed_url=None, version="0.21.1",
-                    build=None):
+                    build=None, sparkle_key=None, signed_feed=True):
         """`build=None` übernimmt die Kurzversion, `build=""` lässt
-        CFBundleVersion ganz weg."""
+        CFBundleVersion ganz weg. `sparkle_key`/`signed_feed` bauen die
+        Negativfälle des Update-Kanals (Review-Fund 2026-08-17)."""
         info = {
             "CFBundleIdentifier": bundle_id,
             "CFBundleShortVersionString": version,
             "SUFeedURL": self.FEED_URL if feed_url is None else feed_url,
         }
+        key = self.SPARKLE_KEY if sparkle_key is None else sparkle_key
+        if key != "":
+            info["SUPublicEDKey"] = key
+        if signed_feed is not None:
+            info["SURequireSignedFeed"] = signed_feed
         if build is None:
             build = version
         if build != "":
@@ -597,6 +605,37 @@ class InstallFromDmgTest(unittest.TestCase):
         self.assertEqual(code, 2, output)
         self.assertIn("nennt keine Version", output)
 
+    # --- Update-Kanal: Feed-URL allein genuegt nicht (Review-Fund 2026-08-17) ---
+
+    def test_wrong_sparkle_key_is_rejected(self):
+        """Ein gueltig signiertes DMG mit fremdem Schluessel wuerde jedes
+        Update ablehnen — das darf nicht nach /Applications."""
+        self.write_plist("Favenio.app", "local.favenio",
+                         sparkle_key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        code, output = self.run_install()
+        self.assertEqual(code, 2, output)
+        self.assertIn("prüft den Appcast", output)
+
+    def test_missing_sparkle_key_is_rejected(self):
+        self.write_plist("Favenio.app", "local.favenio", sparkle_key="")
+        code, output = self.run_install()
+        self.assertEqual(code, 2, output)
+        self.assertIn("keinem Schlüssel", output)
+
+    def test_unsigned_feed_is_rejected(self):
+        """Ohne SURequireSignedFeed akzeptierte die App einen unsignierten
+        Appcast."""
+        self.write_plist("Favenio.app", "local.favenio", signed_feed=False)
+        code, output = self.run_install()
+        self.assertEqual(code, 2, output)
+        self.assertIn("keine signierte Appcast-Datei", output)
+
+    def test_missing_signed_feed_flag_is_rejected(self):
+        self.write_plist("Favenio.app", "local.favenio", signed_feed=None)
+        code, output = self.run_install()
+        self.assertEqual(code, 2, output)
+        self.assertIn("keine signierte Appcast-Datei", output)
+
 
 class FeedUrlTest(unittest.TestCase):
     """favenio_verify_feed_url einzeln: Der Produktions-Feed ist Pflicht,
@@ -609,7 +648,11 @@ class FeedUrlTest(unittest.TestCase):
     def check(self, feed_url):
         path = os.path.join(self.tmp.name, "Favenio.app")
         os.makedirs(os.path.join(path, "Contents"), exist_ok=True)
-        info = {"CFBundleIdentifier": "local.favenio"}
+        info = {
+            "CFBundleIdentifier": "local.favenio",
+            "SUPublicEDKey": InstallFromDmgTest.SPARKLE_KEY,
+            "SURequireSignedFeed": True,
+        }
         if feed_url is not None:
             info["SUFeedURL"] = feed_url
         with open(os.path.join(path, "Contents", "Info.plist"), "wb") as handle:

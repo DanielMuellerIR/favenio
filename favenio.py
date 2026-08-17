@@ -621,14 +621,22 @@ class Search:
         return name.startswith(".")
 
     def emit(self, path, kind, line=None, size=None, filesystem_path=None,
-             archive_members=None):
+             archive_members=None, is_dir=None):
         """Gibt EINEN Treffer aus. kind ist "file", "dir" oder "member"
         (member = Eintrag innerhalb eines Archivs). line ist bei
         Inhaltssuche die Zeilennummer des ersten Treffers, size die
-        Dateigröße in Bytes (bei Ordnern None)."""
+        Dateigröße in Bytes (bei Ordnern None).
+
+        `is_dir` sagt ausdrücklich, ob der Treffer ein Verzeichnis ist. Der
+        Typ `member` allein verrät das nicht: Ein Ordner IM Archiv kam vorher
+        genauso an wie eine Datei im Archiv, und die Oberfläche zeigte ihn als
+        Datei an, filterte ihn beim Ordner-Umschalter falsch und erzeugte beim
+        Öffnen eine leere Datei (Review-Fund 2026-08-17). Ohne Angabe folgt es
+        dem Typ."""
         self.found_any = True
+        directory = kind == "dir" if is_dir is None else bool(is_dir)
         if self.as_json:
-            record = {"path": path, "type": kind}
+            record = {"path": path, "type": kind, "isDirectory": directory}
             record["filesystemPath"] = (filesystem_path
                                         if filesystem_path is not None
                                         else path)
@@ -895,7 +903,7 @@ class Search:
                 and self.type_allowed(is_dir):
             self.emit(full_display, "member", size=None if is_dir else size,
                       filesystem_path=archive_path,
-                      archive_members=member_chain)
+                      archive_members=member_chain, is_dir=is_dir)
 
         if is_dir:
             return

@@ -212,9 +212,10 @@ Spotlight-Ersatz für die Finder-Toolbar: `FavenioQuick.app` bei
 gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
 
 - Ein Klick aufs Icon öffnet ein kleines normales App-Fenster (kein Dock-Icon)
-- **Return** startet die Namenssuche (inkl. Archive) in dem Suchbereich, der
-  neben dem Feld steht — voreingestellt ist der Ordner des vordersten
-  Finder-Fensters
+- **Return** startet die Namenssuche in dem Suchbereich, der neben dem Feld
+  steht — voreingestellt ist der Ordner des vordersten Finder-Fensters.
+  Archive sind ein zuschaltbarer Schalter und **standardmäßig aus**; für
+  Treffer im Archiv **Archive** ankreuzen
 - Der Typ-Umschalter begrenzt Treffer auf Dateien und Ordner, nur Dateien oder
   nur Ordner
 - Die Ergebnisspalten sind sortierbar und verschiebbar; horizontales Scrollen

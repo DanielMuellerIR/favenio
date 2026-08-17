@@ -206,9 +206,10 @@ A Spotlight alternative for the Finder toolbar: drag `FavenioQuick.app` into
 the header of a Finder window while holding **Cmd**.
 
 - One click on the icon opens a small regular app window (no Dock icon)
-- **Return** starts the name search (including archives) in the search scope
-  shown next to the field — by default the folder of the frontmost Finder
-  window
+- **Return** starts the name search in the search scope shown next to the
+  field — by default the folder of the frontmost Finder window. Archives are
+  an optional switch and are **off** by default; tick **Archives** to search
+  inside them
 - The type switch limits hits to files and folders, files only, or folders only
 - The result columns are sortable and resizable; horizontal scrolling exposes
   long source paths
