@@ -15,14 +15,6 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
   dessen erste Spalte den Typ nennt) — die ist aber schwerer verlässlich zu
   zerlegen als die reine Namensliste. Vor der Umsetzung: leeren ISO-Ordner
   als Fixture ergänzen.
-## Niedrigprior (Code-Review-Triage 2026-07-24)
-
-Aus der Review-Triage vom 2026-07-24 (Quelle: MiniMax-Review, von Opus
-verifiziert). Kosmetik und bewusste Tradeoffs, keine Bugs.
-
-- `favenio.py` (~516–528, `walk_tar`): Die Kompressions-Ratio-Heuristik greift
-  nur bei ZIP; für TAR schützen allein die Byte-Budgets (per-Member-Ratio bei
-  tar nicht ermittelbar). Klarstellenden Kommentar ergänzen.
 
 Nicht offen: der frühere Finder-Ordner-Fehler; `osascript` als Unterprozess ist
 die verifizierte Lösung und eine Dauerregel.

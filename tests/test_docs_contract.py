@@ -1,0 +1,94 @@
+# Hält die Dokumentation am CLI-Vertrag fest.
+#
+# Diese Tests prüfen keinen Code, sondern ob README, README.de und AGENTS noch
+# beschreiben, was favenio.py wirklich tut. Beide Lücken, die sie schließen,
+# gab es wirklich: `-e/--exact` und `--max-depth` standen in den Beispielen,
+# aber in keiner Optionstabelle, und das Feld `isDirectory` kam am 2026-08-17
+# in JEDEN Treffer, ohne dass eine der drei Dateien es erwähnte.
+
+import re
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+CLI = (REPO / "favenio.py").read_text(encoding="utf-8")
+READMES = {
+    "README.md": (REPO / "README.md").read_text(encoding="utf-8"),
+    "README.de.md": (REPO / "README.de.md").read_text(encoding="utf-8"),
+}
+AGENTS = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def cli_long_options():
+    """Alle langen Optionen, die argparse in favenio.py kennt.
+
+    Die lange Form steht mal an erster Stelle (`"--hidden"`), mal hinter einer
+    Kurzform (`"-e", "--exact"`) — beide Schreibweisen müssen erfasst werden,
+    sonst prüft der Test stillschweigend zu wenig."""
+    return sorted(set(re.findall(
+        r'add_argument\(\s*(?:"-[a-z]",\s*)?"(--[a-z-]+)"', CLI)))
+
+
+def option_table(text):
+    """Der Abschnitt „Optionen"/„Options" bis zur nächsten Überschrift."""
+    start = text.index("| Option |")
+    rest = text[start:]
+    return rest[:rest.index("\n##")]
+
+
+class OptionTableTest(unittest.TestCase):
+    def test_every_cli_option_is_documented_in_both_readmes(self):
+        options = cli_long_options()
+        self.assertIn("--exact", options)       # Sanity: Regex greift noch.
+        for name, text in READMES.items():
+            with self.subTest(readme=name):
+                table = option_table(text)
+                missing = [option for option in options if option not in table]
+                self.assertEqual(missing, [], "fehlt in %s" % name)
+
+    def test_both_option_tables_list_the_same_options(self):
+        """Die deutsche Fassung ist eine Übersetzung, keine eigene Auswahl."""
+        listed = {}
+        for name, text in READMES.items():
+            table = option_table(text)
+            listed[name] = sorted(set(re.findall(r"`(--[a-z-]+)", table)))
+        self.assertEqual(listed["README.md"], listed["README.de.md"])
+
+
+class JsonContractTest(unittest.TestCase):
+    """Welche Felder JEDER Treffer trägt, steht im Kern in Search.emit()."""
+
+    ALWAYS = ("path", "type", "isDirectory", "filesystemPath",
+              "archiveMembers")
+
+    def test_emit_writes_the_documented_always_fields(self):
+        start = CLI.index("    def emit(self, path, kind")
+        body = CLI[start:CLI.index("\n    def warn(", start)]
+        for field in self.ALWAYS:
+            with self.subTest(field=field):
+                self.assertIn('"%s"' % field, body)
+
+    def test_readmes_and_agents_name_the_always_fields(self):
+        for name, text in list(READMES.items()) + [("AGENTS.md", AGENTS)]:
+            for field in self.ALWAYS:
+                with self.subTest(document=name, field=field):
+                    self.assertIn("`%s`" % field, text)
+
+    def test_documentation_warns_that_type_does_not_reveal_a_folder(self):
+        """Der eigentliche Fallstrick: Ein Ordner IM Archiv kommt als
+        `member` an wie eine Datei. Wer nur `type` liest, liegt falsch."""
+        for name, text in list(READMES.items()) + [("AGENTS.md", AGENTS)]:
+            # Zeilenumbrüche und Fettdruck wegnormalisieren: Die Aussage soll
+            # zählen, nicht wo der Zeilenumbruch gerade fällt.
+            plain = " ".join(text.replace("*", "").split()).lower()
+            with self.subTest(document=name):
+                self.assertRegex(
+                    plain,
+                    r"(ordner (im|innerhalb eines) archivs?|"
+                    r"folder inside an archive).{0,120}member",
+                    "%s erklärt nicht, dass ein Ordner im Archiv als "
+                    "`member` ankommt" % name)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1019,7 +1019,14 @@ class Search:
 
     def walk_tar(self, archive, display, depth, archive_path,
                  archive_members):
-        """Geht alle Einträge eines Tar-Archivs durch."""
+        """Geht alle Einträge eines Tar-Archivs durch.
+
+        Anders als bei Zip wird hier KEIN compressed_size übergeben, und damit
+        greift die Kompressionsverhältnis-Prüfung aus ArchiveBudget nicht: Ein
+        Tar komprimiert als Ganzes, nicht pro Eintrag — eine Einzelgröße gibt
+        es schlicht nicht. Gegen eine Entpack-Bombe schützen bei Tar deshalb
+        allein die Byte-Budgets (Einzel- und Gesamtgrenze), die beim Lesen
+        greifen. Das ist kein Versehen, sondern die Grenze des Formats."""
         for member in archive.getmembers():
             def open_member(member=member):
                 extracted = archive.extractfile(member)

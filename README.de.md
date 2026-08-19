@@ -115,9 +115,13 @@ Bei Inhaltssuche hängt `:N` die Zeilennummer des ersten Treffers an.
 Favenio ist bewusst maschinenfreundlich gebaut:
 
 - **`--json`**: Ein Treffer pro Zeile als JSON-Objekt (JSONL), etwa
-  `{"path": "...", "type": "member", "filesystemPath": "/tmp/a.zip", "archiveMembers": ["innen.txt"], "line": 2}`.
+  `{"path": "...", "type": "member", "isDirectory": false, "filesystemPath": "/tmp/a.zip", "archiveMembers": ["innen.txt"], "line": 2}`.
   `path` bleibt die menschenlesbare Darstellung; Automation sollte die
-  eindeutigen strukturierten Felder verwenden.
+  eindeutigen strukturierten Felder verwenden. Jeder Treffer trägt `path`,
+  `type`, `isDirectory`, `filesystemPath` und `archiveMembers`; Inhaltstreffer
+  zusätzlich `line`, Dateien zusätzlich `size`. Für „ist das ein Ordner?"
+  `isDirectory` fragen, nicht `type`: Ein **Ordner innerhalb eines Archivs**
+  kommt genau wie eine Datei als `"type": "member"` an.
 - **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,
   `2` = Fehler (ungültiger Regex, Pfad fehlt)
 - **Warnungen** (unlesbare Dateien, kaputte Archive) gehen nach stderr;
@@ -137,6 +141,8 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `-c`, `--content` | im Dateiinhalt suchen statt in Namen |
 | `-r`, `--regex` | Muster als regulären Ausdruck interpretieren |
 | `-s`, `--case-sensitive` | Groß-/Kleinschreibung beachten |
+| `-e`, `--exact` | Muster muss dem GANZEN Namen entsprechen (mit `-r`: fullmatch; mit `-c` je Zeile) |
+| `--max-depth N` | nur N Ordnerebenen tief suchen (1 = nur direkt im Startpfad, wie `find -maxdepth`) |
 | `--no-archives` | nicht in Archive hineinschauen |
 | `--archive-depth N` | Verschachtelungstiefe (0 = wie `--no-archives`, Default 1) |
 | `--max-archive-member-bytes BYTES` | maximal gelesene entpackte Bytes pro Archivmitglied |
@@ -148,6 +154,7 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `--progress` | laufend melden, wo gerade gesucht wird (mit `--json` als JSONL-Objekte, sonst auf stderr) |
 | `--extract TREFFER` | Treffer-Pfad (`!/`-Notation) in einen Temp-Ordner auspacken und den nutzbaren Pfad ausgeben |
 | `--extract-json JSON` | einen eindeutigen strukturierten JSON-Treffer auspacken |
+| `--extract-root ORDNER` | Temp-Wurzel für die Extraktion (nutzen die Apps, die sie selbst aufräumen) |
 | `--version` | Version anzeigen |
 
 ## Suchmodi — und wie man z. B. nur `.md`-Dateien findet

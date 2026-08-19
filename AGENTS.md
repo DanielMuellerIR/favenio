@@ -42,8 +42,12 @@ Dokumentformate wie JAR, WHL, EPUB, DOCX, XLSX, PPTX, ODT, ODS und ODP dazu.
 
 Verbindliches CLI-Verhalten:
 
-- `--json` schreibt JSONL, ein Objekt pro Treffer. Treffer tragen mindestens
-  `path` und `type`; Inhaltstreffer zusätzlich `line`.
+- `--json` schreibt JSONL, ein Objekt pro Treffer. Jeder Treffer trägt
+  `path`, `type`, `isDirectory`, `filesystemPath` und `archiveMembers`;
+  Inhaltstreffer zusätzlich `line`, Dateien zusätzlich `size`. `isDirectory`
+  ist nötig, weil `type` es nicht verrät: Ein Ordner IM Archiv kommt wie eine
+  Datei als `member` an. Die Frontends dürfen den Typ nicht aus dem Pfad oder
+  aus `type` erraten.
 - `--progress` erzeugt gedrosselte Fortschrittsobjekte. Im JSON-Modus stehen sie
   im selben stdout-Strom und sind über `type: progress` erkennbar. Ohne JSON
   gehen Fortschritte nach stderr.

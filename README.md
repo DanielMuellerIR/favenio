@@ -113,9 +113,12 @@ For content search, `:N` appends the line number of the first match.
 Favenio is deliberately machine-friendly:
 
 - **`--json`**: one hit per line as a JSON object (JSONL), e.g.
-  `{"path": "...", "type": "member", "filesystemPath": "/tmp/a.zip", "archiveMembers": ["inside.txt"], "line": 2}`.
+  `{"path": "...", "type": "member", "isDirectory": false, "filesystemPath": "/tmp/a.zip", "archiveMembers": ["inside.txt"], "line": 2}`.
   `path` remains the human-readable representation; automation should use the
-  unambiguous structured fields.
+  unambiguous structured fields. Every hit carries `path`, `type`,
+  `isDirectory`, `filesystemPath` and `archiveMembers`; content hits also
+  `line`, files also `size`. Ask `isDirectory`, not `type`: a **folder inside
+  an archive** arrives as `"type": "member"` just like a file does.
 - **Exit codes** as with grep: `0` = hits, `1` = no hits,
   `2` = error (invalid regex, missing path)
 - **Warnings** (unreadable files, broken archives) go to stderr;
@@ -135,6 +138,8 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `-c`, `--content` | search file contents instead of names |
 | `-r`, `--regex` | interpret the pattern as a regular expression |
 | `-s`, `--case-sensitive` | match case-sensitively |
+| `-e`, `--exact` | pattern must match the WHOLE name (with `-r`: fullmatch; with `-c` per line) |
+| `--max-depth N` | search only N directory levels deep (1 = directly in the start path, like `find -maxdepth`) |
 | `--no-archives` | do not look inside archives |
 | `--archive-depth N` | nesting depth (0 = like `--no-archives`, default 1) |
 | `--max-archive-member-bytes BYTES` | maximum uncompressed bytes read per archive member |
@@ -146,6 +151,7 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
 | `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |
 | `--extract-json JSON` | extract an unambiguous structured JSON hit |
+| `--extract-root FOLDER` | temp root for extraction (used by the apps, which clean it up themselves) |
 | `--version` | show version |
 
 ## Search modes — and how to find only `.md` files
