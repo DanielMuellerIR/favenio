@@ -154,6 +154,18 @@ struct Hit: Hashable {
     }
 }
 
+/// Vergleicht zwei Zahlen, die fehlen dürfen. Ein fehlender Wert gilt als
+/// kleiner als jede echte Zahl: Ordner haben keine Größe, Namenstreffer keine
+/// Zeilennummer, und beide sollen in aufsteigender Sortierung vorn stehen.
+private func compareOptionalNumbers(_ lhs: Int?, _ rhs: Int?)
+    -> ComparisonResult {
+    let left = lhs ?? -1
+    let right = rhs ?? -1
+    if left < right { return .orderedAscending }
+    if left > right { return .orderedDescending }
+    return .orderedSame
+}
+
 /// Gemeinsame, strikte Sortierordnung für beide Trefferlisten. Der feste
 /// Pfad-Tie-Breaker verhindert, dass zwei verschiedene Treffer einander in
 /// beiden Richtungen als „kleiner“ ansehen.
@@ -162,16 +174,12 @@ func compareHits(_ lhs: Hit, _ rhs: Hit, key: String,
     let primary: ComparisonResult
     switch key {
     case "size":
-        primary = (lhs.size ?? -1) < (rhs.size ?? -1) ? .orderedAscending
-            : (lhs.size ?? -1) > (rhs.size ?? -1) ? .orderedDescending
-            : .orderedSame
+        primary = compareOptionalNumbers(lhs.size, rhs.size)
     case "type":
         primary = lhs.typeDescription.localizedCaseInsensitiveCompare(
             rhs.typeDescription)
     case "line":
-        primary = (lhs.line ?? -1) < (rhs.line ?? -1) ? .orderedAscending
-            : (lhs.line ?? -1) > (rhs.line ?? -1) ? .orderedDescending
-            : .orderedSame
+        primary = compareOptionalNumbers(lhs.line, rhs.line)
     case "path":
         primary = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
     default:
@@ -185,8 +193,7 @@ func compareHits(_ lhs: Hit, _ rhs: Hit, key: String,
     let pathOrder = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
     if pathOrder != .orderedSame { return pathOrder == .orderedAscending }
     if lhs.kind != rhs.kind { return lhs.kind < rhs.kind }
-    if lhs.line != rhs.line { return (lhs.line ?? -1) < (rhs.line ?? -1) }
-    return false
+    return compareOptionalNumbers(lhs.line, rhs.line) == .orderedAscending
 }
 
 /// Findet den Python-Kern: zuerst im App-Bundle (Resources), sonst im
@@ -284,8 +291,13 @@ func searchExitIsError(_ status: Int32,
 }
 
 /// Führt eine Suche BLOCKIEREND aus und liefert Treffer.
-/// Für die Schnellsuche und den Selbsttest; die große GUI streamt
-/// stattdessen asynchron (siehe MainController in FavenioGUI.swift).
+///
+/// Nur für den Headless-Selbsttest. Beide Oberflächen streamen stattdessen
+/// über `runSearchStreaming` — die Schnellsuche seit ihrer Live-Trefferliste
+/// ebenfalls. Diese Fassung verwirft nämlich das Prozessende: Ein Fehler
+/// (Exit 2) und ein Signalabbruch kommen hier genauso an wie „keine Treffer".
+/// Genau das musste in beiden Frontends behoben werden; ein sichtbarer
+/// Suchlauf gehört deshalb nicht auf diesen Weg zurück.
 func runSearchSync(arguments: [String]) -> [Hit] {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: pythonPath)
