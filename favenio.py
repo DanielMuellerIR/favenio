@@ -40,10 +40,10 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.22.0"
+__version__ = "0.22.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-08-16"
+__date__ = "2026-08-19"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -277,6 +277,19 @@ def single_opener(extension):
     if extension == ZSTD_SINGLE_EXTENSION:
         return zstd_open
     return SINGLE_COMPRESSION_OPENERS[extension]
+
+
+def single_member_name(container_name, extension):
+    """Der Eintragsname einer einzeln komprimierten Datei: der Dateiname ohne
+    die Kompressionsendung („notiz.txt.gz" enthält „notiz.txt").
+
+    Suche und Extraktion müssen dieselbe Regel anwenden: `walk_single()` gibt
+    diesen Namen als Archiv-Eintrag aus, `extract_result()` akzeptiert genau
+    ihn wieder und lehnt jeden anderen mit KeyError ab. Zwei getrennte Kopien
+    der Regel könnten auseinanderdriften — dann wäre ein .gz-Treffer nicht
+    mehr auszupacken. Sonderfall: Heißt die Datei nur „.gz", bleibt der Name
+    er selbst, statt leer zu werden."""
+    return container_name[:-len(extension)] or container_name
 
 # Häppchengrösse für die Inhaltssuche. Dateien werden nicht am Stück
 # eingelesen, sondern in Portionen dieser Grösse — das hält den Speicher
@@ -558,6 +571,19 @@ def positive_float(value):
     parsed = float(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("muss größer als 0 sein")
+    return parsed
+
+
+def nonnegative_int(value):
+    """Wie positive_int, lässt aber die 0 zu — nur für --archive-depth.
+
+    Dort heißt 0 ausdrücklich „gar nicht in Archive schauen". Eine negative
+    Zahl hat dagegen keine Bedeutung: Sie lief bisher stillschweigend wie 0,
+    ein Tippfehler wie „--archive-depth -1" hat also kommentarlos alle
+    Archivtreffer unterschlagen."""
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("darf nicht negativ sein")
     return parsed
 
 
@@ -1021,8 +1047,7 @@ class Search:
         Lesen, eine Kompressionsverhältnis-Prüfung ist nicht möglich."""
         opener = single_opener(extension)
         name = os.path.basename(display.rstrip("/"))
-        # Endung abschneiden; Sonderfall „.gz" als ganzer Name bleibt er selbst.
-        member_name = name[:-len(extension)] or name
+        member_name = single_member_name(name, extension)
         if fileobj is not None:
             # Archiv im Archiv: Die komprimierten Bytes liegen im Speicher.
             # Für den zweiten Lesedurchlauf (Vortest + Zeilennummer) braucht
@@ -1226,7 +1251,7 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                         except OSError:
                             pass
             else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
-                expected = container_name[:-len(kind)] or container_name
+                expected = single_member_name(container_name, kind)
                 if member != expected:
                     raise KeyError(member)
                 opener = single_opener(kind)
@@ -1305,11 +1330,11 @@ def main(argv=None):
                         help="nur N Ordnerebenen tief suchen (1 = nur direkt "
                              "im Startpfad, wie find -maxdepth); Default: "
                              "unbegrenzt")
-    parser.add_argument("--archive-depth", type=int, default=1,
+    parser.add_argument("--archive-depth", type=nonnegative_int, default=1,
                         metavar="N",
                         help="wie tief in verschachtelte Archive schauen "
-                             "(1 = Archive, 2 = Archive in Archiven, …; "
-                             "Default: 1)")
+                             "(0 = gar nicht, wie --no-archives; 1 = Archive, "
+                             "2 = Archive in Archiven, …; Default: 1)")
     parser.add_argument("--max-archive-member-bytes", type=positive_int,
                         default=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
                         metavar="BYTES",

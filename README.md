@@ -136,7 +136,7 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `-r`, `--regex` | interpret the pattern as a regular expression |
 | `-s`, `--case-sensitive` | match case-sensitively |
 | `--no-archives` | do not look inside archives |
-| `--archive-depth N` | nesting depth (default 1) |
+| `--archive-depth N` | nesting depth (0 = like `--no-archives`, default 1) |
 | `--max-archive-member-bytes BYTES` | maximum uncompressed bytes read per archive member |
 | `--max-archive-total-bytes BYTES` | maximum uncompressed archive bytes read per search |
 | `--max-archive-ratio FACTOR` | maximum ZIP compression ratio |

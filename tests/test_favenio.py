@@ -301,6 +301,31 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(code, 2)
         self.assertIn("größer als 0", err)
 
+    def test_archive_depth_rejects_negative(self):
+        # Eine negative Tiefe lief vorher stillschweigend wie 0: Der
+        # Tippfehler „-1" unterschlug kommentarlos alle Archivtreffer.
+        code, _, err = run(["-c", "GEHEIMNIS", self.root,
+                            "--archive-depth", "-1"])
+        self.assertEqual(code, 2)
+        self.assertIn("negativ", err)
+
+    def test_archive_depth_zero_still_means_no_archives(self):
+        # 0 bleibt ausdrücklich erlaubt und muss genau wirken wie
+        # --no-archives: Treffer in normalen Dateien ja, in Archiven nein.
+        zero_code, zero_lines, _ = run(["-c", "GEHEIMNIS", self.root,
+                                        "--archive-depth", "0"])
+        flag_code, flag_lines, _ = run(["-c", "GEHEIMNIS", self.root,
+                                        "--no-archives"])
+        self.assertEqual(zero_code, flag_code)
+        self.assertEqual(sorted(zero_lines), sorted(flag_lines))
+        self.assertFalse([line for line in zero_lines if "!/" in line],
+                         zero_lines)
+        # Ohne die Begrenzung kommen die Archivtreffer sehr wohl dazu.
+        full_code, full_lines, _ = run(["-c", "GEHEIMNIS", self.root])
+        self.assertEqual(full_code, 0)
+        self.assertTrue([line for line in full_lines if "!/" in line],
+                        full_lines)
+
     # ---------- Inhaltssuche ----------
 
     def test_content_in_plain_file(self):
@@ -911,6 +936,23 @@ class SingleCompressionTest(TempTreeTest):
         self.assertTrue(lines[0].endswith("log.txt"))
         with open(lines[0], encoding="utf-8") as handle:
             self.assertEqual(handle.read(), self.CONTENT)
+
+    def test_search_output_is_extractable_in_all_three_formats(self):
+        # Suche und Extraktion leiten den Eintragsnamen aus derselben Regel
+        # ab (single_member_name). Der Test nagelt genau diese Kopplung fest:
+        # Er nimmt den Pfad, den die SUCHE ausgibt, und reicht ihn unverändert
+        # an --extract weiter. Driften beide Seiten auseinander, wäre ein
+        # .gz/.bz2/.xz-Treffer nicht mehr auszupacken.
+        code, lines, _ = run(["--json", "--content", "NADEL", self.root])
+        self.assertEqual(code, 0)
+        hits = [json.loads(line) for line in lines]
+        self.assertEqual(len(hits), 3, hits)
+        for hit in hits:
+            with self.subTest(hit=hit["path"]):
+                code, out, err = run(["--extract", hit["path"]])
+                self.assertEqual(code, 0, err)
+                with open(out[0], encoding="utf-8") as handle:
+                    self.assertEqual(handle.read(), self.CONTENT)
 
     def test_extract_nested_chain_through_gz(self):
         inner = io.BytesIO()

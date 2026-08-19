@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.22.1 — 2026-08-19
+
+Aus der CodeQA-Kampagne vom 2026-08-19:
+
+- `--archive-depth` lehnt negative Werte jetzt mit einer Fehlermeldung ab.
+  Bisher lief `--archive-depth -1` stillschweigend wie `0` und unterschlug
+  damit alle Archivtreffer — ein Tippfehler blieb unbemerkt. `0` bleibt
+  ausdrücklich erlaubt und wirkt wie `--no-archives`.
+
 ## 0.22.0 — 2026-08-16
 
 - **Schnellsuche:** Das normale, minimierbare App-Fenster ersetzt das stets

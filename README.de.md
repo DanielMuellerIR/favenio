@@ -138,7 +138,7 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `-r`, `--regex` | Muster als regulären Ausdruck interpretieren |
 | `-s`, `--case-sensitive` | Groß-/Kleinschreibung beachten |
 | `--no-archives` | nicht in Archive hineinschauen |
-| `--archive-depth N` | Verschachtelungstiefe (Default 1) |
+| `--archive-depth N` | Verschachtelungstiefe (0 = wie `--no-archives`, Default 1) |
 | `--max-archive-member-bytes BYTES` | maximal gelesene entpackte Bytes pro Archivmitglied |
 | `--max-archive-total-bytes BYTES` | maximal gelesene entpackte Archivbytes pro Suchlauf |
 | `--max-archive-ratio FAKTOR` | maximales ZIP-Kompressionsverhältnis |
