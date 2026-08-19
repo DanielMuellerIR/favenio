@@ -17,6 +17,12 @@ READMES = {
     "README.de.md": (REPO / "README.de.md").read_text(encoding="utf-8"),
 }
 AGENTS = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+CHANGELOG = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+
+
+def cli_constant(name):
+    """Wert einer Konstante aus favenio.py, z. B. __version__."""
+    return re.search(r'^%s = "([^"]+)"' % name, CLI, re.M).group(1)
 
 
 def cli_long_options():
@@ -88,6 +94,27 @@ class JsonContractTest(unittest.TestCase):
                     r"folder inside an archive).{0,120}member",
                     "%s erklärt nicht, dass ein Ordner im Archiv als "
                     "`member` ankommt" % name)
+
+
+class ChangelogTest(unittest.TestCase):
+    """`favenio.py::__version__` ist die einzige Versionsquelle, und der
+    CHANGELOG ist die einzige Stelle, an der Nutzer nachlesen, was diese
+    Version ändert — beide Readmes verlinken ihn. Ohne Kopplung entsteht
+    stillschweigend eine Version ohne Eintrag: Der Versionssprung fällt beim
+    Bauen auf, der fehlende Eintrag niemandem."""
+
+    def test_newest_entry_matches_version_and_date(self):
+        entry = re.search(r"^## (\S+) — (\S+)$", CHANGELOG, re.M)
+        self.assertIsNotNone(
+            entry, "CHANGELOG.md hat keinen Eintrag der Form "
+                   "'## X.Y.Z — JJJJ-MM-TT'")
+        version, date = entry.group(1), entry.group(2)
+        self.assertEqual(version, cli_constant("__version__"),
+                         "oberster CHANGELOG-Eintrag passt nicht zu "
+                         "__version__")
+        self.assertEqual(date, cli_constant("__date__"),
+                         "oberster CHANGELOG-Eintrag passt nicht zu __date__")
+        self.assertRegex(date, r"^\d{4}-\d{2}-\d{2}$")
 
 
 if __name__ == "__main__":
