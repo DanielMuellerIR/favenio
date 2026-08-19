@@ -13,6 +13,13 @@ Aus der CodeQA-Kampagne vom 2026-08-19:
   Erklärung von Exit 3 wuchs, fiel der Hinweis auf die maschinenlesbare
   Erfolgszeile stillschweigend heraus. Die Hilfe endet jetzt an der ersten
   Nicht-Kommentarzeile.
+- `release.sh` hängt das Arbeits-Image wieder unter `/Volumes/Favenio` ein.
+  Ein Zwischenstand nutzte einen eigenen Mountpoint im Arbeitsverzeichnis —
+  der Finder führt ein Volume aber unter dem Ordnernamen seines Mountpoints
+  und nicht unter seinem Volume-Namen, sodass das Layout-Skript die Platte
+  `Favenio` nicht mehr fand und der Standardlauf in Schritt 3 abbrach. Die
+  Absicherungen des Zwischenstands bleiben: Ein fremdes Volume gleichen
+  Namens bricht den Lauf ab, und ausgehängt wird nur ein eigener Attach.
 
 ## 0.22.0 — 2026-08-16
 

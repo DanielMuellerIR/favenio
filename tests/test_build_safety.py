@@ -31,6 +31,23 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertNotIn(" /Applications/Favenio.app", source)
         self.assertNotIn(" /Applications/FavenioQuick.app", source)
 
+    def test_release_mounts_where_the_finder_can_address_the_disk(self):
+        """Das Finder-Layout spricht die Platte als `disk "$VOL_NAME"` an.
+        Der Finder führt ein Volume aber unter dem ORDNERNAMEN seines
+        Mountpoints, nicht unter seinem Volume-Namen: Unter einem eigenen
+        Mountpoint gibt es `disk "Favenio"` gar nicht (Fehler -1700), und der
+        Standardlauf von release.sh bricht in Schritt 3 ab. Beide Zeilen
+        gehören deshalb zusammen."""
+        source = Path("release.sh").read_text(encoding="utf-8")
+        if 'tell disk "$VOL_NAME"' in source:
+            self.assertIn('MOUNT_DIR="/Volumes/$VOL_NAME"', source)
+        # Der feste Pfad bleibt nur zulässig, solange ein fremdes Volume
+        # gleichen Namens den Lauf abbricht und nur ein eigener Attach wieder
+        # ausgehängt wird.
+        self.assertIn('if [ -d "$MOUNT_DIR" ]; then', source)
+        self.assertIn("BUILD_MOUNTED=1", source)
+        self.assertIn('if [ "$BUILD_MOUNTED" = "1" ]; then', source)
+
     def test_release_checks_the_update_feed_of_both_bundles(self):
         source = Path("release.sh").read_text(encoding="utf-8")
         self.assertIn('favenio_verify_feed_url "$VERIFY_MOUNT/$app"', source)

@@ -73,13 +73,19 @@ echo "== Schritt 3/5: DMG bauen =="
 STAGING=$(mktemp -d)
 RW_DMG="$STAGING/favenio_rw.dmg"
 VOL_NAME="Favenio"
-# Eigener Mountpoint statt des festen /Volumes/Favenio: Diesen Pfad kann schon
-# ein FREMDES Volume gleichen Namens belegen, und der Aufräumpfad hängte ihn
-# aus, ohne ihn selbst eingehängt zu haben — auch dann, wenn der Build vor dem
-# eigenen Attach abbrach (Review-Fund 2026-08-17).
-MOUNT_DIR="$STAGING/mnt"
-mkdir "$MOUNT_DIR"
-# Ausgehängt wird nur ein nachweislich EIGENER Attach.
+# Das Arbeits-Image MUSS unter /Volumes/<Volume-Name> hängen. Das Finder-
+# Skript weiter unten spricht die Platte als `disk "$VOL_NAME"` an, und der
+# Finder führt ein Volume nicht unter seinem Volume-Namen, sondern unter dem
+# ORDNERNAMEN seines Mountpoints: Ein Image unter "$STAGING/mnt" heißt für ihn
+# `disk "mnt"`, `disk "Favenio"` gibt es dann gar nicht (AppleScript-Fehler
+# -1700, verifiziert am 2026-08-19 mit einem Wegwerf-Image). Ein Zwischenstand
+# hängte hier nach "$STAGING/mnt" und brach den Standardlauf von release.sh
+# damit in Schritt 3 ab.
+#
+# Die beiden Gefahren dieses festen Pfades sind stattdessen einzeln abgesichert:
+# Ein FREMDES Volume gleichen Namens lässt den Lauf unten abbrechen, statt es
+# auszuhängen, und ausgehängt wird nur ein nachweislich eigener Attach.
+MOUNT_DIR="/Volumes/$VOL_NAME"
 BUILD_MOUNTED=0
 VERIFY_MOUNT=""
 VERIFY_MOUNTED=0
@@ -115,8 +121,8 @@ tiffutil -cathidpicheck "$STAGING/DmgBg_1x.png" "$STAGING/DmgBg_2x.png" \
 # Ein fremdes Volume gleichen Namens wird NICHT ausgehängt: Das Finder-Skript
 # unten spricht die Platte über ihren Namen an und träfe sonst die falsche.
 # Lieber abbrechen und Daniel entscheiden lassen.
-if [ -d "/Volumes/$VOL_NAME" ]; then
-    echo "FEHLER: /Volumes/$VOL_NAME ist bereits eingehängt." >&2
+if [ -d "$MOUNT_DIR" ]; then
+    echo "FEHLER: $MOUNT_DIR ist bereits eingehängt." >&2
     echo "Dieses Volume gehört nicht diesem Lauf. Erst selbst auswerfen," >&2
     echo "dann den Release erneut starten." >&2
     exit 1
