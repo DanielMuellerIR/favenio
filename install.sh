@@ -63,7 +63,12 @@ while [ $# -gt 0 ]; do
             DMG="$2"; shift 2 ;;
         --verify-only) VERIFY_ONLY=1; shift ;;
         -h|--help)
-            sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+            # Den GANZEN Kopfkommentar ausgeben: ab Zeile 2 bis zur ersten
+            # Zeile, die kein Kommentar mehr ist. Vorher stand hier eine feste
+            # Endzeile — als der Kopf um die Exit-Code-Erklärung wuchs, fiel
+            # der Hinweis auf die maschinenlesbare Erfolgszeile stillschweigend
+            # aus der Hilfe.
+            awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"
             exit 0 ;;
         *) echo "Unbekannte Option: $1" >&2
            echo "Aufruf: ./install.sh [--dmg <pfad>] [--verify-only]" >&2

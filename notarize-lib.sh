@@ -288,17 +288,6 @@ _favenio_dir_id() {
     /usr/bin/stat -f '%d:%i' "$1" 2>/dev/null || true
 }
 
-# Den Zielordner für die Dauer des Austauschs für andere Läufe sperren.
-#
-# `mkdir` ist der klassische atomare Test-und-Setz-Schritt: Entweder legt genau
-# ein Lauf das Verzeichnis an, oder er weiß sicher, dass schon einer arbeitet.
-# Ohne diese Sperre könnten zwei gleichzeitige Installationen ineinander
-# laufen — der Rollback des ersten träfe dann das frisch eingesetzte Bundle des
-# zweiten. Absichtlich keine automatische Übernahme einer liegen gebliebenen
-# Sperre: Das wäre selbst wieder ein Rennen. install.sh räumt seine eigene
-# Sperre auch bei Abbruch weg (Aufräum-Trap); bleibt sie nach einem harten
-# Abschuss liegen, nennt die Meldung den Weg von Hand.
-#
 # Eine für diesen Lauf eindeutige Kennung für Ablage- und Sicherungsordner.
 #
 # Die Prozessnummer allein reicht nicht: macOS vergibt PIDs wieder, und ein
@@ -311,6 +300,17 @@ _favenio_install_token() {
         "$(/usr/bin/hexdump -n 4 -e '"%08x"' /dev/urandom)"
 }
 
+# Den Zielordner für die Dauer des Austauschs für andere Läufe sperren.
+#
+# `mkdir` ist der klassische atomare Test-und-Setz-Schritt: Entweder legt genau
+# ein Lauf das Verzeichnis an, oder er weiß sicher, dass schon einer arbeitet.
+# Ohne diese Sperre könnten zwei gleichzeitige Installationen ineinander
+# laufen — der Rollback des ersten träfe dann das frisch eingesetzte Bundle des
+# zweiten. Absichtlich keine automatische Übernahme einer liegen gebliebenen
+# Sperre: Das wäre selbst wieder ein Rennen. install.sh räumt seine eigene
+# Sperre auch bei Abbruch weg (Aufräum-Trap); bleibt sie nach einem harten
+# Abschuss liegen, nennt die Meldung den Weg von Hand.
+#
 # Argumente: <sperrverzeichnis>
 # Rückgabe: 0 = Sperre gehört uns, 2 = ein anderer Lauf arbeitet dort.
 _favenio_install_lock() {

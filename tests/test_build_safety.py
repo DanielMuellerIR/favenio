@@ -47,6 +47,26 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertIn("3 = Rollback unvollständig", install)
         self.assertIn("return 3", library)
 
+    def test_install_help_shows_the_complete_header(self):
+        """`--help` gibt den Kopfkommentar aus. Als der Kopf um die
+        Exit-Code-Erklärung wuchs, schnitt die dort fest eingetragene Endzeile
+        den Hinweis auf die maschinenlesbare Erfolgszeile ab. Der Test hält
+        Anfang UND Ende des Blocks fest, damit das nicht wieder still
+        passiert."""
+        result = subprocess.run(["./install.sh", "--help"], cwd=REPO,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        self.assertEqual(result.returncode, 0,
+                         result.stderr.decode("utf-8", "replace"))
+        help_text = result.stdout.decode("utf-8")
+        self.assertIn("Favenio — Installation nach /Applications.", help_text)
+        self.assertIn("--verify-only", help_text)
+        self.assertIn("3 = Rollback unvollständig", help_text)
+        self.assertIn("INSTALL OK: <version>", help_text)
+        self.assertIn("VERIFY OK: <quelle>", help_text)
+        # Der Block endet vor dem Code: keine Shell-Zeile in der Hilfe.
+        self.assertNotIn("set -euo pipefail", help_text)
+
     def test_expected_feed_url_matches_the_build_script(self):
         """notarize-lib.sh prüft gegen eine Kopie des Defaults aus
         build-app.sh. Läuft die auseinander, prüft die Installation gegen

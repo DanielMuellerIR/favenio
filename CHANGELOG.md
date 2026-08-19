@@ -8,6 +8,11 @@ Aus der CodeQA-Kampagne vom 2026-08-19:
   Bisher lief `--archive-depth -1` stillschweigend wie `0` und unterschlug
   damit alle Archivtreffer — ein Tippfehler blieb unbemerkt. `0` bleibt
   ausdrücklich erlaubt und wirkt wie `--no-archives`.
+- `./install.sh --help` zeigt wieder den vollständigen Kopftext. Die Hilfe
+  schnitt an einer fest eingetragenen Zeilennummer ab; als der Kopf um die
+  Erklärung von Exit 3 wuchs, fiel der Hinweis auf die maschinenlesbare
+  Erfolgszeile stillschweigend heraus. Die Hilfe endet jetzt an der ersten
+  Nicht-Kommentarzeile.
 
 ## 0.22.0 — 2026-08-16
 
