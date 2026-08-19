@@ -2,12 +2,12 @@
   "schema_version": 1,
   "project": "favenio",
   "campaign": {
-    "id": "20260819T173504680851+0200",
-    "token_budget": 3000000,
+    "id": "20260819T200733133097+0200",
+    "token_budget": 2000000,
     "status": "complete",
-    "started_at": "2026-08-19T17:35:04+02:00",
-    "tokens_spent": 451000,
-    "finished_at": "2026-08-19T18:25:03+02:00",
+    "started_at": "2026-08-19T20:07:33+02:00",
+    "tokens_spent": 82408,
+    "finished_at": "2026-08-19T20:19:18+02:00",
     "finish_reason": "all-current"
   },
   "campaign_history": [
@@ -18,6 +18,15 @@
       "started_at": "2026-08-15T13:45:38+02:00",
       "tokens_spent": 650000,
       "finished_at": "2026-08-15T14:36:42+02:00",
+      "finish_reason": "all-current"
+    },
+    {
+      "id": "20260819T173504680851+0200",
+      "token_budget": 3000000,
+      "status": "complete",
+      "started_at": "2026-08-19T17:35:04+02:00",
+      "tokens_spent": 451000,
+      "finished_at": "2026-08-19T18:25:03+02:00",
       "finish_reason": "all-current"
     }
   ],
@@ -50,7 +59,8 @@
       "AGENTS.md",
       "CLAUDE.md",
       "BACKLOG.md",
-      "tests/test_docs_contract.py"
+      "tests/test_docs_contract.py",
+      "CHANGELOG.md"
     ],
     "exclusions": []
   },
@@ -91,16 +101,19 @@
       "reason": "Einzige Suchsemantik; Traversierung, Archive, Extraktion und JSONL-Vertrag",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260819T173504680851+0200",
-        "completed_at": "2026-08-19T18:23:26+02:00",
-        "observed_head": "d1601cf72d88d6857793c67d564ef0f112c16ff1",
-        "content_sha256": "3704dd0dbcef4f615b3e00fdbb879bde9cb5a67464239f6704abafd8ccde883f",
+        "campaign_id": "20260819T200733133097+0200",
+        "completed_at": "2026-08-19T20:16:20+02:00",
+        "observed_head": "9230be4016c7ce01acfb1edc63b8792f3f292ca2",
+        "content_sha256": "9aa6879ebd0cd3dc5cdd9e3625b9c8935980564d520495b223d9dba7bf912c20",
         "file_count": 2,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Nachbuchung: Das Delta ist der klarstellende Kommentar in walk_tar aus dem erledigten Backlog-Punkt — er erklaert, warum bei tar nur die Byte-Budgets greifen und keine Ratio-Pruefung moeglich ist; kein Verhalten geaendert.",
+        "summary": "Delta war die 0.23.0-Regel 'nicht hineinschauen heisst nicht auslassen'. Die Grenzpruefung zeigte, dass sie nur eine Ebene tief galt: In visit_member() entschied weiter der Grund ueber das Ergebnis — ein .7z-Eintrag ohne bsdtar wurde durchsucht, ein .zip-Eintrag an der aufgebrauchten --archive-depth uebersprungen. Empirisch belegt an outer.zip mit inner.zip und fake.7z ohne bsdtar im PATH. visit_member() behandelt den Fall jetzt wie visit_file(); Version 0.24.0.",
         "tests": [
-          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 218 passed"
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 220 passed",
+          "Gegenprobe: auf dem Vorzustand des Kerns sind der neue Test und die drei angepassten Tiefentests rot",
+          "./build-app.sh: beide Bundles 0.24.0 gebaut, beide Headless-Selbsttests bestanden",
+          "--extract auf dem neuen Behaeltertreffer outer.zip!/inner.zip: Exit 0, Datei materialisiert"
         ]
       }
     },
@@ -173,25 +186,25 @@
         "AGENTS.md",
         "CLAUDE.md",
         "BACKLOG.md",
-        "tests/test_docs_contract.py"
+        "tests/test_docs_contract.py",
+        "CHANGELOG.md"
       ],
       "risk": "high",
       "priority": 2,
       "reason": "Oeffentliche Nutzerdoku und Projektkanon beschreiben denselben CLI-Vertrag wie favenio.py; Drift fuehrt Nutzer und jede spaetere Session in die Irre",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260819T173504680851+0200",
-        "completed_at": "2026-08-19T18:23:26+02:00",
-        "observed_head": "d1601cf72d88d6857793c67d564ef0f112c16ff1",
-        "content_sha256": "acf018125d6e0ca202757f8188788544f388a03cd9a12c0a64c52c4ba9ae31c7",
-        "file_count": 6,
+        "campaign_id": "20260819T200733133097+0200",
+        "completed_at": "2026-08-19T20:19:00+02:00",
+        "observed_head": "99f761028a49be882c5138fe3bcde1da4598206a",
+        "content_sha256": "d8a3963c2256aa56db1e837f95a1ebc7093c604cac20684519bf75cb6a24b9e9",
+        "file_count": 7,
         "review": "full",
         "outcome": "improved",
-        "summary": "Neuer Bereich, vollstaendig geprueft: Nutzerdoku und Projektkanon waren bisher gar nicht im QA-Scope. Drei Luecken geschlossen — isDirectory fehlte seit dem 2026-08-17 in allen drei Dateien, -e/--exact und --max-depth standen in den Beispielen aber in keiner Optionstabelle (--extract-root ganz), und der Backlog-Punkt zum Ratio-Kommentar in walk_tar ist umgesetzt statt weiter mit veralteten Zeilennummern zu warten. tests/test_docs_contract.py gehoert zum Bereich und haelt Optionstabellen und JSONL-Felder kuenftig am Code fest.",
+        "summary": "Delta aus 22b2230 (Regel 'nicht hineinschauen heisst nicht auslassen' in beiden Readmes und AGENTS) geprueft: inhaltlich korrekt und zwischen den Sprachfassungen synchron. Um die im Kern gefundene Ebenen-Luecke ergaenzt — alle drei Dokumente sagen jetzt, dass die Regel auch fuer ein Archiv IM Archiv an der Tiefengrenze gilt. CHANGELOG.md war trotz Verlinkung aus beiden Readmes gar nicht im QA-Scope: aufgenommen, vollstaendig gelesen und ueber einen neuen Test an favenio.py::__version__ und __date__ gebunden.",
         "tests": [
-          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 218 passed",
-          "Gegenprobe: auf dem Vorzustand meldet der neue Test genau --exact, --max-depth, --extract-root als fehlend und isDirectory als undokumentiert",
-          "./build-app.sh: beide Bundles gebaut, beide Headless-Selbsttests bestanden"
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 221 passed",
+          "Gegenprobe: mit der Vorversion im CHANGELOG-Kopf meldet der neue Test genau diese Abweichung"
         ]
       }
     },
