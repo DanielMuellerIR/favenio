@@ -25,6 +25,12 @@ Aus der CodeQA-Kampagne vom 2026-08-19:
   längst erledigten Bereichswarnung hing dadurch weiter an einer harmlosen
   Zeile wie „12 Treffer — Suche läuft…". Alle vier Eigenschaften setzt jetzt
   eine einzige Stelle.
+- Für einen **Ordner innerhalb eines Archivs** graut das Kontextmenü beider
+  Apps jetzt Vorschau, Öffnen und „Im Finder zeigen" aus und nennt den Grund.
+  Hinter einem solchen Treffer steht keine Datei; seit dem Fix vom 2026-08-17
+  wird dafür bewusst nichts mehr ausgepackt — die Menüeinträge sahen aber
+  weiterhin bedienbar aus und taten auf Klick kommentarlos nichts.
+  „Pfad kopieren" bleibt nutzbar.
 
 ## 0.22.0 — 2026-08-16
 

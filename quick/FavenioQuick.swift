@@ -1045,6 +1045,9 @@ final class QuickController: NSObject, NSApplicationDelegate,
         for row in rows where row < hits.count {
             if let url = materializeHit(hits[row]) {
                 NSWorkspace.shared.open(url)
+            } else if !hits[row].hasOpenableFile {
+                showInfo("Ordner im Archiv — keine Datei zum Öffnen.",
+                         detail: hits[row].path)
             } else {
                 showInfo("Konnte nicht öffnen: \(hits[row].path)",
                          detail: hits[row].path)
@@ -1108,11 +1111,32 @@ final class QuickController: NSObject, NSApplicationDelegate,
         guard contextRow >= 0, contextRow < hits.count else { return }
         let hit = hits[contextRow]
 
-        menu.addItem(withTitle: "Vorschau (Leertaste)",
-                     action: #selector(togglePreview),
-                     keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Öffnen", action: #selector(openSelected),
-                     keyEquivalent: "").target = self
+        // Ein ORDNER im Archiv hat keine Datei hinter sich: materializeHit()
+        // liefert nil, damit beim Öffnen keine leere Datei entsteht. Die
+        // Dateiaktionen kommen deshalb OHNE Aktion in das Menü — AppKit
+        // schaltet sie damit grau. Vorher sahen sie bedienbar aus und taten
+        // auf Klick kommentarlos nichts. „Pfad kopieren" bleibt nutzbar.
+        let openable = hit.hasOpenableFile
+        if !openable {
+            let note = NSMenuItem(title: "Ordner im Archiv — keine Datei "
+                                         + "zum Öffnen", action: nil,
+                                  keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
+            menu.addItem(.separator())
+        }
+        let preview = menu.addItem(
+            withTitle: "Vorschau (Leertaste)",
+            action: openable ? #selector(togglePreview) : nil,
+            keyEquivalent: "")
+        let open = menu.addItem(
+            withTitle: "Öffnen",
+            action: openable ? #selector(openSelected) : nil,
+            keyEquivalent: "")
+        if openable {
+            preview.target = self
+            open.target = self
+        }
 
         let openWithItem = NSMenuItem(title: "Öffnen mit", action: nil,
                                       keyEquivalent: "")
@@ -1140,8 +1164,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
         menu.addItem(openWithItem)
 
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Im Finder zeigen", action: #selector(ctxReveal),
-                     keyEquivalent: "").target = self
+        let reveal = menu.addItem(
+            withTitle: "Im Finder zeigen",
+            action: openable ? #selector(ctxReveal) : nil,
+            keyEquivalent: "")
+        if openable { reveal.target = self }
         menu.addItem(withTitle: "Pfad kopieren", action: #selector(ctxCopyPath),
                      keyEquivalent: "").target = self
     }

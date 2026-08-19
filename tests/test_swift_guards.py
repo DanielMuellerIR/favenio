@@ -60,6 +60,26 @@ class SwiftGuardTests(unittest.TestCase):
         outside = controller.replace(apply_function, "")
         self.assertNotIn("tableView.reloadData()", outside)
 
+    def test_both_menus_grey_out_actions_for_a_folder_in_an_archive(self):
+        """Ein Ordner im Archiv hat keine Datei hinter sich; materializeHit()
+        liefert dafuer nil. Vorher boten beide Kontextmenues Vorschau, Oeffnen
+        und Im Finder zeigen trotzdem an und taten auf Klick kommentarlos
+        nichts. Die Bedingung steht EINMAL im Kern und wird nicht in den Apps
+        nachgebaut."""
+        self.assertIn("var hasOpenableFile: Bool", COMMON)
+        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
+            menu = swift_function(source, "func menuNeedsUpdate(")
+            with self.subTest(app=name):
+                self.assertIn("let openable = hit.hasOpenableFile", menu)
+                # Ohne Aktion schaltet AppKit den Eintrag grau.
+                self.assertEqual(menu.count("openable ? #selector"), 3)
+                self.assertIn("Ordner im Archiv", menu)
+                # „Pfad kopieren" braucht keine Datei und bleibt nutzbar.
+                self.assertIn("#selector(ctxCopyPath)", menu)
+                self.assertNotIn("openable ? #selector(ctxCopyPath)", menu)
+        # Und der Headless-Selbsttest prueft die Auskunft gegen die Wirklichkeit.
+        self.assertIn("materializeHit(archiveFolder) == nil", GUI)
+
     def test_quick_info_line_has_a_single_writer(self):
         """Farbe, Umbruch und Tooltip der Infozeile gehören zusammen. Solange
         einzelne Meldungen nur `stringValue` schrieben, blieb der Tooltip einer

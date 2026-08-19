@@ -133,6 +133,15 @@ struct Hit: Hashable {
     /// Liegt der Treffer INNERHALB eines Archivs?
     var isMember: Bool { !archiveMembers.isEmpty }
 
+    /// Gibt es hinter dem Treffer überhaupt eine Datei, die man öffnen,
+    /// anzeigen oder vorschauen kann?
+    ///
+    /// Für einen ORDNER im Archiv nicht: Er hat keinen Inhalt zum
+    /// Herausschreiben, `materializeHit()` liefert deshalb nil. Ein Ordner im
+    /// Dateisystem hat dagegen sehr wohl einen Pfad, den der Finder öffnet.
+    /// Die Oberflächen fragen hier, statt die Bedingung nachzubauen.
+    var hasOpenableFile: Bool { !(isMember && isDirectory) }
+
     /// Nur der Dateiname (letzte Komponente), für die Namensspalte.
     var displayName: String {
         let lastSegment = archiveMembers.last ?? filesystemPath

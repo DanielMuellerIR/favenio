@@ -116,6 +116,32 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Archiv-Extraktion fehlgeschlagen")
         return 1
     }
+    guard member.hasOpenableFile else {
+        print("SELFTEST FEHLER: auspackbarer Archiv-Eintrag gilt als nicht "
+              + "öffenbar")
+        return 1
+    }
+    // Ein ORDNER im Archiv hat nichts zum Öffnen. hasOpenableFile ist die
+    // Auskunft, an der die Kontextmenüs ihre Dateiaktionen ausgrauen — sie
+    // muss deshalb genau dann nein sagen, wenn materializeHit() nil liefert.
+    let archiveFolder = Hit(path: "/tmp/probe.zip!/inner", kind: "member",
+                            line: nil, size: nil,
+                            filesystemPath: "/tmp/probe.zip",
+                            archiveMembers: ["inner"], isDirectory: true)
+    guard !archiveFolder.hasOpenableFile,
+          materializeHit(archiveFolder) == nil else {
+        print("SELFTEST FEHLER: Ordner im Archiv gilt als öffenbare Datei")
+        return 1
+    }
+    // Ein Ordner im DATEISYSTEM bleibt öffenbar — sein Pfad existiert.
+    let plainFolder = Hit(path: tmp.path, kind: "dir", line: nil, size: nil,
+                          filesystemPath: tmp.path, archiveMembers: [],
+                          isDirectory: true)
+    guard plainFolder.hasOpenableFile,
+          materializeHit(plainFolder) != nil else {
+        print("SELFTEST FEHLER: Ordner im Dateisystem gilt als nicht öffenbar")
+        return 1
+    }
     let tied = Hit(path: "/tmp/b/same.txt", kind: "file", line: 7,
                    size: 42, filesystemPath: "/tmp/b/same.txt",
                    archiveMembers: [], isDirectory: false)
@@ -1191,6 +1217,10 @@ final class MainController: NSObject, NSApplicationDelegate,
         for row in rows where row < hits.count {
             if let url = materializeHit(hits[row]) {
                 NSWorkspace.shared.open(url)
+            } else if !hits[row].hasOpenableFile {
+                statusLabel.stringValue =
+                    "Ordner im Archiv — keine Datei zum Öffnen: "
+                    + hits[row].path
             } else {
                 statusLabel.stringValue =
                     "Konnte nicht auspacken: \(hits[row].path)"
@@ -1204,11 +1234,33 @@ final class MainController: NSObject, NSApplicationDelegate,
         guard contextRow >= 0, contextRow < hits.count else { return }
         let hit = hits[contextRow]
 
-        menu.addItem(withTitle: "Vorschau (Leertaste)",
-                     action: #selector(togglePreview),
-                     keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Öffnen", action: #selector(ctxOpen),
-                     keyEquivalent: "").target = self
+        // Ein ORDNER im Archiv hat keine Datei hinter sich: materializeHit()
+        // liefert nil, damit beim Öffnen keine leere Datei entsteht. Die
+        // Dateiaktionen kommen deshalb OHNE Aktion in das Menü — AppKit
+        // schaltet sie damit grau. Vorher sahen sie bedienbar aus und taten
+        // auf Klick kommentarlos nichts. „Pfad kopieren" bleibt nutzbar.
+        let openable = hit.hasOpenableFile
+        if !openable {
+            let note = NSMenuItem(title: "Ordner im Archiv — keine Datei "
+                                         + "zum Öffnen", action: nil,
+                                  keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
+            menu.addItem(.separator())
+        }
+
+        let preview = menu.addItem(
+            withTitle: "Vorschau (Leertaste)",
+            action: openable ? #selector(togglePreview) : nil,
+            keyEquivalent: "")
+        let open = menu.addItem(
+            withTitle: "Öffnen",
+            action: openable ? #selector(ctxOpen) : nil,
+            keyEquivalent: "")
+        if openable {
+            preview.target = self
+            open.target = self
+        }
 
         // „Öffnen mit“ — Untermenü mit allen Apps, die den Dateityp können.
         let openWithItem = NSMenuItem(title: "Öffnen mit", action: nil,
@@ -1237,9 +1289,11 @@ final class MainController: NSObject, NSApplicationDelegate,
         menu.addItem(openWithItem)
 
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Im Finder zeigen",
-                     action: #selector(ctxReveal),
-                     keyEquivalent: "").target = self
+        let reveal = menu.addItem(
+            withTitle: "Im Finder zeigen",
+            action: openable ? #selector(ctxReveal) : nil,
+            keyEquivalent: "")
+        if openable { reveal.target = self }
         menu.addItem(withTitle: "Pfad kopieren",
                      action: #selector(ctxCopyPath),
                      keyEquivalent: "").target = self
