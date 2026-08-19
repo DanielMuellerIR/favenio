@@ -160,7 +160,9 @@ are searched. That is exactly what happens to a `.7z` when `bsdtar` is absent â€
 the reason Favenio does not look inside must not change the result, otherwise
 whether a file is examined at all would depend on which tools happen to be
 installed. In practice a hit on the container itself only appears when the text
-really is in its raw bytes, i.e. for uncompressed (stored) entries.
+really is in its raw bytes, i.e. for uncompressed (stored) entries. The same
+holds one level down: an archive inside an archive that the remaining
+`--archive-depth` no longer opens counts as an ordinary entry as well.
 
 ## Search modes â€” and how to find only `.md` files
 

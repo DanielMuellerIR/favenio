@@ -75,6 +75,11 @@ Verbindliches CLI-Verhalten:
   Datei eine ganz normale Datei und `--content` durchsucht ihre Rohbytes. Alle
   drei Gründe müssen dasselbe Ergebnis liefern; sonst entscheidet der Zufall
   der installierten Werkzeuge darüber, ob eine Datei überhaupt angefasst wird.
+  Das gilt auf jeder Ebene: Auch ein Archiv IM Archiv, das die aufgebrauchte
+  `--archive-depth` nicht mehr öffnet, ist ein ganz normaler Eintrag.
+  `visit_file()` und `visit_member()` müssen diesen Fall gleich behandeln —
+  vor 0.24.0 wurde ein `.7z`-Eintrag ohne `bsdtar` durchsucht, ein
+  `.zip`-Eintrag an der Tiefengrenze dagegen übersprungen.
 - `--archive-depth` begrenzt Rekursion. Verschachtelte Archive werden im Speicher
   verarbeitet; deshalb Größen- und Tiefengrenzen nicht unbemerkt entfernen.
 - `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären

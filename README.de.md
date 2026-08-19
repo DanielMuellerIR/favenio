@@ -164,7 +164,9 @@ also ihr roher Inhalt durchsucht. Genau so verhält sich eine `.7z` ohne
 ändern, sonst hinge es vom Zufall der installierten Werkzeuge ab, ob eine Datei
 überhaupt angefasst wird. Praktisch entsteht ein Treffer auf dem Behälter
 selbst nur, wenn der Text wirklich in seinen Rohbytes steht, also bei
-unkomprimiert abgelegten Einträgen.
+unkomprimiert abgelegten Einträgen. Dasselbe gilt eine Ebene tiefer: Ein
+Archiv IM Archiv, das die verbleibende `--archive-depth` nicht mehr öffnet,
+zählt ebenfalls als ganz normaler Eintrag.
 
 ## Suchmodi — und wie man z. B. nur `.md`-Dateien findet
 

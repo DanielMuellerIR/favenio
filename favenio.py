@@ -40,7 +40,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.23.0"
+__version__ = "0.24.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-08-19"
@@ -956,7 +956,14 @@ class Search:
                                 full_display, depth - 1,
                                 archive_path=archive_path,
                                 archive_members=member_chain)
-        elif self.content_mode and not nested_kind:
+        elif self.content_mode:
+            # Wird in diesen Eintrag NICHT hineingeschaut — weil die
+            # --archive-depth aufgebraucht ist oder weil er gar kein Archiv
+            # ist —, dann gilt dieselbe Regel wie eine Ebene höher in
+            # visit_file(): Der Eintrag ist ein ganz normaler Eintrag, und
+            # sein roher Inhalt wird durchsucht. Ohne das entschiede auch
+            # hier der Grund über das Ergebnis — ein .7z ohne bsdtar wurde
+            # durchsucht, ein .zip an der Tiefengrenze dagegen nicht.
             try:
                 line = self.member_hit_line(open_member, full_display,
                                             size, compressed_size)

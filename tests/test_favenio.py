@@ -342,9 +342,16 @@ class FavenioTest(TempTreeTest):
         self.assertIn("backup.tar.gz!/sicherung/alt.txt:1", joined)
 
     def test_content_nested_zip_needs_depth_2(self):
-        # Mit Default-Tiefe 1 bleibt das Zip im Zip zu.
+        # Mit Default-Tiefe 1 bleibt das Zip im Zip zu: Kein Treffer zeigt
+        # durch beide Ebenen. Das innere Zip selbst ist an der Tiefengrenze
+        # aber ein ganz normaler Eintrag, und weil es unkomprimiert im
+        # äußeren liegt, steht der Suchtext wirklich in seinen Rohbytes —
+        # der Treffer endet deshalb bei „innen.zip".
         code, lines, _ = run(["-c", "ganz unten", self.root])
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
+        self.assertEqual([line.rsplit(":", 1)[0] for line in lines],
+                         [os.path.join(self.root, "aussen.zip")
+                          + "!/innen.zip"])
         # Mit Tiefe 2 wird es gefunden.
         code, lines, _ = run(["-c", "ganz unten", self.root,
                               "--archive-depth", "2"])
@@ -352,6 +359,38 @@ class FavenioTest(TempTreeTest):
         self.assertTrue(
             any("aussen.zip!/innen.zip!/tief/verstecktes.txt" in line
                 for line in lines))
+
+    def test_depth_limit_in_archive_matches_a_missing_tool(self):
+        """An der Tiefengrenze IM Archiv gilt dieselbe Regel wie außerhalb.
+
+        Wird in einen Eintrag nicht hineingeschaut, ist er ein ganz normaler
+        Eintrag, und sein roher Inhalt wird durchsucht. Sonst entschiede auch
+        hier der Grund über das Ergebnis: Ein „.7z" ohne bsdtar wurde
+        durchsucht, ein „.zip" an der Tiefengrenze dagegen nicht — ob eine
+        Datei überhaupt angefasst wird, hinge dann am Zufall der
+        installierten Werkzeuge."""
+        inner = io.BytesIO()
+        # ZIP_STORED (die Voreinstellung): „NADEL" steht damit wirklich in
+        # den Rohbytes des inneren Archivs.
+        with zipfile.ZipFile(inner, "w") as zf:
+            zf.writestr("drin.txt", "hier steht NADEL drin\n")
+        outer = os.path.join(self.root, "behaelter.zip")
+        with zipfile.ZipFile(outer, "w") as zf:
+            zf.writestr("innen.zip", inner.getvalue())
+            # Kein echtes 7z, nur roher Text: ohne bsdtar ist das für
+            # classify_archive() eine ganz normale Datei.
+            zf.writestr("innen.7z", "nur roher Text mit NADEL\n")
+        original = favenio._EXTERNAL_TOOLS
+        try:
+            favenio._EXTERNAL_TOOLS = (None, None, None)  # Werkzeuge fehlen
+            code, lines, _ = run(["--json", "--content", "NADEL", outer])
+        finally:
+            favenio._EXTERNAL_TOOLS = original
+        self.assertEqual(code, 0)
+        # Beide Einträge werden gleich behandelt, obwohl der eine wegen der
+        # Tiefengrenze und der andere wegen des fehlenden Werkzeugs zu bleibt.
+        self.assertEqual(sorted(json.loads(line)["path"] for line in lines),
+                         [outer + "!/innen.7z", outer + "!/innen.zip"])
 
     # ---------- Regex, JSON, Fehlerfälle ----------
 
@@ -960,9 +999,15 @@ class SingleCompressionTest(TempTreeTest):
         with zipfile.ZipFile(inner, "w") as zf:
             zf.writestr("tief/verstecktes.txt", "GEHEIMNIS ganz unten\n")
         self.write_bytes("innen.zip.gz", gzip.compress(inner.getvalue()))
-        code, _, _ = run(["--content", "GEHEIMNIS",
-                          os.path.join(self.root, "innen.zip.gz")])
-        self.assertEqual(code, 1)
+        # Tiefe 1 entpackt das .gz, steigt aber nicht mehr in das Zip darin
+        # ein. Das Zip ist damit ein ganz normaler Eintrag; sein roher Inhalt
+        # trägt den Suchtext, weil es unkomprimiert gespeichert ist.
+        code, lines, _ = run(["--content", "GEHEIMNIS",
+                              os.path.join(self.root, "innen.zip.gz")])
+        self.assertEqual(code, 0)
+        self.assertEqual([line.rsplit(":", 1)[0] for line in lines],
+                         [os.path.join(self.root, "innen.zip.gz")
+                          + "!/innen.zip"])
         code, lines, _ = run(["--json", "--content", "--archive-depth", "2",
                               "GEHEIMNIS",
                               os.path.join(self.root, "innen.zip.gz")])
@@ -1216,8 +1261,13 @@ class BsdtarFormatsTest(TempTreeTest):
                 handle.write(inner.getvalue())
             subprocess.run([bsdtar, "-cf", archive, "--format", "7zip",
                             "-C", staging, "innen.zip"], check=True)
-        code, _, _ = run(["--content", "GEHEIMNIS", archive])
-        self.assertEqual(code, 1)
+        # Tiefe 1 liest das 7z, steigt aber nicht in das Zip darin ein: Der
+        # Eintrag zählt dann als ganz normale Datei, und der Suchtext steht
+        # roh in seinen Bytes (das Zip ist unkomprimiert gespeichert).
+        code, lines, _ = run(["--content", "GEHEIMNIS", archive])
+        self.assertEqual(code, 0)
+        self.assertEqual([line.rsplit(":", 1)[0] for line in lines],
+                         [archive + "!/innen.zip"])
         code, lines, _ = run(["--json", "--content", "--archive-depth", "2",
                               "GEHEIMNIS", archive])
         self.assertEqual(code, 0)

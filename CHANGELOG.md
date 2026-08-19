@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.24.0 — 2026-08-19
+
+- **Verhaltensänderung:** Die Regel aus 0.23.0 gilt jetzt auch INNERHALB von
+  Archiven. Ein Archiv im Archiv, das die verbleibende `--archive-depth` nicht
+  mehr öffnet, zählt als ganz normaler Eintrag, und `--content` durchsucht
+  seine Rohbytes. Bisher entschied hier weiter der Grund über das Ergebnis:
+  Ein `.7z`-Eintrag ohne `bsdtar` wurde durchsucht, ein `.zip`-Eintrag an der
+  Tiefengrenze dagegen kommentarlos übersprungen. Gefunden in der
+  CodeQA-Kampagne vom 2026-08-19.
+
 ## 0.23.0 — 2026-08-19
 
 - **Verhaltensänderung:** `--no-archives` und `--archive-depth 0` heißen jetzt
