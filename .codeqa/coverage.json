@@ -2,15 +2,25 @@
   "schema_version": 1,
   "project": "favenio",
   "campaign": {
-    "id": "20260815T134538404716+0200",
-    "token_budget": 2000000,
+    "id": "20260819T173504680851+0200",
+    "token_budget": 3000000,
     "status": "complete",
-    "started_at": "2026-08-15T13:45:38+02:00",
-    "tokens_spent": 650000,
-    "finished_at": "2026-08-15T14:36:42+02:00",
+    "started_at": "2026-08-19T17:35:04+02:00",
+    "tokens_spent": 451000,
+    "finished_at": "2026-08-19T18:25:03+02:00",
     "finish_reason": "all-current"
   },
-  "campaign_history": [],
+  "campaign_history": [
+    {
+      "id": "20260815T134538404716+0200",
+      "token_budget": 2000000,
+      "status": "complete",
+      "started_at": "2026-08-15T13:45:38+02:00",
+      "tokens_spent": 650000,
+      "finished_at": "2026-08-15T14:36:42+02:00",
+      "finish_reason": "all-current"
+    }
+  ],
   "scope": {
     "paths": [
       "favenio.py",
@@ -34,7 +44,13 @@
       "assets/favenio.entitlements",
       "icons/make-icons.swift",
       ".github/workflows/ci.yml",
-      "THIRD-PARTY.md"
+      "THIRD-PARTY.md",
+      "README.md",
+      "README.de.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "BACKLOG.md",
+      "tests/test_docs_contract.py"
     ],
     "exclusions": []
   },
@@ -51,17 +67,16 @@
       "reason": "Schreibt nach /Applications; Identitätsprüfung, atomarer Austausch und Rollback schützen Nutzerdaten",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T14:20:40+02:00",
-        "observed_head": "8c30083b9bcd7009fb82c86736f80ffea431ea2f",
-        "content_sha256": "75902544f2ffbe8ec50868f22bc5ce42352bc8500f1fe59b62482433ff219778",
+        "campaign_id": "20260819T173504680851+0200",
+        "completed_at": "2026-08-19T18:17:40+02:00",
+        "observed_head": "79698706476cf768e3fc4ab715be17e1b564728e",
+        "content_sha256": "676e55c9329e176a2209df117a0e004fd6dcc98a8094fe26f8596a9538d6bab6",
         "file_count": 3,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Gemeinsame Build-Sicherheitsdatei um Regressionen für XML-sichere Feed-URLs, funktionsfähige Ad-hoc-Signierung und den ausdrücklich ausgeübten CI-Fallback ergänzt; Installationsgrenzen unverändert",
+        "summary": "Nachbuchung: Das Delta seit dem Abschluss dieses Bereichs sind ausschliesslich die in dieser Kampagne selbst geschriebenen und verifizierten Wachen in tests/test_build_safety.py (Release-Mountpoint, Sparkle-Schluessel in notarize-lib.sh). install.sh und notarize-lib.sh sind unveraendert.",
         "tests": [
-          "BuildSafetyTest unter python3 und /usr/bin/python3: jeweils 8 passed",
-          "Gesamtsuite unter beiden Interpretern: jeweils 184 passed; beide realen Signierzweige mit Headless-Selbsttests geprüft"
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
         ]
       }
     },
@@ -76,18 +91,16 @@
       "reason": "Einzige Suchsemantik; Traversierung, Archive, Extraktion und JSONL-Vertrag",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T14:13:57+02:00",
-        "observed_head": "1910db01cf8f12f0e577dade9cf9cdfa07f030ed",
-        "content_sha256": "1ad922d583e2856081e10cf346d979b3ccdf408df8bdd0663abae8458c672496",
+        "campaign_id": "20260819T173504680851+0200",
+        "completed_at": "2026-08-19T18:23:26+02:00",
+        "observed_head": "d1601cf72d88d6857793c67d564ef0f112c16ff1",
+        "content_sha256": "3704dd0dbcef4f615b3e00fdbb879bde9cb5a67464239f6704abafd8ccde883f",
         "file_count": 2,
-        "review": "full",
+        "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "CLI-Parsing auf parse_intermixed_args umgestellt; Optionen mit Wert dürfen nun auch unter macOS-System-Python zwischen Muster und Startpfad stehen",
+        "summary": "Nachbuchung: Das Delta ist der klarstellende Kommentar in walk_tar aus dem erledigten Backlog-Punkt — er erklaert, warum bei tar nur die Byte-Budgets greifen und keine Ratio-Pruefung moeglich ist; kein Verhalten geaendert.",
         "tests": [
-          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 181 passed",
-          "Gezielter Regressionstest war vor dem Fix unter /usr/bin/python3 rot und ist danach unter beiden Interpretern grün",
-          "./build-app.sh: beide signierten Bundles gebaut; beide Headless-Selbsttests bestanden"
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 218 passed"
         ]
       }
     },
@@ -105,18 +118,19 @@
       "reason": "Öffentliche Lieferkette, Signatur-, Notarisierungs- und Update-Feed-Tore",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T14:09:25+02:00",
-        "observed_head": "11253b1d194312126d3e70d7b43146e4fea9607f",
-        "content_sha256": "5f3c43ba1450e6c7bed33d709400f81c7edf52181190144a765a2f08cfa1b2b6",
+        "campaign_id": "20260819T173504680851+0200",
+        "completed_at": "2026-08-19T17:53:50+02:00",
+        "observed_head": "4e8726806fb90b530d908d614ca17a850ab40320",
+        "content_sha256": "c57dfc31d61811df9cfa5b9d5315c3db80387dcdb8c099cb19ecfd9e44fee8ad",
         "file_count": 5,
-        "review": "full",
+        "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Appcast-Tor in Container- und Bundle-Prüfung getrennt; Notary-Ticket und Gatekeeper-Urteil des heruntergeladenen DMG werden vor hdiutil attach geprüft",
+        "summary": "Regression aus dem Delta gefunden und behoben: release.sh haengte das Arbeits-Image unter einen eigenen Mountpoint, das Finder-Layout spricht die Platte aber ueber ihren Volume-Namen an — der Finder fuehrt sie dort unter dem Ordnernamen des Mountpoints, sodass der Standardlauf in Schritt 3 abbrach (mit Wegwerf-Image verifiziert, AppleScript -1700). Mountpoint zurueck nach /Volumes, die Absicherungen gegen fremde Volumes und fremde Attaches bleiben; Test haelt beide Zeilen zusammen.",
         "tests": [
-          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 180 passed",
-          "Workflow-Bash-Syntax: 6 passed; zsh -n release.sh notarize-lib.sh: passed",
-          "assets/generate-dmg-background.swift real ausgeführt: 1200x840 PNG"
+          "python3 3.14.5 -m unittest discover -s tests: 209 passed",
+          "/usr/bin/python3 3.9.6 -m unittest discover -s tests: 209 passed",
+          "zsh -n release.sh: Syntax OK",
+          "Wegwerf-Image: disk-Zugriff ueber Volume-Namen scheitert ausserhalb /Volumes (-1700), gelingt unter /Volumes"
         ]
       }
     },
@@ -137,19 +151,47 @@
       "reason": "Reproduzierbarer App-Aufbau, gepinnte Updater-Abhängigkeit, Signierung und CI",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T14:20:24+02:00",
-        "observed_head": "8c30083b9bcd7009fb82c86736f80ffea431ea2f",
-        "content_sha256": "01ee606358d826f0986708765125ac11800cc5543daec2d32dfcc9926f0c91f8",
+        "campaign_id": "20260819T173504680851+0200",
+        "completed_at": "2026-08-19T18:12:17+02:00",
+        "observed_head": "2241477c3c60fd0d44494606b64af2190c3bb91f",
+        "content_sha256": "c8bda34b2f84ca22496663cb6a594661e6001fb9b8554ade8b50315eb6c71b6d",
         "file_count": 8,
+        "review": "delta-plus-boundaries",
+        "outcome": "improved",
+        "summary": "Kein Delta: alle 8 Dateien sind byte-identisch mit dem Stand am notierten Referenzcommit — der gespeicherte Hash der Vorkampagne passte nicht dazu, der Faelligkeitsstatus war also ein Buchhaltungsartefakt. Grenzflaechen trotzdem geprueft (Signaturweg, Ad-hoc-Fallback ohne Hardened Runtime, plutil statt XML-Interpolation, Deployment-Target, CI). Gefunden: Der oeffentliche Sparkle-Schluessel aus build-app.sh hat seit dem 2026-08-17 eine dritte, ungepruefte Kopie in notarize-lib.sh, gegen die install.sh und release.sh jedes Bundle pruefen; fuer die Feed-URL gab es diese Wache laengst. Test ergaenzt in tests/test_build_safety.py.",
+        "tests": [
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 212 passed",
+          "./build-app.sh in dieser Sitzung mehrfach gelaufen: beide Bundles signiert gebaut, beide Headless-Selbsttests bestanden"
+        ]
+      }
+    },
+    {
+      "id": "docs-contracts",
+      "paths": [
+        "README.md",
+        "README.de.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "BACKLOG.md",
+        "tests/test_docs_contract.py"
+      ],
+      "risk": "high",
+      "priority": 2,
+      "reason": "Oeffentliche Nutzerdoku und Projektkanon beschreiben denselben CLI-Vertrag wie favenio.py; Drift fuehrt Nutzer und jede spaetere Session in die Irre",
+      "state": "completed",
+      "last_run": {
+        "campaign_id": "20260819T173504680851+0200",
+        "completed_at": "2026-08-19T18:23:26+02:00",
+        "observed_head": "d1601cf72d88d6857793c67d564ef0f112c16ff1",
+        "content_sha256": "acf018125d6e0ca202757f8188788544f388a03cd9a12c0a64c52c4ba9ae31c7",
+        "file_count": 6,
         "review": "full",
         "outcome": "improved",
-        "summary": "Ad-hoc-Builds ohne Developer-ID laden Sparkle wieder, CI erzwingt diesen Pfad; frei gesetzte Feed-URLs werden per plutil XML-sicher in beide Info.plists geschrieben",
+        "summary": "Neuer Bereich, vollstaendig geprueft: Nutzerdoku und Projektkanon waren bisher gar nicht im QA-Scope. Drei Luecken geschlossen — isDirectory fehlte seit dem 2026-08-17 in allen drei Dateien, -e/--exact und --max-depth standen in den Beispielen aber in keiner Optionstabelle (--extract-root ganz), und der Backlog-Punkt zum Ratio-Kommentar in walk_tar ist umgesetzt statt weiter mit veralteten Zeilennummern zu warten. tests/test_docs_contract.py gehoert zum Bereich und haelt Optionstabellen und JSONL-Felder kuenftig am Code fest.",
         "tests": [
-          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 184 passed",
-          "Ad-hoc-Build mit URL samt & erfolgreich; beide Headless-Selbsttests, Plist-Lint und exakter Feedwert bestanden",
-          "Developer-ID-Build erfolgreich; beide Headless-Selbsttests, Team-ID, Hardened Runtime und Automation-Entitlement bestätigt",
-          "Icon-Generator isoliert: je 10 PNGs und gültiges ICNS; Entitlement-Plist, Package.resolved und swift package resolve geprüft"
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 218 passed",
+          "Gegenprobe: auf dem Vorzustand meldet der neue Test genau --exact, --max-depth, --extract-root als fehlend und isDirectory als undokumentiert",
+          "./build-app.sh: beide Bundles gebaut, beide Headless-Selbsttests bestanden"
         ]
       }
     },
@@ -164,16 +206,17 @@
       "reason": "Finder-naher asynchroner Suchlauf, Bereichsauflösung und Übergabe an die Haupt-App",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T14:36:23+02:00",
-        "observed_head": "d6c5eaea514ff153285d1711b77bc3b42cbbcdc1",
-        "content_sha256": "57d2d5c11b68277b78f0a51d8b97a0175d39ab30b506648ec9b3bba6c9db0741",
+        "campaign_id": "20260819T173504680851+0200",
+        "completed_at": "2026-08-19T18:17:41+02:00",
+        "observed_head": "79698706476cf768e3fc4ab715be17e1b564728e",
+        "content_sha256": "aefc16e7ee40c44343399ee5bd774739790a2000876a58d9c5b3752ab9b87a30",
         "file_count": 2,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Quick verwendet die gemeinsame 0/1-Exit-Semantik; abgebrochene alte Generationen bleiben verworfen, unerwartete aktuelle Prozessenden werden sichtbar als Fehler gemeldet",
+        "summary": "Nachbuchung: Das Delta ist der Querschnitts-Fix am Kontextmenue (ausgegraute Dateiaktionen fuer einen Ordner im Archiv, richtige Meldung beim Doppelklick) samt zugehoeriger Quellwache in tests/test_swift_guards.py.",
         "tests": [
-          "Gesamtsuite je 188 passed; Guard-Regression und Quick-Headless-Selbsttest grün"
+          "./build-app.sh: beide Bundles gebaut, beide Headless-Selbsttests bestanden",
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
         ]
       }
     },
@@ -187,16 +230,17 @@
       "reason": "Gemeinsame Prozess-, JSONL-, Materialisierungs-, Übergabe- und Finder/TCC-Grenze beider Apps",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T14:36:09+02:00",
-        "observed_head": "d6c5eaea514ff153285d1711b77bc3b42cbbcdc1",
-        "content_sha256": "f5801ca4a9b9669a3580739576c942f06ae19acbeb9c30fe8ae287c0cdcf10f2",
+        "campaign_id": "20260819T173504680851+0200",
+        "completed_at": "2026-08-19T18:17:41+02:00",
+        "observed_head": "79698706476cf768e3fc4ab715be17e1b564728e",
+        "content_sha256": "fabced61278fc264af572d1fda2b85cbf2a170eb44ffe6cdc8825a8b4cc7b814",
         "file_count": 1,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Gemeinsame Suchprozessgrenze definiert nun zentral, dass ausschließlich Status 0 und 1 normal sind; beide Frontend-Aufrufer und Selbsttest geprüft",
+        "summary": "Nachbuchung: Das Delta ist die im Querschnitts-Fund archive-directory-actions ergaenzte Auskunft Hit.hasOpenableFile — eine reine Ergaenzung ohne Aenderung an bestehendem Verhalten, durch den Headless-Selbsttest samt Gegenprobe belegt.",
         "tests": [
-          "Gesamtsuite je 188 passed; Guard-Regression und beide App-Selbsttests grün"
+          "./build-app.sh: beide Headless-Selbsttests bestanden, inklusive der neuen Pruefung von hasOpenableFile gegen materializeHit",
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
         ]
       }
     },
@@ -210,18 +254,17 @@
       "reason": "Streaming-Suchlauf, Auswahlzustand und Dateiaktionen der Haupt-App",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260815T134538404716+0200",
-        "completed_at": "2026-08-15T14:35:43+02:00",
-        "observed_head": "d6c5eaea514ff153285d1711b77bc3b42cbbcdc1",
-        "content_sha256": "e85e28d919d690f347df935534e0c672428db838f75af7d5b62842f0954af6c0",
+        "campaign_id": "20260819T173504680851+0200",
+        "completed_at": "2026-08-19T18:17:41+02:00",
+        "observed_head": "79698706476cf768e3fc4ab715be17e1b564728e",
+        "content_sha256": "d15027a30fa92c45a6f8d83ca625cb5c0be4a56f82460593ffb51aafb6026b1a",
         "file_count": 1,
-        "review": "full",
+        "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Haupt-App übernimmt den strukturierten Quick-Fallback über denselben validierenden URL-Parser und meldet jeden Suchprozessstatus außerhalb 0/1 als Fehler",
+        "summary": "Nachbuchung: Das Delta ist der Querschnitts-Fix am Kontextmenue und die Erweiterung des Headless-Selbsttests um die Pruefung von hasOpenableFile gegen materializeHit (mit Gegenprobe).",
         "tests": [
-          "python3 und /usr/bin/python3 -m unittest discover -s tests: jeweils 188 passed",
-          "Regressionstest zur gemeinsamen Exit-Code-Semantik war vor dem Fix unter beiden Interpretern rot und ist danach grün",
-          "./build-app.sh: beide signierten Bundles und beide Headless-Selbsttests bestanden; Haupt-App-Selbsttest prüft 0, 1, 2 und Signalstatus"
+          "./build-app.sh: beide Headless-Selbsttests bestanden; Gegenprobe mit falschem hasOpenableFile bricht den Selbsttest ab",
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
         ]
       }
     }
@@ -279,6 +322,30 @@
         "summary": "Gemeinsame Funktion akzeptiert ausschließlich CLI-Status 0 und 1 als normal; Haupt-App und Quick melden Signale sowie andere Statuswerte als Fehler",
         "tests": [
           "Neue Guard-Regression vor dem Fix unter beiden Interpretern rot; danach Gesamtsuite je 188 passed und App-Selbsttest mit 0/1/2/15 grün"
+        ]
+      }
+    },
+    {
+      "id": "archive-directory-actions",
+      "summary": "Beide Kontextmenues bieten fuer einen ORDNER im Archiv weiterhin Vorschau, Oeffnen und Im Finder zeigen an. Seit materialize() fuer solche Treffer nil liefert (Fix 2026-08-17, kein leeres Auspacken mehr), passiert auf Klick kommentarlos nichts — die Eintraege sehen bedienbar aus und sind es nicht.",
+      "evidence": [
+        "gui/FavenioGUI.swift",
+        "quick/FavenioQuick.swift"
+      ],
+      "priority": 2,
+      "state": "completed",
+      "noted_at": "2026-08-19T18:06:11+02:00",
+      "campaign_id": "20260819T173504680851+0200",
+      "started_at": "2026-08-19T18:12:25+02:00",
+      "completed": {
+        "campaign_id": "20260819T173504680851+0200",
+        "completed_at": "2026-08-19T18:17:12+02:00",
+        "observed_head": "79698706476cf768e3fc4ab715be17e1b564728e",
+        "summary": "Hit.hasOpenableFile im gemeinsamen Kern beantwortet einmal, ob hinter einem Treffer eine Datei steht. Beide Kontextmenues grauen Vorschau, Oeffnen und Im Finder zeigen fuer einen Ordner im Archiv aus und nennen den Grund; Pfad kopieren bleibt nutzbar. Die irrefuehrende Meldung 'Konnte nicht auspacken' beim Doppelklick ist ersetzt.",
+        "tests": [
+          "Headless-Selbsttest der Haupt-App prueft hasOpenableFile gegen materializeHit fuer Archiv-Ordner, Archiv-Datei und Dateisystem-Ordner",
+          "Gegenprobe: mit absichtlich falschem hasOpenableFile meldet der Selbsttest 'Ordner im Archiv gilt als oeffenbare Datei' und der Build bricht ab",
+          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
         ]
       }
     }
