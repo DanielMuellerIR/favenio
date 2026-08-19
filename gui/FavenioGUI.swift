@@ -871,11 +871,14 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     @objc func startSearch() {
         stopSearch()
-        // Frische Suche: Tabelle leeren und von vorn sammeln.
+        // Frische Suche: Tabelle leeren und von vorn sammeln. Auch das leere
+        // Modell geht über applyHitsToTable — sonst gäbe es doch wieder einen
+        // Weg an der Sortierung vorbei, und genau daran krankten vorher
+        // continueSearch() und loadResults().
         hits = []
         pending = []
         seenPaths = []
-        tableView.reloadData()
+        applyHitsToTable(keepingSelection: [])
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
         guard !pattern.isEmpty else {

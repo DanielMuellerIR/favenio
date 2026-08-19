@@ -49,6 +49,17 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("compareHits($0, $1", GUI)
         self.assertIn("compareHits($0, $1", QUICK)
 
+    def test_gui_table_updates_always_go_through_one_place(self):
+        """Sortierung und Auswahlerhalt haengen an applyHitsToTable(). Wer
+        daneben direkt reloadData() ruft, umgeht beides — genau daran krankten
+        continueSearch() und loadResults()."""
+        controller = GUI[GUI.index("final class MainController"):]
+        self.assertIn("func applyHitsToTable(keepingSelection", controller)
+        apply_function = swift_function(
+            GUI, "func applyHitsToTable(keepingSelection")
+        outside = controller.replace(apply_function, "")
+        self.assertNotIn("tableView.reloadData()", outside)
+
     def test_quick_info_line_has_a_single_writer(self):
         """Farbe, Umbruch und Tooltip der Infozeile gehören zusammen. Solange
         einzelne Meldungen nur `stringValue` schrieben, blieb der Tooltip einer
