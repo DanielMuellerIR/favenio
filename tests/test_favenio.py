@@ -893,11 +893,53 @@ class SingleCompressionTest(TempTreeTest):
         self.assertTrue(any(p.endswith("log.txt.gz!/log.txt")
                             for p in member_paths))
 
-    def test_no_archives_skips_decompression(self):
+    def test_no_archives_treats_them_as_plain_files(self):
+        """`--no-archives` heißt „nicht hineinschauen", nicht „auslassen".
+
+        Die Datei bleibt dann eine ganz normale Datei, und ihr ROHER Inhalt
+        wird durchsucht — genau wie bei einer .7z ohne bsdtar. Entpackt wird
+        nichts: Es darf keinen `!/`-Treffer geben. Dass dabei ausgerechnet
+        das xz-Fixture anschlägt, ist kein Zufall und kein Fehler — LZMA legt
+        eine so kurze Eingabe fast unverändert als Literale ab, „NADEL" steht
+        dort also wirklich in den Rohbytes."""
         code, lines, _ = run(["--no-archives", "--content", "NADEL",
                               self.root])
-        self.assertEqual(code, 1)
-        self.assertEqual(lines, [])
+        self.assertEqual(code, 0)
+        self.assertFalse([line for line in lines if "!/" in line], lines)
+        for line in lines:
+            path = line.rsplit(":", 1)[0]
+            with self.subTest(hit=path):
+                with open(path, "rb") as handle:
+                    self.assertIn(b"NADEL", handle.read())
+
+    def test_no_archives_matches_a_missing_tool_exactly(self):
+        """Der Grund, warum nicht hineingeschaut wird, darf das Ergebnis
+        nicht ändern: Ob `--no-archives` es verbietet oder das Werkzeug fehlt,
+        muss dieselbe Trefferliste ergeben. Sonst hinge es vom Zufall der
+        installierten Werkzeuge ab, ob eine Datei überhaupt angefasst wird."""
+        # Eine .zst-Datei, deren ROHE Bytes den Suchtext enthalten. Ob ein
+        # echtes zstd vorhanden ist, spielt für diesen Test keine Rolle.
+        self.write_bytes("daten.zst", b"unkomprimiert MERKMAL drin\n")
+        original = favenio._EXTERNAL_TOOLS
+        try:
+            # Beide Seiten ausdrücklich festnageln, damit der Test überall
+            # dasselbe prüft und nicht davon abhängt, ob auf der Maschine
+            # zufällig ein zstd liegt (auf einem CI-Runner meist nicht).
+            # Der Pfad wird nie ausgeführt: Mit --no-archives steigt die Suche
+            # gar nicht erst in das Archiv ein.
+            favenio._EXTERNAL_TOOLS = (None, "/usr/bin/true", None)
+            self.assertEqual(favenio.classify_archive("daten.zst"), ".zst")
+            with_flag = run(["--json", "--no-archives", "--content",
+                             "MERKMAL", self.root])
+            favenio._EXTERNAL_TOOLS = (None, None, None)  # Werkzeug fehlt
+            self.assertIsNone(favenio.classify_archive("daten.zst"))
+            without_tool = run(["--json", "--content", "MERKMAL", self.root])
+        finally:
+            favenio._EXTERNAL_TOOLS = original
+        self.assertEqual(with_flag[0], without_tool[0])
+        self.assertEqual(sorted(with_flag[1]), sorted(without_tool[1]))
+        paths = [json.loads(line)["path"] for line in with_flag[1]]
+        self.assertTrue(any(p.endswith("daten.zst") for p in paths), paths)
 
     def test_gz_inside_zip_needs_depth_2(self):
         archive = os.path.join(self.root, "paket.zip")

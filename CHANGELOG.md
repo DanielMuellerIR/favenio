@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.23.0 — 2026-08-19
+
+- **Verhaltensänderung:** `--no-archives` und `--archive-depth 0` heißen jetzt
+  „nicht hineinschauen" statt „auslassen". Ein Archiv zählt dann als ganz
+  normale Datei, `--content` durchsucht also seine Rohbytes — genau wie bei
+  einer `.7z` ohne `bsdtar`. Vorher wurde eine Archivdatei bei `--content`
+  kommentarlos übersprungen, wenn das Hineinschauen verboten war, aber
+  durchsucht, wenn nur das Werkzeug fehlte. Der Grund darf das Ergebnis nicht
+  ändern, sonst hängt es vom Zufall der installierten Werkzeuge ab, ob eine
+  Datei überhaupt angefasst wird. Praktisch entsteht ein Treffer auf dem
+  Behälter nur, wenn der Text wirklich roh darin steht (unkomprimiert
+  abgelegte Einträge; `.xz` legt sehr kurze Eingaben ebenfalls fast
+  unverändert ab).
+
 ## 0.22.1 — 2026-08-19
 
 Aus der CodeQA-Kampagne vom 2026-08-19:

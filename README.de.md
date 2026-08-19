@@ -143,7 +143,7 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `-s`, `--case-sensitive` | Groß-/Kleinschreibung beachten |
 | `-e`, `--exact` | Muster muss dem GANZEN Namen entsprechen (mit `-r`: fullmatch; mit `-c` je Zeile) |
 | `--max-depth N` | nur N Ordnerebenen tief suchen (1 = nur direkt im Startpfad, wie `find -maxdepth`) |
-| `--no-archives` | nicht in Archive hineinschauen |
+| `--no-archives` | nicht in Archive hineinschauen; sie bleiben normale Dateien (siehe unten) |
 | `--archive-depth N` | Verschachtelungstiefe (0 = wie `--no-archives`, Default 1) |
 | `--max-archive-member-bytes BYTES` | maximal gelesene entpackte Bytes pro Archivmitglied |
 | `--max-archive-total-bytes BYTES` | maximal gelesene entpackte Archivbytes pro Suchlauf |
@@ -156,6 +156,15 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `--extract-json JSON` | einen eindeutigen strukturierten JSON-Treffer auspacken |
 | `--extract-root ORDNER` | Temp-Wurzel für die Extraktion (nutzen die Apps, die sie selbst aufräumen) |
 | `--version` | Version anzeigen |
+
+`--no-archives` (und `--archive-depth 0`) heißt **nicht hineinschauen**,
+nicht **auslassen**. Die Datei zählt dann als ganz normale Datei, mit `-c` wird
+also ihr roher Inhalt durchsucht. Genau so verhält sich eine `.7z` ohne
+`bsdtar` — der Grund, warum Favenio nicht hineinschaut, darf das Ergebnis nicht
+ändern, sonst hinge es vom Zufall der installierten Werkzeuge ab, ob eine Datei
+überhaupt angefasst wird. Praktisch entsteht ein Treffer auf dem Behälter
+selbst nur, wenn der Text wirklich in seinen Rohbytes steht, also bei
+unkomprimiert abgelegten Einträgen.
 
 ## Suchmodi — und wie man z. B. nur `.md`-Dateien findet
 

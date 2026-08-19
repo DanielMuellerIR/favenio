@@ -40,7 +40,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.22.1"
+__version__ = "0.23.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-08-19"
@@ -829,7 +829,14 @@ class Search:
         if archive_kind and self.archive_depth >= 1:
             self.search_archive(path, None, archive_kind, path,
                                 self.archive_depth)
-        elif self.content_mode and not archive_kind:
+        elif self.content_mode:
+            # Wird NICHT in das Archiv geschaut — weil --no-archives bzw.
+            # --archive-depth 0 das verbietet oder weil die Endung gar kein
+            # Archiv ist —, dann ist die Datei eine ganz normale Datei und
+            # ihr roher Inhalt wird durchsucht. Genau das passiert auch mit
+            # einer .7z ohne bsdtar; beide Fälle dürfen sich nicht
+            # unterscheiden, sonst hinge es vom Zufall der installierten
+            # Werkzeuge ab, ob eine Datei überhaupt angefasst wird.
             self.scan_content(path)
 
     def scan_content(self, path):

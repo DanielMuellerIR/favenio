@@ -140,7 +140,7 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `-s`, `--case-sensitive` | match case-sensitively |
 | `-e`, `--exact` | pattern must match the WHOLE name (with `-r`: fullmatch; with `-c` per line) |
 | `--max-depth N` | search only N directory levels deep (1 = directly in the start path, like `find -maxdepth`) |
-| `--no-archives` | do not look inside archives |
+| `--no-archives` | do not look inside archives; they stay ordinary files (see below) |
 | `--archive-depth N` | nesting depth (0 = like `--no-archives`, default 1) |
 | `--max-archive-member-bytes BYTES` | maximum uncompressed bytes read per archive member |
 | `--max-archive-total-bytes BYTES` | maximum uncompressed archive bytes read per search |
@@ -153,6 +153,14 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `--extract-json JSON` | extract an unambiguous structured JSON hit |
 | `--extract-root FOLDER` | temp root for extraction (used by the apps, which clean it up themselves) |
 | `--version` | show version |
+
+`--no-archives` (and `--archive-depth 0`) means **do not look inside**, not
+**skip**. The file then counts as an ordinary file, so with `-c` its raw bytes
+are searched. That is exactly what happens to a `.7z` when `bsdtar` is absent —
+the reason Favenio does not look inside must not change the result, otherwise
+whether a file is examined at all would depend on which tools happen to be
+installed. In practice a hit on the container itself only appears when the text
+really is in its raw bytes, i.e. for uncompressed (stored) entries.
 
 ## Search modes — and how to find only `.md` files
 

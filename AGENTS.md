@@ -70,6 +70,11 @@ Verbindliches CLI-Verhalten:
   Eintragsende prüft, wird sie bewusst nicht geprüft. Vollständiges Durchlesen
   nur zum Prüfen der Prüfsumme hebt den Early-Exit auf und ist entschieden
   abgelehnt.
+- Wird nicht in ein Archiv geschaut — durch `--no-archives`, durch
+  `--archive-depth 0` oder weil das nötige externe Werkzeug fehlt —, ist die
+  Datei eine ganz normale Datei und `--content` durchsucht ihre Rohbytes. Alle
+  drei Gründe müssen dasselbe Ergebnis liefern; sonst entscheidet der Zufall
+  der installierten Werkzeuge darüber, ob eine Datei überhaupt angefasst wird.
 - `--archive-depth` begrenzt Rekursion. Verschachtelte Archive werden im Speicher
   verarbeitet; deshalb Größen- und Tiefengrenzen nicht unbemerkt entfernen.
 - `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären
