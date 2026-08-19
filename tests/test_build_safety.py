@@ -96,6 +96,21 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertIn('FAVENIO_FEED_URL="%s"' % InstallFromDmgTest.FEED_URL,
                       library)
 
+    def test_expected_update_key_matches_the_build_script(self):
+        """Denselben Halt braucht der öffentliche Sparkle-Schlüssel. Er steht
+        in build-app.sh (baut ihn in beide Info.plists), im Appcast-Workflow
+        und seit dem Ausbau der Kanalprüfung auch in notarize-lib.sh — gegen
+        DIESE Kopie prüfen install.sh und release.sh jedes Bundle. Die ersten
+        beiden Kopien hält test_appcast_workflow zusammen, die dritte war
+        ungeprüft."""
+        build = Path("build-app.sh").read_text(encoding="utf-8")
+        library = Path("notarize-lib.sh").read_text(encoding="utf-8")
+        self.assertIn('SPARKLE_PUBLIC_KEY="%s"' % InstallFromDmgTest.SPARKLE_KEY,
+                      build)
+        self.assertIn(
+            'FAVENIO_SPARKLE_PUBLIC_KEY="%s"' % InstallFromDmgTest.SPARKLE_KEY,
+            library)
+
     def test_feed_url_is_not_interpolated_into_plist_xml(self):
         """Eine URL darf XML-Zeichen wie `&` enthalten. Der Wert muss daher
         vom Plist-Werkzeug serialisiert werden statt roh im Here-Dokument zu
