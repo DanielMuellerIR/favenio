@@ -20,6 +20,11 @@ Aus der CodeQA-Kampagne vom 2026-08-19:
   `Favenio` nicht mehr fand und der Standardlauf in Schritt 3 abbrach. Die
   Absicherungen des Zwischenstands bleiben: Ein fremdes Volume gleichen
   Namens bricht den Lauf ab, und ausgehängt wird nur ein eigener Attach.
+- Die Infozeile der Schnellsuche behält keinen veralteten Tooltip mehr. Farbe
+  und Umbruch wurden zurückgesetzt, der Tooltip nicht — die Erklärung einer
+  längst erledigten Bereichswarnung hing dadurch weiter an einer harmlosen
+  Zeile wie „12 Treffer — Suche läuft…". Alle vier Eigenschaften setzt jetzt
+  eine einzige Stelle.
 
 ## 0.22.0 — 2026-08-16
 

@@ -35,11 +35,36 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn("var searchProcess: Process?", GUI)
 
     def test_descending_comparator_is_strict(self):
-        self.assertIn("func compareHits", COMMON)
-        self.assertNotIn("return ascending ? result : !result", COMMON)
-        self.assertIn("return false", COMMON)
+        # Nur die Vergleichsfunktion selbst prüfen, nicht die ganze Datei:
+        # Ein dateiweites Muster wie "return false" trifft irgendwann eine
+        # fremde Zeile und die Wache wird stillschweigend gegenstandslos.
+        compare = swift_function(COMMON, "func compareHits")
+        # Die naive Umkehrung macht aus einem Gleichstand ein „kleiner" in
+        # BEIDE Richtungen.
+        self.assertNotIn("return ascending ? result : !result", compare)
+        # Gleichstand endet ausdrücklich mit „nicht kleiner".
+        self.assertIn("== .orderedAscending", compare)
+        # Und der Headless-Selbsttest prüft die Ordnung zur Laufzeit.
+        self.assertIn("!compareHits(tied, tied", GUI)
         self.assertIn("compareHits($0, $1", GUI)
         self.assertIn("compareHits($0, $1", QUICK)
+
+    def test_quick_info_line_has_a_single_writer(self):
+        """Farbe, Umbruch und Tooltip der Infozeile gehören zusammen. Solange
+        einzelne Meldungen nur `stringValue` schrieben, blieb der Tooltip einer
+        längst erledigten Bereichswarnung an einer harmlosen Statuszeile
+        hängen."""
+        writer = swift_function(QUICK, "func showInfo(")
+        for property_name in ("textColor", "lineBreakMode", "stringValue",
+                              "toolTip"):
+            self.assertIn("infoLabel.%s" % property_name, writer)
+        # Ausserhalb von showInfo() und dem einmaligen Aufbau des Fensters
+        # fasst niemand die Infozeile an.
+        build = swift_function(QUICK, "func buildWindow()")
+        outside = QUICK.replace(writer, "").replace(build, "")
+        self.assertNotIn("infoLabel.stringValue", outside)
+        self.assertNotIn("infoLabel.toolTip", outside)
+        self.assertNotIn("infoLabel.textColor", outside)
 
     def test_quick_uses_a_regular_window_and_balances_the_search_row(self):
         build = QUICK[

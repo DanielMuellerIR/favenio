@@ -13,8 +13,8 @@
 //   Esc (bei leerem Feld)    → App beendet sich
 //
 // Die App ist ein „Accessory" (LSUIElement): kein Dock-Icon. Ihr Fenster ist
-// trotzdem ein normales NSWindow wie das Fastra-Hauptfenster und kein ständig
-// schwebendes Panel.
+// trotzdem ein normales, minimierbares NSWindow wie das Fenster der großen
+// Favenio.app und kein ständig über allem schwebendes Panel.
 
 import AppKit
 import Quartz   // QLPreviewPanel (QuickLook-Vorschau)
@@ -371,8 +371,10 @@ final class QuickController: NSObject, NSApplicationDelegate,
         pathColumn.title = "Ort"
         // Der Ort reicht bewusst über das Fenster hinaus. So zeigt der
         // horizontale Balken den vollständigen Quellordner statt nur eine
-        // anders gekürzte Fassung desselben Texts.
-        pathColumn.width = max(520, floor(visibleWidth * 0.35))
+        // anders gekürzte Fassung desselben Texts. Der Wert ist deshalb eine
+        // feste Breite und keine Quote der Fensterbreite — eine Quote wäre
+        // immer schmaler als das Fenster und liefe dem Zweck zuwider.
+        pathColumn.width = 520
         pathColumn.minWidth = 140
         pathColumn.sortDescriptorPrototype =
             NSSortDescriptor(key: "path", ascending: true)
@@ -572,11 +574,26 @@ final class QuickController: NSObject, NSApplicationDelegate,
     }
 
     /// Problemtext sichtbar (nicht grau) in die Info-Zeile schreiben.
+    /// EINE Stelle für die Infozeile. Alle vier sichtbaren Eigenschaften
+    /// werden immer zusammen gesetzt.
+    ///
+    /// Vorher schrieben die Statusmeldungen nur `stringValue`. Farbe und
+    /// Umbruch setzten `cancelSearch()` und `flushPending()` zwar zurück, den
+    /// TOOLTIP aber niemand: Eine erledigte Bereichswarnung blieb als
+    /// Mouseover an einer harmlosen Zeile wie „12 Treffer — Suche läuft…"
+    /// hängen. `detail` ist der ausführliche Text dahinter — bei laufender
+    /// Suche der vollständige, nicht gekürzte Suchordner.
+    func showInfo(_ text: String, detail: String? = nil,
+                  color: NSColor = .secondaryLabelColor,
+                  lineBreak: NSLineBreakMode = .byTruncatingTail) {
+        infoLabel.textColor = color
+        infoLabel.lineBreakMode = lineBreak
+        infoLabel.stringValue = text
+        infoLabel.toolTip = detail
+    }
+
     func showScopeProblem(_ problem: String) {
-        infoLabel.textColor = .systemOrange
-        infoLabel.lineBreakMode = .byTruncatingTail
-        infoLabel.stringValue = problem
-        infoLabel.toolTip = problem
+        showInfo(problem, detail: problem, color: .systemOrange)
     }
 
     /// Verbotene Finder-Automation ist nichts, was man nur klein in die
@@ -622,7 +639,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         guard !query.isEmpty else {
             hits = []
             tableView.reloadData()
-            infoLabel.stringValue = Self.hint
+            showInfo(Self.hint)
             return
         }
         debounceTimer = Timer.scheduledTimer(
@@ -659,8 +676,6 @@ final class QuickController: NSObject, NSApplicationDelegate,
         pending = []
         searching = false
         spinner.stopAnimation(nil)
-        infoLabel.textColor = .secondaryLabelColor
-        infoLabel.lineBreakMode = .byTruncatingTail
     }
 
     // ---------- Suche starten (live, im Hintergrund) ----------
@@ -688,8 +703,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         else {
             queuedQuery = true
             spinner.startAnimation(nil)
-            infoLabel.textColor = .secondaryLabelColor
-            infoLabel.stringValue = "Finder-Ordner wird ermittelt…"
+            showInfo("Finder-Ordner wird ermittelt…")
             scopeWaitTimer = Timer.scheduledTimer(
                 withTimeInterval: Self.scopeWaitLimit, repeats: false) {
                 [weak self] _ in self?.scopeWaitExpired()
@@ -707,9 +721,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
             showScopeProblem("Suche in " + abbreviateHome(root) + " — "
                              + problem)
         } else {
-            infoLabel.textColor = .secondaryLabelColor
-            infoLabel.stringValue = "Suche in " + abbreviateHome(root) + " …"
-            infoLabel.toolTip = root
+            showInfo("Suche in " + abbreviateHome(root) + " …",
+                     detail: root)
         }
         let searchContent = contentCheckbox.state == .on
         let searchArchives = archivesCheckbox.state == .on
@@ -781,9 +794,9 @@ final class QuickController: NSObject, NSApplicationDelegate,
         guard searching, hits.isEmpty, pending.isEmpty,
               (scopeProblem ?? runScopeNoteText()) == nil
         else { return }
-        infoLabel.textColor = .tertiaryLabelColor
-        infoLabel.lineBreakMode = .byTruncatingMiddle
-        infoLabel.stringValue = "Durchsuche " + abbreviateHome(path)
+        showInfo("Durchsuche " + abbreviateHome(path),
+                 detail: searchRoot, color: .tertiaryLabelColor,
+                 lineBreak: .byTruncatingMiddle)
     }
 
     /// Gebündelt anzeigen. Bei 20 Treffern STOPPT die Suche (Top 20 reichen
@@ -826,8 +839,6 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let room = Self.maxQuickHits - hits.count
         if room > 0 { hits.append(contentsOf: pending.prefix(room)) }
         pending = []
-        infoLabel.textColor = .secondaryLabelColor
-        infoLabel.lineBreakMode = .byTruncatingTail
         sortHits()
         reloadKeepingSelection(selectedPaths)
         openButton.isEnabled = !hits.isEmpty
@@ -843,10 +854,10 @@ final class QuickController: NSObject, NSApplicationDelegate,
         } else if reachedTop {
             // Die Erklärung der 20er-Grenze steht am zugehörigen Button. Eine
             // eigene „Top 20"-Zeile würde nur Tabellenhöhe verbrauchen.
-            infoLabel.stringValue = ""
-            infoLabel.toolTip = nil
+            showInfo("")
         } else {
-            infoLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
+            showInfo("\(hits.count) Treffer — Suche läuft…",
+                     detail: searchRoot)
         }
     }
 
@@ -856,7 +867,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         cancelSearch()
         openButton.isEnabled = !hits.isEmpty
         if let errorText {
-            infoLabel.stringValue = errorText
+            showInfo(errorText)
             return
         }
         let summary = hits.isEmpty
@@ -867,7 +878,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         if let problem = scopeProblem ?? runScopeNoteText() {
             showScopeProblem(summary + " " + problem)
         } else {
-            infoLabel.stringValue = summary
+            showInfo(summary, detail: searchRoot)
         }
     }
 
@@ -882,7 +893,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let root = searchRoot
         let resultsFile: URL
         do { resultsFile = try writeQuickHandoff(hits) } catch {
-            infoLabel.stringValue = "Konnte Treffer nicht zwischenspeichern."
+            showInfo("Konnte Treffer nicht zwischenspeichern.")
             return
         }
         cancelSearch()   // eigenen Suchlauf stoppen
@@ -913,7 +924,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         ]
         guard let handoffURL = components.url else {
             try? FileManager.default.removeItem(at: resultsFile)
-            infoLabel.stringValue = "Konnte Ergebnisübergabe nicht erzeugen."
+            showInfo("Konnte Ergebnisübergabe nicht erzeugen.")
             return
         }
         if NSWorkspace.shared.open(handoffURL) {
@@ -925,8 +936,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // Optionen und das Fortsetzen der Suche exakt wie im primären Weg.
         guard let appURL = locateMainApp() else {
             try? FileManager.default.removeItem(at: resultsFile)
-            infoLabel.stringValue =
-                "Favenio.app nicht gefunden — bitte einmal manuell starten."
+            showInfo("Favenio.app nicht gefunden — bitte einmal "
+                     + "manuell starten.")
             return
         }
         let configuration = NSWorkspace.OpenConfiguration()
@@ -944,8 +955,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
                     NSApp.terminate(nil)
                 } else {
                     try? FileManager.default.removeItem(at: resultsFile)
-                    self.infoLabel.stringValue =
-                        "Favenio.app konnte nicht gestartet werden."
+                    self.showInfo(
+                        "Favenio.app konnte nicht gestartet werden.")
                 }
             }
         }
@@ -1035,7 +1046,8 @@ final class QuickController: NSObject, NSApplicationDelegate,
             if let url = materializeHit(hits[row]) {
                 NSWorkspace.shared.open(url)
             } else {
-                infoLabel.stringValue = "Konnte nicht öffnen: \(hits[row].path)"
+                showInfo("Konnte nicht öffnen: \(hits[row].path)",
+                         detail: hits[row].path)
             }
         }
     }
