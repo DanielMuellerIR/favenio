@@ -395,6 +395,84 @@ class InstallTransactionTest(unittest.TestCase):
         self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
         self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
 
+    def test_signal_during_lock_creation_cannot_leave_the_lock_behind(self):
+        # Der Signal-Handler steht vor dem Sperrversuch; den winzigen Abschnitt
+        # aus atomarem mkdir und Besitzmarkierung schützt die Bibliothek selbst.
+        # Vor dem Fix starb zsh hier mit 143 und ließ die Sperre stehen.
+        prelude = r'''
+        mkdir() {
+            command mkdir "$@" || return $?
+            if [[ "$1" == */.favenio-install.lock ]]; then
+                kill -TERM $$
+            fi
+        }'''
+        result = subprocess.run(
+            ["zsh", "-c", self.install_script("    return 0", prelude)],
+            cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        output = result.stdout.decode("utf-8", "replace")
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn("RC=0", output)
+        self.assertEqual(self.leftovers(), [], output)
+
+    def test_signal_during_backup_creation_leaves_no_private_folders(self):
+        # Zwischen den beiden mkdir-Aufrufen kann nur der Ablageordner uns
+        # gehören. Der Handler darf weder einen fremden Sicherungsordner
+        # anfassen noch eigene Pfade liegen lassen. Ein Signal im kritischen
+        # mkdir/Handler-Wechsel wird kurz ignoriert und der Lauf bleibt sauber.
+        prelude = r'''
+        mkdir() {
+            command mkdir "$@" || return $?
+            if [[ "$1" == */.favenio-previous.* ]]; then
+                kill -TERM $$
+            fi
+        }'''
+        result = subprocess.run(
+            ["zsh", "-c", self.install_script("    return 0", prelude)],
+            cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        output = result.stdout.decode("utf-8", "replace")
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn("RC=0", output)
+        self.assertEqual(self.leftovers(), [], output)
+
+    def test_early_signal_handler_never_removes_an_unowned_lock(self):
+        # Nach dem Freigeben kann ein zweiter Lauf denselben Pfad sofort neu
+        # anlegen. Ein verspäteter früher Handler darf dessen Sperre nicht nach
+        # dem bloßen Namen löschen.
+        lock = os.path.join(self.dest, ".favenio-install.lock")
+        os.makedirs(lock)
+        marker = os.path.join(lock, "fremder-lauf")
+        Path(marker).write_text("behalten", encoding="utf-8")
+        script = '''
+        source "%s/notarize-lib.sh"
+        FAVENIO_INSTALL_LOCK=""
+        _favenio_install_interrupted_early "%s"
+        ''' % (REPO, lock)
+        result = subprocess.run(
+            ["zsh", "-c", script], cwd=REPO, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT)
+        output = result.stdout.decode("utf-8", "replace")
+        self.assertEqual(result.returncode, 2, output)
+        self.assertTrue(os.path.exists(marker), output)
+
+    def test_failed_stage_cleanup_names_the_leftover(self):
+        # Ein fremder Sicherungsordner erzwingt den frühen Fehlerweg. Scheitert
+        # dort selbst das vorsichtige rmdir des eigenen Ablageordners, muss der
+        # konkrete Restpfad auf stderr stehen statt still verschluckt zu werden.
+        foreign = os.path.join(self.dest,
+                               ".favenio-previous." + self.FIXED_TOKEN)
+        os.makedirs(foreign)
+        prelude = self.FIXED_TOKEN_PRELUDE + r'''
+        rmdir() {
+            if [[ "$1" == */.favenio-install.testtoken ]]; then
+                return 1
+            fi
+            command rmdir "$@"
+        }'''
+        output = self.run_install("    return 0", prelude=prelude)
+        self.assertIn("RC=2", output)
+        self.assertIn("WARNUNG: Ablageordner", output)
+        self.assertIn(".favenio-install.testtoken blieb stehen", output)
+
     def test_bad_copy_never_touches_the_installed_bundles(self):
         # Schon die danebengelegte Kopie fällt durch: Der Zielordner darf
         # dann gar nicht erst angefasst werden.
