@@ -1168,16 +1168,18 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // Heißt der Ordner im Archiv etwa „daten.txt", liefert
         // applicationsFor() über die Endung sehr wohl Apps — ctxOpenWith()
         // würde danach nur das nil von materializeHit() verwerfen und
-        // kommentarlos nichts tun (Review-Fund 2026-08-20). Ohne Einträge mit
-        // Aktion schaltet AppKit auch das übergeordnete „Öffnen mit" grau.
+        // kommentarlos nichts tun (Review-Fund 2026-08-20). Das Untermenü wird
+        // deshalb nur angehängt, wenn es überhaupt etwas zu öffnen gibt: AppKit
+        // hält ein Obermenü MIT Untermenü aktiv, auch wenn darin nur ein
+        // deaktivierter Hinweis steht — am 2026-08-20 nachgesehen. Ohne
+        // Untermenü und ohne Aktion wird der Eintrag dagegen grau wie
+        // „Vorschau" und „Öffnen"; den Grund nennt die Kopfzeile des Menüs.
         let openWithItem = NSMenuItem(title: "Öffnen mit", action: nil,
                                       keyEquivalent: "")
         let submenu = NSMenu()
         let appURLs = openable ? applicationsFor(hit) : []
-        if appURLs.isEmpty {
-            let none = NSMenuItem(title: openable
-                                      ? "Keine passende App gefunden"
-                                      : "Keine Datei zum Öffnen",
+        if appURLs.isEmpty && openable {
+            let none = NSMenuItem(title: "Keine passende App gefunden",
                                   action: nil, keyEquivalent: "")
             none.isEnabled = false
             submenu.addItem(none)
@@ -1194,7 +1196,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
             item.image = icon
             submenu.addItem(item)
         }
-        openWithItem.submenu = submenu
+        // Nur mit oeffenbarer Datei bekommt der Eintrag ein Untermenü — sonst
+        // bleibt er ohne Aktion UND ohne Untermenü und damit grau.
+        if openable {
+            openWithItem.submenu = submenu
+        }
         menu.addItem(openWithItem)
 
         menu.addItem(.separator())

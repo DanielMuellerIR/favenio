@@ -12,6 +12,10 @@ Aus der Code-Review vom 2026-08-20:
 - Für einen **Ordner innerhalb eines Archivs** ist jetzt auch „Öffnen mit"
   ausgegraut. Trägt der Ordnername eine Endung wie `daten.txt`, bot das
   Untermenü bisher passende Apps an, die auf Klick kommentarlos nichts taten.
+  Beim Nachsehen in der laufenden App stand der Eintrag zunächst weiter schwarz
+  zwischen drei grauen Dateiaktionen: AppKit hält ein Obermenü mit Untermenü
+  aktiv, auch wenn darin nur ein deaktivierter Hinweis steht. Das Untermenü
+  wird deshalb nur noch angehängt, wenn es wirklich etwas zu öffnen gibt.
 - Die Leertaste öffnet die Vorschau nur noch, wenn es wirklich eine Datei zu
   zeigen gibt. Im Kontextmenü war die Vorschau für einen Ordner im Archiv
   schon ausgegraut, über die Tastatur ging trotzdem ein leeres

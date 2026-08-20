@@ -76,8 +76,18 @@ class SwiftGuardTests(unittest.TestCase):
                 # Vierte Dateiaktion: „Öffnen mit". Die Endung im Namen eines
                 # Ordners im Archiv („daten.txt") liefert sonst echte Apps,
                 # deren Aufruf dann nur das nil von materializeHit() verwirft.
-                # Ohne Eintrag mit Aktion bleibt auch das Obermenü grau.
                 self.assertIn("openable ? applicationsFor(hit) : []", menu)
+                # Und der Eintrag SELBST muss grau werden. Die frühere Annahme
+                # „ohne Eintrag mit Aktion bleibt auch das Obermenü grau" war
+                # falsch: Am 2026-08-20 stand „Öffnen mit" in der laufenden App
+                # schwarz zwischen drei grauen Dateiaktionen, weil AppKit ein
+                # Obermenü MIT Untermenü aktiv hält — auch wenn darin nur ein
+                # deaktivierter Hinweis steht. Die Wache hat das nie geprüft,
+                # sie las nur den Quelltext. Das Untermenü darf deshalb nur
+                # angehängt werden, wenn es etwas zu öffnen gibt.
+                self.assertIn("if openable {\n            openWithItem.submenu = submenu",
+                              menu)
+                self.assertNotIn("Keine Datei zum Öffnen", menu)
                 self.assertIn("Ordner im Archiv", menu)
                 # „Pfad kopieren" braucht keine Datei und bleibt nutzbar.
                 self.assertIn("#selector(ctxCopyPath)", menu)
