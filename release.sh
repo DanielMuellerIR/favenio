@@ -120,7 +120,7 @@ tiffutil -cathidpicheck "$STAGING/DmgBg_1x.png" "$STAGING/DmgBg_2x.png" \
 # macOS-Versionen unzuverlässig. Größe großzügig; UDZO komprimiert später.
 # Ein fremdes Volume gleichen Namens wird NICHT ausgehängt: Das Finder-Skript
 # unten spricht die Platte über ihren Namen an und träfe sonst die falsche.
-# Lieber abbrechen und Daniel entscheiden lassen.
+# Lieber abbrechen, damit ein Mensch die Abweichung prüfen kann.
 if [ -d "$MOUNT_DIR" ]; then
     echo "FEHLER: $MOUNT_DIR ist bereits eingehängt." >&2
     echo "Dieses Volume gehört nicht diesem Lauf. Erst selbst auswerfen," >&2
