@@ -352,6 +352,21 @@ _favenio_install_unlock() {
 # Rollback endet der ganze Installationsprozess mit dem passenden
 # Vertragsstatus; ein bloßes `return` aus einem zsh-Trap würde den Aufrufer
 # dagegen mit Status 0 weiterlaufen lassen.
+#
+# Der frühe Handler gilt für das kurze Stück zwischen dem erfolgreichen
+# Sperren und dem Anlegen von Ablage- und Sicherungsordner. Dort ist noch
+# nichts angefasst worden, es gibt also nichts zurückzuholen — aber die Sperre
+# gehört bereits uns. Ohne eigenen Handler stirbt die Shell am Signal, und der
+# EXIT-Trap von install.sh läuft dann gar nicht mehr; die Sperre blieb liegen
+# und blockierte jede weitere Installation (Review-Fund 2026-08-20, mit einem
+# Signaltest nachgemessen).
+_favenio_install_interrupted_early() {
+    local lock="$1"
+    echo "FEHLER: Installation abgebrochen; es wurde nichts installiert." >&2
+    _favenio_install_unlock "$lock"
+    exit 2
+}
+
 _favenio_install_interrupted() {
     local dest="$1" stage="$2" backup="$3" lock="$4"
     shift 4
@@ -430,26 +445,51 @@ favenio_install_bundles() {
     # automatisch entfernt.
     local lock="$dest/.favenio-install.lock"
     _favenio_install_lock "$lock" || return 2
+    # Damit der Aufräum-Trap von install.sh die Sperre auch bei Ctrl-C wieder
+    # abnimmt; die Funktion selbst räumt sie auf jedem eigenen Weg weg.
+    #
+    # SOFORT nach dem Sperren, noch vor jedem weiteren Befehl: Die Token-
+    # Erzeugung unten ruft externe Programme auf, und ein Signal in diesem
+    # Fenster ließ die frisch erworbene Sperre liegen (Review-Fund
+    # 2026-08-20). Der frühe Signal-Handler gehört aus demselben Grund
+    # hierher — er nimmt nur die Sperre ab, denn angefasst ist noch nichts.
+    FAVENIO_INSTALL_LOCK="$lock"
+    # Erst NACH erfolgreichem Sperren installieren: Sonst könnte ein Signal
+    # beim abgewiesenen zweiten Lauf dessen fremde Sperre wegräumen.
+    trap '_favenio_install_interrupted_early "$lock"' HUP INT TERM
     local token stage backup
     token=$(_favenio_install_token)
     stage="$dest/.favenio-install.$token"
     backup="$dest/.favenio-previous.$token"
-    # Damit der Aufräum-Trap von install.sh die Sperre auch bei Ctrl-C wieder
-    # abnimmt; die Funktion selbst räumt sie auf jedem eigenen Weg weg.
-    FAVENIO_INSTALL_LOCK="$lock"
-    # Erst NACH erfolgreichem Sperren installieren: Sonst könnte ein Signal
-    # beim abgewiesenen zweiten Lauf dessen fremde Sperre wegräumen. Ab hier
-    # räumen INT, TERM und HUP Ablage, Sicherung und eingesetzte Bundles
-    # gemeinsam auf; die Variablen sehen beim Signal die aktuelle Liste.
-    trap '_favenio_install_interrupted "$dest" "$stage" "$backup" "$lock" "${installed[@]}"' \
-        HUP INT TERM
     # KEIN `rm -rf` vorweg: `mkdir` ohne -p scheitert, wenn der Pfad schon da
     # ist, und genau das ist hier die gewünschte Antwort.
-    if ! mkdir "$stage" "$backup"; then
-        echo "FEHLER: Ablageordner in $dest nicht anlegbar." >&2
-        _favenio_install_failure "$dest" "$stage" "$backup" "$lock"
-        return $?
+    #
+    # Und einzeln statt `mkdir "$stage" "$backup"`: Zwei Operanden bearbeitet
+    # `mkdir` UNABHÄNGIG voneinander. Existierte einer der beiden Pfade schon,
+    # legte es den anderen trotzdem an und meldete danach nur einen Fehler —
+    # der gemeinsame Rollback bekam so einen FREMDEN Pfad in die Hand, löschte
+    # ihn rekursiv und hätte Bundles aus einer fremden Sicherung sogar nach
+    # $dest geschoben (Review-Fund 2026-08-20, reproduziert). Aufgeräumt wird
+    # hier deshalb nur, was dieser Lauf nachweislich selbst erzeugt hat.
+    if ! mkdir "$stage"; then
+        echo "FEHLER: Ablageordner $stage nicht anlegbar." >&2
+        _favenio_install_unlock "$lock"
+        return 2
     fi
+    if ! mkdir "$backup"; then
+        echo "FEHLER: Sicherungsordner $backup nicht anlegbar." >&2
+        # `rmdir` statt `rm -rf`: Der eigene Ablageordner ist gerade erst
+        # entstanden und leer; ist er es wider Erwarten nicht, bleibt er
+        # lieber stehen.
+        rmdir "$stage" 2>/dev/null || true
+        _favenio_install_unlock "$lock"
+        return 2
+    fi
+    # Ab hier räumen INT, TERM und HUP Ablage, Sicherung und eingesetzte
+    # Bundles gemeinsam auf; die Variablen sehen beim Signal die aktuelle
+    # Liste. Beide Ordner gehören jetzt sicher diesem Lauf.
+    trap '_favenio_install_interrupted "$dest" "$stage" "$backup" "$lock" "${installed[@]}"' \
+        HUP INT TERM
 
     # 1. Danebenlegen und dort schon prüfen: Vor dem ersten Eingriff steht
     #    fest, dass beide Kopien vollständig und gültig sind.

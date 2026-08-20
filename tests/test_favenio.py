@@ -923,6 +923,31 @@ class SingleCompressionTest(TempTreeTest):
                     archive_name + "!/" + member_name))
                 self.assertEqual(records[0]["line"], 2)
 
+    def test_size_is_absent_because_the_format_does_not_state_it(self):
+        """`size` ist ein optionales Feld — hier fehlt es mit Absicht.
+
+        Eine `.gz`/`.bz2`/`.xz` nennt die entpackte Größe nicht vorab; sie
+        stünde erst nach vollständigem Entpacken fest, und die Suche hört beim
+        ersten Treffer auf. Der Vertrag in beiden READMEs und in AGENTS sagt
+        das ausdrücklich; dieser Test hält beide Seiten zusammen (Review-Fund
+        2026-08-20). Der Zip-Eintrag daneben belegt, dass `size` überall dort
+        weiterhin kommt, wo das Format die Größe im Verzeichnis führt."""
+        for archive_name in ("log.txt.gz", "log-b.txt.bz2", "log-x.txt.xz"):
+            with self.subTest(archive=archive_name):
+                path = os.path.join(self.root, archive_name)
+                code, lines, _ = run(["--json", "--content", "NADEL", path])
+                self.assertEqual(code, 0)
+                record = json.loads(lines[0])
+                self.assertNotIn("size", record)
+
+        zip_path = os.path.join(self.root, "paket.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("innen.txt", self.CONTENT)
+        code, lines, _ = run(["--json", "--content", "NADEL", zip_path])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(lines[0])["size"],
+                         len(self.CONTENT.encode("utf-8")))
+
     def test_name_search_sees_inner_member(self):
         # Der entpackte Name ist per Namenssuche und Glob auffindbar.
         code, lines, _ = run(["--json", "*.txt", self.root])

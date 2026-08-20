@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.24.1 — 2026-08-20
+
+Aus der Code-Review vom 2026-08-20:
+
+- Die Schnellsuche wirft die alten Treffer jetzt sofort weg, sobald sich der
+  Suchtext ändert. Zwischen Tastendruck und dem Start der neuen Suche liegen
+  0,6 Sekunden; in diesem Fenster übergab ⌘↩ oder der Knopf „Alle in Favenio"
+  der Haupt-App die Treffer der VORIGEN Anfrage unter dem bereits neuen
+  Suchtext — und deren Pfade unterdrückten dort anschließend richtige Treffer.
+- Für einen **Ordner innerhalb eines Archivs** ist jetzt auch „Öffnen mit"
+  ausgegraut. Trägt der Ordnername eine Endung wie `daten.txt`, bot das
+  Untermenü bisher passende Apps an, die auf Klick kommentarlos nichts taten.
+- Die Leertaste öffnet die Vorschau nur noch, wenn es wirklich eine Datei zu
+  zeigen gibt. Im Kontextmenü war die Vorschau für einen Ordner im Archiv
+  schon ausgegraut, über die Tastatur ging trotzdem ein leeres
+  Quick-Look-Fenster auf; stattdessen erscheint jetzt derselbe Hinweis.
+- `install.sh` legt Ablage- und Sicherungsordner einzeln an. Trug einer der
+  beiden Pfade denselben Namen wie ein liegen gebliebener Ordner eines anderen
+  Laufs, entstand der jeweils andere trotzdem — und das Aufräumen löschte
+  danach den FREMDEN Ordner samt nicht zurückgeholtem alten Stand, obwohl der
+  Lauf mit Exit 2 „nichts geändert" zusagt.
+- Ein Abbruch (Ctrl-C, HUP, TERM) unmittelbar nach dem Sperren des Zielordners
+  nimmt die Sperre jetzt wieder ab. Vorher blieb sie liegen, und jede weitere
+  Installation meldete „es läuft bereits eine Favenio-Installation".
+- Dokumentation: `size` im JSONL ist ein optionales Feld. Es steht nur dort,
+  wo das Format die entpackte Größe vorab nennt — nicht bei einzeln
+  komprimierten Dateien (`.gz`, `.bz2`, `.xz`) und nicht bei Einträgen, die
+  über `bsdtar` gelesen werden (7z, ISO, `.tar.zst`). Beide READMEs
+  versprachen es bisher für jede Datei.
+
 ## 0.24.0 — 2026-08-19
 
 - **Verhaltensänderung:** Die Regel aus 0.23.0 gilt jetzt auch INNERHALB von

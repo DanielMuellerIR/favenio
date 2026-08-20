@@ -320,6 +320,81 @@ class InstallTransactionTest(unittest.TestCase):
         # weg, sonst könnte er den anderen Lauf gleich mit freigeben.
         self.assertTrue(os.path.isdir(lock))
 
+    # Ablage- und Sicherungsordner tragen normalerweise eine Zufallskennung.
+    # Für die Kollisionstests wird sie festgenagelt, sonst ließe sich der
+    # seltene Fall gar nicht herstellen.
+    FIXED_TOKEN = "testtoken"
+    FIXED_TOKEN_PRELUDE = """
+        _favenio_install_token() { printf 'testtoken' }"""
+
+    def test_a_colliding_stage_folder_of_another_run_is_left_alone(self):
+        # Früher legte EIN `mkdir` beide Ordner an. Existierte der Ablage-
+        # ordner schon, entstand der Sicherungsordner trotzdem, und der
+        # gemeinsame Rollback löschte anschließend den FREMDEN Ablageordner
+        # samt Inhalt — obwohl der Lauf mit Exit 2 „nichts geändert" zusagt.
+        foreign = os.path.join(self.dest,
+                               ".favenio-install." + self.FIXED_TOKEN)
+        os.makedirs(foreign)
+        keep = os.path.join(foreign, "nicht-zurueckgeholt.txt")
+        with open(keep, "w", encoding="utf-8") as handle:
+            handle.write("alter Stand eines anderen Laufs")
+        output = self.run_install("    return 0",
+                                  prelude=self.FIXED_TOKEN_PRELUDE)
+        self.assertIn("RC=2", output)
+        self.assertTrue(os.path.exists(keep), output)
+        # Nur der fremde Ordner bleibt: kein selbst erzeugter Rest, keine
+        # liegen gebliebene Sperre.
+        self.assertEqual(self.leftovers(),
+                         [".favenio-install." + self.FIXED_TOKEN], output)
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
+        self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
+
+    def test_a_colliding_backup_folder_of_another_run_is_left_alone(self):
+        # Andersherum genauso: In einem fremden Sicherungsordner liegt ein
+        # nicht zurückgeholter alter Stand. Der Rollback hätte dessen Bundles
+        # nach dem bloßen Namen in den Zielordner geschoben.
+        foreign = os.path.join(self.dest,
+                               ".favenio-previous." + self.FIXED_TOKEN)
+        self.make_bundle(os.path.join(foreign, "Favenio.app"), "fremd-alt")
+        output = self.run_install("    return 0",
+                                  prelude=self.FIXED_TOKEN_PRELUDE)
+        self.assertIn("RC=2", output)
+        self.assertEqual(self.marker(foreign, "Favenio.app"), "fremd-alt")
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
+        # Der eigene Ablageordner ist wieder weg, der fremde bleibt.
+        self.assertEqual(self.leftovers(),
+                         [".favenio-previous." + self.FIXED_TOKEN], output)
+
+    def test_a_signal_before_the_folders_exist_removes_only_the_lock(self):
+        # Zwischen erfolgreichem Sperren und dem Anlegen der Ordner laufen
+        # externe Befehle (Zeitstempel, Zufallszahl). Ein HUP, INT oder TERM
+        # in diesem Fenster beendete den Prozess, ohne die eigene Sperre
+        # abzunehmen — jede weitere Installation lief danach in „es läuft
+        # bereits eine Installation" und brauchte Handarbeit.
+        # Der Kunstgriff: Die Token-Erzeugung schickt dem Skript selbst das
+        # Signal und wartet danach kurz. Der Handler greift sofort — das
+        # kurze Warten stellt nur sicher, dass die Zustellung nicht erst
+        # NACH der Token-Erzeugung ankommt und dann einen anderen Weg testet.
+        # Bleibt der Handler aus, kehrt die Funktion mit einem Token zurück
+        # und der Test scheitert sichtbar, statt zu hängen. Das Warten bleibt
+        # bewusst kurz: Der Unterprozess hält die Ausgabeleitung des Skripts
+        # so lange offen, und genau so lange sammelt Python sie noch ein.
+        prelude = r"""
+        _favenio_install_token() {
+            kill -TERM $$
+            sleep 0.3
+            printf 'nie'
+        }"""
+        result = subprocess.run(
+            ["zsh", "-c", self.install_script("    return 0", prelude)],
+            cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        output = result.stdout.decode("utf-8", "replace")
+        self.assertEqual(result.returncode, 2, output)
+        self.assertIn("nichts installiert", output)
+        self.assertEqual(self.leftovers(), [], output)
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
+        self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
+
     def test_bad_copy_never_touches_the_installed_bundles(self):
         # Schon die danebengelegte Kopie fällt durch: Der Zielordner darf
         # dann gar nicht erst angefasst werden.

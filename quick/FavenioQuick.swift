@@ -635,10 +635,18 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// neu starten. Verstummt das Tippen, sucht startSearch().
     func controlTextDidChange(_ obj: Notification) {
         cancelSearch()
+        // Die angezeigten Treffer gehören zum ALTEN Suchtext und werden
+        // deshalb sofort entwertet — nicht erst 0,6 s später in
+        // startSearch(). In diesem Fenster hätten ⌘↩ und der Übergabeknopf
+        // der Haupt-App sonst die alten Treffer als Startmenge zum bereits
+        // neuen Suchtext übergeben; deren Pfade hätten dort über `seenPaths`
+        // sogar richtige Treffer der neuen Suche unterdrückt
+        // (Review-Fund 2026-08-20).
+        hits = []
+        openButton.isEnabled = false
+        tableView.reloadData()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else {
-            hits = []
-            tableView.reloadData()
             showInfo(Self.hint)
             return
         }
@@ -1061,9 +1069,27 @@ final class QuickController: NSObject, NSApplicationDelegate,
         guard let panel = QLPreviewPanel.shared() else { return }
         if QLPreviewPanel.sharedPreviewPanelExists() && panel.isVisible {
             panel.orderOut(nil)
-        } else {
-            panel.makeKeyAndOrderFront(nil)
+            return
         }
+        // Erst nachsehen, ob es überhaupt etwas zu zeigen gibt. Ein ORDNER im
+        // Archiv hat keine Datei: materializeHit() liefert nil, das Panel
+        // bliebe leer. Im Kontextmenü ist die Vorschau dafür schon grau — über
+        // die Leertaste war sie trotzdem erreichbar (Review-Fund 2026-08-20).
+        rebuildPreviewURLs()
+        guard !previewURLs.isEmpty else {
+            let row = tableView.selectedRow
+            if row >= 0, row < hits.count {
+                if hits[row].hasOpenableFile {
+                    showInfo("Keine Vorschau möglich: \(hits[row].path)",
+                             detail: hits[row].path)
+                } else {
+                    showInfo("Ordner im Archiv — keine Datei zum Öffnen.",
+                             detail: hits[row].path)
+                }
+            }
+            return
+        }
+        panel.makeKeyAndOrderFront(nil)
     }
 
     func rebuildPreviewURLs() {
@@ -1138,12 +1164,20 @@ final class QuickController: NSObject, NSApplicationDelegate,
             open.target = self
         }
 
+        // Auch „Öffnen mit" ist eine Dateiaktion und braucht dieselbe Wache:
+        // Heißt der Ordner im Archiv etwa „daten.txt", liefert
+        // applicationsFor() über die Endung sehr wohl Apps — ctxOpenWith()
+        // würde danach nur das nil von materializeHit() verwerfen und
+        // kommentarlos nichts tun (Review-Fund 2026-08-20). Ohne Einträge mit
+        // Aktion schaltet AppKit auch das übergeordnete „Öffnen mit" grau.
         let openWithItem = NSMenuItem(title: "Öffnen mit", action: nil,
                                       keyEquivalent: "")
         let submenu = NSMenu()
-        let appURLs = applicationsFor(hit)
+        let appURLs = openable ? applicationsFor(hit) : []
         if appURLs.isEmpty {
-            let none = NSMenuItem(title: "Keine passende App gefunden",
+            let none = NSMenuItem(title: openable
+                                      ? "Keine passende App gefunden"
+                                      : "Keine Datei zum Öffnen",
                                   action: nil, keyEquivalent: "")
             none.isEnabled = false
             submenu.addItem(none)

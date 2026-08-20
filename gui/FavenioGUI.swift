@@ -357,9 +357,24 @@ final class MainController: NSObject, NSApplicationDelegate,
         guard let panel = QLPreviewPanel.shared() else { return }
         if QLPreviewPanel.sharedPreviewPanelExists() && panel.isVisible {
             panel.orderOut(nil)
-        } else {
-            panel.makeKeyAndOrderFront(nil)
+            return
         }
+        // Erst nachsehen, ob es überhaupt etwas zu zeigen gibt. Ein ORDNER im
+        // Archiv hat keine Datei: materializeHit() liefert nil, das Panel
+        // bliebe leer. Im Kontextmenü ist die Vorschau dafür schon grau — über
+        // die Leertaste war sie trotzdem erreichbar (Review-Fund 2026-08-20).
+        rebuildPreviewURLs()
+        guard !previewURLs.isEmpty else {
+            let row = tableView.selectedRow
+            if row >= 0, row < hits.count {
+                statusLabel.stringValue = hits[row].hasOpenableFile
+                    ? "Keine Vorschau möglich: \(hits[row].path)"
+                    : "Ordner im Archiv — keine Datei zum Öffnen: "
+                        + hits[row].path
+            }
+            return
+        }
+        panel.makeKeyAndOrderFront(nil)
     }
 
     func rebuildPreviewURLs() {
@@ -1263,12 +1278,20 @@ final class MainController: NSObject, NSApplicationDelegate,
         }
 
         // „Öffnen mit“ — Untermenü mit allen Apps, die den Dateityp können.
+        // Auch das ist eine Dateiaktion und braucht dieselbe Wache: Heißt der
+        // Ordner im Archiv etwa „daten.txt", liefert applicationsFor() über
+        // die Endung sehr wohl Apps — ctxOpenWith() würde danach nur das nil
+        // von materializeHit() verwerfen und kommentarlos nichts tun
+        // (Review-Fund 2026-08-20). Ohne Einträge mit Aktion schaltet AppKit
+        // auch das übergeordnete „Öffnen mit" grau.
         let openWithItem = NSMenuItem(title: "Öffnen mit", action: nil,
                                       keyEquivalent: "")
         let submenu = NSMenu()
-        let appURLs = applicationsFor(hit)
+        let appURLs = openable ? applicationsFor(hit) : []
         if appURLs.isEmpty {
-            let none = NSMenuItem(title: "Keine passende App gefunden",
+            let none = NSMenuItem(title: openable
+                                      ? "Keine passende App gefunden"
+                                      : "Keine Datei zum Öffnen",
                                   action: nil, keyEquivalent: "")
             none.isEnabled = false
             submenu.addItem(none)

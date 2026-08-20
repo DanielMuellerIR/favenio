@@ -73,12 +73,40 @@ class SwiftGuardTests(unittest.TestCase):
                 self.assertIn("let openable = hit.hasOpenableFile", menu)
                 # Ohne Aktion schaltet AppKit den Eintrag grau.
                 self.assertEqual(menu.count("openable ? #selector"), 3)
+                # Vierte Dateiaktion: „Öffnen mit". Die Endung im Namen eines
+                # Ordners im Archiv („daten.txt") liefert sonst echte Apps,
+                # deren Aufruf dann nur das nil von materializeHit() verwirft.
+                # Ohne Eintrag mit Aktion bleibt auch das Obermenü grau.
+                self.assertIn("openable ? applicationsFor(hit) : []", menu)
                 self.assertIn("Ordner im Archiv", menu)
                 # „Pfad kopieren" braucht keine Datei und bleibt nutzbar.
                 self.assertIn("#selector(ctxCopyPath)", menu)
                 self.assertNotIn("openable ? #selector(ctxCopyPath)", menu)
         # Und der Headless-Selbsttest prueft die Auskunft gegen die Wirklichkeit.
         self.assertIn("materializeHit(archiveFolder) == nil", GUI)
+
+    def test_space_key_preview_only_opens_with_a_real_file(self):
+        """Die Leertaste ruft togglePreview() direkt, am Kontextmenue vorbei.
+        Fuer einen Ordner im Archiv gibt es keine Datei; das Panel ginge leer
+        auf. Deshalb baut togglePreview() die Vorschau-URLs SELBST auf und
+        bricht bei leerer Liste mit einem Hinweis ab."""
+        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
+            toggle = swift_function(source, "@objc func togglePreview() {")
+            with self.subTest(app=name):
+                self.assertIn("guard !previewURLs.isEmpty else {", toggle)
+                self.assertIn("Ordner im Archiv", toggle)
+                self.assertLess(toggle.index("rebuildPreviewURLs()"),
+                                toggle.index("panel.makeKeyAndOrderFront"))
+
+    def test_quick_drops_old_hits_on_every_keystroke(self):
+        """Zwischen Tastendruck und dem 0,6-s-Debounce standen die Treffer des
+        ALTEN Suchtexts weiter in der Liste, der Uebergabeknopf blieb aktiv.
+        ⌘↩ schickte der Haupt-App in diesem Fenster alte Treffer unter neuem
+        Suchtext."""
+        change = swift_function(QUICK, "func controlTextDidChange(")
+        for line in ("hits = []", "openButton.isEnabled = false"):
+            self.assertLess(change.index(line),
+                            change.index("Timer.scheduledTimer"), line)
 
     def test_quick_info_line_has_a_single_writer(self):
         """Farbe, Umbruch und Tooltip der Infozeile gehören zusammen. Solange

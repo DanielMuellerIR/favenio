@@ -44,7 +44,12 @@ Verbindliches CLI-Verhalten:
 
 - `--json` schreibt JSONL, ein Objekt pro Treffer. Jeder Treffer trägt
   `path`, `type`, `isDirectory`, `filesystemPath` und `archiveMembers`;
-  Inhaltstreffer zusätzlich `line`, Dateien zusätzlich `size`. `isDirectory`
+  Inhaltstreffer zusätzlich `line`. `size` ist optional: Es steht nur dort,
+  wo das Format die entpackte Größe vorab nennt (normale Dateien, Zip- und
+  Tar-Einträge), nicht bei einzeln komprimierten Dateien (`.gz`, `.bz2`,
+  `.xz`) und nicht bei `bsdtar`-Einträgen (7z, ISO, `.tar.zst`). Dort wäre
+  die Größe erst nach vollständigem Entpacken bekannt; das hebt den
+  Early-Exit auf und ist für ein bloßes Anzeigefeld abgelehnt. `isDirectory`
   ist nötig, weil `type` es nicht verrät: Ein Ordner IM Archiv kommt wie eine
   Datei als `member` an. Die Frontends dürfen den Typ nicht aus dem Pfad oder
   aus `type` erraten.

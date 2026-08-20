@@ -119,7 +119,12 @@ Favenio ist bewusst maschinenfreundlich gebaut:
   `path` bleibt die menschenlesbare Darstellung; Automation sollte die
   eindeutigen strukturierten Felder verwenden. Jeder Treffer trägt `path`,
   `type`, `isDirectory`, `filesystemPath` und `archiveMembers`; Inhaltstreffer
-  zusätzlich `line`, Dateien zusätzlich `size`. Für „ist das ein Ordner?"
+  zusätzlich `line`. Dateien tragen `size` (entpackte Bytes), **soweit das
+  Format die Größe vorab nennt**: normale Dateien, Zip- und Tar-Einträge ja,
+  einzeln komprimierte Dateien (`.gz`, `.bz2`, `.xz`) und über `bsdtar`
+  gelesene Einträge (7z, ISO, `.tar.zst`) nein — dort steht die Größe erst
+  nach vollständigem Entpacken fest, und die Suche endet beim ersten Treffer.
+  `size` ist also ein optionales Feld. Für „ist das ein Ordner?"
   `isDirectory` fragen, nicht `type`: Ein **Ordner innerhalb eines Archivs**
   kommt genau wie eine Datei als `"type": "member"` an.
 - **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,
@@ -150,7 +155,7 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `--max-archive-ratio FAKTOR` | maximales ZIP-Kompressionsverhältnis |
 | `--only both\|files\|dirs` | Treffer auf Dateien, Ordner oder beides (Default) begrenzen |
 | `--hidden` | unsichtbare (Punkt-)Dateien und -Ordner mitdurchsuchen |
-| `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` = Bytes) |
+| `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` in Bytes, soweit das Format sie nennt) |
 | `--progress` | laufend melden, wo gerade gesucht wird (mit `--json` als JSONL-Objekte, sonst auf stderr) |
 | `--extract TREFFER` | Treffer-Pfad (`!/`-Notation) in einen Temp-Ordner auspacken und den nutzbaren Pfad ausgeben |
 | `--extract-json JSON` | einen eindeutigen strukturierten JSON-Treffer auspacken |

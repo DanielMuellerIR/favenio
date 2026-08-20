@@ -117,8 +117,13 @@ Favenio is deliberately machine-friendly:
   `path` remains the human-readable representation; automation should use the
   unambiguous structured fields. Every hit carries `path`, `type`,
   `isDirectory`, `filesystemPath` and `archiveMembers`; content hits also
-  `line`, files also `size`. Ask `isDirectory`, not `type`: a **folder inside
-  an archive** arrives as `"type": "member"` just like a file does.
+  `line`. Files carry `size` (uncompressed bytes) **as far as the format
+  states it up front**: plain files, ZIP and TAR entries do, single compressed
+  files (`.gz`, `.bz2`, `.xz`) and entries read through `bsdtar` (7z, ISO,
+  `.tar.zst`) do not — their size is only known after full decompression, and
+  the search stops at the first hit. So treat `size` as optional. Ask
+  `isDirectory`, not `type`: a **folder inside an archive** arrives as
+  `"type": "member"` just like a file does.
 - **Exit codes** as with grep: `0` = hits, `1` = no hits,
   `2` = error (invalid regex, missing path)
 - **Warnings** (unreadable files, broken archives) go to stderr;
@@ -147,7 +152,7 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `--max-archive-ratio FACTOR` | maximum ZIP compression ratio |
 | `--only both\|files\|dirs` | limit hits to files, directories or both (default) |
 | `--hidden` | include hidden (dot) files and directories |
-| `--json` | JSONL output for scripts/agents (includes `size` in bytes) |
+| `--json` | JSONL output for scripts/agents (with `size` in bytes where the format states it) |
 | `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
 | `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |
 | `--extract-json JSON` | extract an unambiguous structured JSON hit |

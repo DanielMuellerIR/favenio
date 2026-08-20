@@ -42,22 +42,46 @@ def option_table(text):
     return rest[:rest.index("\n##")]
 
 
+def table_long_options(text):
+    """Die langen Optionen, die eine Optionstabelle wirklich aufführt.
+
+    Zwei Fallstricke, beide echt (Review-Fund 2026-08-20):
+
+    1. Ein Test auf Teilstrings fände `--json` auch in `--extract-json` und
+       `--extract` in `--extract-root`. Deshalb werden ganze Backtick-Wörter
+       geschnitten: `[a-z-]+` endet von selbst am Leerzeichen oder am
+       schließenden Backtick.
+    2. Optionen stehen auch in fremden Beschreibungstexten — die Zeile zu
+       `--progress` nennt zum Beispiel `--json`. Gezählt wird deshalb nur die
+       erste Tabellenspalte, also die eigene Zeile einer Option."""
+    options = set()
+    for row in option_table(text).splitlines():
+        if not row.startswith("|"):
+            continue
+        first_cell = row.split("|")[1]
+        options.update(re.findall(r"`(--[a-z-]+)", first_cell))
+    return options
+
+
 class OptionTableTest(unittest.TestCase):
     def test_every_cli_option_is_documented_in_both_readmes(self):
-        options = cli_long_options()
+        options = set(cli_long_options())
         self.assertIn("--exact", options)       # Sanity: Regex greift noch.
         for name, text in READMES.items():
             with self.subTest(readme=name):
-                table = option_table(text)
-                missing = [option for option in options if option not in table]
-                self.assertEqual(missing, [], "fehlt in %s" % name)
+                listed = table_long_options(text)
+                self.assertEqual(sorted(options - listed), [],
+                                 "fehlt in %s" % name)
+                # Auch andersherum: Eine Tabelle darf keine Option führen,
+                # die es in favenio.py gar nicht (mehr) gibt.
+                self.assertEqual(sorted(listed - options), [],
+                                 "steht in %s, kennt argparse aber nicht"
+                                 % name)
 
     def test_both_option_tables_list_the_same_options(self):
         """Die deutsche Fassung ist eine Übersetzung, keine eigene Auswahl."""
-        listed = {}
-        for name, text in READMES.items():
-            table = option_table(text)
-            listed[name] = sorted(set(re.findall(r"`(--[a-z-]+)", table)))
+        listed = {name: sorted(table_long_options(text))
+                  for name, text in READMES.items()}
         self.assertEqual(listed["README.md"], listed["README.de.md"])
 
 
