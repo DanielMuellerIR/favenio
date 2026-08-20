@@ -121,7 +121,9 @@ Favenio is deliberately machine-friendly:
   states it up front**: plain files, ZIP and TAR entries do, single compressed
   files (`.gz`, `.bz2`, `.xz`) and entries read through `bsdtar` (7z, ISO,
   `.tar.zst`) do not — their size is only known after full decompression, and
-  the search stops at the first hit. So treat `size` as optional. Ask
+  the search stops at the first hit. It is also absent when the size of a plain
+  file cannot be determined (for example, a broken symlink). So treat `size`
+  as optional. Ask
   `isDirectory`, not `type`: a **folder inside an archive** arrives as
   `"type": "member"` just like a file does.
 - **Exit codes** as with grep: `0` = hits, `1` = no hits,

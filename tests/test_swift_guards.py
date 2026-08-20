@@ -67,31 +67,31 @@ class SwiftGuardTests(unittest.TestCase):
         nichts. Die Bedingung steht EINMAL im Kern und wird nicht in den Apps
         nachgebaut."""
         self.assertIn("var hasOpenableFile: Bool", COMMON)
+        builder = swift_function(COMMON, "func populateHitContextMenu(")
+        # Kommentare dürfen keinen dieser Belege liefern. Genau das machte die
+        # vorige Suche nach „Ordner im Archiv" wirkungslos.
+        code = "\n".join(line.split("//", 1)[0] for line in builder.splitlines())
+        compact = " ".join(code.split())
+        self.assertIn(
+            'NSMenuItem(title: "Ordner im Archiv — keine Datei " '
+            '+ "zum Öffnen"', compact)
+        self.assertIn("openWithItem.isEnabled = openable", code)
+        self.assertIn("if let applicationHit", code)
+        self.assertIn("openWithItem.submenu = submenu", code)
+        self.assertIn("action: openable ? selectors.preview : nil", code)
+        self.assertIn("action: openable ? selectors.open : nil", code)
+        self.assertIn("action: openable ? selectors.reveal : nil", code)
+        self.assertIn("action: selectors.copyPath", code)
         for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
             menu = swift_function(source, "func menuNeedsUpdate(")
             with self.subTest(app=name):
-                self.assertIn("let openable = hit.hasOpenableFile", menu)
-                # Ohne Aktion schaltet AppKit den Eintrag grau.
-                self.assertEqual(menu.count("openable ? #selector"), 3)
-                # Vierte Dateiaktion: „Öffnen mit". Die Endung im Namen eines
-                # Ordners im Archiv („daten.txt") liefert sonst echte Apps,
-                # deren Aufruf dann nur das nil von materializeHit() verwirft.
-                self.assertIn("openable ? applicationsFor(hit) : []", menu)
-                # Und der Eintrag SELBST muss grau werden. Die frühere Annahme
-                # „ohne Eintrag mit Aktion bleibt auch das Obermenü grau" war
-                # falsch: Am 2026-08-20 stand „Öffnen mit" in der laufenden App
-                # schwarz zwischen drei grauen Dateiaktionen, weil AppKit ein
-                # Obermenü MIT Untermenü aktiv hält — auch wenn darin nur ein
-                # deaktivierter Hinweis steht. Die Wache hat das nie geprüft,
-                # sie las nur den Quelltext. Das Untermenü darf deshalb nur
-                # angehängt werden, wenn es etwas zu öffnen gibt.
-                self.assertIn("if openable {\n            openWithItem.submenu = submenu",
-                              menu)
-                self.assertNotIn("Keine Datei zum Öffnen", menu)
-                self.assertIn("Ordner im Archiv", menu)
-                # „Pfad kopieren" braucht keine Datei und bleibt nutzbar.
-                self.assertIn("#selector(ctxCopyPath)", menu)
-                self.assertNotIn("openable ? #selector(ctxCopyPath)", menu)
+                self.assertIn("populateHitContextMenu(", menu)
+                # Die wirksame Zeilenmenge entscheidet; bei gemischter Auswahl
+                # genügt ein öffnenbarer Treffer, egal worauf rechtsgeklickt
+                # wurde. Menü und spätere Aktion benutzen actionRows().
+                self.assertIn("actionRows().compactMap", menu)
+                self.assertIn("first(where: { $0.hasOpenableFile })", menu)
+                self.assertIn("copyPath: #selector(ctxCopyPath)", menu)
         # Und der Headless-Selbsttest prueft die Auskunft gegen die Wirklichkeit.
         self.assertIn("materializeHit(archiveFolder) == nil", GUI)
 
@@ -104,9 +104,12 @@ class SwiftGuardTests(unittest.TestCase):
             toggle = swift_function(source, "@objc func togglePreview() {")
             with self.subTest(app=name):
                 self.assertIn("guard !previewURLs.isEmpty else {", toggle)
-                self.assertIn("Ordner im Archiv", toggle)
+                self.assertIn("showActionIssue(selection)", toggle)
                 self.assertLess(toggle.index("rebuildPreviewURLs()"),
                                 toggle.index("panel.makeKeyAndOrderFront"))
+        issue = swift_function(COMMON, "func hitActionIssue(")
+        self.assertIn("Ordner im Archiv", issue)
+        self.assertIn("Kein Treffer ausgewählt", issue)
 
     def test_quick_drops_old_hits_on_every_keystroke(self):
         """Zwischen Tastendruck und dem 0,6-s-Debounce standen die Treffer des
@@ -114,9 +117,29 @@ class SwiftGuardTests(unittest.TestCase):
         ⌘↩ schickte der Haupt-App in diesem Fenster alte Treffer unter neuem
         Suchtext."""
         change = swift_function(QUICK, "func controlTextDidChange(")
-        for line in ("hits = []", "openButton.isEnabled = false"):
-            self.assertLess(change.index(line),
-                            change.index("Timer.scheduledTimer"), line)
+        self.assertIn("clearHits()", change)
+        self.assertIn("guard !query.isEmpty", change)
+        self.assertLess(change.index("clearHits()"),
+                        change.index("guard !query.isEmpty"))
+        clear = swift_function(QUICK, "func clearHits()")
+        for line in ("hits = []", "openButton.isEnabled = false",
+                     "runScopeMismatch = nil", "previewURLs = []",
+                     "tableView.reloadData()", "showInfo(Self.hint)",
+                     "orderOut(nil)"):
+            self.assertIn(line, clear)
+
+    def test_quick_command_return_hands_off_even_before_the_first_hit(self):
+        """Die Haupt-App setzt die Suche selbst fort; deshalb ist ⌘↩ auch im
+        Debounce-Fenster sinnvoll und darf nicht vom alten Trefferzustand
+        abhängen."""
+        launch = swift_function(QUICK, "func applicationDidFinishLaunching(")
+        self.assertIn("self.openInMainApp()", launch)
+        self.assertNotIn("!self.hits.isEmpty", launch)
+        self.assertIn("!self.field.stringValue.trimmingCharacters", launch)
+        handoff = swift_function(QUICK, "@objc func openInMainApp()")
+        self.assertIn("if !hits.isEmpty || searching", handoff)
+        self.assertIn("scopePopup.selectedItem?.representedObject", handoff)
+        self.assertIn("Finder-Ordner wird noch ermittelt", handoff)
 
     def test_quick_info_line_has_a_single_writer(self):
         """Farbe, Umbruch und Tooltip der Infozeile gehören zusammen. Solange
@@ -273,14 +296,11 @@ class SwiftGuardTests(unittest.TestCase):
             QUICK.index("func startSearch()"):
             QUICK.index("func showProgress")
         ]
-        self.assertLess(
-            start.index("hits = []"),
-            start.index("scopePopup.selectedItem?.representedObject"),
-        )
-        self.assertLess(
-            start.index("openButton.isEnabled = false"),
-            start.index("scopePopup.selectedItem?.representedObject"),
-        )
+        self.assertIn("clearHits()", start)
+        self.assertLess(start.index("clearHits()"),
+                        start.index("guard !query.isEmpty"))
+        self.assertLess(start.index("clearHits()"),
+                        start.index("scopePopup.selectedItem?.representedObject"))
 
     def test_quick_keeps_the_scope_warning_while_hits_arrive(self):
         # Eine Warnung zum Suchbereich darf nicht vom Trefferzähler
@@ -304,7 +324,7 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn(
             "runScopeMismatch = (searched: searchRoot, finder: front)", apply)
         for name, following, expected in (
-                ("func startSearch()", "func showProgress",
+                ("func clearHits()", "func startSearch()",
                  "runScopeMismatch = nil"),
                 ("func flushPending()", "func finish(", "runScopeNoteText()"),
                 ("func finish(", "func openInMainApp", "runScopeNoteText()")):

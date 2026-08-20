@@ -163,6 +163,148 @@ struct Hit: Hashable {
     }
 }
 
+/// Selektoren der fünf Dateiaktionen im gemeinsamen Kontextmenü. Die beiden
+/// Apps verwenden andere Methoden für „Öffnen", der Menüaufbau selbst bleibt
+/// dadurch trotzdem an genau einer Stelle.
+struct HitContextMenuSelectors {
+    let preview: Selector
+    let open: Selector
+    let openWith: Selector
+    let reveal: Selector
+    let copyPath: Selector
+}
+
+/// Zeilen einer Tabellenaktion nach der AppKit-Konvention: Ein Rechtsklick
+/// außerhalb der Auswahl meint nur seine Zeile; ein Klick innerhalb der
+/// Auswahl meint die ganze Auswahl. Ohne Kontextzeile gilt die Auswahl.
+func hitActionRows(selectedRows: IndexSet, contextRow: Int) -> [Int] {
+    if contextRow >= 0, !selectedRows.contains(contextRow) {
+        return [contextRow]
+    }
+    if !selectedRows.isEmpty { return Array(selectedRows) }
+    return contextRow >= 0 ? [contextRow] : []
+}
+
+/// Ergebnis des gemeinsamen Materialisierungspfads für Öffnen, Öffnen mit,
+/// Finder-Anzeige und Vorschau. `unavailable` enthält sowohl Ordner im Archiv
+/// als auch Treffer, deren Extraktion wirklich fehlgeschlagen ist.
+struct MaterializedHitSelection {
+    let rows: [Int]
+    let urls: [URL]
+    let unavailable: [Hit]
+}
+
+func materializeHitSelection(_ hits: [Hit], rows: [Int])
+    -> MaterializedHitSelection {
+    var urls: [URL] = []
+    var unavailable: [Hit] = []
+    for row in rows where hits.indices.contains(row) {
+        let hit = hits[row]
+        if let url = materializeHit(hit) {
+            urls.append(url)
+        } else {
+            unavailable.append(hit)
+        }
+    }
+    return MaterializedHitSelection(rows: rows, urls: urls,
+                                    unavailable: unavailable)
+}
+
+/// Eine verständliche Meldung für ausgelassene Treffer. Die Controller
+/// entscheiden nur noch, ob sie sie in Status- oder Infozeile anzeigen.
+func hitActionIssue(_ selection: MaterializedHitSelection)
+    -> (summary: String, detail: String?)? {
+    if selection.rows.isEmpty {
+        return ("Kein Treffer ausgewählt.", nil)
+    }
+    let archiveFolders = selection.unavailable.filter {
+        !$0.hasOpenableFile
+    }
+    if let first = archiveFolders.first {
+        let summary = archiveFolders.count == 1
+            ? "Ordner im Archiv — keine Datei zum Öffnen."
+            : "\(archiveFolders.count) Ordner im Archiv wurden ausgelassen."
+        return (summary, first.path)
+    }
+    if let first = selection.unavailable.first {
+        return ("Konnte nicht auspacken.", first.path)
+    }
+    return nil
+}
+
+/// Baut das Datei-Kontextmenü für beide Apps. `applicationHit` ist der erste
+/// öffnenbare Treffer aus der wirksamen Zeilenmenge; nil heißt, dass ALLE
+/// Dateiaktionen grau bleiben. So entscheiden Menü und spätere Aktion über
+/// dieselben Zeilen, auch bei einer gemischten Mehrfachauswahl.
+func populateHitContextMenu(
+    _ menu: NSMenu,
+    applicationHit: Hit?,
+    target: AnyObject,
+    selectors: HitContextMenuSelectors
+) {
+    menu.removeAllItems()
+    let openable = applicationHit != nil
+    if !openable {
+        let note = NSMenuItem(title: "Ordner im Archiv — keine Datei "
+                                   + "zum Öffnen", action: nil,
+                              keyEquivalent: "")
+        note.isEnabled = false
+        menu.addItem(note)
+        menu.addItem(.separator())
+    }
+
+    let preview = menu.addItem(
+        withTitle: "Vorschau (Leertaste)",
+        action: openable ? selectors.preview : nil,
+        keyEquivalent: "")
+    let open = menu.addItem(
+        withTitle: "Öffnen", action: openable ? selectors.open : nil,
+        keyEquivalent: "")
+    preview.isEnabled = openable
+    open.isEnabled = openable
+    if openable {
+        preview.target = target
+        open.target = target
+    }
+
+    let openWithItem = NSMenuItem(title: "Öffnen mit", action: nil,
+                                  keyEquivalent: "")
+    openWithItem.isEnabled = openable
+    if let applicationHit {
+        let submenu = NSMenu()
+        let appURLs = applicationsFor(applicationHit)
+        if appURLs.isEmpty {
+            let none = NSMenuItem(title: "Keine passende App gefunden",
+                                  action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            submenu.addItem(none)
+        }
+        for appURL in appURLs {
+            let name = FileManager.default.displayName(atPath: appURL.path)
+            let item = NSMenuItem(title: name, action: selectors.openWith,
+                                  keyEquivalent: "")
+            item.target = target
+            item.representedObject = appURL
+            let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+            icon.size = NSSize(width: 16, height: 16)
+            item.image = icon
+            submenu.addItem(item)
+        }
+        openWithItem.submenu = submenu
+    }
+    menu.addItem(openWithItem)
+
+    menu.addItem(.separator())
+    let reveal = menu.addItem(
+        withTitle: "Im Finder zeigen",
+        action: openable ? selectors.reveal : nil,
+        keyEquivalent: "")
+    reveal.isEnabled = openable
+    if openable { reveal.target = target }
+    menu.addItem(withTitle: "Pfad kopieren", action: selectors.copyPath,
+                 keyEquivalent: "").target = target
+}
+
 /// Vergleicht zwei Zahlen, die fehlen dürfen. Ein fehlender Wert gilt als
 /// kleiner als jede echte Zahl: Ordner haben keine Größe, Namenstreffer keine
 /// Zeilennummer, und beide sollen in aufsteigender Sortierung vorn stehen.

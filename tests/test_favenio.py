@@ -179,6 +179,19 @@ class FavenioTest(TempTreeTest):
         record = json.loads(lines[0])
         self.assertEqual(record["size"], 5)
 
+    def test_size_is_absent_when_a_plain_file_cannot_be_stated(self):
+        # os.walk liefert einen toten Symlink als Dateinamen, getsize() kann
+        # dessen Ziel aber nicht statten. Der Treffer bleibt brauchbar; `size`
+        # fehlt nach dem dokumentierten optionalen Vertrag.
+        broken = os.path.join(self.root, "kaputte-groesse.txt")
+        os.symlink(os.path.join(self.root, "fehlt.txt"), broken)
+        code, lines, err = run(["--json", "kaputte-groesse", self.root])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(lines), 1)
+        record = json.loads(lines[0])
+        self.assertEqual(record["type"], "file")
+        self.assertNotIn("size", record)
+
     def test_name_glob(self):
         # Glob muss den GANZEN Namen matchen.
         code, lines, _ = run(["*.txt", self.root])

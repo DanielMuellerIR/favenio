@@ -124,7 +124,9 @@ Favenio ist bewusst maschinenfreundlich gebaut:
   einzeln komprimierte Dateien (`.gz`, `.bz2`, `.xz`) und über `bsdtar`
   gelesene Einträge (7z, ISO, `.tar.zst`) nein — dort steht die Größe erst
   nach vollständigem Entpacken fest, und die Suche endet beim ersten Treffer.
-  `size` ist also ein optionales Feld. Für „ist das ein Ordner?"
+  Das Feld fehlt ebenfalls, wenn sich die Größe einer normalen Datei nicht
+  ermitteln lässt (zum Beispiel bei einem toten Symlink). `size` ist also ein
+  optionales Feld. Für „ist das ein Ordner?"
   `isDirectory` fragen, nicht `type`: Ein **Ordner innerhalb eines Archivs**
   kommt genau wie eine Datei als `"type": "member"` an.
 - **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,

@@ -49,7 +49,9 @@ Verbindliches CLI-Verhalten:
   Tar-Einträge), nicht bei einzeln komprimierten Dateien (`.gz`, `.bz2`,
   `.xz`) und nicht bei `bsdtar`-Einträgen (7z, ISO, `.tar.zst`). Dort wäre
   die Größe erst nach vollständigem Entpacken bekannt; das hebt den
-  Early-Exit auf und ist für ein bloßes Anzeigefeld abgelehnt. `isDirectory`
+  Early-Exit auf und ist für ein bloßes Anzeigefeld abgelehnt. Das Feld fehlt
+  auch, wenn sich die Größe einer normalen Datei nicht ermitteln lässt (zum
+  Beispiel bei einem toten Symlink). `isDirectory`
   ist nötig, weil `type` es nicht verrät: Ein Ordner IM Archiv kommt wie eine
   Datei als `member` an. Die Frontends dürfen den Typ nicht aus dem Pfad oder
   aus `type` erraten.

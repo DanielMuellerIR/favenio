@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.24.2 — 2026-08-20
+
+Aus der zweiten Code-Review vom 2026-08-20:
+
+- Dateiaktionen in einer Mehrfachauswahl beziehen sich jetzt alle auf dieselben
+  Treffer. Ein Rechtsklick auf einen Ordner im Archiv legt nicht mehr das ganze
+  Menü lahm, wenn daneben öffenbare Dateien ausgewählt sind; umgekehrt melden
+  „Öffnen mit" und „Im Finder zeigen" ausgelassene Ordner statt sie
+  kommentarlos zu überspringen.
+- Die Schnellsuche löscht beim ersten neuen Tastendruck auch die alte Infozeile,
+  einen alten Suchbereichshinweis und eine offene Quick-Look-Vorschau. ⌘↩
+  übergibt die neue Anfrage jetzt auch vor dem ersten Treffer sofort an die
+  Haupt-App, die die Suche dort vollständig fortsetzt.
+- Kontextmenü und Vorschau benutzen in beiden Apps dieselbe gemeinsame
+  Zeilen- und Materialisierungslogik. Die Selbsttests prüfen die grauen
+  Menüeinträge an einem echten `NSMenu`, statt sich auf Quelltext-Kommentare
+  und Einrückung zu verlassen.
+- Abbruchsignale während der Installation können weder eigene versteckte
+  Zwischenordner noch eine fremde Installationssperre hinterlassen. Bleibt ein
+  Ablageordner wider Erwarten stehen, nennt die Warnung jetzt seinen Pfad.
+- Die JSONL-Dokumentation nennt auch normale Dateien, deren Größe sich nicht
+  ermitteln lässt: Der Treffer bleibt erhalten, aber das optionale Feld `size`
+  fehlt beispielsweise bei einem toten Symlink.
+
 ## 0.24.1 — 2026-08-20
 
 Aus der Code-Review vom 2026-08-20:

@@ -162,12 +162,18 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 return nil
             }
             if event.keyCode == 36,                        // 36 = Return
-               event.modifierFlags.contains(.command), !self.hits.isEmpty {
+               event.modifierFlags.contains(.command),
+               !self.field.stringValue.trimmingCharacters(
+                    in: .whitespaces).isEmpty {
+                // Auch vor dem ersten Treffer sinnvoll: Die Haupt-App setzt
+                // die Suche mit `continue=1` selbst fort. So fällt ⌘↩ während
+                // des Debounce-Fensters nicht kommentarlos ins Suchfeld durch.
                 self.openInMainApp()
                 return nil
             }
             if event.keyCode == 49,                        // 49 = Leertaste
                self.window.firstResponder === self.tableView {
+                self.contextRow = -1
                 self.togglePreview()
                 return nil
             }
@@ -642,9 +648,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // neuen Suchtext übergeben; deren Pfade hätten dort über `seenPaths`
         // sogar richtige Treffer der neuen Suche unterdrückt
         // (Review-Fund 2026-08-20).
-        hits = []
-        openButton.isEnabled = false
-        tableView.reloadData()
+        clearHits()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else {
             showInfo(Self.hint)
@@ -686,22 +690,29 @@ final class QuickController: NSObject, NSApplicationDelegate,
         spinner.stopAnimation(nil)
     }
 
+    /// Entwertet alle sichtbaren Daten der vorigen Anfrage gemeinsam. Beide
+    /// Einstiege (Tippen und expliziter Suchstart) benutzen diese Funktion,
+    /// damit Infozeile, Bereichshinweis und QuickLook nicht auseinanderlaufen.
+    func clearHits() {
+        hits = []
+        openButton.isEnabled = false
+        runScopeMismatch = nil
+        previewURLs = []
+        tableView.reloadData()
+        showInfo(Self.hint)
+        if QLPreviewPanel.sharedPreviewPanelExists(),
+           QLPreviewPanel.shared().isVisible {
+            QLPreviewPanel.shared().orderOut(nil)
+        }
+    }
+
     // ---------- Suche starten (live, im Hintergrund) ----------
 
     func startSearch() {
         cancelSearch()   // sauberer Ausgangszustand; zählt Generation hoch
+        clearHits()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
-
-        // Treffer der VORIGEN Suche sofort wegräumen — auch wenn es unten
-        // wegen des noch unbekannten Suchbereichs nicht weitergeht. Sonst
-        // stünde die alte Liste neben dem neuen Suchtext, und ⌘↩ übergäbe der
-        // Haupt-App alte Treffer als Startmenge einer anderen Suchanfrage.
-        hits = []
-        openButton.isEnabled = false
-        tableView.reloadData()
-        // Der Hinweis galt dem VORIGEN Suchlauf; ein neuer Lauf startet ohne.
-        runScopeMismatch = nil
 
         // Der ausgewählte Eintrag trägt keinen Pfad → der Finder-Ordner steht
         // noch aus. Dann NICHT ersatzweise im Benutzerordner suchen, sondern
@@ -827,11 +838,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// (Review-Fund 2026-08-17).
     func reloadKeepingSelection(_ selectedPaths: Set<String>) {
         tableView.reloadData()
-        guard !selectedPaths.isEmpty else { return }
-        let rows = IndexSet(hits.indices.filter {
-            selectedPaths.contains(hits[$0].path)
-        })
-        tableView.selectRowIndexes(rows, byExtendingSelection: false)
+        if !selectedPaths.isEmpty {
+            let rows = IndexSet(hits.indices.filter {
+                selectedPaths.contains(hits[$0].path)
+            })
+            tableView.selectRowIndexes(rows, byExtendingSelection: false)
+        }
         // Eine offene Vorschau zeigt sonst weiter den Treffer der alten Zeile.
         if QLPreviewPanel.sharedPreviewPanelExists(),
            QLPreviewPanel.shared().isVisible {
@@ -898,7 +910,22 @@ final class QuickController: NSObject, NSApplicationDelegate,
     @objc func openInMainApp() {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
-        let root = searchRoot
+        let root: String
+        if !hits.isEmpty || searching {
+            // Vorhandene Treffer gehören genau zu diesem laufenden/letzten
+            // Suchpfad, auch wenn der Finder sich inzwischen gemeldet hat.
+            root = searchRoot
+        } else if let selectedRoot = scopePopup.selectedItem?.representedObject
+                    as? String {
+            // ⌘↩ im Debounce-Fenster: Noch kein Quick-Lauf hat searchRoot
+            // gesetzt, also den sichtbar gewählten Bereich übergeben.
+            root = selectedRoot
+        } else {
+            // Der Finder-Bereich ist noch unbekannt. Keinen Ersatzordner raten;
+            // der Nutzer kann nach der Auflösung erneut übergeben.
+            showInfo("Finder-Ordner wird noch ermittelt…")
+            return
+        }
         let resultsFile: URL
         do { resultsFile = try writeQuickHandoff(hits) } catch {
             showInfo("Konnte Treffer nicht zwischenspeichern.")
@@ -1037,30 +1064,24 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// Zeilen, auf die sich eine Aktion bezieht: die geklickte Zeile, sonst
     /// die Auswahl.
     func actionRows() -> [Int] {
-        if contextRow >= 0,
-           !tableView.selectedRowIndexes.contains(contextRow) {
-            return [contextRow]
-        }
-        if !tableView.selectedRowIndexes.isEmpty {
-            return Array(tableView.selectedRowIndexes)
-        }
-        return contextRow >= 0 ? [contextRow] : []
+        hitActionRows(selectedRows: tableView.selectedRowIndexes,
+                      contextRow: contextRow)
+    }
+
+    func actionSelection() -> MaterializedHitSelection {
+        materializeHitSelection(hits, rows: actionRows())
+    }
+
+    func showActionIssue(_ selection: MaterializedHitSelection) {
+        guard let issue = hitActionIssue(selection) else { return }
+        showInfo(issue.summary, detail: issue.detail)
     }
 
     @objc func openSelected() {
-        let row = tableView.clickedRow
-        let rows = row >= 0 ? [row] : actionRows()
-        for row in rows where row < hits.count {
-            if let url = materializeHit(hits[row]) {
-                NSWorkspace.shared.open(url)
-            } else if !hits[row].hasOpenableFile {
-                showInfo("Ordner im Archiv — keine Datei zum Öffnen.",
-                         detail: hits[row].path)
-            } else {
-                showInfo("Konnte nicht öffnen: \(hits[row].path)",
-                         detail: hits[row].path)
-            }
-        }
+        if tableView.clickedRow >= 0 { contextRow = tableView.clickedRow }
+        let selection = actionSelection()
+        selection.urls.forEach { NSWorkspace.shared.open($0) }
+        showActionIssue(selection)
     }
 
     // ---------- QuickLook-Vorschau ----------
@@ -1075,33 +1096,20 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // Archiv hat keine Datei: materializeHit() liefert nil, das Panel
         // bliebe leer. Im Kontextmenü ist die Vorschau dafür schon grau — über
         // die Leertaste war sie trotzdem erreichbar (Review-Fund 2026-08-20).
-        rebuildPreviewURLs()
+        let selection = rebuildPreviewURLs()
         guard !previewURLs.isEmpty else {
-            let row = tableView.selectedRow
-            if row >= 0, row < hits.count {
-                if hits[row].hasOpenableFile {
-                    showInfo("Keine Vorschau möglich: \(hits[row].path)",
-                             detail: hits[row].path)
-                } else {
-                    showInfo("Ordner im Archiv — keine Datei zum Öffnen.",
-                             detail: hits[row].path)
-                }
-            }
+            showActionIssue(selection)
             return
         }
+        showActionIssue(selection)
         panel.makeKeyAndOrderFront(nil)
     }
 
-    func rebuildPreviewURLs() {
-        // Vorschau folgt der AUSWAHL, nicht dem alten Rechtsklick (das war der
-        // „immer dieselbe Datei"-Fehler).
-        var rows = Array(tableView.selectedRowIndexes)
-        if rows.isEmpty, tableView.clickedRow >= 0 {
-            rows = [tableView.clickedRow]
-        }
-        previewURLs = rows.compactMap { row in
-            row < hits.count ? materializeHit(hits[row]) : nil
-        }
+    @discardableResult
+    func rebuildPreviewURLs() -> MaterializedHitSelection {
+        let selection = materializeHitSelection(hits, rows: actionRows())
+        previewURLs = selection.urls
+        return selection
     }
 
     @objc override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!)
@@ -1122,6 +1130,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        contextRow = -1
         if QLPreviewPanel.sharedPreviewPanelExists(),
            QLPreviewPanel.shared().isVisible {
             rebuildPreviewURLs()
@@ -1135,101 +1144,37 @@ final class QuickController: NSObject, NSApplicationDelegate,
         menu.removeAllItems()
         contextRow = tableView.clickedRow
         guard contextRow >= 0, contextRow < hits.count else { return }
-        let hit = hits[contextRow]
-
-        // Ein ORDNER im Archiv hat keine Datei hinter sich: materializeHit()
-        // liefert nil, damit beim Öffnen keine leere Datei entsteht. Die
-        // Dateiaktionen kommen deshalb OHNE Aktion in das Menü — AppKit
-        // schaltet sie damit grau. Vorher sahen sie bedienbar aus und taten
-        // auf Klick kommentarlos nichts. „Pfad kopieren" bleibt nutzbar.
-        let openable = hit.hasOpenableFile
-        if !openable {
-            let note = NSMenuItem(title: "Ordner im Archiv — keine Datei "
-                                         + "zum Öffnen", action: nil,
-                                  keyEquivalent: "")
-            note.isEnabled = false
-            menu.addItem(note)
-            menu.addItem(.separator())
-        }
-        let preview = menu.addItem(
-            withTitle: "Vorschau (Leertaste)",
-            action: openable ? #selector(togglePreview) : nil,
-            keyEquivalent: "")
-        let open = menu.addItem(
-            withTitle: "Öffnen",
-            action: openable ? #selector(openSelected) : nil,
-            keyEquivalent: "")
-        if openable {
-            preview.target = self
-            open.target = self
-        }
-
-        // Auch „Öffnen mit" ist eine Dateiaktion und braucht dieselbe Wache:
-        // Heißt der Ordner im Archiv etwa „daten.txt", liefert
-        // applicationsFor() über die Endung sehr wohl Apps — ctxOpenWith()
-        // würde danach nur das nil von materializeHit() verwerfen und
-        // kommentarlos nichts tun (Review-Fund 2026-08-20). Das Untermenü wird
-        // deshalb nur angehängt, wenn es überhaupt etwas zu öffnen gibt: AppKit
-        // hält ein Obermenü MIT Untermenü aktiv, auch wenn darin nur ein
-        // deaktivierter Hinweis steht — am 2026-08-20 nachgesehen. Ohne
-        // Untermenü und ohne Aktion wird der Eintrag dagegen grau wie
-        // „Vorschau" und „Öffnen"; den Grund nennt die Kopfzeile des Menüs.
-        let openWithItem = NSMenuItem(title: "Öffnen mit", action: nil,
-                                      keyEquivalent: "")
-        let submenu = NSMenu()
-        let appURLs = openable ? applicationsFor(hit) : []
-        if appURLs.isEmpty && openable {
-            let none = NSMenuItem(title: "Keine passende App gefunden",
-                                  action: nil, keyEquivalent: "")
-            none.isEnabled = false
-            submenu.addItem(none)
-        }
-        for appURL in appURLs {
-            let name = FileManager.default.displayName(atPath: appURL.path)
-            let item = NSMenuItem(title: name,
-                                  action: #selector(ctxOpenWith(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = appURL
-            let icon = NSWorkspace.shared.icon(forFile: appURL.path)
-            icon.size = NSSize(width: 16, height: 16)
-            item.image = icon
-            submenu.addItem(item)
-        }
-        // Nur mit oeffenbarer Datei bekommt der Eintrag ein Untermenü — sonst
-        // bleibt er ohne Aktion UND ohne Untermenü und damit grau.
-        if openable {
-            openWithItem.submenu = submenu
-        }
-        menu.addItem(openWithItem)
-
-        menu.addItem(.separator())
-        let reveal = menu.addItem(
-            withTitle: "Im Finder zeigen",
-            action: openable ? #selector(ctxReveal) : nil,
-            keyEquivalent: "")
-        if openable { reveal.target = self }
-        menu.addItem(withTitle: "Pfad kopieren", action: #selector(ctxCopyPath),
-                     keyEquivalent: "").target = self
+        let applicationHit = actionRows().compactMap {
+            hits.indices.contains($0) ? hits[$0] : nil
+        }.first(where: { $0.hasOpenableFile })
+        populateHitContextMenu(
+            menu, applicationHit: applicationHit, target: self,
+            selectors: HitContextMenuSelectors(
+                preview: #selector(togglePreview),
+                open: #selector(openSelected),
+                openWith: #selector(ctxOpenWith(_:)),
+                reveal: #selector(ctxReveal),
+                copyPath: #selector(ctxCopyPath)))
     }
 
     @objc func ctxOpenWith(_ sender: NSMenuItem) {
         guard let appURL = sender.representedObject as? URL else { return }
-        let urls = actionRows().compactMap { row in
-            row < hits.count ? materializeHit(hits[row]) : nil
+        let selection = actionSelection()
+        guard !selection.urls.isEmpty else {
+            showActionIssue(selection)
+            return
         }
-        guard !urls.isEmpty else { return }
-        NSWorkspace.shared.open(urls, withApplicationAt: appURL,
+        NSWorkspace.shared.open(selection.urls, withApplicationAt: appURL,
                                 configuration: NSWorkspace.OpenConfiguration())
+        showActionIssue(selection)
     }
 
     @objc func ctxReveal() {
-        let urls = actionRows().compactMap { row in
-            row < hits.count ? materializeHit(hits[row]) : nil
+        let selection = actionSelection()
+        if !selection.urls.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(selection.urls)
         }
-        if !urls.isEmpty {
-            NSWorkspace.shared.activateFileViewerSelecting(urls)
-        }
+        showActionIssue(selection)
     }
 
     @objc func ctxCopyPath() {

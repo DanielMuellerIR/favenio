@@ -119,6 +119,17 @@ class JsonContractTest(unittest.TestCase):
                     "%s erklärt nicht, dass ein Ordner im Archiv als "
                     "`member` ankommt" % name)
 
+    def test_documentation_says_size_can_be_unavailable_for_plain_files(self):
+        required = {
+            "README.md": "cannot be determined",
+            "README.de.md": "nicht ermitteln lässt",
+            "AGENTS.md": "nicht ermitteln lässt",
+        }
+        texts = dict(READMES, **{"AGENTS.md": AGENTS})
+        for name, phrase in required.items():
+            with self.subTest(document=name):
+                self.assertIn(phrase, " ".join(texts[name].split()))
+
 
 class ChangelogTest(unittest.TestCase):
     """`favenio.py::__version__` ist die einzige Versionsquelle, und der
