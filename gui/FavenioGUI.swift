@@ -148,11 +148,31 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: gemischte Auswahl verschluckt Auslassungen")
         return 1
     }
+    // Archivordner UND Auspackfehler zusammen: Beide Gruppen müssen in der
+    // Meldung stehen. Vorher gewann der Ordner, und der echte Auspackfehler
+    // eines weiteren Treffers blieb unsichtbar (Review-Fund 2026-08-21).
+    let brokenMember = Hit(path: "/tmp/probe.zip!/kaputt.txt", kind: "member",
+                           line: nil, size: nil,
+                           filesystemPath: "/tmp/fehlt-nicht-vorhanden.zip",
+                           archiveMembers: ["kaputt.txt"], isDirectory: false)
+    guard brokenMember.hasOpenableFile, materializeHit(brokenMember) == nil else {
+        print("SELFTEST FEHLER: beschädigtes Archivmitglied verhält sich falsch")
+        return 1
+    }
+    let bothKinds = materializeHitSelection([archiveFolder, brokenMember],
+                                            rows: [0, 1])
+    guard let bothIssue = hitActionIssue(bothKinds),
+          bothIssue.summary.contains("Ordner im Archiv"),
+          bothIssue.summary.contains("auspacken") else {
+        print("SELFTEST FEHLER: Meldung nennt nicht beide Gruppen")
+        return 1
+    }
     // Die Kopfzeile und vier grauen Dateiaktionen werden am echten NSMenu
     // geprüft. Damit kann ein Kommentar im Quelltext die Wache nicht erfüllen.
     let blockedMenu = NSMenu()
+    blockedMenu.removeAllItems()
     populateHitContextMenu(
-        blockedMenu, applicationHit: nil, target: NSObject(),
+        blockedMenu, applicationHits: [], target: NSObject(),
         selectors: HitContextMenuSelectors(
             preview: NSSelectorFromString("preview"),
             open: NSSelectorFromString("open"),
@@ -1271,11 +1291,14 @@ final class MainController: NSObject, NSApplicationDelegate,
         menu.removeAllItems()
         contextRow = tableView.clickedRow
         guard contextRow >= 0, contextRow < hits.count else { return }
-        let applicationHit = actionRows().compactMap {
+        // ALLE öffnenbaren Treffer, nicht nur der erste: `ctxOpenWith`
+        // übergibt später sämtliche materialisierten URLs an die gewählte App,
+        // also muss das Menü über dieselbe Menge entscheiden.
+        let applicationHits = actionRows().compactMap {
             hits.indices.contains($0) ? hits[$0] : nil
-        }.first(where: { $0.hasOpenableFile })
+        }.filter { $0.hasOpenableFile }
         populateHitContextMenu(
-            menu, applicationHit: applicationHit, target: self,
+            menu, applicationHits: applicationHits, target: self,
             selectors: HitContextMenuSelectors(
                 preview: #selector(togglePreview), open: #selector(ctxOpen),
                 openWith: #selector(ctxOpenWith(_:)),

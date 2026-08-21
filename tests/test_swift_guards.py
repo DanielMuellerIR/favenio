@@ -76,8 +76,13 @@ class SwiftGuardTests(unittest.TestCase):
             'NSMenuItem(title: "Ordner im Archiv — keine Datei " '
             '+ "zum Öffnen"', compact)
         self.assertIn("openWithItem.isEnabled = openable", code)
-        self.assertIn("if let applicationHit", code)
+        self.assertIn("if openable {", code)
         self.assertIn("openWithItem.submenu = submenu", code)
+        # „Öffnen mit" darf nur Apps anbieten, die JEDEN öffnenbaren Treffer
+        # der Auswahl öffnen — ctxOpenWith übergibt später alle URLs an die
+        # eine gewählte App (Review-Fund 2026-08-21).
+        self.assertIn("commonApplicationsFor(applicationHits)", code)
+        self.assertNotIn("applicationsFor(applicationHit)", code)
         self.assertIn("action: openable ? selectors.preview : nil", code)
         self.assertIn("action: openable ? selectors.open : nil", code)
         self.assertIn("action: openable ? selectors.reveal : nil", code)
@@ -90,7 +95,9 @@ class SwiftGuardTests(unittest.TestCase):
                 # genügt ein öffnenbarer Treffer, egal worauf rechtsgeklickt
                 # wurde. Menü und spätere Aktion benutzen actionRows().
                 self.assertIn("actionRows().compactMap", menu)
-                self.assertIn("first(where: { $0.hasOpenableFile })", menu)
+                # ALLE öffnenbaren Treffer, nicht nur der erste.
+                self.assertIn("filter { $0.hasOpenableFile }", menu)
+                self.assertIn("applicationHits: applicationHits", menu)
                 self.assertIn("copyPath: #selector(ctxCopyPath)", menu)
         # Und der Headless-Selbsttest prueft die Auskunft gegen die Wirklichkeit.
         self.assertIn("materializeHit(archiveFolder) == nil", GUI)

@@ -314,13 +314,47 @@ _favenio_install_token() {
 #
 # Argumente: <sperrverzeichnis>
 # Rückgabe: 0 = Sperre gehört uns, 2 = ein anderer Lauf arbeitet dort.
+# --- Kritische Abschnitte: Abbruch merken statt verwerfen ---
+#
+# In den wenigen Befehlen, in denen Sperr- oder Ordnerbesitz noch nicht
+# eindeutig ist, darf ein Abbruchsignal nicht ZUGESTELLT werden. Es darf aber
+# auch nicht verlorengehen: `trap '' HUP INT TERM` verwarf es ersatzlos, die
+# Installation lief danach trotz Abbruchwunsch weiter und konnte beide Apps
+# ersetzen (Review-Fund 2026-08-21). Stattdessen merkt ein Handler das Signal
+# nur, und sobald der Besitz feststeht, führt der Code den passenden
+# Abbruchhandler selbst aus.
+#
+# Die drei `trap`-Zeilen stehen deshalb ÜBERALL AUSGESCHRIEBEN und nicht in
+# einer gemeinsamen Hilfsfunktion: Unter `localtraps` — und das ist hier
+# durchgehend gesetzt — gilt ein in einer Funktion gesetzter Trap nur bis zu
+# deren Rückkehr. Eine Hilfsfunktion `set_traps; …` hinterließe also gar keinen
+# aktiven Handler mehr; nachgemessen mit zsh, das Signal ging dabei komplett
+# verloren.
+#
+#     FAVENIO_INSTALL_PENDING_SIGNAL=""
+#     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=HUP' HUP
+#     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=INT' INT
+#     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=TERM' TERM
+#
+# Danach jeweils `_favenio_install_signal_pending` prüfen.
+
+# Wahr, wenn während eines kritischen Abschnitts ein Abbruch angefordert wurde.
+_favenio_install_signal_pending() {
+    [ -n "${FAVENIO_INSTALL_PENDING_SIGNAL:-}" ]
+}
+
 _favenio_install_lock() {
     # Zwischen dem erfolgreichen mkdir und dem Merken des Besitzes darf kein
     # weiches Signal zugestellt werden: Der Signal-Handler könnte die gerade
     # erworbene Sperre sonst noch nicht als unsere erkennen. Die wenigen
     # Befehle dieses atomaren Erwerbs laufen deshalb als kritischer Abschnitt.
+    # Die Merkvariable ist bewusst NICHT lokal — der Aufrufer wertet sie nach
+    # der Rückkehr aus. Traps ausgeschrieben, siehe Erklärung oben.
     setopt localoptions localtraps
-    trap '' HUP INT TERM
+    FAVENIO_INSTALL_PENDING_SIGNAL=""
+    trap 'FAVENIO_INSTALL_PENDING_SIGNAL=HUP' HUP
+    trap 'FAVENIO_INSTALL_PENDING_SIGNAL=INT' INT
+    trap 'FAVENIO_INSTALL_PENDING_SIGNAL=TERM' TERM
     local lock="$1"
     if mkdir "$lock" 2>/dev/null; then
         FAVENIO_INSTALL_LOCK="$lock"
@@ -486,6 +520,11 @@ favenio_install_bundles() {
     FAVENIO_INSTALL_LOCK=""
     trap '_favenio_install_interrupted_early' HUP INT TERM
     _favenio_install_lock "$lock" || return 2
+    # Kam während des Sperrerwerbs ein Abbruchsignal? Der Besitz ist jetzt
+    # eindeutig, also wird der Wunsch hier ausgeführt statt verworfen.
+    if _favenio_install_signal_pending; then
+        _favenio_install_interrupted_early
+    fi
     local token stage backup
     token=$(_favenio_install_token)
     stage="$dest/.favenio-install.$token"
@@ -504,7 +543,10 @@ favenio_install_bundles() {
     # Abschnitt. Ein dort eintreffendes weiches Signal wird für diese wenigen
     # Befehle ignoriert; danach ist immer ein Handler aktiv, der exakt die bis
     # dahin nachweislich eigenen Pfade kennt.
-    trap '' HUP INT TERM
+    FAVENIO_INSTALL_PENDING_SIGNAL=""
+    trap 'FAVENIO_INSTALL_PENDING_SIGNAL=HUP' HUP
+    trap 'FAVENIO_INSTALL_PENDING_SIGNAL=INT' INT
+    trap 'FAVENIO_INSTALL_PENDING_SIGNAL=TERM' TERM
     if ! mkdir "$stage"; then
         trap '_favenio_install_interrupted_early' HUP INT TERM
         echo "FEHLER: Ablageordner $stage nicht anlegbar." >&2
@@ -512,7 +554,13 @@ favenio_install_bundles() {
         return 2
     fi
     trap '_favenio_install_interrupted_stage "$stage" "$lock"' HUP INT TERM
-    trap '' HUP INT TERM
+    if _favenio_install_signal_pending; then
+        _favenio_install_interrupted_stage "$stage" "$lock"
+    fi
+    FAVENIO_INSTALL_PENDING_SIGNAL=""
+    trap 'FAVENIO_INSTALL_PENDING_SIGNAL=HUP' HUP
+    trap 'FAVENIO_INSTALL_PENDING_SIGNAL=INT' INT
+    trap 'FAVENIO_INSTALL_PENDING_SIGNAL=TERM' TERM
     if ! mkdir "$backup"; then
         trap '_favenio_install_interrupted_stage "$stage" "$lock"' HUP INT TERM
         echo "FEHLER: Sicherungsordner $backup nicht anlegbar." >&2
@@ -530,6 +578,10 @@ favenio_install_bundles() {
     # Liste. Beide Ordner gehören jetzt sicher diesem Lauf.
     trap '_favenio_install_interrupted "$dest" "$stage" "$backup" "$lock" "${installed[@]}"' \
         HUP INT TERM
+    if _favenio_install_signal_pending; then
+        _favenio_install_interrupted "$dest" "$stage" "$backup" "$lock" \
+            "${installed[@]}"
+    fi
 
     # 1. Danebenlegen und dort schon prüfen: Vor dem ersten Eingriff steht
     #    fest, dass beide Kopien vollständig und gültig sind.

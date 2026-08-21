@@ -398,7 +398,11 @@ class InstallTransactionTest(unittest.TestCase):
     def test_signal_during_lock_creation_cannot_leave_the_lock_behind(self):
         # Der Signal-Handler steht vor dem Sperrversuch; den winzigen Abschnitt
         # aus atomarem mkdir und Besitzmarkierung schützt die Bibliothek selbst.
-        # Vor dem Fix starb zsh hier mit 143 und ließ die Sperre stehen.
+        # Vor dem ersten Fix starb zsh hier mit 143 und ließ die Sperre stehen.
+        # Seit dem Review 2026-08-21 wird das Signal im kritischen Abschnitt
+        # nur GEMERKT und danach ausgeführt: Der Abbruchwunsch darf nicht
+        # verworfen werden, sonst liefe die Installation weiter und ersetzte
+        # beide Apps. Erwartet ist deshalb Exit 2 mit unverändertem Altstand.
         prelude = r'''
         mkdir() {
             command mkdir "$@" || return $?
@@ -410,15 +414,21 @@ class InstallTransactionTest(unittest.TestCase):
             ["zsh", "-c", self.install_script("    return 0", prelude)],
             cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         output = result.stdout.decode("utf-8", "replace")
-        self.assertEqual(result.returncode, 0, output)
-        self.assertIn("RC=0", output)
+        self.assertEqual(result.returncode, 2, output)
+        self.assertIn("nichts installiert", output)
         self.assertEqual(self.leftovers(), [], output)
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
+        self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
 
     def test_signal_during_backup_creation_leaves_no_private_folders(self):
         # Zwischen den beiden mkdir-Aufrufen kann nur der Ablageordner uns
         # gehören. Der Handler darf weder einen fremden Sicherungsordner
-        # anfassen noch eigene Pfade liegen lassen. Ein Signal im kritischen
-        # mkdir/Handler-Wechsel wird kurz ignoriert und der Lauf bleibt sauber.
+        # anfassen noch eigene Pfade liegen lassen. Auch hier wird das Signal
+        # im kritischen mkdir/Handler-Wechsel gemerkt und unmittelbar danach
+        # ausgeführt — Exit 2, alter Stand unverändert, keine eigenen Reste.
+        # Hier gehören beide Ordner schon nachweislich diesem Lauf, deshalb
+        # läuft der volle Rollback („alter Stand wird zurückgeholt") und nicht
+        # der frühe Handler.
         prelude = r'''
         mkdir() {
             command mkdir "$@" || return $?
@@ -430,9 +440,11 @@ class InstallTransactionTest(unittest.TestCase):
             ["zsh", "-c", self.install_script("    return 0", prelude)],
             cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         output = result.stdout.decode("utf-8", "replace")
-        self.assertEqual(result.returncode, 0, output)
-        self.assertIn("RC=0", output)
+        self.assertEqual(result.returncode, 2, output)
+        self.assertIn("Installation abgebrochen", output)
         self.assertEqual(self.leftovers(), [], output)
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
+        self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
 
     def test_early_signal_handler_never_removes_an_unowned_lock(self):
         # Nach dem Freigeben kann ein zweiter Lauf denselben Pfad sofort neu

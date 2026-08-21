@@ -217,33 +217,69 @@ func hitActionIssue(_ selection: MaterializedHitSelection)
     if selection.rows.isEmpty {
         return ("Kein Treffer ausgewählt.", nil)
     }
-    let archiveFolders = selection.unavailable.filter {
-        !$0.hasOpenableFile
-    }
-    if let first = archiveFolders.first {
-        let summary = archiveFolders.count == 1
+    // Beide Gruppen getrennt zählen und BEIDE melden. Vorher gewann der
+    // Archivordner sofort: Eine Auswahl aus einem Archivordner und einem
+    // beschädigten Archivmitglied nannte nur den ausgelassenen Ordner, der
+    // echte Auspackfehler blieb unsichtbar (Review-Fund 2026-08-21).
+    let archiveFolders = selection.unavailable.filter { !$0.hasOpenableFile }
+    let extractionFailures = selection.unavailable.filter { $0.hasOpenableFile }
+
+    var parts: [String] = []
+    if !archiveFolders.isEmpty {
+        parts.append(archiveFolders.count == 1
             ? "Ordner im Archiv — keine Datei zum Öffnen."
-            : "\(archiveFolders.count) Ordner im Archiv wurden ausgelassen."
-        return (summary, first.path)
+            : "\(archiveFolders.count) Ordner im Archiv wurden ausgelassen.")
     }
-    if let first = selection.unavailable.first {
-        return ("Konnte nicht auspacken.", first.path)
+    if !extractionFailures.isEmpty {
+        parts.append(extractionFailures.count == 1
+            ? "Konnte nicht auspacken."
+            : "\(extractionFailures.count) Treffer ließen sich nicht auspacken.")
     }
-    return nil
+    guard !parts.isEmpty else { return nil }
+    // Der Detailpfad nennt den ersten betroffenen Treffer in derselben
+    // Reihenfolge, in der die Meldung die Gruppen aufzählt.
+    let firstPath = (archiveFolders.first ?? extractionFailures.first)?.path
+    return (parts.joined(separator: " "), firstPath)
 }
 
-/// Baut das Datei-Kontextmenü für beide Apps. `applicationHit` ist der erste
-/// öffnenbare Treffer aus der wirksamen Zeilenmenge; nil heißt, dass ALLE
-/// Dateiaktionen grau bleiben. So entscheiden Menü und spätere Aktion über
-/// dieselben Zeilen, auch bei einer gemischten Mehrfachauswahl.
+/// Schnittmenge der Anwendungen über ALLE öffenbaren Treffer der Auswahl.
+///
+/// Das Untermenü „Öffnen mit" richtete sich früher allein nach dem ERSTEN
+/// öffenbaren Treffer, während `ctxOpenWith` danach sämtliche materialisierten
+/// URLs derselben Mehrfachauswahl an die eine gewählte Anwendung übergab. Bei
+/// gemischten Dateitypen bot das Menü deshalb eine Anwendung an, die die
+/// übrigen Dateien gar nicht öffnen kann (Review-Fund 2026-08-21).
+///
+/// Die Reihenfolge des ersten Treffers bleibt erhalten — dessen Standard-App
+/// steht dort vorn und soll auch im Menü vorn stehen.
+func commonApplicationsFor(_ hits: [Hit]) -> [URL] {
+    guard let first = hits.first else { return [] }
+    var common = applicationsFor(first)
+    for hit in hits.dropFirst() {
+        if common.isEmpty { break }
+        let allowed = Set(applicationsFor(hit).map { $0.standardizedFileURL })
+        common = common.filter { allowed.contains($0.standardizedFileURL) }
+    }
+    return common
+}
+
+/// Baut das Datei-Kontextmenü für beide Apps. `applicationHits` sind ALLE
+/// öffnenbaren Treffer der wirksamen Zeilenmenge; eine leere Liste heißt, dass
+/// ALLE Dateiaktionen grau bleiben. So entscheiden Menü und spätere Aktion über
+/// dieselben Zeilen, auch bei einer gemischten Mehrfachauswahl — und „Öffnen
+/// mit" bietet nur Anwendungen an, die JEDEN dieser Treffer öffnen können.
+///
+/// Das Leeren des Menüs bleibt bei den Controllern: Deren Pfad für eine
+/// ungültige Zeile endet vor diesem Aufbau, sie müssen also ohnehin selbst
+/// aufräumen. Ein zweites `removeAllItems()` hier war reine Doppelarbeit
+/// (Review-Fund 2026-08-21).
 func populateHitContextMenu(
     _ menu: NSMenu,
-    applicationHit: Hit?,
+    applicationHits: [Hit],
     target: AnyObject,
     selectors: HitContextMenuSelectors
 ) {
-    menu.removeAllItems()
-    let openable = applicationHit != nil
+    let openable = !applicationHits.isEmpty
     if !openable {
         let note = NSMenuItem(title: "Ordner im Archiv — keine Datei "
                                    + "zum Öffnen", action: nil,
@@ -270,14 +306,19 @@ func populateHitContextMenu(
     let openWithItem = NSMenuItem(title: "Öffnen mit", action: nil,
                                   keyEquivalent: "")
     openWithItem.isEnabled = openable
-    if let applicationHit {
+    if openable {
         let submenu = NSMenu()
-        let appURLs = applicationsFor(applicationHit)
+        let appURLs = commonApplicationsFor(applicationHits)
         if appURLs.isEmpty {
-            let none = NSMenuItem(title: "Keine passende App gefunden",
-                                  action: nil, keyEquivalent: "")
+            // Leere Schnittmenge bei mehreren Treffern ist etwas anderes als
+            // „für diesen Dateityp gibt es nichts" — das muss die Meldung sagen.
+            let title = applicationHits.count > 1
+                ? "Keine App öffnet alle ausgewählten Dateien"
+                : "Keine passende App gefunden"
+            let none = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             none.isEnabled = false
             submenu.addItem(none)
+            openWithItem.isEnabled = false
         }
         for appURL in appURLs {
             let name = FileManager.default.displayName(atPath: appURL.path)

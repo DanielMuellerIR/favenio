@@ -648,12 +648,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // neuen Suchtext übergeben; deren Pfade hätten dort über `seenPaths`
         // sogar richtige Treffer der neuen Suche unterdrückt
         // (Review-Fund 2026-08-20).
+        // `clearHits()` setzt die Infozeile bereits auf `Self.hint`; ein
+        // zweiter Aufruf schriebe denselben Wert nur noch einmal
+        // (Review-Fund 2026-08-21).
         clearHits()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else {
-            showInfo(Self.hint)
-            return
-        }
+        guard !query.isEmpty else { return }
         debounceTimer = Timer.scheduledTimer(
             withTimeInterval: Self.debounceInterval, repeats: false) {
             [weak self] _ in self?.startSearch()
@@ -1144,11 +1144,14 @@ final class QuickController: NSObject, NSApplicationDelegate,
         menu.removeAllItems()
         contextRow = tableView.clickedRow
         guard contextRow >= 0, contextRow < hits.count else { return }
-        let applicationHit = actionRows().compactMap {
+        // ALLE öffnenbaren Treffer, nicht nur der erste: `ctxOpenWith`
+        // übergibt später sämtliche materialisierten URLs an die gewählte App,
+        // also muss das Menü über dieselbe Menge entscheiden.
+        let applicationHits = actionRows().compactMap {
             hits.indices.contains($0) ? hits[$0] : nil
-        }.first(where: { $0.hasOpenableFile })
+        }.filter { $0.hasOpenableFile }
         populateHitContextMenu(
-            menu, applicationHit: applicationHit, target: self,
+            menu, applicationHits: applicationHits, target: self,
             selectors: HitContextMenuSelectors(
                 preview: #selector(togglePreview),
                 open: #selector(openSelected),

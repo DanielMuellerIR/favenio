@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.24.3 — 2026-08-21
+
+Aus der Code-Review vom 2026-08-21:
+
+- Ein Abbruchsignal während der Installation wird nicht mehr verworfen. Die
+  kurzen kritischen Abschnitte (Sperrerwerb, Anlegen von Ablage- und
+  Sicherungsordner) schoben `HUP`, `INT` und `TERM` bisher mit `trap ''`
+  beiseite — die Installation lief danach trotz Abbruchwunsch weiter und
+  konnte beide Apps ersetzen. Jetzt merkt sich ein Handler das Signal, und
+  sobald der Besitz von Sperre und Ordnern feststeht, läuft der passende
+  Abbruch mit Exit 2 und unverändertem Altstand. Die drei `trap`-Zeilen stehen
+  bewusst ausgeschrieben statt in einer Hilfsfunktion: Unter `localtraps` gilt
+  ein in einer Funktion gesetzter Trap nur bis zu deren Rückkehr, das Signal
+  ging so komplett verloren (an zsh nachgemessen).
+- „Öffnen mit" bietet nur noch Anwendungen an, die JEDEN öffnenbaren Treffer
+  der Auswahl öffnen können. Das Untermenü richtete sich nach dem ersten
+  Treffer, während der Klick anschließend sämtliche Dateien derselben
+  Mehrfachauswahl an diese eine Anwendung übergab. Ist die Schnittmenge leer,
+  erklärt der Eintrag das und bleibt grau.
+- Die Meldung über ausgelassene Treffer nennt beide Gründe. Stand ein
+  Archivordner in der Auswahl, blieb ein echter Auspackfehler eines weiteren
+  Treffers unsichtbar; jetzt zählt die Meldung beide Gruppen und nennt den
+  ersten betroffenen Pfad.
+- Zwei doppelte Schreibpfade entfernt: `populateHitContextMenu` leert das Menü
+  nicht mehr selbst (das tun die Controller ohnehin unmittelbar davor), und
+  `controlTextDidChange` schreibt die Infozeile im Leerfall nicht ein zweites
+  Mal — `clearHits()` hat sie bereits gesetzt.
+
 ## 0.24.2 — 2026-08-20
 
 Aus der zweiten Code-Review vom 2026-08-20:
