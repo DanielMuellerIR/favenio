@@ -338,3 +338,8 @@ behobene Finder-Probleme nicht wieder als offene Arbeit übernehmen.
 - [assets/](assets/) — Signing-Entitlements und DMG-Hintergrund-Generator.
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) — CI auf macOS:
   Kern-Tests mit beiden Interpretern plus App-Build und Selbsttest.
+
+## Offene Abnahme (2026-08-29, aus der Handoff-Frontier)
+
+- **Echter sichtbarer Sparkle-Update-Test** aus einer älteren notarisierten
+  Test-App auf v0.24.2 steht noch aus (Session c-1115a198).
