@@ -229,9 +229,192 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Ergebnisübergabe: \(error)")
         return 1
     }
-    print("SELFTEST OK — Suche, Archiv-Extraktion und Sparkle-Anbindung "
-          + "funktionieren")
+    if let failure = checkResultListFeatures(realHits: hits, sandbox: tmp) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
+    print("SELFTEST OK — Suche, Archiv-Extraktion, Trefferlisten-Werkzeuge "
+          + "und Sparkle-Anbindung funktionieren")
     return 0
+}
+
+/// Prüft die Werkzeuge, die auf der fertigen Trefferliste arbeiten:
+/// Kennzahlen, Export, Auswahl fürs Löschen und den Papierkorb selbst.
+/// Rückgabe: nil bei Erfolg, sonst der Grund.
+func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
+    let file = Hit(path: "/tmp/ordner-a/gross.bin", kind: "file", line: nil,
+                   size: 1000, filesystemPath: "/tmp/ordner-a/gross.bin",
+                   archiveMembers: [], isDirectory: false)
+    let sameFolder = Hit(path: "/tmp/ordner-a/klein.bin", kind: "file",
+                         line: 12, size: 24,
+                         filesystemPath: "/tmp/ordner-a/klein.bin",
+                         archiveMembers: [], isDirectory: false)
+    let folder = Hit(path: "/tmp/ordner-b/unterordner", kind: "dir",
+                     line: nil, size: nil,
+                     filesystemPath: "/tmp/ordner-b/unterordner",
+                     archiveMembers: [], isDirectory: true)
+    // Eine DATEI ohne bekannte Größe (bsdtar-Eintrag) macht die Summe
+    // unvollständig; ein Ordner ohne Größe nicht.
+    let unsized = Hit(path: "/tmp/ordner-b/paket.7z!/darin.txt",
+                      kind: "member", line: nil, size: nil,
+                      filesystemPath: "/tmp/ordner-b/paket.7z",
+                      archiveMembers: ["darin.txt"], isDirectory: false)
+
+    // ---- Kennzahlen ----
+    var stepwise = HitStatistics()
+    for hit in [file, sameFolder, folder, unsized] { stepwise.add(hit) }
+    let atOnce = HitStatistics.over([file, sameFolder, folder, unsized])
+    guard stepwise.count == atOnce.count,
+          stepwise.totalSize == atOnce.totalSize,
+          stepwise.folders == atOnce.folders,
+          stepwise.sizeIsPartial == atOnce.sizeIsPartial else {
+        return "fortgeschriebene und neu berechnete Kennzahlen weichen ab"
+    }
+    guard stepwise.count == 4, stepwise.totalSize == 1024,
+          stepwise.folders == ["/tmp/ordner-a", "/tmp/ordner-b"],
+          stepwise.sizeIsPartial else {
+        return "Kennzahlen falsch: \(stepwise.count) Treffer, "
+            + "\(stepwise.totalSize) Bytes, "
+            + "\(stepwise.folders.count) Ordner"
+    }
+    guard HitStatistics.over([folder]).sizeIsPartial == false else {
+        return "ein Ordner ohne Größe macht die Summe unvollständig"
+    }
+    // Die Auswahl steht erst ab zwei markierten Zeilen in der Fußzeile.
+    let oneSelected = hitStatisticsText(stepwise, selected: 1)
+    let twoSelected = hitStatisticsText(stepwise, selected: 2)
+    guard !oneSelected.contains("ausgewählt"),
+          twoSelected.contains("2 ausgewählt"),
+          oneSelected.contains("≥"), oneSelected.contains("2 Ordner") else {
+        return "Fußzeile falsch: \(oneSelected) / \(twoSelected)"
+    }
+
+    // ---- Export ----
+    let exported = [file, unsized]
+    guard let paths = String(data: exportData(for: exported, format: .paths),
+                             encoding: .utf8),
+          paths == "/tmp/ordner-a/gross.bin\n"
+              + "/tmp/ordner-b/paket.7z!/darin.txt\n" else {
+        return "Pfad-Export stimmt nicht"
+    }
+    let nulData = exportData(for: exported, format: .pathsNUL)
+    guard nulData.filter({ $0 == 0 }).count == 2,
+          !nulData.contains(0x0A) else {
+        return "NUL-Export enthält keine zwei Trenner oder einen Zeilenumbruch"
+    }
+    // JSONL muss der Kern-Parser wieder lesen können — sonst ist es kein
+    // Austauschformat, sondern nur Text.
+    let jsonlLines = exportData(for: exported, format: .jsonl)
+        .split(separator: 0x0A).map { Data($0) }
+    guard jsonlLines.count == 2,
+          jsonlLines.compactMap({ parseHit($0) }) == exported else {
+        return "JSONL-Export liest sich nicht wieder als dieselben Treffer"
+    }
+    let tricky = Hit(path: "/tmp/mit,Komma und \"Zitat\".txt", kind: "file",
+                     line: nil, size: 7,
+                     filesystemPath: "/tmp/mit,Komma und \"Zitat\".txt",
+                     archiveMembers: [], isDirectory: false)
+    let csvData = exportData(for: [tricky], format: .csv)
+    // Die BOM wird als BYTES geprüft: Beim Dekodieren nach String
+    // verschluckt Foundation sie, und ohne sie liest Excel unter macOS eine
+    // UTF-8-Tabelle als Latin-1 und zerlegt jeden Umlaut im Dateinamen.
+    guard csvData.starts(with: [0xEF, 0xBB, 0xBF]) else {
+        return "CSV-Export beginnt nicht mit der UTF-8-BOM"
+    }
+    guard let csv = String(data: csvData.dropFirst(3), encoding: .utf8),
+          csv.hasPrefix("path,type,isDirectory,size,line,filesystemPath\n"),
+          csv.contains("\"/tmp/mit,Komma und \"\"Zitat\"\".txt\"") else {
+        return "CSV-Export maskiert Komma und Anführungszeichen nicht"
+    }
+
+    // ---- Auswahl fürs Löschen ----
+    // Derselbe Pfad zweimal darf nur EINMAL gelöscht werden, und ein Eintrag
+    // im Archiv gar nicht: Dort gäbe es nur die ausgepackte Temp-Kopie.
+    let split = trashableHits([file, file, unsized, sameFolder])
+    guard split.trashable == [file, sameFolder], split.skipped == [unsized]
+    else { return "Auswahl fürs Löschen falsch aufgeteilt" }
+    let onlyMembers = trashableHits([unsized])
+    guard onlyMembers.trashable.isEmpty else {
+        return "ein Archiv-Eintrag gilt als löschbar"
+    }
+    let confirmation = trashConfirmationText(trashable: split.trashable,
+                                             skipped: split.skipped)
+    guard confirmation.message.contains("2 Objekte"),
+          confirmation.info.contains("Archiv") else {
+        return "Bestätigungstext nennt Anzahl oder Auslassung nicht"
+    }
+    guard trashConfirmationText(trashable: [file], skipped: [])
+            .message.contains("gross.bin") else {
+        return "Bestätigungstext einer einzelnen Datei nennt sie nicht"
+    }
+
+    // ---- Papierkorb, wirklich ----
+    // Nicht nur die Aufteilung prüfen, sondern den Weg, den auch ⌘⌫ nimmt.
+    let victim = sandbox.appendingPathComponent("papierkorb-probe.txt")
+    guard (try? "weg damit\n".write(to: victim, atomically: true,
+                                    encoding: .utf8)) != nil else {
+        return "Testdatei für den Papierkorb nicht anlegbar"
+    }
+    let victimHit = Hit(path: victim.path, kind: "file", line: nil, size: 9,
+                        filesystemPath: victim.path, archiveMembers: [],
+                        isDirectory: false)
+    var trashedPaths: [String: URL]?
+    var trashError: Error?
+    trashHits([victimHit]) { trashed, error in
+        trashedPaths = trashed
+        trashError = error
+    }
+    // Die Antwort kommt über die Main-Queue; ohne laufende NSApplication muss
+    // der Selbsttest den Runloop selbst drehen.
+    let deadline = Date().addingTimeInterval(20)
+    while trashedPaths == nil, Date() < deadline {
+        RunLoop.current.run(mode: .default,
+                            before: Date().addingTimeInterval(0.05))
+    }
+    guard let trashedPaths else {
+        return "Papierkorb hat innerhalb von 20 s nicht geantwortet"
+    }
+    guard let inTrash = trashedPaths[victim.path], trashedPaths.count == 1,
+          !FileManager.default.fileExists(atPath: victim.path),
+          FileManager.default.fileExists(atPath: inTrash.path) else {
+        return "Datei liegt nicht im Papierkorb: "
+            + (trashError?.localizedDescription ?? "ohne Fehlermeldung")
+    }
+    // Der Selbsttest räumt seine eigene Probe wieder weg — sonst sammelt sich
+    // bei jedem Bauen eine weitere Datei im Papierkorb des Nutzers an.
+    try? FileManager.default.removeItem(at: inTrash)
+
+    // ---- Die Menüpunkte selbst ----
+    // Am echten NSMenu geprüft: Ein Kürzel, das im Menü fehlt oder die
+    // falsche Zusatztaste trägt, ist für den Nutzer nicht auffindbar.
+    let resultMenu = NSMenu()
+    populateResultListMenu(
+        resultMenu, target: NSObject(),
+        selectors: ResultListMenuSelectors(
+            exportSelection: NSSelectorFromString("export:"),
+            removeFromList: NSSelectorFromString("remove:"),
+            moveToTrash: NSSelectorFromString("trash:")))
+    let expected: [(String, String, NSEvent.ModifierFlags)] = [
+        ("Auswahl exportieren…", "e", [.command, .shift]),
+        ("Aus Trefferliste entfernen", backspaceKeyEquivalent, []),
+        ("In den Papierkorb legen", backspaceKeyEquivalent, [.command]),
+    ]
+    guard resultMenu.items.count == expected.count else {
+        return "Trefferlisten-Menü hat \(resultMenu.items.count) Punkte "
+            + "statt \(expected.count)"
+    }
+    for (item, want) in zip(resultMenu.items, expected) {
+        guard item.title == want.0, item.keyEquivalent == want.1,
+              item.keyEquivalentModifierMask == want.2 else {
+            return "Menüpunkt „\(item.title)“ trägt das falsche Kürzel"
+        }
+    }
+
+    // ---- Kennzahlen über echte Treffer ----
+    guard HitStatistics.over(realHits).count == realHits.count else {
+        return "Kennzahlen zählen die echten Treffer falsch"
+    }
+    return nil
 }
 
 // MARK: - Haupt-Controller
@@ -252,7 +435,8 @@ final class ActiveSearchRun {
 
 final class MainController: NSObject, NSApplicationDelegate,
                             NSTableViewDataSource, NSTableViewDelegate,
-                            NSMenuDelegate, NSSearchFieldDelegate,
+                            NSMenuDelegate, NSMenuItemValidation,
+                            NSSearchFieldDelegate,
                             QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
     /// Ein Controller pro App-Prozess; Sparkle hält darüber Update-Zustand,
@@ -310,6 +494,27 @@ final class MainController: NSObject, NSApplicationDelegate,
     var contextRow = -1             // Zeile, auf die der Rechtsklick ging
     var pendingURL: URL?            // favenio://-URL, die vor dem Fenster kam
     var previewURLs: [URL] = []     // gerade in der QuickLook-Vorschau
+    /// Zustand der Suche für die Fußzeile. Gespeichert wird der ZUSTAND, nie
+    /// ein fertig formulierter Satz — sonst steht dort später „Suche läuft…",
+    /// obwohl sie längst fertig ist. Dieselbe Falle umgeht FavenioQuick mit
+    /// runScopeNoteText().
+    enum SearchPhase {
+        case idle                // es wurde noch nicht gesucht
+        case running
+        case stopped             // vom Nutzer abgebrochen
+        case finished
+        case handedOver          // Treffer der Schnellsuche, ohne eigenen Lauf
+        case failed(String)      // Grund, den die Fußzeile wörtlich zeigt
+    }
+    var searchPhase: SearchPhase = .idle
+    /// Ordner oder Archiv, das der Kern gerade durchsucht (nur bei .running).
+    var progressPath: String?
+    /// Kennzahlen der Trefferliste (Treffer, Datenmenge, Ordner) für die
+    /// Fußzeile. Beim Streamen fortgeschrieben statt neu aufsummiert.
+    var statistics = HitStatistics()
+    /// Der offene Sichern-Dialog des Exports; das Format-Aufklappmenü darin
+    /// muss seinen Dateinamen ändern können.
+    var exportSavePanel: NSSavePanel?
 
     // ---------- App-Lebenszyklus ----------
 
@@ -329,6 +534,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         buildWindow()
         installAboutItem()
         installViewMenu()
+        installFileMenu()
         // Finder-Fenster für das Ordner-Popup vorab im Hintergrund laden
         // (der AppleScript-Aufruf darf den Start nicht blockieren).
         refreshFinderFoldersAsync()
@@ -365,18 +571,41 @@ final class MainController: NSObject, NSApplicationDelegate,
         // Suchen über den ganzen Benutzerordner deutlich weniger Nachfragen).
         maybePromptFullDiskAccess(appName: "Favenio")
 
-        // Leertaste in der Trefferliste öffnet die QuickLook-Vorschau (wie im
-        // Finder). Nur wenn die Tabelle den Fokus hat — sonst tippt die
-        // Leertaste normal ins Suchfeld.
+        // Tasten, die nur IN der Trefferliste gelten. Hat die Tabelle nicht
+        // den Fokus, geht das Ereignis unverändert weiter — dann tippt die
+        // Leertaste normal ins Suchfeld und ⌫ löscht dort ein Zeichen.
+        //
+        // Der Monitor läuft vor NSApplication.sendEvent und damit vor dem
+        // Tastenkürzel des Menüs: Wer hier zugreift, löst die Aktion genau
+        // einmal aus. Der Menüpunkt trägt dasselbe Kürzel trotzdem — dort
+        // steht es sichtbar, statt Geheimwissen zu bleiben.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [weak self] event in
-            if event.keyCode == 49,                        // 49 = Leertaste
-               let self, self.window.firstResponder === self.tableView {
+            guard let self,
+                  self.window.firstResponder === self.tableView
+            else { return event }
+            // Nur die echten Zusatztasten vergleichen. Caps Lock, Zehnerblock
+            // und das Funktionsbit hängen je nach Tastatur mit dran und
+            // dürfen ein Kürzel nicht entwerten.
+            let modifiers = event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask)
+                .subtracting([.capsLock, .numericPad, .function])
+            switch event.keyCode {
+            case 49 where modifiers.isEmpty:               // Leertaste
                 self.contextRow = -1
                 self.togglePreview()
                 return nil
+            case 51 where modifiers.isEmpty:               // ⌫
+                self.contextRow = -1
+                self.removeFromResults(nil)
+                return nil
+            case 51 where modifiers == .command:           // ⌘⌫
+                self.contextRow = -1
+                self.trashSelected(nil)
+                return nil
+            default:
+                return event
             }
-            return event
         }
     }
 
@@ -429,6 +658,17 @@ final class MainController: NSObject, NSApplicationDelegate,
         }
         showActionIssue(selection)
         panel.makeKeyAndOrderFront(nil)
+        // Den Tastaturfokus sofort zurück ins Hauptfenster holen. Sonst gehen
+        // Pfeil hoch/runter an das Vorschaufenster, und man kann die Vorschau
+        // nicht mit den Pfeiltasten durch die Trefferliste wandern lassen —
+        // genau das, was der Finder kann. Das Vorschaufenster bleibt dabei
+        // sichtbar; tableViewSelectionDidChange lädt seinen Inhalt nach.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, QLPreviewPanel.sharedPreviewPanelExists(),
+                  QLPreviewPanel.shared().isVisible else { return }
+            self.window.makeKeyAndOrderFront(nil)
+            self.window.makeFirstResponder(self.tableView)
+        }
     }
 
     @discardableResult
@@ -460,6 +700,7 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// Auswahl geändert, während die Vorschau offen ist → mitziehen.
     func tableViewSelectionDidChange(_ notification: Notification) {
         contextRow = -1
+        refreshStatus()     // „N ausgewählt" in der Fußzeile mitziehen
         if QLPreviewPanel.sharedPreviewPanelExists(),
            QLPreviewPanel.shared().isVisible {
             rebuildPreviewURLs()
@@ -546,14 +787,19 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// die Suche lief dort schon, hier wird nichts doppelt gesucht.
     func loadResults(from file: URL) {
         guard let loaded = consumeQuickHandoff(file) else {
-            statusLabel.stringValue = "Ungültige oder zu große Ergebnisübergabe."
+            searchPhase = .failed("Ungültige oder zu große Ergebnisübergabe.")
+            refreshStatus()
             return
         }
         stopSearch()
         hits = loaded
         pending = []
+        seenPaths = Set(loaded.map { $0.path })
+        statistics = .over(hits)
+        searchPhase = .handedOver
+        progressPath = nil
         applyHitsToTable(keepingSelection: [])
-        statusLabel.stringValue = "\(hits.count) Treffer (aus Schnellsuche)."
+        refreshStatus()
     }
 
     // ---------- Fenster + Layout ----------
@@ -706,6 +952,44 @@ final class MainController: NSObject, NSApplicationDelegate,
 
         // Drag & Drop nach draußen (Finder, andere Apps) erlauben.
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
+    }
+
+    // ---------- Fußzeile ----------
+
+    /// Schreibt die Fußzeile aus dem aktuellen Zustand neu.
+    func refreshStatus() { statusLabel.stringValue = statusText() }
+
+    /// Formuliert die Fußzeile: Kennzahlen der Trefferliste, dahinter — falls
+    /// gerade etwas läuft oder abgebrochen wurde — der Zustand der Suche.
+    func statusText() -> String {
+        if case .failed(let reason) = searchPhase { return reason }
+        if hits.isEmpty {
+            switch searchPhase {
+            case .idle:
+                return "Bereit."
+            case .running:
+                return progressPath.map { "Durchsuche " + abbreviateHome($0) }
+                    ?? "Suche läuft…"
+            case .stopped:
+                return "Suche gestoppt — keine Treffer."
+            default:
+                return "Keine Treffer."
+            }
+        }
+        var text = hitStatisticsText(
+            statistics, selected: tableView.selectedRowIndexes.count)
+        switch searchPhase {
+        case .running:
+            text += progressPath.map { " — durchsuche " + abbreviateHome($0) }
+                ?? " — Suche läuft…"
+        case .stopped:
+            text += " — Suche gestoppt"
+        case .handedOver:
+            text += " — aus der Schnellsuche"
+        default:
+            break
+        }
+        return text
     }
 
     func setSearchRoot(_ url: URL) {
@@ -971,8 +1255,11 @@ final class MainController: NSObject, NSApplicationDelegate,
         applyHitsToTable(keepingSelection: [])
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
+        statistics = HitStatistics()
+        searchPhase = .idle
+        progressPath = nil
         guard !pattern.isEmpty else {
-            statusLabel.stringValue = "Bereit."
+            refreshStatus()
             return
         }
         launchSearch(pattern: pattern)
@@ -983,18 +1270,22 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// `seenPaths` nicht doppelt gelistet.
     func continueSearch(from file: URL) {
         guard let seed = consumeQuickHandoff(file) else {
-            statusLabel.stringValue = "Ungültige oder zu große Ergebnisübergabe."
+            searchPhase = .failed("Ungültige oder zu große Ergebnisübergabe.")
+            refreshStatus()
             return
         }
         stopSearch()
         hits = seed
         pending = []
         seenPaths = Set(seed.map { $0.path })
+        statistics = .over(hits)
+        searchPhase = .handedOver
+        progressPath = nil
         applyHitsToTable(keepingSelection: [])
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
         guard !pattern.isEmpty else {
-            statusLabel.stringValue = "\(hits.count) Treffer (aus Schnellsuche)."
+            refreshStatus()
             return
         }
         launchSearch(pattern: pattern)
@@ -1016,7 +1307,8 @@ final class MainController: NSObject, NSApplicationDelegate,
             only: only, includeHidden: hiddenCheckbox.state == .on,
             exact: exactCheckbox.state == .on)
         else {
-            statusLabel.stringValue = "favenio.py nicht gefunden."
+            searchPhase = .failed("favenio.py nicht gefunden.")
+            refreshStatus()
             return
         }
 
@@ -1062,11 +1354,15 @@ final class MainController: NSObject, NSApplicationDelegate,
             activeSearchRun = nil
             pipe.fileHandleForReading.readabilityHandler = nil
             process.terminationHandler = nil
-            statusLabel.stringValue = "Suche ließ sich nicht starten: \(error.localizedDescription)"
+            searchPhase = .failed("Suche ließ sich nicht starten: "
+                                  + error.localizedDescription)
+            refreshStatus()
             return
         }
         stopButton.isEnabled = true
-        statusLabel.stringValue = "Suche läuft…"
+        searchPhase = .running
+        progressPath = nil
+        refreshStatus()
         // Die Tabelle nicht bei jedem einzelnen Treffer neu laden,
         // sondern gebündelt ein paar Mal pro Sekunde.
         flushTimer = Timer.scheduledTimer(withTimeInterval: 0.15,
@@ -1090,8 +1386,10 @@ final class MainController: NSObject, NSApplicationDelegate,
     @objc func stopSearchClicked() {
         guard activeSearchRun != nil else { return }
         stopSearch()
+        searchPhase = .stopped
+        progressPath = nil
         flushPending()
-        statusLabel.stringValue = "Suche gestoppt — \(hits.count) Treffer."
+        refreshStatus()
     }
 
     /// Rohbytes aus der Pipe in Zeilen zerlegen und als Hits vormerken.
@@ -1109,8 +1407,8 @@ final class MainController: NSObject, NSApplicationDelegate,
         // Fortschritt (welcher Ordner/welches Archiv gerade dran ist)
         // wie in der Schnellsuche laufend anzeigen.
         if let path = parseProgress(lineData) {
-            statusLabel.stringValue = "\(hits.count) Treffer — durchsuche "
-                + abbreviateHome(path)
+            progressPath = path
+            refreshStatus()
         } else if let hit = parseHit(lineData),
                   seenPaths.insert(hit.path).inserted {
             // Schon gezeigte Pfade (z. B. die aus der Schnellsuche
@@ -1151,10 +1449,14 @@ final class MainController: NSObject, NSApplicationDelegate,
         // beim Streamen sofort wieder die markierte Zeile — etwa fürs
         // QuickLook). Wir merken die Pfade und stellen sie danach wieder her.
         let selectedPaths = selectedHitPaths()
+        // Kennzahlen FORTSCHREIBEN statt neu aufsummieren: Bei einem langen
+        // Lauf wird diese Methode viele Male aufgerufen, und jedes Mal die
+        // ganze Liste durchzurechnen kostete quadratisch.
+        for hit in pending { statistics.add(hit) }
         hits.append(contentsOf: pending)
         pending = []
         applyHitsToTable(keepingSelection: selectedPaths)
-        statusLabel.stringValue = "\(hits.count) Treffer — Suche läuft…"
+        refreshStatus()
     }
 
     func finishSearchRunIfReady(_ run: ActiveSearchRun) {
@@ -1172,13 +1474,11 @@ final class MainController: NSObject, NSApplicationDelegate,
         run.process.terminationHandler = nil
         activeSearchRun = nil
         stopButton.isEnabled = false
-        if searchExitIsError(status, reason: reason) {
-            statusLabel.stringValue = "Suche fehlgeschlagen."
-        } else {
-            statusLabel.stringValue = hits.isEmpty
-                ? "Keine Treffer."
-                : "\(hits.count) Treffer."
-        }
+        progressPath = nil
+        searchPhase = searchExitIsError(status, reason: reason)
+            ? .failed("Suche fehlgeschlagen.")
+            : .finished
+        refreshStatus()
     }
 
     // ---------- Tabelle ----------
@@ -1227,13 +1527,6 @@ final class MainController: NSObject, NSApplicationDelegate,
             cell?.textField?.stringValue = hit.path
         }
         return cell
-    }
-
-    /// Dateigröße menschenlesbar (z. B. „1,2 MB"); Ordner (nil) → „—".
-    func humanSize(_ bytes: Int?) -> String {
-        guard let bytes else { return "—" }
-        return ByteCountFormatter.string(fromByteCount: Int64(bytes),
-                                         countStyle: .file)
     }
 
     /// Header-Klick: Trefferliste nach der gewählten Spalte sortieren.
@@ -1304,6 +1597,23 @@ final class MainController: NSObject, NSApplicationDelegate,
                 openWith: #selector(ctxOpenWith(_:)),
                 reveal: #selector(ctxReveal),
                 copyPath: #selector(ctxCopyPath)))
+        // Dieselben Listen-Aktionen wie im Ablage-Menü, mit denselben
+        // Kürzeln daneben. Sie hängen nicht an einer öffenbaren Datei: Auch
+        // ein Ordner im Archiv lässt sich aus der Liste werfen.
+        menu.addItem(.separator())
+        addResultListItems(to: menu)
+    }
+
+    /// Die drei Punkte, die auf die Trefferliste wirken — einmal gebaut, in
+    /// beiden Menüs verwendet. Gebaut werden sie im Kern; hier stehen nur die
+    /// Methoden, die sie aufrufen sollen.
+    func addResultListItems(to menu: NSMenu) {
+        populateResultListMenu(
+            menu, target: self,
+            selectors: ResultListMenuSelectors(
+                exportSelection: #selector(exportSelectedHits(_:)),
+                removeFromList: #selector(removeFromResults(_:)),
+                moveToTrash: #selector(trashSelected(_:))))
     }
 
     @objc func ctxOpen() { openSelected() }
@@ -1340,6 +1650,219 @@ final class MainController: NSObject, NSApplicationDelegate,
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(paths.joined(separator: "\n"), forType: .string)
+    }
+
+    // ---------- Trefferliste verfeinern, exportieren, löschen ----------
+
+    /// „Ablage"-Menü: Export, Entfernen aus der Trefferliste und Papierkorb.
+    /// Die Tastenkürzel stehen hier sichtbar daneben, damit sie niemand
+    /// erraten muss.
+    func installFileMenu() {
+        guard let mainMenu = NSApp.mainMenu else { return }
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "Ablage")
+        let exportAll = fileMenu.addItem(
+            withTitle: "Alle Treffer exportieren…",
+            action: #selector(exportAllHits(_:)), keyEquivalent: "e")
+        exportAll.target = self
+        fileMenu.addItem(.separator())
+        addResultListItems(to: fileMenu)
+        fileItem.submenu = fileMenu
+        // Direkt hinter das App-Menü, also vor „Ansicht".
+        mainMenu.insertItem(fileItem, at: min(1, mainMenu.numberOfItems))
+    }
+
+    /// Zeilen, die eine Menüaktion meint.
+    ///
+    /// Aus dem Rechtsklick-Menü der Tabelle gilt die AppKit-Konvention: Ein
+    /// Klick außerhalb der Auswahl meint nur die geklickte Zeile. Aus dem
+    /// Hauptmenü und vom Tastenkürzel gilt dagegen immer die Auswahl — dort
+    /// gibt es keinen Klickort, und ein liegengebliebener `contextRow` eines
+    /// früheren Rechtsklicks träfe sonst die falschen Dateien.
+    func rows(for sender: Any?) -> [Int] {
+        if let item = sender as? NSMenuItem, item.menu === tableView.menu {
+            return actionRows()
+        }
+        return Array(tableView.selectedRowIndexes)
+    }
+
+    /// Die Treffer zu einer Zeilenmenge, in Listenreihenfolge.
+    func hitsAtRows(_ rows: [Int]) -> [Hit] {
+        rows.sorted().compactMap { hits.indices.contains($0) ? hits[$0] : nil }
+    }
+
+    /// Ein ungültiger Menüpunkt gibt sein Tastenkürzel wieder frei. Genau
+    /// deshalb löscht ⌫ im Suchfeld weiter ein Zeichen und ⌘⌫ dort weiter bis
+    /// zum Zeilenanfang, statt an Dateien zu gehen: Beide Punkte gelten nur,
+    /// solange die Trefferliste den Fokus hat. Im Rechtsklick-Menü der
+    /// Tabelle entfällt diese Bedingung — dort ist der Bezug der Klick.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        let fromTableMenu = item.menu === tableView.menu
+        switch item.action {
+        case #selector(removeFromResults(_:)), #selector(trashSelected(_:)),
+             #selector(exportSelectedHits(_:)):
+            guard fromTableMenu || window?.firstResponder === tableView
+            else { return false }
+            return !rows(for: item).isEmpty
+        case #selector(exportAllHits(_:)):
+            return !hits.isEmpty
+        default:
+            return true
+        }
+    }
+
+    /// ⌫ bzw. Menü: Treffer nur aus der ANZEIGE werfen. Die Dateien bleiben
+    /// unangetastet — das dient dem schrittweisen Verfeinern der Liste, bis
+    /// nur noch übrig ist, was wirklich gemeint war.
+    @objc func removeFromResults(_ sender: Any?) {
+        let doomed = Set(hitsAtRows(rows(for: sender)).map { $0.path })
+        guard !doomed.isEmpty else {
+            statusLabel.stringValue = "Kein Treffer ausgewählt."
+            return
+        }
+        let removed = removeHits { doomed.contains($0.path) }
+        statusLabel.stringValue = removed == 1
+            ? "1 Treffer aus der Liste entfernt — die Datei bleibt."
+            : "\(groupedNumber(removed)) Treffer aus der Liste entfernt — "
+                + "die Dateien bleiben."
+    }
+
+    /// Entfernt Treffer aus der Liste und stellt Kennzahlen, Sortierung und
+    /// Auswahl wieder her. Danach steht die Auswahl auf der Zeile, die an die
+    /// Stelle der ersten entfernten gerückt ist.
+    @discardableResult
+    func removeHits(where shouldRemove: (Hit) -> Bool) -> Int {
+        guard let firstRemoved = hits.firstIndex(where: shouldRemove) else {
+            return 0
+        }
+        let before = hits.count
+        hits.removeAll(where: shouldRemove)
+        // `seenPaths` bleibt unangetastet: Ein noch laufender Suchlauf soll
+        // einen bewusst entfernten Treffer nicht gleich wieder einfügen.
+        statistics = .over(hits)
+        applyHitsToTable(keepingSelection: [])
+        if !hits.isEmpty {
+            tableView.selectRowIndexes(
+                [min(firstRemoved, hits.count - 1)], byExtendingSelection: false)
+        }
+        refreshStatus()
+        return before - hits.count
+    }
+
+    /// ⌘⌫ bzw. Menü: Die ausgewählten Dateien in den Papierkorb legen — nach
+    /// Rückfrage, in EINEM `recycle`-Aufruf (damit auch eine sehr große
+    /// Auswahl nicht Datei für Datei abgearbeitet wird) und mit dem
+    /// Papierkorb-Geräusch des Finders.
+    @objc func trashSelected(_ sender: Any?) {
+        let targets = hitsAtRows(rows(for: sender))
+        let split = trashableHits(targets)
+        guard !split.trashable.isEmpty else {
+            statusLabel.stringValue = targets.isEmpty
+                ? "Kein Treffer ausgewählt."
+                : "Einträge in einem Archiv lassen sich nicht löschen."
+            return
+        }
+        let text = trashConfirmationText(trashable: split.trashable,
+                                         skipped: split.skipped)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = text.message
+        alert.informativeText = text.info
+        alert.addButton(withTitle: "In den Papierkorb")
+        alert.addButton(withTitle: "Abbrechen").keyEquivalent = "\u{1b}"
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        trashHits(split.trashable) { [weak self] trashed, error in
+            guard let self else { return }
+            guard !trashed.isEmpty else {
+                self.statusLabel.stringValue = "Nichts in den Papierkorb "
+                    + "gelegt: " + (error?.localizedDescription
+                                    ?? "unbekannter Fehler")
+                return
+            }
+            playFinderTrashSound()
+            // Mit einem Archiv verschwinden auch seine Einträge aus der
+            // Liste: Hinter ihnen liegt jetzt keine Datei mehr.
+            self.removeHits { trashed[$0.filesystemPath] != nil }
+            let failed = split.trashable.count - trashed.count
+            let moved = "\(groupedNumber(trashed.count)) in den Papierkorb "
+                + "gelegt"
+            self.statusLabel.stringValue = failed == 0
+                ? moved + "."
+                : moved + ", \(groupedNumber(failed)) nicht: "
+                    + (error?.localizedDescription ?? "unbekannter Fehler")
+        }
+    }
+
+    @objc func exportAllHits(_ sender: Any?) {
+        runExport(hits, scope: "alle Treffer")
+    }
+
+    @objc func exportSelectedHits(_ sender: Any?) {
+        runExport(hitsAtRows(rows(for: sender)), scope: "Auswahl")
+    }
+
+    /// Vorschlag für den Dateinamen: der Suchbegriff, von allem befreit, was
+    /// in einem Dateinamen nichts zu suchen hat.
+    func exportBaseName() -> String {
+        let query = searchField.stringValue
+            .trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return "Favenio-Treffer" }
+        let cleaned = query.components(
+            separatedBy: CharacterSet(charactersIn: "/:\n\r")).joined(
+                separator: "-")
+        return "Favenio-" + String(cleaned.prefix(60))
+    }
+
+    /// Sichern-Dialog mit Format-Aufklappmenü und anschließendes Schreiben.
+    func runExport(_ selected: [Hit], scope: String) {
+        guard !selected.isEmpty else {
+            statusLabel.stringValue = "Kein Treffer zum Exportieren."
+            return
+        }
+        let formats = HitExportFormat.allCases
+        let popUp = NSPopUpButton(frame: NSRect(x: 0, y: 0,
+                                                width: 340, height: 26))
+        formats.forEach { popUp.addItem(withTitle: $0.title) }
+        popUp.target = self
+        popUp.action = #selector(exportFormatChanged(_:))
+        let label = NSTextField(labelWithString: "Format:")
+        let row = NSStackView(views: [label, popUp])
+        row.orientation = .horizontal
+        row.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
+
+        let panel = NSSavePanel()
+        panel.message = "Trefferliste exportieren (\(scope))"
+        panel.nameFieldStringValue = exportBaseName() + "."
+            + formats[0].fileExtension
+        panel.accessoryView = row
+        exportSavePanel = panel
+        panel.beginSheetModal(for: window) { [weak self] response in
+            self?.exportSavePanel = nil
+            guard response == .OK, let url = panel.url,
+                  let self else { return }
+            let format = formats[max(0, popUp.indexOfSelectedItem)]
+            do {
+                try exportData(for: selected, format: format)
+                    .write(to: url, options: .atomic)
+                self.statusLabel.stringValue =
+                    "\(groupedNumber(selected.count)) Treffer exportiert: "
+                    + abbreviateHome(url.path)
+            } catch {
+                self.statusLabel.stringValue = "Export fehlgeschlagen: "
+                    + error.localizedDescription
+            }
+        }
+    }
+
+    /// Anderes Format gewählt → Endung im Dateinamen mitziehen.
+    @objc func exportFormatChanged(_ sender: NSPopUpButton) {
+        guard let panel = exportSavePanel else { return }
+        let format = HitExportFormat.allCases[
+            max(0, sender.indexOfSelectedItem)]
+        let base = (panel.nameFieldStringValue as NSString)
+            .deletingPathExtension
+        panel.nameFieldStringValue = base + "." + format.fileExtension
     }
 }
 

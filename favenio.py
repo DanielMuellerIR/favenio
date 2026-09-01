@@ -40,10 +40,10 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.24.3"
+__version__ = "0.25.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-08-21"
+__date__ = "2026-09-01"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,

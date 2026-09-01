@@ -107,6 +107,42 @@ Die Haupt-App streamt Treffer, erhält die Auswahl bei neuen Ergebnissen und
 bietet Öffnen, Öffnen mit, Finder-Anzeige, Pfadkopie, Quick Look und Drag-and-
 drop. Der `--selftest`-Pfad ist die automatische Grenze zwischen GUI und Kern.
 
+Auf der Trefferliste arbeiten drei weitere Werkzeuge, alle im Menü **Ablage**
+und im Rechtsklick-Menü der Tabelle, jeweils mit sichtbarem Kürzel:
+
+- **Aus Trefferliste entfernen (⌫)** wirft Zeilen nur aus der Anzeige. Dieser
+  Weg darf das Dateisystem nie anfassen — der Menüpunkt verspricht das
+  Gegenteil eines Löschens, und ein Test hält ihn darauf fest. Entfernte Pfade
+  bleiben in `seenPaths`, sonst fügt ein noch laufender Lauf sie wieder ein.
+- **In den Papierkorb legen (⌘⌫)** geht über EINEN `NSWorkspace.recycle`-Aufruf
+  für die ganze Auswahl. Datei für Datei zu löschen wäre bei tausenden Treffern
+  deutlich langsamer als der Finder und ist damit abgelehnt. Ein Eintrag IM
+  Archiv wird ausgelassen und im Dialog genannt: Hinter ihm liegt nur die
+  ausgepackte Temp-Kopie. Dieselbe Datei aus mehreren Treffern wird einmal
+  gelöscht. Das Geräusch ist die Klangdatei des Finders; fehlt sie, bleibt es
+  still statt einen fremden Systemton zu spielen.
+- **Treffer exportieren (⌘E / ⇧⌘E)** schreibt Pfade zeilenweise, Pfade
+  NUL-getrennt, JSONL im Format von `--json` oder CSV mit UTF-8-BOM. Die
+  NUL-Form ist kein Beiwerk: Ein Dateiname darf unter macOS jedes Zeichen außer
+  `/` und NUL enthalten, auch einen Zeilenumbruch. In beiden Pfadformaten steht
+  der Pfad in `!/`-Notation, den `--extract` wieder liest.
+
+Beide Kürzel gelten nur, solange die Trefferliste den Fokus hat. Das ist keine
+Kosmetik: Ein ungültiger Menüpunkt gibt sein Kürzel frei, und nur deshalb
+löscht ⌫ im Suchfeld weiter ein Zeichen. Durchgesetzt wird das doppelt — vom
+Tastaturmonitor (layoutunabhängiger Tastencode 51, läuft vor dem Menü) und von
+`validateMenuItem`. Aus dem Hauptmenü und vom Kürzel gilt immer die Auswahl,
+nie der gemerkte `contextRow` eines früheren Rechtsklicks.
+
+Die Fußzeile zeigt Treffer, Datenmenge und Anzahl der Ordner, ab zwei
+markierten Zeilen auch die Auswahlgröße. Sie wird über `statusText()` aus dem
+Zustand formuliert; die Kennzahlen schreibt `flushPending()` fort, statt beim
+Streamen jedes Mal die ganze Liste neu aufzusummieren.
+
+Die Leertaste öffnet Quick Look und gibt den Tastaturfokus sofort ans
+Hauptfenster zurück. Ohne das gehen die Pfeiltasten an das Vorschaufenster, und
+die Vorschau lässt sich nicht durch die Trefferliste blättern.
+
 FavenioQuick ist ein `LSUIElement`-Panel. Es sucht im Hintergrund, zeigt den
 aktuellen Pfad und übergibt fertige Treffer an die Haupt-App. Primär wird das
 registrierte URL-Schema verwendet, als Fallback Startargumente und eine

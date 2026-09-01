@@ -228,6 +228,47 @@ Aus der Trefferliste heraus:
 - **Drag & Drop**: Treffer in den Finder oder andere Apps ziehen.
   Das geht auch mit Dateien aus Archiven; gezogen wird dann die
   ausgepackte Kopie
+- **Leertaste**: QuickLook-Vorschau. Der Tastaturfokus bleibt in der
+  Trefferliste, mit Pfeil hoch/runter wandert die Vorschau also durch die
+  Treffer
+
+Die Fußzeile zählt Treffer, Datenmenge und die Anzahl der Ordner, auf die sie
+sich verteilen; ab zwei markierten Zeilen auch die Größe der Auswahl. Steht ein
+`≥` vor der Datenmenge, hat mindestens eine Datei keine vorab bekannte Größe
+(siehe `size` im JSON-Vertrag).
+
+### Trefferliste verfeinern, exportieren, aufräumen
+
+Diese drei Punkte stehen im Menü **Ablage** und im Rechtsklick-Menü der
+Trefferliste. Ihre Tastenkürzel gelten nur, solange die Trefferliste den Fokus
+hat — im Suchfeld löscht ⌫ weiterhin ein Zeichen.
+
+| Aktion | Kürzel | Wirkung |
+| --- | --- | --- |
+| Aus Trefferliste entfernen | ⌫ | Wirft Zeilen nur aus der **Anzeige**. Die Dateien bleiben unangetastet. Damit lässt sich eine große Trefferliste schrittweise auf das eindampfen, was wirklich gemeint war |
+| In den Papierkorb legen | ⌘⌫ | Legt die Dateien nach Rückfrage in den Papierkorb — wie im Finder, mit demselben Geräusch, und aus dem Papierkorb zurückholbar. Einträge *in* einem Archiv werden ausgelassen und genannt: Hinter ihnen liegt keine eigene Datei |
+| Alle Treffer exportieren… | ⌘E | Schreibt die ganze Liste in eine Datei |
+| Auswahl exportieren… | ⇧⌘E | Dasselbe nur für die markierten Zeilen |
+
+Der Sichern-Dialog bietet vier Formate an:
+
+| Format | Wofür |
+| --- | --- |
+| Pfade, eine Zeile pro Treffer (`.txt`) | Das, was Kommandozeilenwerkzeuge erwarten: `xargs`, `while read`, `grep -f` |
+| Pfade, NUL-getrennt (`.txt`) | Dieselbe Liste für `xargs -0`. Ein Dateiname darf unter macOS jedes Zeichen außer `/` und NUL enthalten — auch einen Zeilenumbruch. Nur diese Form überträgt deshalb **jeden** Namen unversehrt |
+| JSON Lines (`.jsonl`) | Dieselben Objekte, die `favenio.py --json` schreibt (`path`, `type`, `isDirectory`, `filesystemPath`, `archiveMembers`, optional `size`/`line`) — für `jq` und eigene Skripte |
+| CSV (`.csv`) | Für Tabellenkalkulation; mit UTF-8-BOM, sonst liest Excel unter macOS Umlaute falsch |
+
+In den beiden Pfadformaten steht derselbe Pfad wie bei „Pfad kopieren": bei
+einer normalen Datei ihr POSIX-Pfad, bei einem Archiv-Eintrag der Pfad in
+`!/`-Notation, den `favenio.py --extract` wieder versteht. Ein Archiv-Eintrag
+hat keinen eigenen POSIX-Pfad; ihn stillschweigend wegzulassen wäre schlimmer,
+als ihn kenntlich zu machen.
+
+```bash
+# Alle exportierten Treffer nach „TODO" durchsuchen
+xargs -0 -a Favenio-Treffer.txt grep -l TODO
+```
 
 Die GUI ist nur ein Frontend: Gesucht wird immer über `favenio.py`.
 

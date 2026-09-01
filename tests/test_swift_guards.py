@@ -118,6 +118,123 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("Ordner im Archiv", issue)
         self.assertIn("Kein Treffer ausgewählt", issue)
 
+    def test_trashing_is_one_bulk_call_and_never_touches_an_archive_entry(self):
+        """Der Papierkorb muss so schnell sein wie im Finder: EIN
+        recycle()-Aufruf fuer die ganze Auswahl, nicht ein Aufruf je Datei.
+        Und ein Eintrag IM Archiv hat keine eigene Datei — dort laege nur die
+        ausgepackte Temp-Kopie, deren Loeschung niemandem hilft."""
+        trash = swift_function(COMMON, "func trashHits(")
+        self.assertIn("NSWorkspace.shared.recycle(urls)", trash)
+        # Kein Weg, der Datei fuer Datei arbeitet.
+        for slow in ("trashItem", "for hit in hits", "for url in urls"):
+            self.assertNotIn(slow, trash)
+        split = swift_function(COMMON, "func trashableHits(")
+        self.assertIn("if hit.isMember {", split)
+        self.assertIn("seen.insert(hit.filesystemPath).inserted", split)
+        # Und die GUI fragt genau diese Aufteilung, statt sie nachzubauen.
+        action = swift_function(GUI, "@objc func trashSelected(")
+        self.assertIn("trashableHits(targets)", action)
+        self.assertIn("alert.runModal() == .alertFirstButtonReturn", action)
+        self.assertIn("playFinderTrashSound()", action)
+
+    def test_removing_from_the_list_never_touches_the_filesystem(self):
+        """„Aus Trefferliste entfernen" verfeinert nur die Anzeige. Wer hier
+        versehentlich einen Loesch- oder Papierkorbweg einbaut, vernichtet
+        Daten, obwohl der Menuepunkt das Gegenteil verspricht."""
+        for name in ("@objc func removeFromResults(",
+                     "func removeHits(where"):
+            body = swift_function(GUI, name)
+            for destructive in ("trashHits", "recycle", "removeItem",
+                                "trashItem", "unlink"):
+                self.assertNotIn(destructive, body, name)
+
+    def test_list_shortcuts_release_their_keys_outside_the_result_list(self):
+        """⌫ und ⌘⌫ duerfen im Suchfeld weiter ganz normal Text loeschen.
+        Dafuer sorgen zwei Dinge: Der Tastaturmonitor greift nur, wenn die
+        Tabelle den Fokus hat, und der Menuepunkt meldet sich sonst als
+        ungueltig — ein ungueltiger Menuepunkt gibt sein Kuerzel frei."""
+        launch = swift_function(GUI, "func applicationDidFinishLaunching(")
+        self.assertIn("self.window.firstResponder === self.tableView",
+                      launch)
+        self.assertIn("case 51 where modifiers.isEmpty:", launch)
+        self.assertIn("case 51 where modifiers == .command:", launch)
+        validate = swift_function(GUI, "func validateMenuItem(")
+        self.assertIn("window?.firstResponder === tableView", validate)
+        self.assertIn("#selector(removeFromResults(_:))", validate)
+        self.assertIn("#selector(trashSelected(_:))", validate)
+
+    def test_both_list_actions_are_visible_in_the_menu_with_their_keys(self):
+        """Ein Kuerzel, das nirgends steht, ist Geheimwissen. Beide Aktionen
+        stehen im Ablage-Menue UND im Rechtsklick-Menue, aus demselben
+        Bauplan, mit ihrem Kuerzel daneben."""
+        builder = swift_function(COMMON, "func populateResultListMenu(")
+        self.assertIn('"Aus Trefferliste entfernen"', builder)
+        self.assertIn('"In den Papierkorb legen"', builder)
+        self.assertIn("keyEquivalent: backspaceKeyEquivalent", builder)
+        self.assertIn("trash.keyEquivalentModifierMask = [.command]", builder)
+        self.assertIn("remove.keyEquivalentModifierMask = []", builder)
+        # Und der Headless-Selbsttest prueft die gebauten Punkte am echten
+        # NSMenu — ein Kommentar im Quelltext kann diese Wache nicht erfuellen.
+        self.assertIn('resultMenu.items', GUI)
+        for caller in ("func installFileMenu(", "func menuNeedsUpdate("):
+            self.assertIn("addResultListItems(to:",
+                          swift_function(GUI, caller), caller)
+
+    def test_footer_numbers_are_written_from_state_not_stored_as_a_sentence(self):
+        """Die Fusszeile wird aus dem Zustand formuliert. Wer die fertige
+        Zahl irgendwo anders hineinschreibt, hat spaeter eine Zeile, die der
+        Liste nicht mehr folgt — dieselbe Falle wie in FavenioQuick."""
+        controller = GUI[GUI.index("final class MainController"):]
+        status = swift_function(GUI, "func statusText(")
+        outside = controller.replace(status, "")
+        self.assertNotIn("hits.count) Treffer", outside)
+        self.assertIn("hitStatisticsText(", status)
+        # Die Auswahl erst ab zwei markierten Zeilen — sonst stuende dort
+        # fast immer „1 ausgewaehlt", was niemandem hilft.
+        text = swift_function(COMMON, "func hitStatisticsText(")
+        self.assertIn("if selected >= 2", text)
+
+    def test_streaming_updates_the_statistics_incrementally(self):
+        """flushPending() laeuft waehrend eines langen Laufs sehr oft. Wer
+        dort die ganze Liste neu aufsummiert, macht aus dem Streamen einen
+        quadratischen Aufwand."""
+        flush = swift_function(GUI, "func flushPending(")
+        self.assertIn("for hit in pending { statistics.add(hit) }", flush)
+        self.assertNotIn("HitStatistics.over", flush)
+        self.assertNotIn(".over(hits)", flush)
+        # Beide Wege muessen dasselbe ergeben; der Selbsttest vergleicht sie.
+        self.assertIn("stepwise.folders == atOnce.folders", GUI)
+
+    def test_quicklook_hands_the_focus_back_to_the_main_window(self):
+        """Sonst gehen Pfeil hoch/runter an das Vorschaufenster und man kann
+        die Vorschau nicht durch die Trefferliste wandern lassen."""
+        toggle = swift_function(GUI, "@objc func togglePreview(")
+        self.assertIn("self.window.makeKeyAndOrderFront(nil)", toggle)
+        self.assertIn("self.window.makeFirstResponder(self.tableView)",
+                      toggle)
+
+    def test_path_export_is_offered_in_the_form_pipes_really_need(self):
+        """Ein Dateiname darf unter macOS jedes Zeichen ausser / und NUL
+        enthalten — auch einen Zeilenumbruch. Deshalb gibt es die Pfadliste
+        zusaetzlich NUL-getrennt; nur die uebertraegt jeden Namen unversehrt
+        an `xargs -0`."""
+        self.assertIn("case pathsNUL", COMMON)
+        export = swift_function(COMMON, "func exportData(")
+        self.assertIn('$0.path + "\\0"', export)
+        self.assertIn("return jsonlData(for: hits)", export)
+        # Die BOM ist kein Schmuck: ohne sie liest Excel UTF-8 als Latin-1.
+        self.assertIn("Data([0xEF, 0xBB, 0xBF])", export)
+        self.assertIn("csvField(", export)
+
+    def test_menu_actions_from_the_main_menu_ignore_a_stale_click_row(self):
+        """`contextRow` merkt sich den Rechtsklick. Aus dem Hauptmenue und
+        vom Tastenkuerzel gibt es keinen Klickort — dort muss die Auswahl
+        gelten, sonst trifft ⌘⌫ die Datei eines frueheren Rechtsklicks."""
+        rows = swift_function(GUI, "func rows(for sender: Any?)")
+        self.assertIn("item.menu === tableView.menu", rows)
+        self.assertIn("return actionRows()", rows)
+        self.assertIn("return Array(tableView.selectedRowIndexes)", rows)
+
     def test_quick_drops_old_hits_on_every_keystroke(self):
         """Zwischen Tastendruck und dem 0,6-s-Debounce standen die Treffer des
         ALTEN Suchtexts weiter in der Liste, der Uebergabeknopf blieb aktiv.

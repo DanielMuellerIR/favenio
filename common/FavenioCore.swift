@@ -1183,6 +1183,276 @@ func abbreviateHome(_ path: String) -> String {
 /// `includeClose` = zusätzlich „Fenster schließen" (Cmd+W); nur die
 /// Schnellsuche braucht das (dort beendet das Schließen die App), damit
 /// nicht die große GUI ungewollt ihr Verhalten ändert.
+// MARK: - Kennzahlen der Trefferliste
+
+/// Was die Fußzeile über die Trefferliste sagt. Die Werte werden beim
+/// Anhängen fortgeschrieben, damit ein Streaming-Lauf nicht bei jedem
+/// Nachschub die ganze Liste erneut aufsummieren muss.
+struct HitStatistics {
+    /// Anzahl der Treffer.
+    private(set) var count = 0
+    /// Summe der bekannten Dateigrößen in Bytes.
+    private(set) var totalSize = 0
+    /// Die Ordner, in denen die Treffer liegen.
+    private(set) var folders = Set<String>()
+    /// Mindestens eine DATEI, deren Größe der Kern nicht mitliefert (etwa ein
+    /// bsdtar-Eintrag, dessen entpackte Größe erst beim Auspacken feststeht).
+    /// `totalSize` ist dann eine Untergrenze und wird als „≥" gekennzeichnet.
+    private(set) var sizeIsPartial = false
+
+    mutating func add(_ hit: Hit) {
+        count += 1
+        folders.insert(HitStatistics.folder(of: hit))
+        if let size = hit.size {
+            totalSize += size
+        } else if !hit.isDirectory {
+            // Ordner haben von Natur aus keine Größe — das macht die Summe
+            // nicht unvollständig. Eine DATEI ohne Größe dagegen schon.
+            sizeIsPartial = true
+        }
+    }
+
+    /// Der Ordner, in dem ein Treffer liegt: immer der Elternordner seines
+    /// Dateisystempfads. Ein Ordner-Treffer zählt damit für den Ordner, in dem
+    /// er steckt, und ein Archiv-Eintrag für den Ordner seines Archivs — im
+    /// Dateisystem liegt er nirgendwo anders.
+    static func folder(of hit: Hit) -> String {
+        (hit.filesystemPath as NSString).deletingLastPathComponent
+    }
+
+    static func over(_ hits: [Hit]) -> HitStatistics {
+        var statistics = HitStatistics()
+        for hit in hits { statistics.add(hit) }
+        return statistics
+    }
+}
+
+/// Zahl mit Tausendertrennung in der Sprache des Nutzers („12.345").
+func groupedNumber(_ value: Int) -> String {
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .decimal
+    return formatter.string(from: NSNumber(value: value)) ?? String(value)
+}
+
+/// Dateigröße menschenlesbar (z. B. „1,2 MB"); ohne bekannte Größe „—".
+func humanSize(_ bytes: Int?) -> String {
+    guard let bytes else { return "—" }
+    return ByteCountFormatter.string(fromByteCount: Int64(bytes),
+                                     countStyle: .file)
+}
+
+/// Die Kennzahlenzeile: Treffer, Datenmenge, Anzahl Ordner — und die Auswahl
+/// erst ab ZWEI markierten Zeilen. Eine einzelne markierte Zeile hat man fast
+/// immer; „1 ausgewählt" wäre nur Rauschen.
+func hitStatisticsText(_ statistics: HitStatistics, selected: Int) -> String {
+    var parts = [
+        "\(groupedNumber(statistics.count)) Treffer",
+        (statistics.sizeIsPartial ? "≥ " : "")
+            + humanSize(statistics.totalSize),
+        "\(groupedNumber(statistics.folders.count)) Ordner",
+    ]
+    if selected >= 2 { parts.append("\(groupedNumber(selected)) ausgewählt") }
+    return parts.joined(separator: " · ")
+}
+
+// MARK: - Menüpunkte der Trefferliste
+
+/// Selektoren der drei Aktionen, die auf der Trefferliste arbeiten.
+struct ResultListMenuSelectors {
+    let exportSelection: Selector
+    let removeFromList: Selector
+    let moveToTrash: Selector
+}
+
+/// Baut die drei Trefferlisten-Punkte — einmal für das Ablage-Menü, einmal
+/// für das Rechtsklick-Menü der Tabelle. Beide zeigen dasselbe Kürzel, damit
+/// es nicht Geheimwissen bleibt.
+///
+/// Der Bauplan steht hier und nicht im Controller, damit der Headless-
+/// Selbsttest die fertigen Menüpunkte prüfen kann statt eines Kommentars.
+func populateResultListMenu(_ menu: NSMenu, target: AnyObject,
+                            selectors: ResultListMenuSelectors) {
+    let export = menu.addItem(withTitle: "Auswahl exportieren…",
+                              action: selectors.exportSelection,
+                              keyEquivalent: "e")
+    export.keyEquivalentModifierMask = [.command, .shift]
+    export.target = target
+    let remove = menu.addItem(withTitle: "Aus Trefferliste entfernen",
+                              action: selectors.removeFromList,
+                              keyEquivalent: backspaceKeyEquivalent)
+    // Ohne Zusatztaste: ⌫ allein. NSMenuItem setzt sonst ⌘ voraus.
+    remove.keyEquivalentModifierMask = []
+    remove.target = target
+    let trash = menu.addItem(withTitle: "In den Papierkorb legen",
+                             action: selectors.moveToTrash,
+                             keyEquivalent: backspaceKeyEquivalent)
+    trash.keyEquivalentModifierMask = [.command]
+    trash.target = target
+}
+
+// MARK: - Treffer exportieren
+
+/// Ausgabeformate von „Treffer exportieren".
+///
+/// Die Textliste mit einem POSIX-Pfad pro Zeile ist das Format, das
+/// Kommandozeilenwerkzeuge erwarten (`xargs`, `while read`, `grep -f`). Weil
+/// ein Dateiname unter macOS jedes Zeichen außer `/` und NUL enthalten darf —
+/// auch einen Zeilenumbruch —, gibt es dieselbe Liste zusätzlich
+/// NUL-getrennt; das ist die Form, die `xargs -0` und `find -print0` sprechen
+/// und die als einzige jeden Namen unversehrt überträgt.
+enum HitExportFormat: String, CaseIterable {
+    case paths
+    case pathsNUL
+    case jsonl
+    case csv
+
+    /// Beschriftung im Format-Aufklappmenü des Sichern-Dialogs.
+    var title: String {
+        switch self {
+        case .paths:
+            return "Pfade — eine Zeile pro Treffer (.txt)"
+        case .pathsNUL:
+            return "Pfade — NUL-getrennt für xargs -0 (.txt)"
+        case .jsonl:
+            return "JSON Lines — ein Objekt pro Treffer (.jsonl)"
+        case .csv:
+            return "CSV — für Tabellenkalkulation (.csv)"
+        }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .paths, .pathsNUL: return "txt"
+        case .jsonl: return "jsonl"
+        case .csv: return "csv"
+        }
+    }
+}
+
+/// Ein CSV-Feld nach RFC 4180: Anführungszeichen nur, wo sie nötig sind, und
+/// ein enthaltenes Anführungszeichen wird verdoppelt.
+func csvField(_ value: String) -> String {
+    guard value.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n"
+                                    || $0 == "\r" }) else { return value }
+    return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+}
+
+/// Serialisiert die Trefferliste in das gewählte Exportformat.
+///
+/// Für die beiden Pfadformate steht dort derselbe Pfad, den auch „Pfad
+/// kopieren" liefert: bei einer normalen Datei ihr POSIX-Pfad, bei einem
+/// Archiv-Eintrag der Pfad in `!/`-Notation, den `favenio.py --extract`
+/// wieder versteht. Ein Archiv-Eintrag hat keinen eigenen POSIX-Pfad; ihn
+/// stillschweigend wegzulassen wäre schlimmer, als ihn kenntlich zu machen.
+func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
+    switch format {
+    case .paths:
+        return Data(hits.map { $0.path + "\n" }.joined().utf8)
+    case .pathsNUL:
+        return Data(hits.map { $0.path + "\0" }.joined().utf8)
+    case .jsonl:
+        return jsonlData(for: hits)
+    case .csv:
+        var text = "path,type,isDirectory,size,line,filesystemPath\n"
+        for hit in hits {
+            text += [csvField(hit.path),
+                     csvField(hit.kind),
+                     hit.isDirectory ? "true" : "false",
+                     hit.size.map(String.init) ?? "",
+                     hit.line.map(String.init) ?? "",
+                     csvField(hit.filesystemPath)].joined(separator: ",")
+            text += "\n"
+        }
+        // BOM voran: Ohne sie liest Excel eine UTF-8-Tabelle unter macOS als
+        // Latin-1 und zerlegt jeden Umlaut im Dateinamen.
+        return Data([0xEF, 0xBB, 0xBF]) + Data(text.utf8)
+    }
+}
+
+// MARK: - In den Papierkorb legen
+
+/// Das Kürzel-Zeichen der Rückschritttaste. NSMenuItem zeichnet dafür genau
+/// das Symbol ⌫ neben den Menüpunkt. Das Tastenereignis selbst fängt der
+/// Tastaturmonitor der GUI über den layoutunabhängigen Tastencode ab — das
+/// Kürzel im Menü zeigt es, verlässt sich aber nicht darauf.
+let backspaceKeyEquivalent = String(UnicodeScalar(UInt8(NSBackspaceCharacter)))
+
+
+/// Teilt eine Auswahl in das, was in den Papierkorb kann, und das, was nicht.
+///
+/// Ein Eintrag INNERHALB eines Archivs hat keine eigene Datei im Dateisystem;
+/// zu löschen gäbe es dort nur die ausgepackte Kopie im Temp-Ordner, und das
+/// hilft niemandem. Solche Treffer werden ausgelassen und gemeldet.
+///
+/// Mehrere Treffer können auf dieselbe Datei zeigen (ein Archiv und ein
+/// Eintrag darin, mehrere Inhaltstreffer derselben Datei). Jede Datei steht
+/// deshalb genau einmal in der Liste.
+func trashableHits(_ hits: [Hit]) -> (trashable: [Hit], skipped: [Hit]) {
+    var trashable: [Hit] = []
+    var skipped: [Hit] = []
+    var seen = Set<String>()
+    for hit in hits {
+        if hit.isMember {
+            skipped.append(hit)
+        } else if seen.insert(hit.filesystemPath).inserted {
+            trashable.append(hit)
+        }
+    }
+    return (trashable, skipped)
+}
+
+/// Text des Bestätigungsdialogs vor dem Papierkorb.
+func trashConfirmationText(trashable: [Hit], skipped: [Hit])
+    -> (message: String, info: String) {
+    let message = trashable.count == 1
+        ? "„\(trashable[0].displayName)“ in den Papierkorb legen?"
+        : "\(groupedNumber(trashable.count)) Objekte in den Papierkorb legen?"
+    var info = "Aus dem Papierkorb lassen sie sich im Finder zurückholen."
+    if !skipped.isEmpty {
+        info += skipped.count == 1
+            ? "\n\nEin Treffer liegt in einem Archiv und wird ausgelassen: "
+                + skipped[0].path
+            : "\n\n\(groupedNumber(skipped.count)) Treffer liegen in Archiven "
+                + "und werden ausgelassen."
+    }
+    return (message, info)
+}
+
+/// Legt die Dateien der Treffer in den Papierkorb — in EINEM Aufruf, damit
+/// eine große Auswahl nicht Datei für Datei abgearbeitet wird.
+/// `recycle` meldet im Wörterbuch nur die Dateien, die wirklich verschoben
+/// wurden; die Antwort kommt auf dem Main-Thread.
+/// `trashed` bildet den bisherigen Pfad auf den neuen Ort im Papierkorb ab.
+func trashHits(_ hits: [Hit],
+               completion: @escaping (_ trashed: [String: URL],
+                                      _ error: Error?) -> Void) {
+    let urls = hits.map { URL(fileURLWithPath: $0.filesystemPath) }
+    NSWorkspace.shared.recycle(urls) { moved, error in
+        var trashed: [String: URL] = [:]
+        for (original, inTrash) in moved { trashed[original.path] = inTrash }
+        DispatchQueue.main.async { completion(trashed, error) }
+    }
+}
+
+/// Das Papierkorb-Geräusch des Finders — dieselbe Klangdatei, die auch der
+/// Finder abspielt. Fehlt sie (andere macOS-Version), bleibt es still, statt
+/// ersatzweise einen fremden Systemton zu spielen.
+let finderTrashSoundPath =
+    "/System/Library/Components/CoreAudio.component/Contents/SharedSupport"
+    + "/SystemSounds/finder/move to trash.aif"
+
+private let finderTrashSound = NSSound(contentsOfFile: finderTrashSoundPath,
+                                       byReference: true)
+
+func playFinderTrashSound() {
+    guard let sound = finderTrashSound else { return }
+    // Eine noch laufende Wiedergabe erst anhalten: NSSound spielt eine
+    // Instanz sonst nicht erneut an, und bei zwei Löschungen kurz
+    // hintereinander bliebe die zweite stumm.
+    if sound.isPlaying { sound.stop() }
+    sound.play()
+}
+
 func installMainMenu(appName: String, includeClose: Bool = false) {
     let mainMenu = NSMenu()
 

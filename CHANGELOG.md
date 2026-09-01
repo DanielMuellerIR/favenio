@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.25.0 — 2026-09-01
+
+Vier neue Werkzeuge in der Haupt-App, alle auf der Trefferliste. Der Python-Kern
+ist unverändert; die Suchsemantik und der JSON-Vertrag bleiben, wie sie waren.
+
+- **In den Papierkorb legen (⌘⌫).** Die ausgewählten Dateien landen nach
+  Rückfrage im Papierkorb — mit dem Papierkorb-Geräusch des Finders und aus dem
+  Papierkorb zurückholbar. Die ganze Auswahl geht in EINEM
+  `NSWorkspace.recycle`-Aufruf weg, nicht Datei für Datei; das ist derselbe Weg,
+  den auch der Finder nimmt, und deshalb bei tausenden Dateien nicht langsamer.
+  Einträge *in* einem Archiv werden ausgelassen und im Dialog genannt: Hinter
+  ihnen liegt keine eigene Datei, sondern nur die ausgepackte Temp-Kopie.
+  Zeigen mehrere Treffer auf dieselbe Datei, wird sie einmal gelöscht.
+- **Aus Trefferliste entfernen (⌫).** Wirft Zeilen nur aus der Anzeige; die
+  Dateien bleiben unangetastet. Damit lässt sich eine große Trefferliste
+  schrittweise auf das eindampfen, was wirklich gemeint war. Entfernte Pfade
+  bleiben in `seenPaths` — ein noch laufender Suchlauf fügt sie nicht wieder
+  ein.
+- **Treffer exportieren (⌘E für alle, ⇧⌘E für die Auswahl).** Vier Formate:
+  Pfade zeilenweise, Pfade NUL-getrennt für `xargs -0` (ein Dateiname darf unter
+  macOS jedes Zeichen außer `/` und NUL enthalten, auch einen Zeilenumbruch),
+  JSON Lines im Format von `favenio.py --json` und CSV mit UTF-8-BOM für die
+  Tabellenkalkulation.
+- **Kennzahlen in der Fußzeile.** Neben der Trefferzahl jetzt auch die
+  Datenmenge und die Anzahl der Ordner, auf die sich die Treffer verteilen; ab
+  zwei markierten Zeilen zusätzlich die Größe der Auswahl. Ein `≥` vor der
+  Datenmenge heißt, dass mindestens eine Datei keine vorab bekannte Größe hat.
+  Die Zahlen werden beim Streamen fortgeschrieben statt bei jedem Nachschub neu
+  aufsummiert.
+- **QuickLook lässt sich jetzt durchblättern.** Die Leertaste öffnet die
+  Vorschau und gibt den Tastaturfokus sofort ans Hauptfenster zurück. Vorher
+  gingen Pfeil hoch/runter an das Vorschaufenster, und man musste erst das
+  Favenio-Fenster anklicken, um mit den Pfeiltasten durch die Bilder zu gehen.
+
+Alle drei Listen-Aktionen stehen sichtbar im neuen Menü **Ablage** und im
+Rechtsklick-Menü der Trefferliste, jeweils mit ihrem Kürzel daneben. Die Kürzel
+gelten nur, solange die Trefferliste den Fokus hat: Im Suchfeld löscht ⌫
+weiterhin ein Zeichen und ⌘⌫ bis zum Zeilenanfang. Der Selbsttest der App legt
+dafür eine echte Datei in den Papierkorb, prüft sie dort und räumt sie wieder
+weg.
+
 ## 0.24.3 — 2026-08-21
 
 Aus der Code-Review vom 2026-08-21:

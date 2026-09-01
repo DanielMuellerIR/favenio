@@ -220,6 +220,45 @@ From the results list:
   Show in Finder / Copy path
 - **Drag & drop**: drag hits into Finder or other apps. This also works for
   files inside archives; the extracted copy is dragged
+- **Space**: QuickLook preview. Keyboard focus stays in the result list, so
+  Up/Down walks the preview through the hits
+
+The footer counts hits, their total size and how many folders they are spread
+across; from two selected rows on, also the size of the selection. A `≥` in
+front of the total size means at least one file has no size known up front
+(see `size` in the JSON contract).
+
+### Refine, export and clean up the result list
+
+These entries live in the **Ablage** (File) menu and in the result list's
+context menu. Their shortcuts only apply while the result list has focus — in
+the search field, ⌫ still deletes a character.
+
+| Action | Shortcut | Effect |
+| --- | --- | --- |
+| Remove from result list | ⌫ | Drops rows from the **display** only. The files are left alone. This is how a large result list is narrowed down step by step to what was actually meant |
+| Move to Trash | ⌘⌫ | After confirmation, moves the files to the Trash — like Finder, with the same sound, and recoverable from the Trash. Entries *inside* an archive are skipped and named: there is no file of their own behind them |
+| Export all hits… | ⌘E | Writes the whole list to a file |
+| Export selection… | ⇧⌘E | The same for the selected rows only |
+
+The save dialog offers four formats:
+
+| Format | For |
+| --- | --- |
+| Paths, one line per hit (`.txt`) | What command line tools expect: `xargs`, `while read`, `grep -f` |
+| Paths, NUL-separated (`.txt`) | The same list for `xargs -0`. On macOS a filename may contain any character except `/` and NUL — including a newline. Only this form carries **every** name intact |
+| JSON Lines (`.jsonl`) | The same objects `favenio.py --json` writes (`path`, `type`, `isDirectory`, `filesystemPath`, `archiveMembers`, optional `size`/`line`) — for `jq` and your own scripts |
+| CSV (`.csv`) | For spreadsheets; with a UTF-8 BOM, otherwise Excel on macOS misreads non-ASCII names |
+
+Both path formats carry the same path as “Copy path”: for a plain file its
+POSIX path, for an archive entry the `!/` notation that `favenio.py --extract`
+reads back. An archive entry has no POSIX path of its own; dropping it silently
+would be worse than marking it.
+
+```bash
+# Grep all exported hits for "TODO"
+xargs -0 -a Favenio-Treffer.txt grep -l TODO
+```
 
 The GUI is only a frontend: searching always happens through `favenio.py`.
 
