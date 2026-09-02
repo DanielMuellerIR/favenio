@@ -112,8 +112,13 @@ class SwiftGuardTests(unittest.TestCase):
             with self.subTest(app=name):
                 self.assertIn("guard !previewURLs.isEmpty else {", toggle)
                 self.assertIn("showActionIssue(selection)", toggle)
-                self.assertLess(toggle.index("rebuildPreviewURLs()"),
-                                toggle.index("panel.makeKeyAndOrderFront"))
+                # Das Panel wird erst NACH dem Aufbau der Liste gezeigt —
+                # egal ob als Tastaturfenster (Quick) oder nur nach vorn
+                # geholt (Haupt-App, siehe test_quicklook_keeps_the_focus…).
+                shown = min(index for index in (
+                    toggle.find("panel.makeKeyAndOrderFront"),
+                    toggle.find("panel.orderFront(nil)")) if index >= 0)
+                self.assertLess(toggle.index("rebuildPreviewURLs()"), shown)
         issue = swift_function(COMMON, "func hitActionIssue(")
         self.assertIn("Ordner im Archiv", issue)
         self.assertIn("Kein Treffer ausgewählt", issue)
@@ -205,13 +210,22 @@ class SwiftGuardTests(unittest.TestCase):
         # Beide Wege muessen dasselbe ergeben; der Selbsttest vergleicht sie.
         self.assertIn("stepwise.folders == atOnce.folders", GUI)
 
-    def test_quicklook_hands_the_focus_back_to_the_main_window(self):
+    def test_quicklook_keeps_the_focus_in_the_main_window(self):
         """Sonst gehen Pfeil hoch/runter an das Vorschaufenster und man kann
-        die Vorschau nicht durch die Trefferliste wandern lassen."""
+        die Vorschau nicht durch die Trefferliste wandern lassen. Das Panel
+        wird deshalb NUR nach vorn geholt, nie zum Tastaturfenster gemacht;
+        den Fokus danach zurueckzuholen verlor das Rennen (2026-09-02 am
+        Fenster geprueft). Ohne Wechsel des Tastaturfensters findet QuickLook
+        seinen Controller nicht selbst — Datenquelle ausdruecklich setzen."""
         toggle = swift_function(GUI, "@objc func togglePreview(")
-        self.assertIn("self.window.makeKeyAndOrderFront(nil)", toggle)
-        self.assertIn("self.window.makeFirstResponder(self.tableView)",
-                      toggle)
+        self.assertNotIn("makeKeyAndOrderFront", toggle)
+        self.assertNotIn("DispatchQueue.main.async", toggle)
+        self.assertIn("panel.dataSource = self", toggle)
+        self.assertIn("panel.orderFront(nil)", toggle)
+        self.assertIn("window.makeFirstResponder(tableView)", toggle)
+        # ⎋ schliesst die Vorschau vom Hauptfenster aus, weil das Panel sich
+        # als Nicht-Tastaturfenster nicht mehr selbst schliessen kann.
+        self.assertIn("case 53 where modifiers.isEmpty", GUI)
 
     def test_path_export_is_offered_in_the_form_pipes_really_need(self):
         """Ein Dateiname darf unter macOS jedes Zeichen ausser / und NUL

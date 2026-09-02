@@ -595,6 +595,15 @@ final class MainController: NSObject, NSApplicationDelegate,
                 self.contextRow = -1
                 self.togglePreview()
                 return nil
+            case 53 where modifiers.isEmpty:               // ⎋
+                // Die Vorschau ist nicht mehr das Tastaturfenster und kann
+                // sich deshalb nicht mehr selbst schließen. Nur abfangen,
+                // wenn sie wirklich offen ist — sonst gehört ⎋ weiter dem
+                // Fenster (Suchfeld leeren, Blatt abbrechen).
+                guard QLPreviewPanel.sharedPreviewPanelExists(),
+                      QLPreviewPanel.shared().isVisible else { return event }
+                QLPreviewPanel.shared().orderOut(nil)
+                return nil
             case 51 where modifiers.isEmpty:               // ⌫
                 self.contextRow = -1
                 self.removeFromResults(nil)
@@ -657,18 +666,28 @@ final class MainController: NSObject, NSApplicationDelegate,
             return
         }
         showActionIssue(selection)
-        panel.makeKeyAndOrderFront(nil)
-        // Den Tastaturfokus sofort zurück ins Hauptfenster holen. Sonst gehen
-        // Pfeil hoch/runter an das Vorschaufenster, und man kann die Vorschau
-        // nicht mit den Pfeiltasten durch die Trefferliste wandern lassen —
-        // genau das, was der Finder kann. Das Vorschaufenster bleibt dabei
-        // sichtbar; tableViewSelectionDidChange lädt seinen Inhalt nach.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, QLPreviewPanel.sharedPreviewPanelExists(),
-                  QLPreviewPanel.shared().isVisible else { return }
-            self.window.makeKeyAndOrderFront(nil)
-            self.window.makeFirstResponder(self.tableView)
-        }
+        // Das Panel wird NUR nach vorn geholt, nicht zum Tastaturfenster
+        // gemacht. Sonst gehen Pfeil hoch/runter dorthin und die Vorschau
+        // lässt sich nicht durch die Trefferliste blättern — genau das, was
+        // der Finder kann.
+        //
+        // Ein erster Versuch holte den Fokus danach per DispatchQueue zurück.
+        // Das ist ein Rennen und verliert: Am 2026-09-02 am laufenden Fenster
+        // gemessen blieb das Panel Tastaturfenster, die Auswahl in der Tabelle
+        // wurde grau und die Pfeiltaste bewegte nichts. Deshalb wird der
+        // Fokus gar nicht erst abgegeben.
+        //
+        // Damit entfällt auch der Weg, über den QuickLook seinen Controller
+        // sonst sucht: `beginPreviewPanelControl` kommt über die
+        // Responder-Kette beim Wechsel des Tastaturfensters. Ohne diesen
+        // Wechsel muss die Datenquelle hier ausdrücklich gesetzt werden,
+        // sonst bliebe das Panel leer.
+        panel.dataSource = self
+        panel.delegate = self
+        panel.orderFront(nil)
+        panel.reloadData()
+        // Der Fokus gehört in die Tabelle — von dort blättern die Pfeiltasten.
+        window.makeFirstResponder(tableView)
     }
 
     @discardableResult
