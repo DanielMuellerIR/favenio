@@ -26,9 +26,12 @@ Abnahme der Quick-Look-Vorschau. Suchsemantik und JSON-Vertrag sind unverändert
 - **Kennzahlen stürzen bei absurden Archivgrößen nicht ab.** Mehrere einzeln
   darstellbare, zusammen aber zu große deklarierte Größen beendeten die App;
   die Summe sättigt jetzt und gilt als Untergrenze (`≥`).
-- **Quick Look hält den Fokus.** Das Vorschaufenster wird nur nach vorn
-  geholt und nie zum Tastaturfenster; der frühere Rückholer verlor das Rennen
-  (Auswahl grau, Pfeiltasten wirkungslos). ⎋ schließt die Vorschau.
+- **Quick Look lässt sich blättern, egal wer die Tastatur hat.** Das
+  Vorschaufenster wird nur nach vorn geholt; wird es trotzdem Tastaturfenster
+  (am Fenster gemessen: nach der Leertaste ist es das), leitet die App wie der
+  Finder Pfeil hoch/runter an die Trefferliste weiter, und ⎋ schließt. Der
+  frühere Fokus-Rückholer verlor das Rennen (Auswahl grau, Pfeiltasten
+  wirkungslos).
 - **Installation:** Ein Ctrl-C, das den `mkdir`-Prozess des Sperr- oder
   Ablageordners selbst traf, ließ die eigene Sperre als fremd erscheinen und
   liegen. `mkdir` läuft dort jetzt gegen HUP/INT/TERM abgeschirmt, die Shell

@@ -226,6 +226,13 @@ class SwiftGuardTests(unittest.TestCase):
         # ⎋ schliesst die Vorschau vom Hauptfenster aus, weil das Panel sich
         # als Nicht-Tastaturfenster nicht mehr selbst schliessen kann.
         self.assertIn("case 53 where modifiers.isEmpty", GUI)
+        # Und wird das Panel doch Tastaturfenster (am 2026-09-02 am Fenster
+        # gemessen: nach der Leertaste war es das), leitet der Delegate wie
+        # der Finder Pfeil hoch/runter an die Tabelle weiter und ⎋ schliesst.
+        handler = swift_function(
+            GUI, "func previewPanel(_ panel: QLPreviewPanel!, handle event:")
+        self.assertIn("tableView.keyDown(with: event)", handler)
+        self.assertIn("panel.orderOut(nil)", handler)
 
     def test_path_export_is_offered_in_the_form_pipes_really_need(self):
         """Ein Dateiname darf unter macOS jedes Zeichen ausser / und NUL

@@ -758,6 +758,30 @@ final class MainController: NSObject, NSApplicationDelegate,
         previewURLs[index] as NSURL
     }
 
+    /// Tasten, die beim Vorschaufenster landen.
+    ///
+    /// `orderFront` genügt nicht, um das Panel vom Tastaturfokus fernzuhalten:
+    /// Am 2026-09-02 am laufenden Fenster gemessen wurde es nach der Leertaste
+    /// trotzdem Tastaturfenster (Auswahl grau, Pfeiltasten wirkungslos), erst
+    /// ein Klick ins Hauptfenster holte den Fokus zurück. Deshalb der Weg, den
+    /// auch der Finder geht: Pfeil hoch/runter blättern die Trefferliste, ⎋
+    /// schließt — egal, welches Fenster gerade die Tastatur hat. Der Monitor
+    /// oben deckt den anderen Fall ab (Hauptfenster ist Tastaturfenster).
+    func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!)
+        -> Bool {
+        guard event.type == .keyDown else { return false }
+        switch event.keyCode {
+        case 125, 126:                                   // ↓ ↑
+            tableView.keyDown(with: event)
+            return true
+        case 53:                                         // ⎋
+            panel.orderOut(nil)
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Auswahl geändert, während die Vorschau offen ist → mitziehen.
     func tableViewSelectionDidChange(_ notification: Notification) {
         // Während applyHitsToTable die Auswahl leert und wieder setzt, ist
