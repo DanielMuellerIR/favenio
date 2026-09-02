@@ -219,8 +219,9 @@ it runs in — `--metadata Winter --min-width 1000` finds pictures tagged
 file header (JPEG, PNG, GIF, BMP, WebP, TIFF; inside archives too) without any
 dependency; only HEIC, AVIF, RAW and video fall back to `exiftool`. Files
 without readable dimensions never match a size filter. With a size filter the
-pattern may be omitted (`favenio.py --min-width 3000 ~/Pictures`), and JSON hits
-carry `width` and `height`. Cheap checks run first: name, then size, then
+pattern may be omitted (`favenio.py --min-width 3000 ~/Pictures`); the search
+then runs without a text criterion, so `--content` and `--metadata` — which say
+what the pattern runs against — need one. JSON hits carry `width` and `height`. Cheap checks run first: name, then size, then
 metadata, then content — `exiftool` only ever sees files that passed the size
 filter.
 
@@ -249,7 +250,8 @@ The **Name | Content | Metadata** switch says what the pattern runs against;
 in metadata mode a field menu narrows it to one field. The **Image size** row
 (width and height, each from/to) filters with AND and works on its own without
 a pattern. The **Location** column shows the line number of a content hit or
-`Keywords: Winter` for a metadata hit, the **Size** column the pixel dimensions.
+`Keywords: Winter` for a metadata hit, the **Dimensions** column the pixel
+size. **Size** is the byte size.
 
 From the results list:
 

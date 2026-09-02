@@ -122,8 +122,25 @@ func runSelfTest() -> Int32 {
     }
     // ---- Maßsuche: ohne Muster, nur „mindestens 1000 px breit" ----
     guard parsePixelLimit("1.000 px") == 1000, parsePixelLimit("") == nil,
-          parsePixelLimit("abc") == nil, parsePixelLimit("0") == nil else {
+          parsePixelLimit("abc") == nil, parsePixelLimit("0") == nil,
+          // Eine unbrauchbare Eingabe darf keine Grenze setzen: „-1" ergab
+          // früher 1 und „10.5" ergab 105, weil nur die Ziffern übrig
+          // blieben (Review-Fund 2026-09-02).
+          parsePixelLimit("-1") == nil, parsePixelLimit("10.5") == nil,
+          parsePixelLimit("1 000") == 1000, parsePixelLimit("12") == 12 else {
         print("SELFTEST FEHLER: Pixelfeld wird falsch gelesen")
+        return 1
+    }
+    // Ein präparierter Bildkopf darf die Flächensortierung nicht über
+    // Int.max laufen lassen — das beendete den Prozess.
+    let riesig = Hit(path: "/tmp/a/kaputt.png", kind: "file", line: nil,
+                     size: nil, filesystemPath: "/tmp/a/kaputt.png",
+                     archiveMembers: [], isDirectory: false, field: nil,
+                     value: nil, width: Int.max, height: Int.max)
+    guard riesig.pixelArea == Int.max,
+          compareHits(riesig, riesig, key: "dims", ascending: true) == false
+    else {
+        print("SELFTEST FEHLER: Flächenvergleich läuft über")
         return 1
     }
     let limits = PixelLimits(minWidth: 1000, maxHeight: 900)
@@ -133,8 +150,25 @@ func runSelfTest() -> Int32 {
                                          content: false, regex: false,
                                          caseSensitive: false, archives: true,
                                          pixelLimits: limits),
-          sizeArgs.contains("--min-width"), sizeArgs.contains("*") else {
+          sizeArgs.contains("--min-width"),
+          // Ohne Muster kein synthetisches „*": Der Kern läuft dann ganz
+          // ohne Textkriterium (Review-Fund 2026-09-02).
+          !sizeArgs.contains("*") else {
         print("SELFTEST FEHLER: Maßfilter werden nicht an den Kern gereicht")
+        return 1
+    }
+    // --content/--metadata brauchen ein Muster; ohne eines lehnt der Kern
+    // sie ab und die reine Maßsuche wäre nicht mehr startbar.
+    guard let sizeOnlyArgs = searchArguments(
+            pattern: "", root: tmp.path, content: true, regex: false,
+            caseSensitive: false, archives: true, metadata: false,
+            metadataField: "Title", pixelLimits: limits),
+          !sizeOnlyArgs.contains("--content"),
+          !sizeOnlyArgs.contains("--metadata-field"),
+          searchArguments(pattern: "", root: tmp.path, content: false,
+                          regex: false, caseSensitive: false,
+                          archives: true) == nil else {
+        print("SELFTEST FEHLER: Textmodus ohne Muster wird mitgeschickt")
         return 1
     }
     let sized = runSearchSync(arguments: sizeArgs)
@@ -1536,7 +1570,10 @@ final class MainController: NSObject, NSApplicationDelegate,
         applyHitsToTable(keepingSelection: [])
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
-        guard !pattern.isEmpty else {
+        // Wie startSearch(): ohne Muster nur weitersuchen, wenn ein
+        // Maßfilter gesetzt ist. Die Schnellsuche übergibt genau so eine
+        // reine Maßsuche, und die Fortsetzung darf sie nicht abbrechen.
+        guard !pattern.isEmpty || !pixelLimits.isEmpty else {
             refreshStatus()
             return
         }

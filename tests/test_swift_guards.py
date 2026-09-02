@@ -737,14 +737,120 @@ print("OHNE|" + (zustand.runScopeNoteText() ?? "nil"))
             self.assertNotIn('"%s"' % field, COMMON)
 
     def test_size_filters_reach_the_core_and_allow_an_empty_pattern(self):
-        """Ohne Muster nur mit Maßfilter: searchArguments schickt dann `*`,
-        und beide Apps starten die Suche nur, wenn Muster ODER Maßfilter da
-        sind — sonst liefe bei leerem Feld eine Suche ueber alles."""
+        """Ohne Muster nur mit Maßfilter: searchArguments laesst das Muster
+        ganz weg (der Kern laeuft dann ohne Textkriterium; ein kuenstliches
+        `*` war unter --regex ein ungueltiger Ausdruck), und beide Apps
+        starten die Suche nur, wenn Muster ODER Maßfilter da sind."""
         arguments = swift_function(COMMON, "func searchArguments(")
         self.assertIn("args += pixelLimits.arguments", arguments)
-        self.assertIn('!pixelLimits.isEmpty ? "*" : pattern', arguments)
+        self.assertNotIn('"*"', arguments)
+        self.assertIn("if hasPattern { args.append(pattern) }", arguments)
+        # --content/--metadata sagen, WOGEGEN das Muster laeuft, und lehnt
+        # der Kern ohne Muster ab.
+        self.assertIn("if content && hasPattern", arguments)
+        self.assertIn("if metadata && hasPattern", arguments)
         self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty", GUI)
         self.assertIn("guard !query.isEmpty || !limits.isEmpty", QUICK)
+
+    def test_a_size_only_search_can_be_handed_over_and_continued(self):
+        """Der Knopf „Alle in Favenio" und ⌘↩ brachen bei leerem Suchfeld ab,
+        obwohl die Schnellsuche mit gesetztem Maßfilter laeuft; die
+        Fortsetzung in der Haupt-App ebenso. Beide Uebergabewege haengen
+        jetzt an derselben Bedingung wie der Suchstart."""
+        handover = swift_function(QUICK, "@objc func openInMainApp() {")
+        self.assertIn("guard !query.isEmpty || !pixelLimits.isEmpty",
+                      handover)
+        # ⌘↩ geht nicht ueber den Knopf, sondern ueber den Tastaturmonitor —
+        # der muss dieselbe Bedingung tragen, sonst faellt die Taste bei
+        # leerem Suchfeld kommentarlos ins Feld durch.
+        launched = swift_function(
+            QUICK, "func applicationDidFinishLaunching(")
+        self.assertIn("|| !self.pixelLimits.isEmpty", launched)
+        continue_search = swift_function(
+            GUI, "func continueSearch(from file: URL) {")
+        self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty",
+                      continue_search)
+
+    def test_a_size_only_result_line_names_the_size_filter(self):
+        """Ohne Suchbegriff schrieb die Endmeldung „für „"" mit leeren
+        Anfuehrungszeichen. Bei einer reinen Maßsuche nennt sie stattdessen
+        den Filter, nach dem wirklich gesucht wurde."""
+        finish = swift_function(
+            QUICK, "func finish(query: String, errorText: String?) {")
+        self.assertIn("pixelLimits.summary", finish)
+        self.assertIn("query.isEmpty", finish)
+
+    def test_area_sort_cannot_overflow(self):
+        """Die Maß-Spalte sortiert nach Flaeche. Ein praeparierter Bildkopf
+        mit 0xffffffff je Kante liess `width * height` ueber Int.max laufen
+        und beendete die App; der Kern lehnt solche Kopfmaße zusaetzlich ab."""
+        compare = swift_function(COMMON, "func compareHits")
+        self.assertIn("lhs.pixelArea, rhs.pixelArea", compare)
+        self.assertNotIn("w * $0", compare)
+        self.assertIn("multipliedReportingOverflow", COMMON)
+        self.assertIn("MAX_IMAGE_EDGE", Path("favenio.py").read_text(
+            encoding="utf-8"))
+
+
+class ParsePixelLimitBehaviourTest(unittest.TestCase):
+    """parsePixelLimit() haengt von nichts ab und laesst sich deshalb wirklich
+    AUSFUEHREN: Die Funktion wird unveraendert aus common/FavenioCore.swift
+    geschnitten, uebersetzt und mit echten Eingaben aufgerufen. Frueher strich
+    sie schlicht alle Nicht-Ziffern — aus „-1" wurde 1, aus „10.5" wurde 105,
+    also eine Suchgrenze, die niemand hingeschrieben hat."""
+
+    EINGABEN = ["1000", "1.000", "1 000", "1000 px", "1.000 px", "12",
+                "-1", "10.5", "1.0", "1,5", "abc", "0", "", "  ",
+                "1.000.000", "1.0000", "10.500", "12px", "3O0"]
+
+    @classmethod
+    def setUpClass(cls):
+        if shutil.which("swiftc") is None:
+            raise unittest.SkipTest("swiftc nicht gefunden")
+        body = swift_function(COMMON, "func parsePixelLimit(")
+        calls = "\n".join(
+            'print("%d|" + (parsePixelLimit(%s).map(String.init) ?? "nil"))'
+            % (index, _swift_literal(text))
+            for index, text in enumerate(cls.EINGABEN))
+        with tempfile.TemporaryDirectory() as tmp:
+            # Top-Level-Code erlaubt Swift nur in einer Datei namens main.swift.
+            source = Path(tmp) / "main.swift"
+            source.write_text("import Foundation\n" + body + "\n"
+                              + calls + "\n", encoding="utf-8")
+            binary = Path(tmp) / "pixeltest"
+            subprocess.run(["swiftc", "-o", str(binary), str(source)],
+                           check=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+            result = subprocess.run([str(binary)], check=True,
+                                    stdout=subprocess.PIPE)
+        answers = dict(line.split("|", 1) for line
+                       in result.stdout.decode("utf-8").splitlines() if line)
+        cls.gelesen = {text: answers[str(index)]
+                       for index, text in enumerate(cls.EINGABEN)}
+
+    def test_plain_and_grouped_numbers_are_read(self):
+        for text, expected in (("1000", "1000"), ("1.000", "1000"),
+                               ("1 000", "1000"), ("1000 px", "1000"),
+                               ("1.000 px", "1000"), ("12", "12"),
+                               ("12px", "12"), ("1.000.000", "1000000")):
+            with self.subTest(eingabe=text):
+                self.assertEqual(self.gelesen[text], expected)
+
+    def test_anything_that_is_not_a_whole_number_sets_no_limit(self):
+        # "10.5" ist keine Tausendergruppe: Nach einem Trenner stehen genau
+        # drei Ziffern, sonst ist es eine Dezimalzahl und keine Grenze.
+        for text in ("-1", "10.5", "1.0", "1,5", "abc", "0", "", "  ",
+                     "1.0000", "3O0"):
+            with self.subTest(eingabe=text):
+                self.assertEqual(self.gelesen[text], "nil")
+
+    def test_a_real_thousands_group_still_counts(self):
+        self.assertEqual(self.gelesen["10.500"], "10500")
+
+
+def _swift_literal(text):
+    """Ein Swift-String-Literal aus einem Python-Text."""
+    return '"%s"' % text.replace("\\", "\\\\").replace('"', '\\"')
 
 
 if __name__ == "__main__":

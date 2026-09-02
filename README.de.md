@@ -224,8 +224,10 @@ Stichwort „Winter", die mindestens 1000 px breit sind. Breite und Höhe kommen
 aus dem Dateikopf (JPEG, PNG, GIF, BMP, WebP, TIFF; auch in Archiven) ohne
 jede Abhängigkeit; nur HEIC, AVIF, RAW und Video fallen auf `exiftool` zurück.
 Dateien ohne lesbare Maße erfüllen einen Maßfilter nie. Mit Maßfilter darf das
-Muster fehlen (`favenio.py --min-width 3000 ~/Pictures`), und JSON-Treffer
-tragen `width` und `height`. Billige Prüfungen laufen zuerst: Name, dann Maße,
+Muster fehlen (`favenio.py --min-width 3000 ~/Pictures`); die Suche läuft dann
+ganz ohne Textkriterium, weshalb `--content` und `--metadata` — die sagen,
+wogegen das Muster läuft — eines brauchen. JSON-Treffer tragen `width` und
+`height`. Billige Prüfungen laufen zuerst: Name, dann Maße,
 dann Metadaten, dann Inhalt — exiftool sieht nur Dateien, die den Maßfilter
 schon bestanden haben.
 

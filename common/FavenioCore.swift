@@ -162,6 +162,18 @@ struct Hit: Hashable {
         return "\(width)×\(height)"
     }
 
+    /// Fläche in Pixeln — die Größe, nach der die Maß-Spalte sortiert.
+    /// Gedeckelt statt fangend: Ein beschädigter oder präparierter Bildkopf
+    /// kann sehr große Kanten melden, und `width * height` beendet in Swift
+    /// bei Überlauf den ganzen Prozess. Der Kern lehnt solche Köpfe seit
+    /// 0.26.1 ab; die Sortierung darf sich darauf trotzdem nicht verlassen,
+    /// weil die Zahlen aus einem fremden Prozess kommen.
+    var pixelArea: Int? {
+        guard let width, let height else { return nil }
+        let (product, overflow) = width.multipliedReportingOverflow(by: height)
+        return overflow ? Int.max : product
+    }
+
     /// Nur der Dateiname (letzte Komponente), für die Namensspalte.
     var displayName: String {
         let lastSegment = archiveMembers.last ?? filesystemPath
@@ -414,9 +426,7 @@ func compareHits(_ lhs: Hit, _ rhs: Hit, key: String,
         primary = compareOptionalNumbers(lhs.line, rhs.line)
     case "dims":
         // Nach Fläche: Das ist die Frage, die man an Bildmaße stellt.
-        primary = compareOptionalNumbers(
-            lhs.width.flatMap { w in lhs.height.map { w * $0 } },
-            rhs.width.flatMap { w in rhs.height.map { w * $0 } })
+        primary = compareOptionalNumbers(lhs.pixelArea, rhs.pixelArea)
     case "path":
         primary = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
     default:
@@ -535,11 +545,41 @@ struct PixelLimits: Equatable {
 
 /// Ein Pixel-Textfeld lesen: leer oder unbrauchbar → nil, sonst die Zahl.
 /// „1.000" und „1000 px" gelten als 1000 — man tippt so etwas.
+///
+/// Erlaubt ist genau eine positive Ganzzahl, wahlweise in Dreierblöcken
+/// gruppiert (Punkt, Komma, Apostroph oder Leerzeichen als Trenner) und mit
+/// angehängtem „px". Alles andere verwirft die Grenze, statt sie
+/// stillschweigend umzudeuten: Der frühere Weg strich einfach alle
+/// Nicht-Ziffern und machte damit aus „-1" eine 1 und aus „10.5" eine 105 —
+/// eine Suchgrenze, die der Nutzer nirgends hingeschrieben hat. Die
+/// Dreierblöcke sind das, was Tausendertrenner von Dezimalstellen
+/// unterscheidbar macht.
 func parsePixelLimit(_ text: String) -> Int? {
-    let digits = text.filter { $0.isNumber }
-    guard !digits.isEmpty, let value = Int(digits), value > 0 else {
-        return nil
+    var rest = text.trimmingCharacters(in: .whitespaces).lowercased()
+    if rest.hasSuffix("px") {
+        rest = String(rest.dropLast(2))
+            .trimmingCharacters(in: .whitespaces)
     }
+    guard !rest.isEmpty else { return nil }
+    // Schmale und geschützte Leerzeichen kommen aus Kopiervorgängen.
+    let separators: Set<Character> = [".", ",", "'", "\u{2019}", " ",
+                                      "\u{00a0}", "\u{202f}", "\u{2009}"]
+    var groups = [""]
+    for character in rest {
+        if separators.contains(character) {
+            groups.append("")
+        } else if character.isASCII, character.isNumber {
+            groups[groups.count - 1].append(character)
+        } else {
+            return nil
+        }
+    }
+    if groups.count > 1 {
+        // "1.000" ist 1000, "10.5" ist keine Ganzzahl.
+        guard (1...3).contains(groups[0].count) else { return nil }
+        for group in groups.dropFirst() where group.count != 3 { return nil }
+    }
+    guard let value = Int(groups.joined()), value > 0 else { return nil }
     return value
 }
 
@@ -592,17 +632,19 @@ func searchArguments(pattern: String, root: String, content: Bool,
                      metadataField: String? = nil,
                      pixelLimits: PixelLimits = PixelLimits()) -> [String]? {
     guard let cli = findCLI() else { return nil }
+    // Eine Suche braucht mindestens ein Muster oder einen Maßfilter.
+    let hasPattern = !pattern.isEmpty
+    guard hasPattern || !pixelLimits.isEmpty else { return nil }
     var args = ["-u", cli, "--json"]   // -u = ungepuffert → Treffer streamen
-    if content { args.append("--content") }
-    if metadata { args.append("--metadata") }
-    if let metadataField, !metadataField.isEmpty {
+    // Nur nach Maßen suchen: Ohne Muster läuft die Suche ganz ohne
+    // Textkriterium. --content und --metadata sagen, WOGEGEN das Muster
+    // läuft, und lehnt der Kern ohne Muster deshalb ab.
+    if content && hasPattern { args.append("--content") }
+    if metadata && hasPattern { args.append("--metadata") }
+    if let metadataField, !metadataField.isEmpty, hasPattern {
         args += ["--metadata-field", metadataField]
     }
     args += pixelLimits.arguments
-    // Nur nach Maßen suchen: Ohne Muster kommt jedes Bild in Frage. Der
-    // Kern versteht ein fehlendes Muster nur ohne Startpfad; hier steht der
-    // Startpfad immer, also das „alles"-Muster ausdrücklich hinschreiben.
-    let pattern = pattern.isEmpty && !pixelLimits.isEmpty ? "*" : pattern
     if regex { args.append("--regex") }
     if caseSensitive { args.append("--case-sensitive") }
     if exact { args.append("--exact") }
@@ -611,8 +653,8 @@ func searchArguments(pattern: String, root: String, content: Bool,
     if includeHidden { args.append("--hidden") }
     if progress { args.append("--progress") }
     args.append("--")   // ab hier nur noch Positionsargumente (Muster darf
-    args.append(pattern) // sonst mit "-" beginnen und argparse verwirren)
-    args.append(root)
+    if hasPattern { args.append(pattern) }  // sonst mit "-" beginnen und
+    args.append(root)                       // argparse verwirren)
     return args
 }
 

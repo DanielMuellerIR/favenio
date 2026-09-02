@@ -170,8 +170,11 @@ final class QuickController: NSObject, NSApplicationDelegate,
             }
             if event.keyCode == 36,                        // 36 = Return
                event.modifierFlags.contains(.command),
+               // Wie startSearch() und openInMainApp(): eine reine Maßsuche
+               // ist eine vollständige Frage. Auf das Suchfeld allein zu
+               // prüfen ließ ⌘↩ dort kommentarlos ins Feld durchfallen.
                !self.field.stringValue.trimmingCharacters(
-                    in: .whitespaces).isEmpty {
+                    in: .whitespaces).isEmpty || !self.pixelLimits.isEmpty {
                 // Auch vor dem ersten Treffer sinnvoll: Die Haupt-App setzt
                 // die Suche mit `continue=1` selbst fort. So fällt ⌘↩ während
                 // des Debounce-Fensters nicht kommentarlos ins Suchfeld durch.
@@ -949,9 +952,15 @@ final class QuickController: NSObject, NSApplicationDelegate,
             showInfo(errorText)
             return
         }
+        // Bei einer reinen Maßsuche gibt es keinen Suchbegriff; „für „"" mit
+        // leeren Anführungszeichen sagt dann nichts. Stattdessen nennt der
+        // Satz den Maßfilter, nach dem tatsächlich gesucht wurde.
+        let criterion = query.isEmpty
+            ? (pixelLimits.summary.isEmpty ? "" : " (\(pixelLimits.summary))")
+            : " für „\(query)“"
         let summary = hits.isEmpty
-            ? "Keine Treffer für „\(query)“ in \(abbreviateHome(searchRoot))."
-            : "\(hits.count) Treffer für „\(query)“."
+            ? "Keine Treffer\(criterion) in \(abbreviateHome(searchRoot))."
+            : "\(hits.count) Treffer\(criterion)."
         // Gerade wenn NICHTS gefunden wurde, muss ein unklarer Suchbereich
         // dabeistehen — sonst sucht man den Fehler beim Suchbegriff.
         if let problem = scopeProblem ?? runScopeNoteText() {
@@ -968,7 +977,10 @@ final class QuickController: NSObject, NSApplicationDelegate,
     /// vollständig fortsetzt (dort kann man sortieren und alle sehen).
     @objc func openInMainApp() {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return }
+        // Dieselbe Bedingung wie startSearch(): eine reine Maßsuche ist eine
+        // vollständige Frage und muss sich übergeben lassen. Sonst sind der
+        // aktive Knopf „Alle in Favenio" und ⌘↩ dort wirkungslos.
+        guard !query.isEmpty || !pixelLimits.isEmpty else { return }
         let root: String
         if !hits.isEmpty || searching {
             // Vorhandene Treffer gehören genau zu diesem laufenden/letzten

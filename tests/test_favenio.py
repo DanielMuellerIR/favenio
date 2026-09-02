@@ -24,16 +24,27 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import favenio  # noqa: E402
 
 
-def run(argv):
+def run(argv, cwd=None):
     """Ruft favenio.main() auf und fängt stdout/stderr + Exit-Code ein.
-    Liefert (exit_code, stdout_zeilen, stderr_text)."""
+    Liefert (exit_code, stdout_zeilen, stderr_text).
+
+    `cwd` führt den Lauf in einem anderen Arbeitsverzeichnis aus — nötig für
+    relative Startpfade, deren Schreibweise Teil des Testfalls ist."""
     out, err = io.StringIO(), io.StringIO()
-    with redirect_stdout(out), redirect_stderr(err):
-        try:
-            code = favenio.main(argv)
-        except SystemExit as exit_info:
-            # argparse (parser.error) beendet per SystemExit — Code einfangen.
-            code = exit_info.code
+    previous = os.getcwd() if cwd is not None else None
+    if cwd is not None:
+        os.chdir(cwd)
+    try:
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                code = favenio.main(argv)
+            except SystemExit as exit_info:
+                # argparse (parser.error) beendet per SystemExit — Code
+                # einfangen.
+                code = exit_info.code
+    finally:
+        if previous is not None:
+            os.chdir(previous)
     lines = [line for line in out.getvalue().splitlines() if line]
     return code, lines, err.getvalue()
 
@@ -1283,6 +1294,22 @@ class BsdtarFormatsTest(TempTreeTest):
         with open(lines[0], encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "x\n")
 
+    def test_extract_finds_a_member_with_control_character_and_bang(self):
+        # Suche und --extract müssen die Auflistung von `bsdtar -tf` gleich
+        # lesen. Der Eintragsname trägt hier beides: ein maskiertes
+        # Steuerzeichen UND ein "!/", das die Trefferschreibweise mehrdeutig
+        # macht und pick_member() zur Eintragsliste zwingt.
+        archive = self.make_archive(
+            "sonder.7z", "7zip", {"odd!/tab\tname.txt": self.CONTENT})
+        code, lines, err = run(["--json", "--content", "NADEL", archive])
+        self.assertEqual(code, 0, err)
+        hit = json.loads(lines[0])["path"]
+        self.assertTrue(hit.endswith("sonder.7z!/odd!/tab\tname.txt"), hit)
+        code, lines, err = run(["--extract", hit])
+        self.assertEqual(code, 0, err)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+
     def test_control_characters_in_member_names_stay_real(self):
         # `bsdtar -tf` maskiert Steuerzeichen und Backslashes im Namen (aus
         # einem Tabulator werden die zwei Zeichen \t). Wird die Auflistung
@@ -1656,6 +1683,20 @@ class ImageDimensionsTest(unittest.TestCase):
             favenio.image_dimensions(ForwardOnly(tiff_bytes(640, 480))),
             (640, 480))
 
+    def test_implausible_header_sizes_are_no_dimensions(self):
+        # Ein beschädigter oder präparierter Kopf kann jede 32-Bit-Zahl
+        # nennen. 0xffffffff je Kante ließ die Flächensortierung der App
+        # über Int.max laufen und beendete den Prozess.
+        import struct
+        def png_head(width, height):
+            return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR"
+                    + struct.pack(">II", width, height)
+                    + b"\x08\x02\x00\x00\x00")
+        self.assertIsNone(self.dims(png_head(0xFFFFFFFF, 0xFFFFFFFF)))
+        self.assertIsNone(self.dims(png_head(0, 100)))
+        self.assertEqual(self.dims(png_head(2 ** 31 - 1, 1)),
+                         (2 ** 31 - 1, 1))
+
 
 class DimensionFilterTest(TempTreeTest):
     """--min-width/--max-width/--min-height/--max-height: Pixelfilter, die
@@ -1733,6 +1774,57 @@ class DimensionFilterTest(TempTreeTest):
         self.assertEqual(code, 2)
         self.assertIn("größer", err)
 
+    def test_size_filter_alone_has_no_text_criterion(self):
+        # Ohne Muster gibt es kein Textkriterium — früher sprang ein
+        # künstliches "*" ein, das unter --regex ein ungültiger Ausdruck war.
+        search = favenio.Search(None, False, 1, True, min_width=1)
+        self.assertEqual([type(item).__name__ for item in search.criteria],
+                         ["DimensionCriterion"])
+        self.assertIsNone(search.text_mode)
+
+    def test_size_filter_alone_works_with_regex_flag(self):
+        code, lines, err = run(["--regex", "--min-width", "4000", self.root])
+        self.assertEqual(code, 0, err)
+        self.assertTrue(lines[0].endswith("bilder.zip!/drin/riesig.png"))
+
+    def test_content_and_metadata_need_a_pattern(self):
+        # Beide sagen, WOGEGEN das Muster läuft. Ohne Muster ist das eine
+        # widersprüchliche Angabe und muss auffallen — mit dem alten "*"
+        # meldete --metadata still nur Dateien, die überhaupt Tags tragen.
+        for flag in ("--content", "--metadata"):
+            code, lines, err = run([flag, "--min-width", "1", self.root])
+            self.assertEqual(code, 2, err)
+            self.assertIn("PATTERN", err)
+            self.assertEqual(lines, [])
+
+    def test_dimension_reader_obeys_the_archive_budget(self):
+        # Der Bildkopf eines Archiv-Eintrags läuft über denselben
+        # budgetierten Chunker wie sein Inhalt. Sonst liest eine Maßsuche
+        # beliebig viele Köpfe an den Entpackgrenzen vorbei.
+        for limit in ("--max-archive-total-bytes",
+                      "--max-archive-member-bytes"):
+            code, lines, err = run(["--min-width", "4000", limit, "1",
+                                    self.root])
+            self.assertEqual(code, 1, err)
+            self.assertEqual(lines, [])
+            self.assertIn("bilder.zip!/drin/riesig.png", err)
+
+    def test_dimension_head_is_not_charged_to_the_budget_twice(self):
+        # Maß- und Inhaltssuche lesen denselben Eintrag nacheinander. Der
+        # Anfang, den der Maß-Leser schon gezählt hat, darf das Gesamtbudget
+        # nicht ein zweites Mal belasten.
+        with zipfile.ZipFile(os.path.join(self.root, "bilder.zip")) as zf:
+            member_size = zf.getinfo("drin/riesig.png").file_size
+        # Genau EIN Durchlauf über den Eintrag passt ins Budget. Zählte der
+        # Bildkopf ein zweites Mal, wäre die Grenze schon überschritten.
+        code, lines, err = run(["--json", "--content", "IHDR",
+                                "--min-width", "4000",
+                                "--max-archive-total-bytes", str(member_size),
+                                self.root])
+        self.assertEqual(code, 0, err)
+        self.assertEqual([json.loads(line)["path"].split("!/")[-1]
+                          for line in lines], ["drin/riesig.png"])
+
     def test_cheap_criteria_run_first_and_short_circuit(self):
         # Die Reihenfolge ist Kosten: Name → Maße → Metadaten → Inhalt. Und
         # sie schließt kurz: Scheitert der Name, werden keine Maße gelesen.
@@ -1805,6 +1897,34 @@ class MetadataSearchTest(TempTreeTest):
     def test_content_and_metadata_exclude_each_other(self):
         code, _, err = run(["--content", "--metadata", "x", self.root])
         self.assertEqual(code, 2)
+
+    @unittest.skipUnless(favenio.find_exiftool(), "exiftool nicht installiert")
+    def test_metadata_reads_a_path_with_a_line_break(self):
+        # macOS erlaubt in einem Dateinamen jedes Zeichen außer "/" und NUL.
+        # Die Argumentdatei des laufenden exiftool-Prozesses ist zeilenweise;
+        # solche Pfade gingen deshalb still verloren statt über einen eigenen
+        # Prozess gelesen zu werden.
+        umbruch = self.write_bytes("zeilen\numbruch.png", png_bytes(60, 40))
+        schlicht = self.write_bytes("schlicht.png", png_bytes(60, 40))
+        for path in (umbruch, schlicht):
+            self.tag(path, **{"XMP-dc:Subject": "Winter"})
+        code, lines, err = run(["--json", "--metadata", "Winter", self.root])
+        self.assertEqual(code, 0, err)
+        found = {json.loads(line)["path"] for line in lines}
+        self.assertEqual(found, {umbruch, schlicht})
+
+    @unittest.skipUnless(favenio.find_exiftool(), "exiftool nicht installiert")
+    def test_metadata_reads_a_relative_start_path_beginning_with_dash(self):
+        # Ein Pfad, der mit "-" beginnt, wäre für exiftool eine Option.
+        os.makedirs(os.path.join(self.root, "-bilder"))
+        path = self.write_bytes(os.path.join("-bilder", "winter.png"),
+                                png_bytes(60, 40))
+        self.tag(path, **{"XMP-dc:Subject": "Winter"})
+        code, lines, err = run(["--json", "--metadata", "Winter", "--",
+                                "-bilder"], cwd=self.root)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([json.loads(line)["path"] for line in lines],
+                         ["-bilder/winter.png"])
 
     @unittest.skipUnless(favenio.find_exiftool(), "exiftool nicht installiert")
     def test_metadata_hits_name_field_and_value(self):

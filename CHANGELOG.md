@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.26.1 — 2026-09-02
+
+Korrekturen aus dem Code-Review vom 2026-09-02 (neun Funde) zur Metadaten- und
+Bildmaßsuche aus 0.26.0. Der JSON-Vertrag bleibt unverändert; eine
+CLI-Kombination verhält sich neu (siehe letzter Punkt).
+
+- **Maß-Leser hält die Entpackgrenzen ein.** Der Bildkopf eines
+  Archiv-Eintrags lief am Budget vorbei: Eine Maßsuche fand ihn auch bei
+  `--max-archive-total-bytes 1`. Er läuft jetzt über denselben budgetierten
+  Chunker wie die Inhaltssuche. Der schon gezählte Anfang belastet einen
+  folgenden Inhaltsdurchlauf nicht ein zweites Mal.
+- **Suche nur nach Maßen ohne künstliches Muster.** Fehlte das Muster, sprang
+  ein `*` ein. Unter `--regex` war das ein ungültiger Ausdruck und beendete
+  den Lauf mit Exit 2; unter `--metadata` filterte es still auf Dateien, die
+  überhaupt Metadaten tragen, sodass ein ungetaggtes Bild trotz passender
+  Maße fehlte. Ohne Muster läuft die Suche jetzt ganz ohne Textkriterium.
+- **Übergabe einer reinen Maßsuche an die Haupt-App.** „Alle in Favenio" und
+  ⌘↩ in der Schnellsuche brachen bei leerem Suchfeld ab, obwohl die Suche mit
+  gesetztem Maßfilter läuft; die Haupt-App beendete die Fortsetzung ebenso.
+  Alle drei Wege — Knopf, Tastaturmonitor und `continueSearch` — binden die
+  Übergabe jetzt an dieselbe Bedingung wie den Suchstart. Gemessen an 33
+  passenden Bildern: vorher blieb es bei den 20 übergebenen Treffern, jetzt
+  sucht die Haupt-App bis 33 weiter.
+- **Endmeldung einer reinen Maßsuche.** Ohne Suchbegriff schrieb die
+  Schnellsuche „20 Treffer für „"." mit leeren Anführungszeichen; jetzt nennt
+  der Satz den Maßfilter („1 Treffer (H ≥ 800).").
+- **exiftool-Pfade vollständig übergeben.** Ein Dateiname mit Zeilenumbruch
+  fiel ohne Meldung aus der Trefferliste (die Argumentdatei ist zeilenweise);
+  er geht jetzt über einen eigenen exiftool-Aufruf. Ein relativer Startpfad
+  wie `-bilder` galt exiftool als Option und lieferte falsche Ergebnisse.
+- **`--extract` liest die bsdtar-Auflistung wie die Suche.** Beide gehen jetzt
+  durch dieselbe Funktion. Ein 7z-Eintrag mit maskiertem Steuerzeichen und
+  `!/` im Namen wurde gefunden, ließ sich aber nicht mehr materialisieren.
+- **Flächensortierung ohne Überlauf.** Ein präparierter Bildkopf mit
+  0xffffffff je Kante beendete die Haupt-App beim Sortieren der Maß-Spalte.
+  Der Kern lehnt unplausible Kopfmaße jetzt ab, und die Sortierung deckelt die
+  Multiplikation zusätzlich.
+- **Pixelfelder mit klarer Syntax.** Die Oberflächen strichen aus der Eingabe
+  alle Nicht-Ziffern: Aus „-1" wurde 1, aus „10.5" wurde 105. Erlaubt ist
+  jetzt eine positive Ganzzahl, wahlweise in Dreierblöcken gruppiert und mit
+  „px"; alles andere setzt keine Grenze.
+- **`--content` und `--metadata` brauchen ein Muster.** Beide sagen, wogegen
+  das Muster läuft. Ohne Muster sind sie eine widersprüchliche Angabe und
+  enden mit Exit 2 statt still falsch zu antworten. Die reine Maßsuche
+  (`favenio.py --min-width 3000 ~/Pictures`) bleibt unverändert.
+
 ## 0.26.0 — 2026-09-02
 
 Metadaten- und Bildmaßsuche — im Kern, in der Haupt-App und in der

@@ -45,7 +45,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.26.0"
+__version__ = "0.26.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-02"
@@ -405,6 +405,31 @@ EXPECTED_ARCHIVE_ERRORS = (
 )
 
 
+def bsdtar_listing_names(raw_stdout):
+    """Die Eintragsnamen aus der Ausgabe von `bsdtar -tf`.
+
+    Suche und `--extract` müssen hier dasselbe sehen: Findet die Suche einen
+    Eintrag, dessen Name die Maskierung oder ein "./"-Präfix trägt, muss
+    `pick_member()` beim Materialisieren genau diesen Namen wiedererkennen.
+    Vorher las nur der Suchpfad die Maskierung zurück, und ein 7z-Eintrag mit
+    Tabulator und "!/" im Namen ließ sich nicht mehr auspacken.
+
+    Erst die Maskierung zurücknehmen (bsdtar schreibt z. B. für einen
+    Tabulator die zwei Zeichen \\t), dann dekodieren — echte Zeilenumbrüche im
+    Namen kommen ebenfalls maskiert an, die Zeilenaufteilung bleibt dadurch
+    heil. ISO listet ein "."-Wurzelelement; "./"-Präfixe würden als
+    versteckte Komponente gelten. Beides wird normalisiert."""
+    names = []
+    for raw_line in raw_stdout.split(b"\n"):
+        raw = bsdtar_unescape(raw_line).decode("utf-8", "replace")
+        if raw.startswith("./"):
+            raw = raw[2:]
+        if raw in ("", ".", "./"):
+            continue
+        names.append(raw)
+    return names
+
+
 def classify_archive(name):
     """Liefert "zip", "tar", "bsdtar", eine Kompressionsendung (".gz",
     ".bz2", ".xz", ".zst") oder None — je nachdem, ob der Dateiname wie
@@ -657,6 +682,63 @@ def find_exiftool():
 # wenigen KB, bei eingebetteten Vorschaubildern nach ein paar hundert KB.
 DIMENSION_SCAN_LIMIT = 4 * 1024 * 1024
 
+# Längste Kante, die noch als Bildmaß durchgeht. PNG erlaubt laut
+# Spezifikation höchstens 2^31-1 Pixel je Kante, und kein reales Format geht
+# darüber hinaus; größere Werte stammen aus einem beschädigten oder absichtlich
+# präparierten Kopf. Ohne diese Schranke liefert ein 30-Byte-PNG-Kopf mit
+# 0xffffffff je Kante einen Treffer, dessen Fläche in der App beim Sortieren
+# über Int.max läuft und den Prozess beendet.
+MAX_IMAGE_EDGE = 2 ** 31 - 1
+
+
+def plausible_dimensions(width, height):
+    """(Breite, Höhe) — oder None, wenn die Werte kein Bild beschreiben
+    können. Gilt für den eigenen Kopf-Leser wie für den exiftool-Rückfall."""
+    if not isinstance(width, int) or not isinstance(height, int):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    if width > MAX_IMAGE_EDGE or height > MAX_IMAGE_EDGE:
+        return None
+    return width, height
+
+
+class _BudgetedStream:
+    """Macht aus den Byte-Häppchen eines Chunkers ein lesbares Objekt.
+
+    Der Maß-Leser will `read(n)`; der Chunker liefert Häppchen und zählt sie
+    dabei gegen die Entpackgrenzen des Suchlaufs. Nur über diesen Umweg gilt
+    für den Bildkopf eines Archiv-Eintrags dieselbe Einzel- und Gesamtgrenze
+    wie für die Inhaltssuche — sonst käme eine Maßsuche an den Grenzen
+    vorbei. `fetched` sagt hinterher, wie viele Bytes dem Budget belastet
+    wurden; der Inhaltsdurchlauf zählt genau diesen Anfang nicht noch einmal.
+    """
+
+    def __init__(self, chunks):
+        self.chunks = iter(chunks)
+        self.pending = b""      # vom letzten Häppchen übrig geblieben
+        self.fetched = 0        # so viele Bytes kamen aus dem Chunker
+
+    def read(self, count):
+        parts = []
+        have = 0
+        if self.pending:
+            take = self.pending[:count]
+            self.pending = self.pending[len(take):]
+            parts.append(take)
+            have = len(take)
+        while have < count:
+            try:
+                chunk = next(self.chunks)
+            except StopIteration:
+                break
+            self.fetched += len(chunk)
+            take = min(count - have, len(chunk))
+            parts.append(chunk[:take])
+            self.pending = chunk[take:]
+            have += take
+        return b"".join(parts)
+
 
 class _ForwardReader:
     """Liest einen Datenstrom nur vorwärts, mit Zurücklegen des Kopfes.
@@ -716,9 +798,12 @@ def image_dimensions(handle):
     Rückfall über exiftool. Gemessen am 2026-09-01: 0,198 ms je Datei über
     239 reale Bilder, 239 davon korrekt."""
     try:
-        return _image_dimensions(_ForwardReader(handle))
+        dims = _image_dimensions(_ForwardReader(handle))
     except (EOFError, ValueError, struct.error):
         return None
+    if dims is None:
+        return None
+    return plausible_dimensions(*dims)
 
 
 def _image_dimensions(reader):
@@ -817,6 +902,7 @@ class ExifToolStream:
     zurück, abgeschlossen durch die Zeile `{ready}`."""
 
     def __init__(self, executable, fields):
+        self.executable = executable
         self.fields = list(fields)
         self.broken = False
         self.process = subprocess.Popen(
@@ -824,19 +910,41 @@ class ExifToolStream:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL)
 
-    def read(self, path):
-        """Die angeforderten Felder EINER Datei als dict — oder None."""
-        if self.broken or "\n" in path or "\r" in path:
-            # Die Argumentdatei ist zeilenweise; ein Umbruch im Pfad ließe
-            # sich nicht übertragen.
-            return None
-        # `-use MWG` legt EXIF, IPTC und XMP übereinander (Keywords ist dann
-        # ein Feld statt drei); `-m` übergeht kleine Formatfehler, wie es
-        # auch ein Bildbetrachter täte.
+    def arguments(self, path):
+        """Die exiftool-Argumente für EINE Datei.
+
+        `-use MWG` legt EXIF, IPTC und XMP übereinander (Keywords ist dann
+        ein Feld statt drei); `-m` übergeht kleine Formatfehler, wie es auch
+        ein Bildbetrachter täte."""
         arguments = ["-json", "-use", "MWG", "-m", "-charset",
                      "filename=utf8"]
         arguments.extend("-" + field for field in self.fields)
-        arguments.extend([path, "-execute"])
+        # Ein Pfad, der mit "-" beginnt, wäre für exiftool eine Option —
+        # `favenio --metadata Winter -- -bilder` liest sonst statt der
+        # Dateien eine erfundene Option. "./" davor macht ihn eindeutig zum
+        # Dateinamen und zeigt auf dieselbe Datei.
+        arguments.append("./" + path if path.startswith("-") else path)
+        return arguments
+
+    @staticmethod
+    def parse(raw):
+        """Das JSON-Array eines exiftool-Laufs als dict — oder None."""
+        text = raw.decode("utf-8", "replace").strip()
+        if not text:
+            return None
+        try:
+            records = json.loads(text)
+        except ValueError:
+            return None
+        return records[0] if records else None
+
+    def read(self, path):
+        """Die angeforderten Felder EINER Datei als dict — oder None."""
+        if self.broken:
+            return None
+        if "\n" in path or "\r" in path:
+            return self.read_once(path)
+        arguments = self.arguments(path) + ["-execute"]
         try:
             self.process.stdin.write(
                 ("\n".join(arguments) + "\n").encode("utf-8"))
@@ -852,14 +960,25 @@ class ExifToolStream:
         except (OSError, ValueError):
             self.broken = True
             return None
-        text = b"".join(buffer).decode("utf-8", "replace").strip()
-        if not text:
-            return None
+        return self.parse(b"".join(buffer))
+
+    def read_once(self, path):
+        """Rückfall für Pfade, die der laufende Prozess nicht annehmen kann.
+
+        Die Argumentdatei von `-stay_open` ist zeilenweise; ein Zeilenumbruch
+        im Dateinamen ließe sich darüber nicht übertragen. macOS erlaubt in
+        einem Dateinamen aber jedes Zeichen außer "/" und NUL. Für diese
+        seltenen Pfade deshalb EIN eigener Prozess (44 ms statt 0,75 ms) —
+        besser als der frühere stille Ausfall, bei dem eine getaggte Datei
+        ohne jede Meldung aus der Trefferliste fiel."""
         try:
-            records = json.loads(text)
-        except ValueError:
+            completed = subprocess.run(
+                [self.executable] + self.arguments(path),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                check=False)
+        except OSError:
             return None
-        return records[0] if records else None
+        return self.parse(completed.stdout)
 
     def close(self):
         """Beendet den Prozess sauber — auch nach einem Abbruch der Suche."""
@@ -905,6 +1024,9 @@ class FileProbe:
         self.size = size
         self.in_archive = in_archive
         self.metadata_hit = None              # (Feld, Wert) bei Treffer
+        self.dimension_bytes = 0              # so viele Bytes hat der
+                                              # Maß-Leser schon gegen das
+                                              # Archivbudget gezählt
         self._dimensions = MISSING
         self._metadata = MISSING
         self._content_line = MISSING
@@ -918,14 +1040,20 @@ class FileProbe:
         für Formate, die er nicht kennt — exiftool."""
         if self._dimensions is MISSING:
             with self.open_stream() as handle:
-                dims = image_dimensions(handle)
+                # Über den Chunker statt direkt über den Strom: Der Bildkopf
+                # eines Archiv-Eintrags muss dieselben Entpackgrenzen
+                # einhalten wie sein Inhalt. Sonst liest eine Maßsuche
+                # beliebig viele Köpfe an --max-archive-total-bytes vorbei.
+                stream = _BudgetedStream(self.chunker(handle))
+                try:
+                    dims = image_dimensions(stream)
+                finally:
+                    self.dimension_bytes = stream.fetched
             if dims is None and not self.in_archive \
                     and self.extension in EXIFTOOL_DIMENSION_EXTENSIONS:
                 record = self.metadata() or {}
-                width = record.get("ImageWidth")
-                height = record.get("ImageHeight")
-                if isinstance(width, int) and isinstance(height, int):
-                    dims = (width, height)
+                dims = plausible_dimensions(record.get("ImageWidth"),
+                                            record.get("ImageHeight"))
             self._dimensions = dims
         return self._dimensions
 
@@ -1040,8 +1168,12 @@ class Search:
         self.content_probe = content_probe    # ContentProbe oder None:
                                               # billiger Vortest vor der
                                               # zeilenweisen Inhaltssuche
-        # Wogegen das Muster läuft: "name", "content" oder "metadata".
-        if content_mode:
+        # Wogegen das Muster läuft: "name", "content" oder "metadata" —
+        # oder None, wenn es gar kein Muster gibt. Dann filtern allein die
+        # Maßgrenzen, und die Suche hat kein Textkriterium.
+        if matcher is None:
+            self.text_mode = None
+        elif content_mode:
             self.text_mode = "content"
         elif metadata_mode:
             self.text_mode = "metadata"
@@ -1055,7 +1187,7 @@ class Search:
             criteria.append(NameCriterion(matcher))
         elif self.text_mode == "content":
             criteria.append(ContentCriterion())
-        else:
+        elif self.text_mode == "metadata":
             criteria.append(MetadataCriterion(matcher, self.metadata_fields))
         self.wants_dimensions = any(
             limit is not None
@@ -1259,9 +1391,14 @@ class Search:
         0,12 s Entpacken gegenüber 0,68 s Gesamtsuche). Für den zweiten
         Durchlauf wird neu geöffnet — ein entpackender Datenstrom lässt sich
         nicht zurückspulen, und eine Datei liegt jetzt im Cache."""
+        # Der Maß-Leser läuft wegen der Kostenreihenfolge vor der
+        # Inhaltssuche und hat den Anfang des Eintrags bereits gegen das
+        # Gesamtbudget gezählt. Genau diese Bytes sind hier frei.
+        head_bytes = probe.dimension_bytes
         if self.content_probe is None:
             with probe.open_stream() as handle:
-                return self.match_content(probe.chunker(handle))
+                return self.match_content(
+                    probe.chunker(handle, free_bytes=head_bytes))
         probed_bytes = 0
 
         def tally(chunks):
@@ -1274,14 +1411,16 @@ class Search:
                 yield chunk
 
         with probe.open_stream() as handle:
-            if not self.content_probe.hits(tally(probe.chunker(handle))):
+            if not self.content_probe.hits(
+                    tally(probe.chunker(handle, free_bytes=head_bytes))):
                 return None
         with probe.open_stream() as handle:
             # free_bytes: genau den Anfang, den der Vortest schon gelesen und
             # dem Gesamtbudget belastet hat, nicht zweimal zählen. Liest der
             # genaue Lauf weiter, zählt der Rest wieder mit.
             return self.match_content(
-                probe.chunker(handle, free_bytes=probed_bytes))
+                probe.chunker(handle,
+                              free_bytes=max(probed_bytes, head_bytes)))
 
     # ---------- Inhalts-Matching ----------
 
@@ -1640,20 +1779,7 @@ class Search:
                 raise ArchiveReadError(
                     listing.stderr.decode("utf-8", "replace").strip()
                     or "bsdtar konnte das Archiv nicht lesen")
-            names = []
-            for raw_line in listing.stdout.split(b"\n"):
-                # Erst die Maskierung zurücknehmen (bsdtar schreibt z. B. für
-                # einen Tabulator die zwei Zeichen \t), dann dekodieren. Echte
-                # Zeilenumbrüche im Namen kommen ebenfalls maskiert an, die
-                # Zeilenaufteilung bleibt dadurch heil.
-                raw = bsdtar_unescape(raw_line).decode("utf-8", "replace")
-                # ISO listet ein "."-Wurzelelement; "./"-Präfixe würden
-                # als versteckte Komponente gelten — beides normalisieren.
-                if raw.startswith("./"):
-                    raw = raw[2:]
-                if raw in ("", ".", "./"):
-                    continue
-                names.append(raw)
+            names = bsdtar_listing_names(listing.stdout)
             dir_names = set()
             for name in names:
                 clean = name.rstrip("/")
@@ -1817,8 +1943,11 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                         listing = subprocess.run(
                             [bsdtar, "-tf", path], stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, env=env, check=False)
-                        names = listing.stdout.decode(
-                            "utf-8", "replace").splitlines()
+                        # rstrip("/") wie in walk_bsdtar: Ein Ordnereintrag
+                        # steht im Treffer ohne Schrägstrich, und genau
+                        # diesen Namen sucht pick_member() hier wieder.
+                        names = [name.rstrip("/") for name
+                                 in bsdtar_listing_names(listing.stdout)]
                     member, used = pick_member(remaining, names)
                     proc = subprocess.Popen(
                         [bsdtar, "-xOf", path, "--", bsdtar_escape(member)],
@@ -2048,17 +2177,21 @@ def main(argv=None):
         # und den Startpfad beide hin.
         args.paths = [args.pattern]
         args.pattern = None
-    if not args.pattern:
-        if wants_dimensions:
-            # Nur nach Maßen suchen: jedes Bild kommt in Frage.
-            args.pattern = "*"
-        else:
-            # parser.error() gibt die Usage aus und beendet mit Exit-Code 2.
-            parser.error("PATTERN fehlt (oder --extract verwenden)")
+    if not args.pattern and not wants_dimensions:
+        # parser.error() gibt die Usage aus und beendet mit Exit-Code 2.
+        parser.error("PATTERN fehlt (oder --extract verwenden)")
 
     metadata_mode = args.metadata or bool(args.metadata_field)
     if args.content and metadata_mode:
         parser.error("--content und --metadata schließen sich aus")
+    if not args.pattern and (args.content or metadata_mode):
+        # Ohne Muster läuft die Suche ganz ohne Textkriterium (nur die
+        # Maßgrenzen zählen). --content und --metadata sagen, WOGEGEN das
+        # Muster läuft, und sind dann eine widersprüchliche Angabe. Früher
+        # sprang hier ein künstliches "*" ein: Mit --regex war das ein
+        # ungültiger Ausdruck (Exit 2), mit --metadata ein stiller Filter
+        # auf Dateien, die überhaupt Metadaten tragen.
+        parser.error("--content und --metadata brauchen ein PATTERN")
     exiftool_path = find_exiftool()
     if metadata_mode and exiftool_path is None:
         print("favenio: fehler: --metadata braucht exiftool, das nicht "
@@ -2071,8 +2204,11 @@ def main(argv=None):
     paths = args.paths if args.paths else ["."]
 
     try:
-        matcher = build_matcher(args.pattern, args.regex, args.case_sensitive,
-                                exact=args.exact)
+        # Ohne Muster gibt es kein Textkriterium; Search kommt mit None aus.
+        matcher = None
+        if args.pattern:
+            matcher = build_matcher(args.pattern, args.regex,
+                                    args.case_sensitive, exact=args.exact)
     except re.error as err:
         print("favenio: fehler: ungültiger regulärer Ausdruck: %s" % err,
               file=sys.stderr)

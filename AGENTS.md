@@ -90,10 +90,13 @@ Verbindliches CLI-Verhalten:
   vor 0.24.0 wurde ein `.7z`-Eintrag ohne `bsdtar` durchsucht, ein
   `.zip`-Eintrag an der Tiefengrenze dagegen übersprungen.
 - Die Suche ist eine **Kriterienliste**, die alle zutreffen müssen
-  (`Search.criteria`, ausgewertet in `evaluate()`): genau ein Textkriterium
-  — `NameCriterion`, `ContentCriterion` oder `MetadataCriterion`, je nach
-  `--content`/`--metadata` — plus `DimensionCriterion`, sobald einer der vier
-  Maßfilter gesetzt ist. Sortiert nach `cost` (Name 0, Maße 1, Metadaten 2,
+  (`Search.criteria`, ausgewertet in `evaluate()`): höchstens ein
+  Textkriterium — `NameCriterion`, `ContentCriterion` oder
+  `MetadataCriterion`, je nach `--content`/`--metadata` — plus
+  `DimensionCriterion`, sobald einer der vier Maßfilter gesetzt ist. Ohne
+  Muster (`matcher is None`, `text_mode is None`) entfällt das Textkriterium
+  ganz; ein synthetisches `*` gab es bis 0.26.0 und war unter `--regex` ein
+  ungültiger Ausdruck. Sortiert nach `cost` (Name 0, Maße 1, Metadaten 2,
   Inhalt 3), Abbruch beim ersten Nein. Diese Reihenfolge ist ein
   Leistungsversprechen: exiftool sieht nur Dateien, die den Maßfilter schon
   bestanden haben, und ein Test hält sie fest. `FileProbe` beantwortet die
@@ -111,19 +114,29 @@ Verbindliches CLI-Verhalten:
   TIFF; 0,198 ms je Datei, am 2026-09-02 über 30 370 reale Bilder ohne
   Abweichung gegen exiftool geprüft). exiftool ist nur der Rückfall für die
   Endungen in `EXIFTOOL_DIMENSION_EXTENSIONS` (HEIC, AVIF, RAW, Video).
-  Ein Bild ohne lesbare Maße erfüllt einen Maßfilter nie.
+  Ein Bild ohne lesbare Maße erfüllt einen Maßfilter nie; das gilt auch für
+  unplausible Kopfmaße (0 oder über `MAX_IMAGE_EDGE` = 2^31-1 je Kante).
+  Der Kopf-Leser eines Archiv-Eintrags läuft über denselben budgetierten
+  Chunker wie die Inhaltssuche und hält damit dieselben Entpackgrenzen ein;
+  `FileProbe.dimension_bytes` sagt, welchen Anfang ein folgender
+  Inhaltsdurchlauf dem Gesamtbudget nicht noch einmal belasten darf.
 - `--metadata` liest über exiftool die Felder aus `METADATA_TEXT_FIELDS` —
   EINE kuratierte Konstante, bewusst leicht änderbar; die Oberflächen holen
   sie per `--list-metadata-fields` und bauen sie nicht nach. exiftool läuft
   als EIN Prozess je Suchlauf (`ExifToolStream`, `-stay_open True`, Pfade
   über stdin, `-use MWG`), gestartet beim ersten Bedarf und in `close()`
   beendet; ein Prozess je Datei kostete 44 ms statt 0,75 ms und ist
-  abgelehnt. Nur Endungen aus `METADATA_EXTENSIONS` gehen an exiftool. Ohne
+  abgelehnt. Die Argumentdatei ist zeilenweise — ein Dateiname mit
+  Zeilenumbruch geht deshalb über `read_once()` durch EINEN eigenen Prozess,
+  statt still zu verschwinden; ein Pfad mit führendem `-` bekommt ein `./`,
+  sonst liest exiftool ihn als Option. Nur Endungen aus `METADATA_EXTENSIONS` gehen an exiftool. Ohne
   exiftool endet `--metadata` mit Exit 2 und einem Satz, der sagt, was
   fehlt; die Maßfilter laufen ohne. Dieselbe Bauart wie `bsdtar` und `zstd`:
   optional, sauber erkannt, kein Pflichtpaket.
-- Fehlt das Muster, ist das nur mit Maßfilter erlaubt (`*`). Ein einziges
-  Positionsargument, das als Pfad existiert, gilt dann als Startpfad.
+- Fehlt das Muster, ist das nur mit Maßfilter erlaubt; die Suche läuft dann
+  ohne Textkriterium. `--content` und `--metadata` sagen, WOGEGEN das Muster
+  läuft, und enden ohne Muster mit Exit 2 statt still falsch zu antworten.
+  Ein einziges Positionsargument, das als Pfad existiert, gilt als Startpfad.
 - `--archive-depth` begrenzt Rekursion. Verschachtelte Archive werden im Speicher
   verarbeitet; deshalb Größen- und Tiefengrenzen nicht unbemerkt entfernen.
 - `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären
@@ -132,6 +145,10 @@ Verbindliches CLI-Verhalten:
   Jeder neue `bsdtar`-Aufruf mit einem echten Eintragsnamen muss deshalb durch
   `bsdtar_escape()` — sonst trifft ein Eintrag `a*.txt` auch `abc.txt` und beide
   Inhalte kommen aneinandergehängt zurück, also ein falscher Treffer ohne Fehler.
+  Die Auflistung von `bsdtar -tf` liest umgekehrt nur `bsdtar_listing_names()`
+  (Maskierung zurücknehmen, dann dekodieren, `./` normalisieren) — Suche und
+  `--extract` müssen denselben Eintragsnamen sehen, sonst findet `pick_member()`
+  einen gefundenen Eintrag beim Materialisieren nicht wieder.
 
 ## Swift-Frontends
 
@@ -147,12 +164,19 @@ drop. Der `--selftest`-Pfad ist die automatische Grenze zwischen GUI und Kern.
 Beide Apps tragen den Umschalter **Name | Inhalt | Metadaten**
 (`SearchTextMode`, `modeControl`) und vier Maßfelder (Breite/Höhe je
 von/bis, `PixelLimits`, gelesen über `parsePixelLimit`, das „1.000 px" als
-1000 versteht). Die Haupt-App zeigt im Metadaten-Modus zusätzlich ein
+1000 versteht — eine positive Ganzzahl, wahlweise in Dreierblöcken gruppiert;
+alles andere setzt KEINE Grenze, denn ein Streichen aller Nicht-Ziffern machte
+aus „-1" eine 1 und aus „10.5" eine 105). Die Haupt-App zeigt im Metadaten-Modus zusätzlich ein
 Feldmenü, dessen Einträge `metadataFieldList()` vom Kern holt. Ohne Muster
-startet eine Suche nur mit gesetztem Maßfilter; `searchArguments` schickt dann
-`*`. Die Spalte „Fundstelle" (`locationText`) zeigt Zeilennummer oder
-„Feld: Wert", die Spalte „Maße" (`dimensionsText`) die Pixel; nach Maßen wird
-nach Fläche sortiert. Die URL-Übergabe der Schnellsuche trägt `mode`, `minw`,
+startet eine Suche nur mit gesetztem Maßfilter; `searchArguments` lässt das
+Muster dann ganz weg und schickt auch `--content`/`--metadata` nicht mit. An
+derselben Bedingung hängen die Übergabe der Schnellsuche (`openInMainApp`) und
+die Fortsetzung in der Haupt-App (`continueSearch`) — sonst sind „Alle in
+Favenio" und ⌘↩ bei einer reinen Maßsuche wirkungslos. Die Spalte
+„Fundstelle" (`locationText`) zeigt Zeilennummer oder „Feld: Wert", die Spalte
+„Maße" (`dimensionsText`) die Pixel; nach Maßen wird nach Fläche sortiert —
+über `Hit.pixelArea`, das den Überlauf deckelt, weil eine fangende
+`Int`-Multiplikation die App beendet. Die URL-Übergabe der Schnellsuche trägt `mode`, `minw`,
 `maxw`, `minh` und `maxh`; `content=1` bleibt für alte Quick-Versionen
 lesbar.
 
