@@ -420,6 +420,35 @@ class InstallTransactionTest(unittest.TestCase):
         self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
         self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
 
+    def test_a_signal_that_hits_the_mkdir_process_itself_is_ignored_there(self):
+        # Ctrl-C im Terminal trifft die ganze Prozessgruppe, also auch den
+        # gerade laufenden mkdir-Prozess. Legt der den Ordner an und stirbt
+        # dann mit Status 130/143, hielte die Bibliothek die eigene Sperre für
+        # fremd und den eigenen Ablageordner für nicht erworben. Das Double
+        # ist ein ECHTES Programm auf dem PATH, das sich nach dem Anlegen
+        # selbst TERM schickt: Erbt es die Signal-Abschirmung der Bibliothek,
+        # überlebt es und die Installation läuft normal durch.
+        stubs = os.path.join(self.tmp.name, "stubs")
+        os.makedirs(stubs)
+        stub = os.path.join(stubs, "mkdir")
+        with open(stub, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\n"
+                         '/bin/mkdir "$@" || exit $?\n'
+                         'case "$1" in\n'
+                         "    */.favenio-install.lock|*/.favenio-install.*|"
+                         "*/.favenio-previous.*)\n"
+                         "        kill -TERM $$\n"
+                         "        sleep 0.2 ;;\n"
+                         "esac\n"
+                         "exit 0\n")
+        os.chmod(stub, 0o755)
+        prelude = 'export PATH="%s:$PATH"' % stubs
+        output = self.run_install("    return 0", prelude=prelude)
+        self.assertIn("RC=0", output)
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "neu")
+        self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "neu")
+        self.assertEqual(self.leftovers(), [], output)
+
     def test_signal_during_backup_creation_leaves_no_private_folders(self):
         # Zwischen den beiden mkdir-Aufrufen kann nur der Ablageordner uns
         # gehören. Der Handler darf weder einen fremden Sicherungsordner

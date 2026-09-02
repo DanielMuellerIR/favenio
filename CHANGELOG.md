@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.25.1 — 2026-09-02
+
+Korrekturen aus dem Code-Review vom 2026-09-02 (neun Funde) und der sichtbaren
+Abnahme der Quick-Look-Vorschau. Suchsemantik und JSON-Vertrag sind unverändert.
+
+- **Kürzel gelten nicht mehr in Dialogen.** Solange der Sichern-Dialog des
+  Exports oder eine Rückfrage offen war, hielt die App die Trefferliste weiter
+  für fokussiert: ⌫ im Dateinamenfeld entfernte Treffer, die Leertaste öffnete
+  die Vorschau, ⌘⌫ konnte einen zweiten Papierkorb-Dialog starten. Tastatur-
+  monitor und Menüprüfung verlangen jetzt, dass das Hauptfenster das
+  Tastaturfenster ist und das Ereignis aus ihm kommt.
+- **Papierkorb räumt vollständig auf.** Nach dem Verschieben eines Ordners
+  blieben Treffer unter ihm stehen, und ein noch laufender Suchlauf konnte
+  Einträge eines verschobenen Archivs erneut einfügen. Der Lauf merkt sich
+  jetzt, was im Papierkorb liegt (Datei genau, Ordner mit allem darunter), und
+  prüft Liste, vorgemerkte und neu eintreffende Treffer dagegen.
+- **Auswahl überlebt Neuladen nur noch pfadbasiert.** Nach dem Entfernen einer
+  Zeile oder einer Übergabe aus der Schnellsuche konnte die alte Zeilennummer
+  auf einen anderen Treffer wandern und die Vorschau beim alten bleiben.
+- **`--extract` versteht Eintragsnamen mit `!/`.** Der Pfad-Export schreibt
+  nur die `!/`-Notation; ein Eintrag wie `odd!/name.txt` wurde darin als zwei
+  Archivebenen gelesen. Jetzt wird je Ebene gegen die Eintragsliste aufgelöst,
+  der längste passende Anfang gewinnt.
+- **Kennzahlen stürzen bei absurden Archivgrößen nicht ab.** Mehrere einzeln
+  darstellbare, zusammen aber zu große deklarierte Größen beendeten die App;
+  die Summe sättigt jetzt und gilt als Untergrenze (`≥`).
+- **Quick Look hält den Fokus.** Das Vorschaufenster wird nur nach vorn
+  geholt und nie zum Tastaturfenster; der frühere Rückholer verlor das Rennen
+  (Auswahl grau, Pfeiltasten wirkungslos). ⎋ schließt die Vorschau.
+- **Installation:** Ein Ctrl-C, das den `mkdir`-Prozess des Sperr- oder
+  Ablageordners selbst traf, ließ die eigene Sperre als fremd erscheinen und
+  liegen. `mkdir` läuft dort jetzt gegen HUP/INT/TERM abgeschirmt, die Shell
+  merkt sich das Signal weiterhin.
+- **„Öffnen mit" bei großer Auswahl:** Anwendungen werden je Dateiendung nur
+  einmal bei LaunchServices erfragt statt je Treffer.
+- README: Das NUL-Export-Beispiel nutzte `xargs -a`, das BSD-`xargs` von macOS
+  nicht kennt; jetzt per Umleitung von stdin.
+
 ## 0.25.0 — 2026-09-01
 
 Vier neue Werkzeuge in der Haupt-App, alle auf der Trefferliste. Der Python-Kern

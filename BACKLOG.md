@@ -5,6 +5,11 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
 1. Größen-/Datumsfilter und Mehrwortmodus als getrennte Produktentscheidungen.
 2. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
+3. Metadatensuche (EXIF/PDF-Felder) — Entscheidung offen. Machbarkeit am
+   2026-09-01 gemessen: `exiftool` im Stapel 0,65–2,9 ms je Bild und 61 ms
+   je PDF, ein Prozess je Datei dagegen 44 ms. Empfehlung: optionales
+   `exiftool` im Python-Kern mit kuratierter Feldliste (der Großteil der
+   Felder ist ICC-Rauschen), sauber erkannt, ohne den Kern zu brechen.
 
 ## Offen aus der Code-Review-Triage 2026-08-02
 

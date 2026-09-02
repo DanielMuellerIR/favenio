@@ -280,6 +280,34 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
     guard HitStatistics.over([folder]).sizeIsPartial == false else {
         return "ein Ordner ohne Größe macht die Summe unvollständig"
     }
+    // Zwei einzeln darstellbare, zusammen aber zu große Archivgrößen dürfen
+    // die App nicht beenden: Die Summe sättigt und gilt als Untergrenze.
+    let huge = Hit(path: "/tmp/ordner-a/riesig.zip!/a.bin", kind: "member",
+                   line: nil, size: Int.max - 1,
+                   filesystemPath: "/tmp/ordner-a/riesig.zip",
+                   archiveMembers: ["a.bin"], isDirectory: false)
+    let overflowed = HitStatistics.over([huge, huge, file])
+    guard overflowed.totalSize == Int.max, overflowed.sizeIsPartial,
+          overflowed.count == 3 else {
+        return "Größensumme sättigt beim Überlauf nicht"
+    }
+
+    // ---- Papierkorb-Merkliste ----
+    // Ein verschobener Ordner nimmt alles darunter mit, aber nicht den
+    // Nachbarn mit gleichem Namensanfang; ein Archiv nimmt seine Einträge mit.
+    var trashedList = TrashedPaths()
+    guard trashedList.isEmpty, !trashedList.contains("/tmp/x") else {
+        return "leere Papierkorb-Merkliste meldet Treffer"
+    }
+    trashedList.insert("/tmp/weg/", isDirectory: true)
+    trashedList.insert("/tmp/ordner-b/paket.7z", isDirectory: false)
+    guard trashedList.contains("/tmp/weg"),
+          trashedList.contains("/tmp/weg/tief/datei.txt"),
+          !trashedList.contains("/tmp/wegweiser.txt"),
+          trashedList.contains(unsized.filesystemPath),
+          !trashedList.contains("/tmp/ordner-b/paket.7z.bak") else {
+        return "Papierkorb-Merkliste ordnet Pfade falsch zu"
+    }
     // Die Auswahl steht erst ab zwei markierten Zeilen in der Fußzeile.
     let oneSelected = hitStatisticsText(stepwise, selected: 1)
     let twoSelected = hitStatisticsText(stepwise, selected: 2)
@@ -473,6 +501,12 @@ final class MainController: NSObject, NSApplicationDelegate,
     var hits: [Hit] = []            // was die Tabelle zeigt
     var pending: [Hit] = []         // frisch gestreamte, noch nicht gezeigte
     var seenPaths = Set<String>()   // schon gezeigte Pfade → keine Doppelten
+    // Was dieser Lauf in den Papierkorb gelegt hat. Ein noch laufender
+    // Suchprozess kennt den Papierkorb nicht und streamt Treffer unter einem
+    // verschobenen Ordner oder in einem verschobenen Archiv weiter.
+    var trashedPaths = TrashedPaths()
+    // Wahr, solange applyHitsToTable die Auswahl leert und wieder setzt.
+    var isRestoringSelection = false
     var cachedFinderFolders: [String] = []   // Finder-Fenster (async geladen)
     var refreshingFinder = false
     /// Zählt die Aktivierungen des Fensters. Nur die Antwort der AKTUELLEN
@@ -581,7 +615,15 @@ final class MainController: NSObject, NSApplicationDelegate,
         // steht es sichtbar, statt Geheimwissen zu bleiben.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [weak self] event in
+            // Das Ereignis muss aus dem HAUPTFENSTER kommen, und das muss
+            // das Tastaturfenster sein. Der gemerkte firstResponder allein
+            // reicht nicht: Während ein Sichern-Blatt oder ein NSAlert offen
+            // ist, steht im Hauptfenster weiter die Tabelle — ⌫ im
+            // Dateinamenfeld des Exportdialogs entfernte sonst Treffer
+            // (Review-Fund 2026-09-02).
             guard let self,
+                  event.window === self.window,
+                  self.window.isKeyWindow,
                   self.window.firstResponder === self.tableView
             else { return event }
             // Nur die echten Zusatztasten vergleichen. Caps Lock, Zehnerblock
@@ -718,6 +760,9 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     /// Auswahl geändert, während die Vorschau offen ist → mitziehen.
     func tableViewSelectionDidChange(_ notification: Notification) {
+        // Während applyHitsToTable die Auswahl leert und wieder setzt, ist
+        // der Zwischenzustand keine Auswahländerung.
+        guard !isRestoringSelection else { return }
         contextRow = -1
         refreshStatus()     // „N ausgewählt" in der Fußzeile mitziehen
         if QLPreviewPanel.sharedPreviewPanelExists(),
@@ -814,6 +859,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         hits = loaded
         pending = []
         seenPaths = Set(loaded.map { $0.path })
+        trashedPaths = TrashedPaths()
         statistics = .over(hits)
         searchPhase = .handedOver
         progressPath = nil
@@ -1271,6 +1317,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         hits = []
         pending = []
         seenPaths = []
+        trashedPaths = TrashedPaths()
         applyHitsToTable(keepingSelection: [])
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
@@ -1297,6 +1344,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         hits = seed
         pending = []
         seenPaths = Set(seed.map { $0.path })
+        trashedPaths = TrashedPaths()
         statistics = .over(hits)
         searchPhase = .handedOver
         progressPath = nil
@@ -1429,9 +1477,11 @@ final class MainController: NSObject, NSApplicationDelegate,
             progressPath = path
             refreshStatus()
         } else if let hit = parseHit(lineData),
+                  !trashedPaths.contains(hit.filesystemPath),
                   seenPaths.insert(hit.path).inserted {
             // Schon gezeigte Pfade (z. B. die aus der Schnellsuche
-            // übernommenen 20) nicht erneut auflisten.
+            // übernommenen 20) nicht erneut auflisten — und nichts, was
+            // dieser Lauf schon in den Papierkorb gelegt hat.
             pending.append(hit)
         }
     }
@@ -1452,14 +1502,37 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// übergebenen Treffer, blieb `pending` leer, `flushPending()` lief nie —
     /// und die Kopfzeile zeigte eine Sortierung, der die Liste nicht folgte
     /// (Review-Fund 2026-08-17).
+    ///
+    /// `reloadData()` behält die Auswahl nach ZEILENNUMMER. Nach Sortieren,
+    /// Entfernen oder einer Übergabe aus der Schnellsuche zeigt dieselbe
+    /// Nummer auf einen anderen Treffer; deshalb wird die Auswahl vorher
+    /// geleert und danach ausschließlich pfadbasiert gesetzt — auch bei
+    /// leerer Pfadmenge (Review-Fund 2026-09-02). Die Zwischenschritte lösen
+    /// keine Auswahl-Benachrichtigung aus, sonst flackerte die Vorschau bei
+    /// jedem Nachschub; am Ende wird sie nur nachgeladen, wenn sie jetzt
+    /// andere Dateien meint.
     func applyHitsToTable(keepingSelection selectedPaths: Set<String>) {
         sortHits()
+        isRestoringSelection = true
+        tableView.deselectAll(nil)
         tableView.reloadData()
-        guard !selectedPaths.isEmpty else { return }
         let rows = IndexSet(hits.indices.filter {
             selectedPaths.contains(hits[$0].path)
         })
         tableView.selectRowIndexes(rows, byExtendingSelection: false)
+        isRestoringSelection = false
+        contextRow = -1
+        reloadPreviewIfSelectionChanged()
+    }
+
+    /// Offene Vorschau nachziehen, wenn die Auswahl jetzt andere Dateien
+    /// meint als die, die sie zeigt.
+    func reloadPreviewIfSelectionChanged() {
+        guard QLPreviewPanel.sharedPreviewPanelExists(),
+              QLPreviewPanel.shared().isVisible else { return }
+        let shown = previewURLs
+        rebuildPreviewURLs()
+        if previewURLs != shown { QLPreviewPanel.shared().reloadData() }
     }
 
     func flushPending() {
@@ -1715,16 +1788,25 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// zum Zeilenanfang, statt an Dateien zu gehen: Beide Punkte gelten nur,
     /// solange die Trefferliste den Fokus hat. Im Rechtsklick-Menü der
     /// Tabelle entfällt diese Bedingung — dort ist der Bezug der Klick.
+    ///
+    /// Dieselbe Bedingung wie beim Tastaturmonitor: Das Hauptfenster muss das
+    /// Tastaturfenster sein. Solange ein Blatt oder ein Alert offen ist,
+    /// bleiben alle vier Punkte grau — sonst startete ⌘⌫ aus dem Exportdialog
+    /// heraus einen zweiten Papierkorb-Dialog. „Alle Treffer exportieren"
+    /// braucht keine Auswahl und deshalb auch keinen Tabellenfokus.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         let fromTableMenu = item.menu === tableView.menu
+        let mainWindowIsKey = window?.isKeyWindow == true
         switch item.action {
         case #selector(removeFromResults(_:)), #selector(trashSelected(_:)),
              #selector(exportSelectedHits(_:)):
-            guard fromTableMenu || window?.firstResponder === tableView
+            guard fromTableMenu
+                    || (mainWindowIsKey
+                        && window?.firstResponder === tableView)
             else { return false }
             return !rows(for: item).isEmpty
         case #selector(exportAllHits(_:)):
-            return !hits.isEmpty
+            return mainWindowIsKey && !hits.isEmpty
         default:
             return true
         }
@@ -1801,8 +1883,17 @@ final class MainController: NSObject, NSApplicationDelegate,
             }
             playFinderTrashSound()
             // Mit einem Archiv verschwinden auch seine Einträge aus der
-            // Liste: Hinter ihnen liegt jetzt keine Datei mehr.
-            self.removeHits { trashed[$0.filesystemPath] != nil }
+            // Liste, mit einem Ordner alles darunter: Hinter ihnen liegt
+            // jetzt keine Datei mehr. Dasselbe gilt für schon vorgemerkte
+            // und für noch eintreffende Treffer des laufenden Suchprozesses.
+            for hit in split.trashable where trashed[hit.filesystemPath] != nil {
+                self.trashedPaths.insert(hit.filesystemPath,
+                                         isDirectory: hit.isDirectory)
+            }
+            self.pending.removeAll {
+                self.trashedPaths.contains($0.filesystemPath)
+            }
+            self.removeHits { self.trashedPaths.contains($0.filesystemPath) }
             let failed = split.trashable.count - trashed.count
             let moved = "\(groupedNumber(trashed.count)) in den Papierkorb "
                 + "gelegt"

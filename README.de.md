@@ -240,8 +240,10 @@ sich verteilen; ab zwei markierten Zeilen auch die Größe der Auswahl. Steht ei
 ### Trefferliste verfeinern, exportieren, aufräumen
 
 Diese drei Punkte stehen im Menü **Ablage** und im Rechtsklick-Menü der
-Trefferliste. Ihre Tastenkürzel gelten nur, solange die Trefferliste den Fokus
-hat — im Suchfeld löscht ⌫ weiterhin ein Zeichen.
+Trefferliste. Die Kürzel, die auf der Auswahl arbeiten (⌫, ⌘⌫, ⇧⌘E), gelten
+nur, solange die Trefferliste den Fokus hat — im Suchfeld löscht ⌫ weiterhin
+ein Zeichen. ⌘E exportiert die ganze Liste und gilt, sobald das Hauptfenster
+aktiv ist; in einem Dialog gilt es nie.
 
 | Aktion | Kürzel | Wirkung |
 | --- | --- | --- |
@@ -261,13 +263,14 @@ Der Sichern-Dialog bietet vier Formate an:
 
 In den beiden Pfadformaten steht derselbe Pfad wie bei „Pfad kopieren": bei
 einer normalen Datei ihr POSIX-Pfad, bei einem Archiv-Eintrag der Pfad in
-`!/`-Notation, den `favenio.py --extract` wieder versteht. Ein Archiv-Eintrag
-hat keinen eigenen POSIX-Pfad; ihn stillschweigend wegzulassen wäre schlimmer,
-als ihn kenntlich zu machen.
+`!/`-Notation, den `favenio.py --extract` wieder versteht (ein Eintragsname,
+der selbst `!/` enthält, wird gegen die Eintragsliste des Archivs aufgelöst).
+Ein Archiv-Eintrag hat keinen eigenen POSIX-Pfad; ihn stillschweigend
+wegzulassen wäre schlimmer, als ihn kenntlich zu machen.
 
 ```bash
-# Alle exportierten Treffer nach „TODO" durchsuchen
-xargs -0 -a Favenio-Treffer.txt grep -l TODO
+# Alle exportierten Treffer nach „TODO" durchsuchen (BSD-xargs kennt kein -a)
+xargs -0 grep -l TODO < Favenio-Treffer.txt
 ```
 
 Die GUI ist nur ein Frontend: Gesucht wird immer über `favenio.py`.

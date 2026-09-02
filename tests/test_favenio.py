@@ -507,6 +507,37 @@ class FavenioTest(TempTreeTest):
             materialization_root,
         )
 
+    def test_path_notation_resolves_separator_inside_zip_member(self):
+        # Der Export der App schreibt in den Pfadformaten nur die !/-Notation,
+        # und die zerlegt den Eintrag "odd!/name.txt" in zwei Teile. --extract
+        # muss deshalb gegen die Eintragsliste auflösen, sonst hielte es "odd"
+        # für ein inneres Archiv (Review-Fund 2026-09-02).
+        result = os.path.join(self.root, "paket.zip") + "!/odd!/name.txt"
+        code, lines, err = run(["--extract", result])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.read(lines[0]), "STRUKTURIERT\n")
+
+    def test_path_notation_resolves_separator_inside_tar_member(self):
+        tar_path = os.path.join(self.root, "seltsam.tar")
+        with tarfile.open(tar_path, "w") as tf:
+            data = b"IM TAR\n"
+            info = tarfile.TarInfo("odd!/im-tar.txt")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        code, lines, err = run(["--extract", tar_path + "!/odd!/im-tar.txt"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.read(lines[0]), "IM TAR\n")
+
+    def test_path_notation_still_descends_into_nested_archives(self):
+        # Die Auflösung darf eine echte Verschachtelung nicht verschlucken:
+        # Ohne Eintrag "innen.zip!/tief/verstecktes.txt" bleibt "innen.zip"
+        # das innere Archiv.
+        result = (os.path.join(self.root, "aussen.zip")
+                  + "!/innen.zip!/tief/verstecktes.txt")
+        code, lines, err = run(["--extract", result])
+        self.assertEqual(code, 0, err)
+        self.assertIn("ganz unten", self.read(lines[0]))
+
     def test_extract_zip_member(self):
         result = os.path.join(self.root, "paket.zip") + "!/docs/anleitung.md"
         code, lines, _ = run(["--extract", result])

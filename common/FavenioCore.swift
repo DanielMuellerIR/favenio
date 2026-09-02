@@ -252,12 +252,32 @@ func hitActionIssue(_ selection: MaterializedHitSelection)
 ///
 /// Die Reihenfolge des ersten Treffers bleibt erhalten — dessen Standard-App
 /// steht dort vorn und soll auch im Menü vorn stehen.
+///
+/// LaunchServices wird je Dateiendung nur EINMAL gefragt: Der Aufruf läuft
+/// beim Öffnen des Rechtsklick-Menüs auf dem Main-Thread, und bei einer
+/// großen, gleichartigen Auswahl (tausend `.txt`) kostete die Abfrage je
+/// Treffer sichtbar Zeit, obwohl sich der Anwendungssatz für dieselbe Endung
+/// wiederholt (Review-Fund 2026-09-02). Ohne Endung wird je Treffer gefragt.
 func commonApplicationsFor(_ hits: [Hit]) -> [URL] {
     guard let first = hits.first else { return [] }
     var common = applicationsFor(first)
+    var byExtension: [String: Set<URL>] = [:]
+    func extensionKey(_ hit: Hit) -> String? {
+        let ext = (hit.displayName as NSString).pathExtension.lowercased()
+        return ext.isEmpty ? nil : ext
+    }
+    if let key = extensionKey(first) {
+        byExtension[key] = Set(common.map { $0.standardizedFileURL })
+    }
     for hit in hits.dropFirst() {
         if common.isEmpty { break }
-        let allowed = Set(applicationsFor(hit).map { $0.standardizedFileURL })
+        let allowed: Set<URL>
+        if let key = extensionKey(hit), let cached = byExtension[key] {
+            allowed = cached
+        } else {
+            allowed = Set(applicationsFor(hit).map { $0.standardizedFileURL })
+            if let key = extensionKey(hit) { byExtension[key] = allowed }
+        }
         common = common.filter { allowed.contains($0.standardizedFileURL) }
     }
     return common
@@ -1196,7 +1216,8 @@ struct HitStatistics {
     /// Die Ordner, in denen die Treffer liegen.
     private(set) var folders = Set<String>()
     /// Mindestens eine DATEI, deren Größe der Kern nicht mitliefert (etwa ein
-    /// bsdtar-Eintrag, dessen entpackte Größe erst beim Auspacken feststeht).
+    /// bsdtar-Eintrag, dessen entpackte Größe erst beim Auspacken feststeht),
+    /// oder die Summe hat `Int.max` überschritten und ist gesättigt.
     /// `totalSize` ist dann eine Untergrenze und wird als „≥" gekennzeichnet.
     private(set) var sizeIsPartial = false
 
@@ -1204,7 +1225,20 @@ struct HitStatistics {
         count += 1
         folders.insert(HitStatistics.folder(of: hit))
         if let size = hit.size {
-            totalSize += size
+            // Die Größen kommen aus fremden Archivköpfen, ungeprüft: Eine
+            // Namenssuche gibt die deklarierte Größe eines Zip-Eintrags aus,
+            // ohne ihn zu öffnen. Mehrere einzeln darstellbare Werte können
+            // zusammen Int.max überschreiten — mit fangender Addition
+            // beendete Swift dann die App beim Fortschreiben der Fußzeile
+            // (Review-Fund 2026-09-02). Die Summe sättigt stattdessen und
+            // wird als Untergrenze gekennzeichnet.
+            let (sum, overflow) = totalSize.addingReportingOverflow(size)
+            if overflow {
+                totalSize = Int.max
+                sizeIsPartial = true
+            } else {
+                totalSize = sum
+            }
         } else if !hit.isDirectory {
             // Ordner haben von Natur aus keine Größe — das macht die Summe
             // nicht unvollständig. Eine DATEI ohne Größe dagegen schon.
@@ -1377,6 +1411,38 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
 /// Kürzel im Menü zeigt es, verlässt sich aber nicht darauf.
 let backspaceKeyEquivalent = String(UnicodeScalar(UInt8(NSBackspaceCharacter)))
 
+
+/// Was ein Suchlauf schon in den Papierkorb gelegt hat.
+///
+/// Der laufende Suchprozess weiß davon nichts und streamt weiter, was er
+/// unter einem verschobenen Ordner oder in einem verschobenen Archiv findet.
+/// Die Liste beantwortet deshalb für jeden Treffer: Liegt hinter seinem
+/// Dateisystempfad noch etwas? Eine Datei zählt genau, ein Ordner mitsamt
+/// allem darunter — mit Pfadkomponenten-Grenze, damit „/a/b" nicht auch
+/// „/a/bc" trifft.
+struct TrashedPaths {
+    private var files = Set<String>()
+    private var folders: [String] = []
+
+    var isEmpty: Bool { files.isEmpty && folders.isEmpty }
+
+    mutating func insert(_ filesystemPath: String, isDirectory: Bool) {
+        let path = TrashedPaths.withoutTrailingSlash(filesystemPath)
+        files.insert(path)
+        if isDirectory { folders.append(path) }
+    }
+
+    func contains(_ filesystemPath: String) -> Bool {
+        let path = TrashedPaths.withoutTrailingSlash(filesystemPath)
+        if files.contains(path) { return true }
+        return folders.contains { path.hasPrefix($0 + "/") }
+    }
+
+    private static func withoutTrailingSlash(_ path: String) -> String {
+        path.count > 1 && path.hasSuffix("/")
+            ? String(path.dropLast()) : path
+    }
+}
 
 /// Teilt eine Auswahl in das, was in den Papierkorb kann, und das, was nicht.
 ///

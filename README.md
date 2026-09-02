@@ -231,8 +231,10 @@ front of the total size means at least one file has no size known up front
 ### Refine, export and clean up the result list
 
 These entries live in the **Ablage** (File) menu and in the result list's
-context menu. Their shortcuts only apply while the result list has focus — in
-the search field, ⌫ still deletes a character.
+context menu. The shortcuts that act on the selection (⌫, ⌘⌫, ⇧⌘E) only apply
+while the result list has focus — in the search field, ⌫ still deletes a
+character. ⌘E exports the whole list and works whenever the main window is
+active; it never applies inside a dialog.
 
 | Action | Shortcut | Effect |
 | --- | --- | --- |
@@ -252,12 +254,13 @@ The save dialog offers four formats:
 
 Both path formats carry the same path as “Copy path”: for a plain file its
 POSIX path, for an archive entry the `!/` notation that `favenio.py --extract`
-reads back. An archive entry has no POSIX path of its own; dropping it silently
-would be worse than marking it.
+reads back (an entry name that itself contains `!/` is resolved against the
+archive's member list). An archive entry has no POSIX path of its own;
+dropping it silently would be worse than marking it.
 
 ```bash
-# Grep all exported hits for "TODO"
-xargs -0 -a Favenio-Treffer.txt grep -l TODO
+# Grep all exported hits for "TODO" (BSD xargs on macOS has no -a; feed stdin)
+xargs -0 grep -l TODO < Favenio-Treffer.txt
 ```
 
 The GUI is only a frontend: searching always happens through `favenio.py`.

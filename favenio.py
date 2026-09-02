@@ -40,10 +40,10 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.25.0"
+__version__ = "0.25.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-09-01"
+__date__ = "2026-09-02"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -1168,6 +1168,26 @@ class Search:
                     pass
 
 
+def pick_member(remaining, names):
+    """Welcher Eintrag dieser Archivebene gemeint ist, und wie viele Teile
+    der !/-Kette er verbraucht.
+
+    `remaining` sind die restlichen Teile der Kette, `names` die Eintrags-
+    namen des Archivs (None = nicht auflösen, der erste Teil ist der Name).
+    Enthält ein Eintragsname selbst "!/", zerlegt ihn die Notation in
+    mehrere Teile; gewählt wird deshalb der LÄNGSTE Anfang der Kette, der
+    als Eintrag existiert. Ohne Treffer bleibt es beim ersten Teil — die
+    folgende Fehlermeldung nennt dann den fehlenden Eintrag."""
+    if names is None or len(remaining) == 1:
+        return remaining[0], 1
+    known = set(names)
+    for count in range(len(remaining), 0, -1):
+        candidate = "!/".join(remaining[:count])
+        if candidate in known:
+            return candidate, count
+    return remaining[0], 1
+
+
 def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                    max_archive_member_bytes=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
                    max_archive_total_bytes=DEFAULT_MAX_ARCHIVE_TOTAL_BYTES,
@@ -1183,6 +1203,10 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
     Einträge werden in einen frischen Temp-Ordner extrahiert. In beiden
     Fällen landet der nutzbare Datei-Pfad auf stdout (genau eine Zeile).
     Das ist der Unterbau für Öffnen/„Öffnen mit"/Drag&Drop in der GUI."""
+    # Kam der Pfad in !/-Notation, ist die Zerlegung mehrdeutig: Ein
+    # Eintragsname darf selbst "!/" enthalten (Test-Fixture "odd!/name.txt").
+    # Dann wird unten je Archivebene gegen die Eintragsliste aufgelöst.
+    ambiguous = False
     if filesystem_path is None:
         # Ein existierender Pfad gewinnt immer gegen die historische !/-Notation.
         # Damit bleibt z. B. /tmp/folder!/plain.txt eine normale Datei.
@@ -1193,6 +1217,7 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
             parts = (result_path or "").split("!/")
             filesystem_path = parts[0]
             archive_members = parts[1:]
+            ambiguous = len(archive_members) > 1
     fs_path = filesystem_path
     members = list(archive_members or [])
     display_path = result_path or fs_path + "".join(
@@ -1218,7 +1243,11 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
     try:
         # Ebene für Ebene absteigen: erst das Archiv auf der Platte
         # öffnen, dann ggf. innere Archive aus dem Speicher heraus.
-        for member in members:
+        # `index` zeigt auf den nächsten Teil der !/-Kette; eine Ebene kann
+        # mehrere Teile verbrauchen, wenn der Eintragsname "!/" enthält.
+        index = 0
+        while index < len(members):
+            remaining = members[index:]
             if kind is None:
                 print("favenio: fehler: kein unterstütztes Archiv: %s"
                       % display_path, file=sys.stderr)
@@ -1226,6 +1255,8 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
             if kind == "zip":
                 source = io.BytesIO(data) if data is not None else fs_path
                 with zipfile.ZipFile(source) as archive:
+                    names = archive.namelist() if ambiguous else None
+                    member, used = pick_member(remaining, names)
                     info = archive.getinfo(member)
                     with archive.open(info, "r") as handle:
                         data = budget.read_all(
@@ -1238,6 +1269,8 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                 else:
                     archive = tarfile.open(fs_path, mode="r:*")
                 with archive:
+                    names = archive.getnames() if ambiguous else None
+                    member, used = pick_member(remaining, names)
                     handle = archive.extractfile(member)
                     if handle is None:
                         raise KeyError(member)
@@ -1259,6 +1292,16 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                             temp_handle.write(data)
                         temp_path = temp_handle.name
                         path = temp_path
+                    names = None
+                    if ambiguous:
+                        # Eintragsliste nur im mehrdeutigen Fall erfragen —
+                        # sie kostet einen eigenen bsdtar-Prozess.
+                        listing = subprocess.run(
+                            [bsdtar, "-tf", path], stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, env=env, check=False)
+                        names = listing.stdout.decode(
+                            "utf-8", "replace").splitlines()
+                    member, used = pick_member(remaining, names)
                     proc = subprocess.Popen(
                         [bsdtar, "-xOf", path, "--", bsdtar_escape(member)],
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -1273,6 +1316,8 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                             pass
             else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
                 expected = single_member_name(container_name, kind)
+                member, used = pick_member(
+                    remaining, [expected] if ambiguous else None)
                 if member != expected:
                     raise KeyError(member)
                 opener = single_opener(kind)
@@ -1283,6 +1328,7 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
             # nächste Ebene wieder ein Archiv ist.
             container_name = os.path.basename(member.rstrip("/"))
             kind = classify_archive(member)
+            index += used
     except EXPECTED_ARCHIVE_ERRORS as err:
         print("favenio: fehler: %s: %s" % (display_path, err),
               file=sys.stderr)

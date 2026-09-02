@@ -125,14 +125,35 @@ und im Rechtsklick-Menü der Tabelle, jeweils mit sichtbarem Kürzel:
   NUL-getrennt, JSONL im Format von `--json` oder CSV mit UTF-8-BOM. Die
   NUL-Form ist kein Beiwerk: Ein Dateiname darf unter macOS jedes Zeichen außer
   `/` und NUL enthalten, auch einen Zeilenumbruch. In beiden Pfadformaten steht
-  der Pfad in `!/`-Notation, den `--extract` wieder liest.
+  der Pfad in `!/`-Notation, den `--extract` wieder liest. Diese Notation ist
+  mehrdeutig, wenn ein Eintragsname selbst `!/` enthält; `--extract` löst das
+  je Archivebene gegen die Eintragsliste auf (`pick_member()`, längster
+  passender Anfang gewinnt). Verlustfrei strukturiert ist nur JSONL.
 
-Beide Kürzel gelten nur, solange die Trefferliste den Fokus hat. Das ist keine
-Kosmetik: Ein ungültiger Menüpunkt gibt sein Kürzel frei, und nur deshalb
-löscht ⌫ im Suchfeld weiter ein Zeichen. Durchgesetzt wird das doppelt — vom
-Tastaturmonitor (layoutunabhängiger Tastencode 51, läuft vor dem Menü) und von
-`validateMenuItem`. Aus dem Hauptmenü und vom Kürzel gilt immer die Auswahl,
-nie der gemerkte `contextRow` eines früheren Rechtsklicks.
+Die Kürzel auf der Auswahl (⌫, ⌘⌫, ⇧⌘E) gelten nur, solange die Trefferliste
+den Fokus hat. Das ist keine Kosmetik: Ein ungültiger Menüpunkt gibt sein
+Kürzel frei, und nur deshalb löscht ⌫ im Suchfeld weiter ein Zeichen.
+Durchgesetzt wird das doppelt — vom Tastaturmonitor (layoutunabhängiger
+Tastencode 51, läuft vor dem Menü) und von `validateMenuItem`. Beide verlangen
+zusätzlich, dass das Hauptfenster das Tastaturfenster ist und das Ereignis aus
+ihm kommt: Solange ein Sichern-Blatt oder ein Alert offen ist, steht im
+Hauptfenster weiter die Tabelle als `firstResponder`, und ⌫ im Dateinamenfeld
+des Exportdialogs entfernte sonst Treffer. ⌘E (alle Treffer) braucht keine
+Auswahl und deshalb nur das aktive Hauptfenster. Aus dem Hauptmenü und vom
+Kürzel gilt immer die Auswahl, nie der gemerkte `contextRow` eines früheren
+Rechtsklicks.
+
+Nach dem Papierkorb merkt sich der Lauf die verschobenen Pfade in
+`TrashedPaths` (Datei genau, Ordner mit allem darunter). Der Suchprozess läuft
+weiter und kennt den Papierkorb nicht; deshalb werden Trefferliste, `pending`
+und jede neu gestreamte Zeile dagegen geprüft. Eine neue Suche oder Übergabe
+setzt die Liste zurück.
+
+`applyHitsToTable` leert die Auswahl vor `reloadData()` und setzt sie danach
+nur pfadbasiert — `reloadData()` behält Zeilennummern, und nach Sortieren oder
+Entfernen zeigt dieselbe Nummer auf einen anderen Treffer. Die Zwischenschritte
+lösen keine Auswahl-Benachrichtigung aus; die Vorschau wird am Ende nur
+nachgeladen, wenn sie jetzt andere Dateien meint.
 
 Die Fußzeile zeigt Treffer, Datenmenge und Anzahl der Ordner, ab zwei
 markierten Zeilen auch die Auswahlgröße. Sie wird über `statusText()` aus dem

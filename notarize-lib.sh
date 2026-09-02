@@ -343,6 +343,19 @@ _favenio_install_signal_pending() {
     [ -n "${FAVENIO_INSTALL_PENDING_SIGNAL:-}" ]
 }
 
+# mkdir für die kritischen Abschnitte: Die Merk-Traps oben halten nur die
+# zsh selbst am Leben. Der gestartete mkdir-Prozess bekommt HUP, INT und TERM
+# mit Standardverhalten — ein Ctrl-C im Terminal geht an die ganze
+# Prozessgruppe. Legt mkdir den Ordner an und stirbt danach am Signal, meldet
+# es Status 130 bis 143, und die eigene Sperre gälte als fremd beziehungsweise
+# der eigene Ablageordner als nicht erworben (Review-Fund 2026-09-02).
+# Deshalb läuft mkdir in einer Unterschale, die diese Signale ignoriert; das
+# Ignorieren erbt der Kindprozess. Die aufrufende zsh merkt sich das Signal
+# weiterhin und führt es nach dem kritischen Abschnitt aus.
+_favenio_install_mkdir_shielded() {
+    ( trap '' HUP INT TERM; mkdir "$1" )
+}
+
 _favenio_install_lock() {
     # Zwischen dem erfolgreichen mkdir und dem Merken des Besitzes darf kein
     # weiches Signal zugestellt werden: Der Signal-Handler könnte die gerade
@@ -356,7 +369,7 @@ _favenio_install_lock() {
     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=INT' INT
     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=TERM' TERM
     local lock="$1"
-    if mkdir "$lock" 2>/dev/null; then
+    if _favenio_install_mkdir_shielded "$lock" 2>/dev/null; then
         FAVENIO_INSTALL_LOCK="$lock"
         echo $$ >"$lock/pid" 2>/dev/null || true
         return 0
@@ -547,7 +560,7 @@ favenio_install_bundles() {
     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=HUP' HUP
     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=INT' INT
     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=TERM' TERM
-    if ! mkdir "$stage"; then
+    if ! _favenio_install_mkdir_shielded "$stage"; then
         trap '_favenio_install_interrupted_early' HUP INT TERM
         echo "FEHLER: Ablageordner $stage nicht anlegbar." >&2
         _favenio_install_unlock "$lock"
@@ -561,7 +574,7 @@ favenio_install_bundles() {
     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=HUP' HUP
     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=INT' INT
     trap 'FAVENIO_INSTALL_PENDING_SIGNAL=TERM' TERM
-    if ! mkdir "$backup"; then
+    if ! _favenio_install_mkdir_shielded "$backup"; then
         trap '_favenio_install_interrupted_stage "$stage" "$lock"' HUP INT TERM
         echo "FEHLER: Sicherungsordner $backup nicht anlegbar." >&2
         # `rmdir` statt `rm -rf`: Der eigene Ablageordner ist gerade erst
