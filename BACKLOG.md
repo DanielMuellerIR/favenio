@@ -5,6 +5,10 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
 1. Größen-/Datumsfilter und Mehrwortmodus als getrennte Produktentscheidungen.
 2. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
+3. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
+   heraus auf die aktuelle aktualisieren und den Ablauf am Fenster prüfen.
+   Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
+   Durchlauf am Bildschirm.
 
 ## Offen aus der Code-Review-Triage 2026-08-02
 
