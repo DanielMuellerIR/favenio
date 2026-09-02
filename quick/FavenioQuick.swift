@@ -69,8 +69,15 @@ final class QuickController: NSObject, NSApplicationDelegate,
         trackingMode: .selectOne, target: nil, action: nil)
     let archivesCheckbox = NSButton(checkboxWithTitle: "In Archiven",
                                     target: nil, action: nil)
-    let contentCheckbox = NSButton(checkboxWithTitle: "Inhalt",
-                                   target: nil, action: nil)
+    // Wogegen der Suchbegriff läuft: Name | Inhalt | Metadaten.
+    let modeControl = NSSegmentedControl(
+        labels: SearchTextMode.allCases.map { $0.title },
+        trackingMode: .selectOne, target: nil, action: nil)
+    // Bildmaße (Breite/Höhe je von/bis), leer = egal; gelten per UND.
+    let minWidthField = NSTextField(string: "")
+    let maxWidthField = NSTextField(string: "")
+    let minHeightField = NSTextField(string: "")
+    let maxHeightField = NSTextField(string: "")
     let hiddenCheckbox = NSButton(checkboxWithTitle: "Unsichtbare",
                                   target: nil, action: nil)
     // Ohne diesen Schalter ist ein Muster ohne Platzhalter ein Teilstring:
@@ -269,8 +276,25 @@ final class QuickController: NSObject, NSApplicationDelegate,
         typeControl.target = self
         typeControl.action = #selector(optionsChanged)
 
-        for checkbox in [archivesCheckbox, contentCheckbox, hiddenCheckbox,
-                         exactCheckbox] {
+        modeControl.controlSize = .small
+        modeControl.font = NSFont.systemFont(ofSize: 11)
+        modeControl.selectedSegment = 0
+        modeControl.target = self
+        modeControl.action = #selector(optionsChanged)
+        for (field, placeholder) in [(minWidthField, "min"),
+                                     (maxWidthField, "max"),
+                                     (minHeightField, "min"),
+                                     (maxHeightField, "max")] {
+            field.controlSize = .small
+            field.font = NSFont.systemFont(ofSize: 11)
+            field.placeholderString = placeholder
+            field.alignment = .right
+            field.widthAnchor.constraint(equalToConstant: 48).isActive = true
+            field.target = self
+            field.action = #selector(optionsChanged)
+        }
+
+        for checkbox in [archivesCheckbox, hiddenCheckbox, exactCheckbox] {
             checkbox.controlSize = .small
             checkbox.font = NSFont.systemFont(ofSize: 11)
             checkbox.state = .off        // Default: schnelle Namenssuche
@@ -312,19 +336,36 @@ final class QuickController: NSObject, NSApplicationDelegate,
         searchRow.orientation = .horizontal
         searchRow.spacing = 8
         searchRow.alignment = .centerY
-        let optionsRow = NSStackView(views: [typeControl, archivesCheckbox,
-                                             contentCheckbox, hiddenCheckbox,
+        let optionsRow = NSStackView(views: [typeControl, modeControl,
+                                             archivesCheckbox, hiddenCheckbox,
                                              exactCheckbox])
         optionsRow.orientation = .horizontal
         optionsRow.spacing = 10
         optionsRow.alignment = .centerY
+        // Schmale Maßzeile: „px  B [min]–[max]  H [min]–[max]".
+        func smallLabel(_ text: String) -> NSTextField {
+            let label = NSTextField(labelWithString: text)
+            label.font = NSFont.systemFont(ofSize: 11)
+            label.textColor = .secondaryLabelColor
+            return label
+        }
+        let sizeRow = NSStackView(views: [
+            smallLabel("px"), smallLabel("B"), minWidthField,
+            smallLabel("–"), maxWidthField, smallLabel("H"), minHeightField,
+            smallLabel("–"), maxHeightField,
+        ])
+        sizeRow.orientation = .horizontal
+        sizeRow.spacing = 4
+        sizeRow.alignment = .centerY
+        sizeRow.setCustomSpacing(12, after: sizeRow.views[0])
+        sizeRow.setCustomSpacing(12, after: sizeRow.views[4])
         infoRow = NSStackView(views: [spinner, infoLabel, openButton])
         infoRow.orientation = .horizontal
         infoRow.spacing = 6
         infoRow.alignment = .centerY
 
-        let outer = NSStackView(views: [searchRow, optionsRow, infoRow,
-                                        scrollView])
+        let outer = NSStackView(views: [searchRow, optionsRow, sizeRow,
+                                        infoRow, scrollView])
         outer.orientation = .vertical
         outer.spacing = 8
         outer.alignment = .leading
@@ -665,9 +706,24 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
     /// Umschalten einer Suchoption startet dieselbe Suche neu.
     @objc func optionsChanged() {
-        if !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty {
+        if !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
+            || !pixelLimits.isEmpty {
             startSearch()
         }
+    }
+
+    /// Die vier Maßfelder als Grenzen; leer oder unbrauchbar = keine Grenze.
+    var pixelLimits: PixelLimits {
+        PixelLimits(minWidth: parsePixelLimit(minWidthField.stringValue),
+                    maxWidth: parsePixelLimit(maxWidthField.stringValue),
+                    minHeight: parsePixelLimit(minHeightField.stringValue),
+                    maxHeight: parsePixelLimit(maxHeightField.stringValue))
+    }
+
+    var selectedMode: SearchTextMode {
+        SearchTextMode.allCases[
+            max(0, min(SearchTextMode.allCases.count - 1,
+                       modeControl.selectedSegment))]
     }
 
     /// CLI-Wert des sichtbaren Drei-Wege-Umschalters.
@@ -712,7 +768,9 @@ final class QuickController: NSObject, NSApplicationDelegate,
         cancelSearch()   // sauberer Ausgangszustand; zählt Generation hoch
         clearHits()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return }
+        // Ohne Suchbegriff nur mit Maßfilter — „alle Bilder über 1000 px".
+        let limits = pixelLimits
+        guard !query.isEmpty || !limits.isEmpty else { return }
 
         // Der ausgewählte Eintrag trägt keinen Pfad → der Finder-Ordner steht
         // noch aus. Dann NICHT ersatzweise im Benutzerordner suchen, sondern
@@ -743,7 +801,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
             showInfo("Suche in " + abbreviateHome(root) + " …",
                      detail: root)
         }
-        let searchContent = contentCheckbox.state == .on
+        let mode = selectedMode
         let searchArchives = archivesCheckbox.state == .on
         let searchHidden = hiddenCheckbox.state == .on
         let searchExact = exactCheckbox.state == .on
@@ -758,11 +816,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let arguments = searchArguments(
-                pattern: query, root: root, content: searchContent,
+                pattern: query, root: root, content: mode == .content,
                 regex: false, caseSensitive: false,
                 archives: searchArchives, progress: true,
                 only: only,
-                includeHidden: searchHidden, exact: searchExact)
+                includeHidden: searchHidden, exact: searchExact,
+                metadata: mode == .metadata, pixelLimits: limits)
             else {
                 DispatchQueue.main.async {
                     guard let self, generation == self.searchGeneration
@@ -947,7 +1006,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
             URLQueryItem(name: "root", value: root),
             URLQueryItem(name: "file", value: resultsFile.path),
             URLQueryItem(name: "content",
-                         value: contentCheckbox.state == .on ? "1" : "0"),
+                         value: selectedMode == .content ? "1" : "0"),
+            URLQueryItem(name: "mode", value: selectedMode.rawValue),
+            URLQueryItem(name: "minw", value: minWidthField.stringValue),
+            URLQueryItem(name: "maxw", value: maxWidthField.stringValue),
+            URLQueryItem(name: "minh", value: minHeightField.stringValue),
+            URLQueryItem(name: "maxh", value: maxHeightField.stringValue),
             URLQueryItem(name: "archives",
                          value: archivesCheckbox.state == .on ? "1" : "0"),
             URLQueryItem(name: "hidden",

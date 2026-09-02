@@ -9,7 +9,11 @@ Wunsch auch Archive in Archiven). Mit den externen Werkzeugen bsdtar
 
 Grundprinzipien:
 - Standardmäßig wird nach DATEINAMEN gesucht (Ordner zählen mit).
-- Mit --content wird stattdessen im DATEIINHALT gesucht.
+- Mit --content wird stattdessen im DATEIINHALT gesucht, mit --metadata in
+  den Metadaten-Textfeldern (Stichwörter, Titel, Beschreibung …; braucht
+  das optionale exiftool).
+- --min-width/--max-width/--min-height/--max-height filtern Bilder nach
+  Pixelmaßen; sie gelten immer zusätzlich (UND) zum Suchmuster.
 - Ohne Platzhalter (* ? [) gilt „Name enthält den Suchtext";
   mit Platzhaltern gilt Glob-Matching auf den ganzen Namen. --exact verlangt
   in jedem Fall den ganzen Namen.
@@ -32,6 +36,7 @@ import lzma
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -40,7 +45,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.25.1"
+__version__ = "0.26.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-02"
@@ -587,6 +592,434 @@ def nonnegative_int(value):
     return parsed
 
 
+
+# --- Metadaten und Bildmaße -------------------------------------------------
+
+# Die Metadatenfelder, in denen --metadata liest: bewusst EINE kuratierte
+# Liste, die sich leicht ändern lässt. „Alle Felder" wäre als Suchraum
+# unbrauchbar — in 357 realen Dateien (Bilder, PDFs, Audio; Messung
+# 2026-09-01) waren die häufigsten Felder ICC-Profil-Rauschen wie
+# ProfileCMMType, nutzerrelevanter Text steckte in etwa 15 Feldern.
+# Die Namen sind die von exiftool mit `-use MWG` (das legt EXIF, IPTC und
+# XMP übereinander); --list-metadata-fields gibt sie aus.
+METADATA_TEXT_FIELDS = (
+    "Keywords", "Subject", "Title", "Description", "ImageDescription",
+    "Caption-Abstract", "Headline", "UserComment", "Comment", "XPComment",
+    "XPKeywords", "Artist", "Creator", "Author", "Copyright", "PersonInImage",
+    "Album", "AlbumArtist", "Genre", "Composer", "Category",
+)
+
+# Nur Dateien mit diesen Endungen gehen überhaupt an exiftool. Ein Lauf über
+# ein Quellcodeverzeichnis darf exiftool nicht auf jede .o werfen — der
+# Aufruf kostet je Datei 0,7 ms (Bilder) bis 61 ms (PDF).
+METADATA_EXTENSIONS = frozenset((
+    ".jpg", ".jpeg", ".jpe", ".png", ".gif", ".tif", ".tiff", ".bmp", ".webp",
+    ".heic", ".heif", ".avif", ".psd", ".dng", ".cr2", ".cr3", ".nef", ".arw",
+    ".raf", ".orf", ".rw2", ".pdf", ".mp3", ".m4a", ".flac", ".wav", ".aif",
+    ".aiff", ".ogg", ".opus", ".aac", ".mp4", ".mov", ".m4v", ".mkv", ".avi",
+))
+
+# Formate, deren Maße der eingebaute Leser nicht kennt. Nur hier fragt der
+# Rückfall exiftool nach ImageWidth/ImageHeight — und nur, wenn es da ist.
+EXIFTOOL_DIMENSION_EXTENSIONS = frozenset((
+    ".heic", ".heif", ".avif", ".psd", ".dng", ".cr2", ".cr3", ".nef", ".arw",
+    ".raf", ".orf", ".rw2", ".mp4", ".mov", ".m4v", ".mkv", ".avi",
+))
+
+# Orte, an denen exiftool liegen kann, wenn es nicht im PATH steht (die Apps
+# starten mit dem knappen launchd-PATH ohne Homebrew).
+EXIFTOOL_FALLBACK_CANDIDATES = (
+    "/opt/homebrew/bin/exiftool", "/usr/local/bin/exiftool",
+    "/opt/local/bin/exiftool",
+)
+
+# Cache der einmaligen Suche: None = noch nicht gesucht, "" = nicht da.
+# Tests setzen "" um „exiftool fehlt" zu simulieren.
+_EXIFTOOL_PATH = None
+
+
+def find_exiftool():
+    """Pfad zu exiftool oder None, wenn es nicht installiert ist."""
+    global _EXIFTOOL_PATH
+    if _EXIFTOOL_PATH is None:
+        found = shutil.which("exiftool")
+        if found is None:
+            for candidate in EXIFTOOL_FALLBACK_CANDIDATES:
+                if os.access(candidate, os.X_OK):
+                    found = candidate
+                    break
+        _EXIFTOOL_PATH = found or ""
+    return _EXIFTOOL_PATH or None
+
+
+# So viele Bytes darf der Maß-Leser höchstens durchgehen. Ein JPEG trägt
+# seine Maße hinter den APP-Segmenten (EXIF, ICC, XMP) — normalerweise nach
+# wenigen KB, bei eingebetteten Vorschaubildern nach ein paar hundert KB.
+DIMENSION_SCAN_LIMIT = 4 * 1024 * 1024
+
+
+class _ForwardReader:
+    """Liest einen Datenstrom nur vorwärts, mit Zurücklegen des Kopfes.
+
+    Der Maß-Leser bekommt keinen Pfad, sondern einen Strom — so gilt er
+    unverändert für Archiv-Einträge, die sich nicht zurückspulen lassen
+    (bsdtar liefert einen Pipe-Strom). Deshalb kein seek(): Überspringen
+    heißt Weglesen, und die anfangs gelesenen Kopfbytes werden zurückgelegt,
+    damit jedes Format bei Byte 0 beginnt."""
+
+    def __init__(self, handle):
+        self.handle = handle
+        self.pending = b""
+        self.position = 0
+
+    def push_back(self, data):
+        self.pending = data + self.pending
+        self.position -= len(data)
+
+    def read(self, count):
+        """Bis zu `count` Bytes; am Ende weniger oder b""."""
+        parts = []
+        if self.pending:
+            parts.append(self.pending[:count])
+            self.pending = self.pending[count:]
+            count -= len(parts[0])
+        if count > 0:
+            chunk = self.handle.read(count)
+            if chunk:
+                parts.append(chunk)
+        data = b"".join(parts)
+        self.position += len(data)
+        if self.position > DIMENSION_SCAN_LIMIT:
+            raise ValueError("Bildkopf zu lang")
+        return data
+
+    def read_exact(self, count):
+        data = self.read(count)
+        if len(data) < count:
+            raise EOFError("Bildkopf abgeschnitten")
+        return data
+
+    def skip(self, count):
+        while count > 0:
+            chunk = self.read(min(count, CHUNK_SIZE))
+            if not chunk:
+                raise EOFError("Bildkopf abgeschnitten")
+            count -= len(chunk)
+
+
+def image_dimensions(handle):
+    """(Breite, Höhe) in Pixeln aus dem Dateikopf — oder None.
+
+    Nur Standardbibliothek, liest nur vorwärts und nur so weit wie nötig:
+    PNG (IHDR), GIF, BMP, WebP (VP8/VP8L/VP8X), TIFF (erstes IFD) und JPEG
+    (erster SOF-Marker). Alles andere — HEIC, RAW, Video — beantwortet der
+    Rückfall über exiftool. Gemessen am 2026-09-01: 0,198 ms je Datei über
+    239 reale Bilder, 239 davon korrekt."""
+    try:
+        return _image_dimensions(_ForwardReader(handle))
+    except (EOFError, ValueError, struct.error):
+        return None
+
+
+def _image_dimensions(reader):
+    head = reader.read(30)
+    reader.push_back(head)
+    if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+        return struct.unpack(">II", head[16:24])
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return struct.unpack("<HH", head[6:10])
+    if head[:2] == b"BM" and len(head) >= 26:
+        header_size = struct.unpack("<I", head[14:18])[0]
+        if header_size == 12:                      # altes OS/2-Format
+            return struct.unpack("<HH", head[18:22])
+        width, height = struct.unpack("<ii", head[18:26])
+        return abs(width), abs(height)             # negativ = von oben
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        chunk = head[12:16]
+        if chunk == b"VP8 ":
+            width, height = struct.unpack("<HH", head[26:30])
+            return width & 0x3FFF, height & 0x3FFF
+        if chunk == b"VP8L":
+            bits = head[21:25]
+            width = 1 + (((bits[1] & 0x3F) << 8) | bits[0])
+            height = 1 + (((bits[3] & 0x0F) << 10) | (bits[2] << 2)
+                          | ((bits[1] & 0xC0) >> 6))
+            return width, height
+        if chunk == b"VP8X":
+            return (int.from_bytes(head[24:27], "little") + 1,
+                    int.from_bytes(head[27:30], "little") + 1)
+        return None
+    if head[:2] == b"\xff\xd8":
+        return _jpeg_dimensions(reader)
+    if head[:4] in (b"II*\x00", b"MM\x00*"):
+        return _tiff_dimensions(reader, "<" if head[:2] == b"II" else ">")
+    return None
+
+
+def _jpeg_dimensions(reader):
+    """Sucht den ersten SOF-Marker; davor liegen nur Segmente mit Länge."""
+    reader.skip(2)
+    while True:
+        byte = reader.read(1)
+        if not byte:
+            return None
+        if byte != b"\xff":
+            continue
+        while byte == b"\xff":
+            byte = reader.read_exact(1)
+        marker = byte[0]
+        if marker in (0x01, 0xD8) or 0xD0 <= marker <= 0xD7:
+            continue                               # Marker ohne Länge
+        if marker in (0xD9, 0xDA):
+            return None                            # Bilddaten ohne SOF
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            reader.skip(3)                         # Länge + Farbtiefe
+            height, width = struct.unpack(">HH", reader.read_exact(4))
+            return width, height
+        length = struct.unpack(">H", reader.read_exact(2))[0]
+        reader.skip(length - 2)
+
+
+def _tiff_dimensions(reader, endian):
+    """Breite (Tag 0x100) und Höhe (0x101) aus dem ersten IFD."""
+    header = reader.read_exact(8)
+    offset = struct.unpack(endian + "I", header[4:8])[0]
+    reader.skip(offset - 8)
+    count = struct.unpack(endian + "H", reader.read_exact(2))[0]
+    width = height = None
+    for _ in range(count):
+        entry = reader.read_exact(12)
+        tag, kind = struct.unpack(endian + "HH", entry[:4])
+        if tag not in (0x0100, 0x0101):
+            continue
+        if kind == 3:                              # SHORT
+            value = struct.unpack(endian + "H", entry[8:10])[0]
+        elif kind == 4:                            # LONG
+            value = struct.unpack(endian + "I", entry[8:12])[0]
+        else:
+            continue
+        if tag == 0x0100:
+            width = value
+        else:
+            height = value
+        if width is not None and height is not None:
+            return width, height
+    return None
+
+
+class ExifToolStream:
+    """EIN exiftool-Prozess für den ganzen Suchlauf.
+
+    Ein Prozess je Datei kostet 44 ms; mit `-stay_open True` werden die
+    Pfade laufend über die Argumentdatei (hier: stdin) nachgereicht und
+    kosten 0,75 ms je Bild (Messung 2026-09-01). Die Suche streamt damit
+    weiter, statt erst alle Pfade zu sammeln. Je Datei kommt ein JSON-Array
+    zurück, abgeschlossen durch die Zeile `{ready}`."""
+
+    def __init__(self, executable, fields):
+        self.fields = list(fields)
+        self.broken = False
+        self.process = subprocess.Popen(
+            [executable, "-stay_open", "True", "-@", "-"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL)
+
+    def read(self, path):
+        """Die angeforderten Felder EINER Datei als dict — oder None."""
+        if self.broken or "\n" in path or "\r" in path:
+            # Die Argumentdatei ist zeilenweise; ein Umbruch im Pfad ließe
+            # sich nicht übertragen.
+            return None
+        # `-use MWG` legt EXIF, IPTC und XMP übereinander (Keywords ist dann
+        # ein Feld statt drei); `-m` übergeht kleine Formatfehler, wie es
+        # auch ein Bildbetrachter täte.
+        arguments = ["-json", "-use", "MWG", "-m", "-charset",
+                     "filename=utf8"]
+        arguments.extend("-" + field for field in self.fields)
+        arguments.extend([path, "-execute"])
+        try:
+            self.process.stdin.write(
+                ("\n".join(arguments) + "\n").encode("utf-8"))
+            self.process.stdin.flush()
+            buffer = []
+            while True:
+                line = self.process.stdout.readline()
+                if not line:
+                    raise BrokenPipeError("exiftool hat sich beendet")
+                if line.strip() == b"{ready}":
+                    break
+                buffer.append(line)
+        except (OSError, ValueError):
+            self.broken = True
+            return None
+        text = b"".join(buffer).decode("utf-8", "replace").strip()
+        if not text:
+            return None
+        try:
+            records = json.loads(text)
+        except ValueError:
+            return None
+        return records[0] if records else None
+
+    def close(self):
+        """Beendet den Prozess sauber — auch nach einem Abbruch der Suche."""
+        try:
+            self.process.stdin.write(b"-stay_open\nFalse\n")
+            self.process.stdin.flush()
+            self.process.stdin.close()
+            self.process.wait(timeout=5)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            self.process.kill()
+            self.process.wait()
+
+
+def metadata_values(value):
+    """Ein Metadatenfeld als Liste von Texten: Listen (Keywords) Element
+    für Element, alles andere als ein Text."""
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+MISSING = object()   # „noch nicht ermittelt" — auch None ist ein Ergebnis
+
+
+class FileProbe:
+    """Eine Datei oder ein Archiv-Eintrag, der teure Fragen EINMAL beantwortet.
+
+    Ein Lauf mit drei Kriterien (Name, Maße, Metadaten) fragt exiftool
+    trotzdem nur einmal je Datei und liest den Bildkopf nur einmal. Die
+    Antworten bleiben gemerkt, bis der Treffer ausgegeben ist."""
+
+    def __init__(self, search, label, name, open_stream, chunker,
+                 filesystem_path, size=None, in_archive=False):
+        self.search = search
+        self.label = label                    # Anzeigepfad für Warnungen
+        self.name = name                      # Dateiname (nur die letzte
+                                              # Komponente)
+        self.open_stream = open_stream        # liefert einen frischen
+                                              # lesbaren Datenstrom
+        self.chunker = chunker                # chunker(handle, free_bytes)
+                                              # → Byte-Häppchen (Budget!)
+        self.filesystem_path = filesystem_path
+        self.size = size
+        self.in_archive = in_archive
+        self.metadata_hit = None              # (Feld, Wert) bei Treffer
+        self._dimensions = MISSING
+        self._metadata = MISSING
+        self._content_line = MISSING
+
+    @property
+    def extension(self):
+        return os.path.splitext(self.name)[1].lower()
+
+    def dimensions(self):
+        """(Breite, Höhe) oder None. Erst der eingebaute Leser, dann — nur
+        für Formate, die er nicht kennt — exiftool."""
+        if self._dimensions is MISSING:
+            with self.open_stream() as handle:
+                dims = image_dimensions(handle)
+            if dims is None and not self.in_archive \
+                    and self.extension in EXIFTOOL_DIMENSION_EXTENSIONS:
+                record = self.metadata() or {}
+                width = record.get("ImageWidth")
+                height = record.get("ImageHeight")
+                if isinstance(width, int) and isinstance(height, int):
+                    dims = (width, height)
+            self._dimensions = dims
+        return self._dimensions
+
+    def metadata(self):
+        """Die angeforderten exiftool-Felder als dict — oder None. Archiv-
+        Einträge und Dateien ohne Medienendung fragen exiftool gar nicht."""
+        if self._metadata is MISSING:
+            self._metadata = None
+            if not self.in_archive \
+                    and self.extension in METADATA_EXTENSIONS:
+                stream = self.search.exiftool_stream()
+                if stream is not None:
+                    self._metadata = stream.read(self.filesystem_path)
+        return self._metadata
+
+    def content_line(self):
+        """Zeilennummer des ersten Inhaltstreffers oder None."""
+        if self._content_line is MISSING:
+            self._content_line = self.search.find_content_line(self)
+        return self._content_line
+
+
+# Die Kriterien einer Suche. Alle müssen zutreffen; `Search` sortiert sie
+# nach `cost` und bricht beim ersten Nein ab. Reihenfolge: Name (gratis) →
+# Maße (0,2 ms) → Metadaten (0,75 ms) → Inhalt (teuer). Genau das macht
+# „Winter UND ≥ 1000 px" schnell: exiftool sieht nur die Dateien, die die
+# Maßprüfung überlebt haben. Ein weiteres Textkriterium wäre eine weitere
+# Klasse in dieser Liste — der Kern ist dafür geschnitten.
+
+class NameCriterion:
+    cost = 0
+
+    def __init__(self, matcher):
+        self.matcher = matcher
+
+    def test(self, probe):
+        return self.matcher(probe.name)
+
+
+class DimensionCriterion:
+    cost = 1
+
+    def __init__(self, min_width=None, max_width=None, min_height=None,
+                 max_height=None):
+        self.min_width = min_width
+        self.max_width = max_width
+        self.min_height = min_height
+        self.max_height = max_height
+
+    def test(self, probe):
+        dims = probe.dimensions()
+        if dims is None:
+            return False               # keine Maße = kein Bild = kein Treffer
+        width, height = dims
+        if self.min_width is not None and width < self.min_width:
+            return False
+        if self.max_width is not None and width > self.max_width:
+            return False
+        if self.min_height is not None and height < self.min_height:
+            return False
+        if self.max_height is not None and height > self.max_height:
+            return False
+        return True
+
+
+class MetadataCriterion:
+    cost = 2
+
+    def __init__(self, matcher, fields):
+        self.matcher = matcher
+        self.fields = list(fields)
+
+    def test(self, probe):
+        record = probe.metadata()
+        if not record:
+            return False
+        for field in self.fields:
+            value = record.get(field)
+            if value is None:
+                continue
+            for text in metadata_values(value):
+                if self.matcher(text):
+                    probe.metadata_hit = (field, text)
+                    return True
+        return False
+
+
+class ContentCriterion:
+    cost = 3
+
+    def test(self, probe):
+        return probe.content_line() is not None
+
+
 class Search:
     """Kapselt eine Suche: Muster, Optionen und das Einsammeln der Treffer.
 
@@ -600,12 +1033,50 @@ class Search:
                  max_archive_member_bytes=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
                  max_archive_total_bytes=DEFAULT_MAX_ARCHIVE_TOTAL_BYTES,
                  max_archive_ratio=DEFAULT_MAX_ARCHIVE_RATIO,
-                 content_probe=None):
+                 content_probe=None, metadata_mode=False,
+                 metadata_fields=None, min_width=None, max_width=None,
+                 min_height=None, max_height=None, exiftool_path=None):
         self.matcher = matcher                # Funktion text -> bool
         self.content_probe = content_probe    # ContentProbe oder None:
                                               # billiger Vortest vor der
                                               # zeilenweisen Inhaltssuche
-        self.content_mode = content_mode      # True = Inhalt, False = Namen
+        # Wogegen das Muster läuft: "name", "content" oder "metadata".
+        if content_mode:
+            self.text_mode = "content"
+        elif metadata_mode:
+            self.text_mode = "metadata"
+        else:
+            self.text_mode = "name"
+        self.content_mode = content_mode      # True = Inhalt (Altname)
+        self.metadata_fields = list(metadata_fields or METADATA_TEXT_FIELDS)
+        # Die Kriterienliste — siehe Kommentar über NameCriterion.
+        criteria = []
+        if self.text_mode == "name":
+            criteria.append(NameCriterion(matcher))
+        elif self.text_mode == "content":
+            criteria.append(ContentCriterion())
+        else:
+            criteria.append(MetadataCriterion(matcher, self.metadata_fields))
+        self.wants_dimensions = any(
+            limit is not None
+            for limit in (min_width, max_width, min_height, max_height))
+        if self.wants_dimensions:
+            criteria.append(DimensionCriterion(min_width, max_width,
+                                               min_height, max_height))
+        self.criteria = sorted(criteria, key=lambda item: item.cost)
+        # Ordner haben weder Inhalt noch Maße noch Metadaten: Sie können nur
+        # eine reine Namenssuche erfüllen.
+        self.directories_can_match = (self.text_mode == "name"
+                                      and not self.wants_dimensions)
+        # exiftool: Pfad (oder None) und der erst bei Bedarf gestartete
+        # Prozess. Angefordert werden nur die Felder, die dieser Lauf braucht.
+        self.exiftool_path = exiftool_path
+        self._exiftool = MISSING
+        self.exiftool_fields = []
+        if self.text_mode == "metadata":
+            self.exiftool_fields.extend(self.metadata_fields)
+        if self.wants_dimensions:
+            self.exiftool_fields.extend(["ImageWidth", "ImageHeight"])
         self.archive_depth = archive_depth    # 0 = Archive ignorieren,
                                               # 1 = in Archive schauen,
                                               # 2 = auch Archive IN Archiven …
@@ -647,7 +1118,8 @@ class Search:
         return name.startswith(".")
 
     def emit(self, path, kind, line=None, size=None, filesystem_path=None,
-             archive_members=None, is_dir=None):
+             archive_members=None, is_dir=None, field=None, value=None,
+             width=None, height=None):
         """Gibt EINEN Treffer aus. kind ist "file", "dir" oder "member"
         (member = Eintrag innerhalb eines Archivs). line ist bei
         Inhaltssuche die Zeilennummer des ersten Treffers, size die
@@ -658,7 +1130,12 @@ class Search:
         genauso an wie eine Datei im Archiv, und die Oberfläche zeigte ihn als
         Datei an, filterte ihn beim Ordner-Umschalter falsch und erzeugte beim
         Öffnen eine leere Datei (Review-Fund 2026-08-17). Ohne Angabe folgt es
-        dem Typ."""
+        dem Typ.
+
+        `field`/`value` nennen bei einer Metadatensuche das Feld und den
+        gefundenen Wert, `width`/`height` die Pixelmaße, wenn ein Maßfilter
+        sie ermittelt hat. Alle vier sind optional und ändern den bisherigen
+        Pflichtsatz nicht."""
         self.found_any = True
         directory = kind == "dir" if is_dir is None else bool(is_dir)
         if self.as_json:
@@ -671,9 +1148,17 @@ class Search:
                 record["line"] = line
             if size is not None:
                 record["size"] = size
+            if field is not None:
+                record["field"] = field
+                record["value"] = value
+            if width is not None and height is not None:
+                record["width"] = width
+                record["height"] = height
             text = json.dumps(record, ensure_ascii=False)
         else:
             text = path + (":%d" % line if line is not None else "")
+            if field is not None:
+                text += ":%s: %s" % (field, value)
         print(text)
 
     def warn(self, message):
@@ -703,6 +1188,100 @@ class Search:
                              ensure_ascii=False), flush=True)
         else:
             print("… durchsuche: %s" % path, file=sys.stderr)
+
+    # ---------- exiftool ----------
+
+    def exiftool_stream(self):
+        """Der eine exiftool-Prozess dieses Laufs — gestartet beim ersten
+        Bedarf, None ohne exiftool oder ohne angeforderte Felder."""
+        if self._exiftool is MISSING:
+            self._exiftool = None
+            if self.exiftool_path and self.exiftool_fields:
+                try:
+                    self._exiftool = ExifToolStream(self.exiftool_path,
+                                                    self.exiftool_fields)
+                except OSError as err:
+                    self.warn("exiftool nicht startbar: %s" % err)
+        return self._exiftool
+
+    def close(self):
+        """Räumt auf, was der Lauf gestartet hat (den exiftool-Prozess)."""
+        if self._exiftool not in (MISSING, None):
+            self._exiftool.close()
+        self._exiftool = MISSING
+
+    # ---------- Kriterien ----------
+
+    def evaluate(self, probe, display, kind, filesystem_path=None,
+                 archive_members=None):
+        """Prüft alle Kriterien gegen EINE Datei bzw. EINEN Archiv-Eintrag
+        und gibt bei Erfolg den Treffer aus. Das erste Nein beendet die
+        Prüfung — die teuren Fragen kommen dank der Kostenreihenfolge
+        zuletzt."""
+        try:
+            for criterion in self.criteria:
+                if not criterion.test(probe):
+                    return
+            line = (probe.content_line() if self.text_mode == "content"
+                    else None)
+            dims = probe.dimensions() if self.wants_dimensions else None
+        except EXPECTED_ARCHIVE_ERRORS as err:
+            self.warn("%s: %s" % (probe.label, err))
+            return
+        field = value = None
+        if probe.metadata_hit is not None:
+            field, value = probe.metadata_hit
+        size = probe.size if probe.in_archive \
+            else self.file_size(probe.filesystem_path)
+        self.emit(display, kind, line=line, size=size,
+                  filesystem_path=filesystem_path,
+                  archive_members=archive_members, is_dir=False,
+                  field=field, value=value,
+                  width=dims[0] if dims else None,
+                  height=dims[1] if dims else None)
+
+    @staticmethod
+    def file_chunks(handle, free_bytes=0):
+        """Häppchen einer normalen Datei; `free_bytes` gibt es nur bei
+        Archiv-Einträgen (Budget) und wird hier ignoriert."""
+        # iter(callable, sentinel) ruft read() so lange auf,
+        # bis es b"" liefert — das Dateiende.
+        return iter(lambda: handle.read(CHUNK_SIZE), b"")
+
+    def find_content_line(self, probe):
+        """Zeilennummer des ersten Inhaltstreffers oder None — für Dateien
+        wie für Archiv-Einträge derselbe Weg.
+
+        Ohne Vortest ist das ein Durchlauf. Mit Vortest sind es zwei: erst
+        das billige Ja/Nein, und nur bei Ja das genaue Zählen. Auch im
+        Archiv lohnt sich das, denn das Entpacken ist nicht der Hauptaufwand
+        (gemessen am 2026-07-28 an einem 22-MB-Zip mit 72,8 MB Inhalt:
+        0,12 s Entpacken gegenüber 0,68 s Gesamtsuche). Für den zweiten
+        Durchlauf wird neu geöffnet — ein entpackender Datenstrom lässt sich
+        nicht zurückspulen, und eine Datei liegt jetzt im Cache."""
+        if self.content_probe is None:
+            with probe.open_stream() as handle:
+                return self.match_content(probe.chunker(handle))
+        probed_bytes = 0
+
+        def tally(chunks):
+            """Zählt mit, wie weit der Vortest wirklich gelesen hat. Genau
+            diese Bytes stehen danach schon im Gesamtbudget; er hört beim
+            ersten Fund mitten im Eintrag auf."""
+            nonlocal probed_bytes
+            for chunk in chunks:
+                probed_bytes += len(chunk)
+                yield chunk
+
+        with probe.open_stream() as handle:
+            if not self.content_probe.hits(tally(probe.chunker(handle))):
+                return None
+        with probe.open_stream() as handle:
+            # free_bytes: genau den Anfang, den der Vortest schon gelesen und
+            # dem Gesamtbudget belastet hat, nicht zweimal zählen. Liest der
+            # genaue Lauf weiter, zählt der Rest wieder mit.
+            return self.match_content(
+                probe.chunker(handle, free_bytes=probed_bytes))
 
     # ---------- Inhalts-Matching ----------
 
@@ -778,7 +1357,7 @@ class Search:
                 # überspringen. dirnames IN PLACE ändern, damit os.walk folgt.
                 dirnames[:] = [d for d in dirnames if not self.is_hidden(d)]
                 filenames = [f for f in filenames if not self.is_hidden(f)]
-            if not self.content_mode:
+            if self.directories_can_match:
                 # Bei Namenssuche zählen auch Ordnernamen als Treffer. Das
                 # passiert VOR dem Abschneiden unten: Ein Ordner GENAU auf der
                 # Grenztiefe ist selbst noch ein erlaubter Treffer, nur sein
@@ -817,57 +1396,32 @@ class Search:
             return None
 
     def visit_file(self, path):
-        """Behandelt EINE Datei im Dateisystem: Namens- oder Inhaltstest,
-        und — falls es ein Archiv ist — der Blick hinein."""
+        """Behandelt EINE Datei im Dateisystem: alle Kriterien gegen die
+        Datei selbst, und — falls es ein Archiv ist — der Blick hinein."""
         name = os.path.basename(path)
-
-        if not self.content_mode and self.matcher(name) \
-                and self.type_allowed(False):
-            self.emit(path, "file", size=self.file_size(path))
-
         archive_kind = classify_archive(name)
-        if archive_kind and self.archive_depth >= 1:
+        # Bei einer Metadatensuche lohnt der Blick ins Archiv nicht: Ein
+        # Eintrag hat keine Datei, die exiftool lesen könnte.
+        descend = (archive_kind is not None and self.archive_depth >= 1
+                   and self.text_mode != "metadata")
+        # Wird NICHT in das Archiv geschaut — weil --no-archives bzw.
+        # --archive-depth 0 das verbietet oder weil die Endung gar kein
+        # Archiv ist —, dann ist die Datei eine ganz normale Datei und
+        # ihr roher Inhalt wird durchsucht. Genau das passiert auch mit
+        # einer .7z ohne bsdtar; beide Fälle dürfen sich nicht
+        # unterscheiden, sonst hinge es vom Zufall der installierten
+        # Werkzeuge ab, ob eine Datei überhaupt angefasst wird. Bei der
+        # Namenssuche zählt das Archiv selbst immer auch als Datei.
+        if self.type_allowed(False) \
+                and (self.text_mode != "content" or not descend):
+            probe = FileProbe(self, path, name,
+                              open_stream=lambda: open(path, "rb"),
+                              chunker=self.file_chunks,
+                              filesystem_path=path)
+            self.evaluate(probe, path, "file")
+        if descend:
             self.search_archive(path, None, archive_kind, path,
                                 self.archive_depth)
-        elif self.content_mode:
-            # Wird NICHT in das Archiv geschaut — weil --no-archives bzw.
-            # --archive-depth 0 das verbietet oder weil die Endung gar kein
-            # Archiv ist —, dann ist die Datei eine ganz normale Datei und
-            # ihr roher Inhalt wird durchsucht. Genau das passiert auch mit
-            # einer .7z ohne bsdtar; beide Fälle dürfen sich nicht
-            # unterscheiden, sonst hinge es vom Zufall der installierten
-            # Werkzeuge ab, ob eine Datei überhaupt angefasst wird.
-            self.scan_content(path)
-
-    def scan_content(self, path):
-        """Inhaltssuche in EINER normalen Datei des Dateisystems.
-
-        Gelesen wird häppchenweise statt am Stück: so bleibt der Speicher
-        unabhängig von der Dateigröße klein, und bei einem Treffer weit
-        vorne sparen wir uns den ganzen Rest.
-
-        Gibt es einen Vortest (ContentProbe), läuft er zuerst. Die meisten
-        Dateien enthalten den Suchtext nicht und sind damit ohne die teure
-        Arbeit pro Zeile abgehakt."""
-        try:
-            with open(path, "rb") as handle:
-                # iter(callable, sentinel) ruft read() so lange auf,
-                # bis es b"" liefert — das Dateiende.
-                if self.content_probe is not None:
-                    if not self.content_probe.hits(
-                            iter(lambda: handle.read(CHUNK_SIZE), b"")):
-                        return
-                    # Der Suchtext kommt vor: noch einmal von vorn, diesmal
-                    # genau, für die Zeilennummer. Das zweite Lesen ist
-                    # billig, weil die Datei jetzt im Cache des Systems liegt.
-                    handle.seek(0)
-                line = self.match_content(
-                    iter(lambda: handle.read(CHUNK_SIZE), b""))
-        except OSError as err:
-            self.warn(str(err))
-            return
-        if line is not None and self.type_allowed(False):
-            self.emit(path, "file", line, size=self.file_size(path))
 
     # ---------- Archive ----------
 
@@ -932,17 +1486,39 @@ class Search:
         if not self.include_hidden and self.member_is_hidden(member_path):
             return
 
-        if not self.content_mode and self.matcher(name) \
-                and self.type_allowed(is_dir):
-            self.emit(full_display, "member", size=None if is_dir else size,
-                      filesystem_path=archive_path,
-                      archive_members=member_chain, is_dir=is_dir)
-
         if is_dir:
+            # Ein Ordner im Archiv kann nur eine reine Namenssuche erfüllen.
+            if self.directories_can_match and self.matcher(name) \
+                    and self.type_allowed(True):
+                self.emit(full_display, "member", size=None,
+                          filesystem_path=archive_path,
+                          archive_members=member_chain, is_dir=True)
             return
 
         nested_kind = classify_archive(name)
-        if nested_kind and depth - 1 >= 1:
+        nested = nested_kind is not None and depth - 1 >= 1
+        # Wird in diesen Eintrag NICHT hineingeschaut — weil die
+        # --archive-depth aufgebraucht ist oder weil er gar kein Archiv
+        # ist —, dann gilt dieselbe Regel wie eine Ebene höher in
+        # visit_file(): Der Eintrag ist ein ganz normaler Eintrag, und
+        # sein roher Inhalt wird durchsucht. Ohne das entschiede auch
+        # hier der Grund über das Ergebnis — ein .7z ohne bsdtar wurde
+        # durchsucht, ein .zip an der Tiefengrenze dagegen nicht.
+        if self.type_allowed(False) \
+                and (self.text_mode != "content" or not nested):
+            def chunker(handle, free_bytes=0):
+                return self.archive_budget.iter_chunks(
+                    handle, full_display, size, compressed_size,
+                    free_bytes=free_bytes)
+            probe = FileProbe(self, full_display, name,
+                              open_stream=open_member, chunker=chunker,
+                              filesystem_path=archive_path, size=size,
+                              in_archive=True)
+            self.evaluate(probe, full_display, "member",
+                          filesystem_path=archive_path,
+                          archive_members=member_chain)
+
+        if nested:
             # Archiv im Archiv: Inhalt in den Speicher holen und rekursiv
             # weitersuchen (depth sinkt um 1).
             try:
@@ -956,64 +1532,6 @@ class Search:
                                 full_display, depth - 1,
                                 archive_path=archive_path,
                                 archive_members=member_chain)
-        elif self.content_mode:
-            # Wird in diesen Eintrag NICHT hineingeschaut — weil die
-            # --archive-depth aufgebraucht ist oder weil er gar kein Archiv
-            # ist —, dann gilt dieselbe Regel wie eine Ebene höher in
-            # visit_file(): Der Eintrag ist ein ganz normaler Eintrag, und
-            # sein roher Inhalt wird durchsucht. Ohne das entschiede auch
-            # hier der Grund über das Ergebnis — ein .7z ohne bsdtar wurde
-            # durchsucht, ein .zip an der Tiefengrenze dagegen nicht.
-            try:
-                line = self.member_hit_line(open_member, full_display,
-                                            size, compressed_size)
-            except EXPECTED_ARCHIVE_ERRORS as err:
-                self.warn("%s: %s" % (full_display, err))
-                return
-            if line is not None and self.type_allowed(False):
-                self.emit(full_display, "member", line, size=size,
-                          filesystem_path=archive_path,
-                          archive_members=member_chain)
-
-    def member_hit_line(self, open_member, label, size, compressed_size):
-        """Zeilennummer des ersten Inhaltstreffers in EINEM Archiv-Eintrag,
-        oder None.
-
-        Ohne Vortest ist das ein Durchlauf wie bei einer normalen Datei. Mit
-        Vortest sind es zwei: erst das billige Ja/Nein, und nur bei Ja das
-        genaue Zählen. Auch im Archiv lohnt sich das, denn das Entpacken ist
-        hier nicht der Hauptaufwand (gemessen am 2026-07-28 an einem 22-MB-Zip
-        mit 72,8 MB Inhalt: 0,12 s Entpacken gegenüber 0,68 s Gesamtsuche).
-
-        Der Eintrag wird für den zweiten Durchlauf neu geöffnet — ein
-        entpackender Datenstrom lässt sich nicht zurückspulen."""
-        if self.content_probe is None:
-            with open_member() as handle:
-                return self.match_content(self.archive_budget.iter_chunks(
-                    handle, label, size, compressed_size))
-        probed_bytes = 0
-
-        def tally(chunks):
-            """Zählt mit, wie weit der Vortest wirklich gelesen hat. Genau
-            diese Bytes stehen danach schon im Gesamtbudget; er hört beim
-            ersten Fund mitten im Eintrag auf."""
-            nonlocal probed_bytes
-            for chunk in chunks:
-                probed_bytes += len(chunk)
-                yield chunk
-
-        with open_member() as handle:
-            if not self.content_probe.hits(tally(
-                    self.archive_budget.iter_chunks(
-                        handle, label, size, compressed_size))):
-                return None
-        with open_member() as handle:
-            # free_bytes: genau den Anfang, den der Vortest schon gelesen und
-            # dem Gesamtbudget belastet hat, nicht zweimal zählen. Liest der
-            # genaue Lauf weiter, zählt der Rest wieder mit.
-            return self.match_content(self.archive_budget.iter_chunks(
-                handle, label, size, compressed_size,
-                free_bytes=probed_bytes))
 
     def walk_zip(self, archive, display, depth, archive_path,
                  archive_members):
@@ -1374,6 +1892,27 @@ def main(argv=None):
                         help="Startpfade (Default: aktueller Ordner)")
     parser.add_argument("-c", "--content", action="store_true",
                         help="im Dateiinhalt suchen statt in Dateinamen")
+    parser.add_argument("-m", "--metadata", action="store_true",
+                        help="in den Metadaten-Textfeldern suchen (Stich"
+                             "wörter, Titel, Beschreibung …) statt in "
+                             "Dateinamen; braucht exiftool")
+    parser.add_argument("--metadata-field", action="append", metavar="TAG",
+                        default=[],
+                        help="nur dieses Metadatenfeld durchsuchen (wieder"
+                             "holbar; schaltet --metadata ein)")
+    parser.add_argument("--list-metadata-fields", action="store_true",
+                        help="die durchsuchten Metadatenfelder ausgeben, "
+                             "eines je Zeile, und beenden")
+    parser.add_argument("--min-width", type=positive_int, metavar="PX",
+                        help="nur Bilder ab dieser Breite (Pixel)")
+    parser.add_argument("--max-width", type=positive_int, metavar="PX",
+                        help="nur Bilder bis zu dieser Breite (Pixel)")
+    parser.add_argument("--min-height", type=positive_int, metavar="PX",
+                        help="nur Bilder ab dieser Höhe (Pixel)")
+    parser.add_argument("--max-height", type=positive_int, metavar="PX",
+                        help="nur Bilder bis zu dieser Höhe (Pixel); alle "
+                             "vier Maßfilter gelten zusätzlich (UND) zum "
+                             "Muster, das dann auch fehlen darf")
     parser.add_argument("-r", "--regex", action="store_true",
                         help="Muster als regulären Ausdruck interpretieren")
     parser.add_argument("-s", "--case-sensitive", action="store_true",
@@ -1484,9 +2023,48 @@ def main(argv=None):
                               archive_members=archive_members,
                               **extract_options)
 
+    if args.list_metadata_fields:
+        for field in METADATA_TEXT_FIELDS:
+            print(field)
+        return 0
+
+    dimension_limits = {
+        "min_width": args.min_width, "max_width": args.max_width,
+        "min_height": args.min_height, "max_height": args.max_height,
+    }
+    wants_dimensions = any(value is not None
+                           for value in dimension_limits.values())
+    if args.min_width is not None and args.max_width is not None \
+            and args.min_width > args.max_width:
+        parser.error("--min-width ist größer als --max-width")
+    if args.min_height is not None and args.max_height is not None \
+            and args.min_height > args.max_height:
+        parser.error("--min-height ist größer als --max-height")
+    if wants_dimensions and args.pattern and not args.paths \
+            and os.path.exists(args.pattern):
+        # `favenio.py --min-width 1000 ~/Bilder`: Das einzige Positions-
+        # argument ist ein Pfad, kein Muster. Wer wirklich nach einem Namen
+        # sucht, der zufällig auch als Pfad existiert, schreibt das Muster
+        # und den Startpfad beide hin.
+        args.paths = [args.pattern]
+        args.pattern = None
     if not args.pattern:
-        # parser.error() gibt die Usage aus und beendet mit Exit-Code 2.
-        parser.error("PATTERN fehlt (oder --extract verwenden)")
+        if wants_dimensions:
+            # Nur nach Maßen suchen: jedes Bild kommt in Frage.
+            args.pattern = "*"
+        else:
+            # parser.error() gibt die Usage aus und beendet mit Exit-Code 2.
+            parser.error("PATTERN fehlt (oder --extract verwenden)")
+
+    metadata_mode = args.metadata or bool(args.metadata_field)
+    if args.content and metadata_mode:
+        parser.error("--content und --metadata schließen sich aus")
+    exiftool_path = find_exiftool()
+    if metadata_mode and exiftool_path is None:
+        print("favenio: fehler: --metadata braucht exiftool, das nicht "
+              "gefunden wurde (z. B. `brew install exiftool`). Die "
+              "Maßfilter kommen ohne aus.", file=sys.stderr)
+        return 2
 
     # argparse setzt den Default für nargs="*" nur, wenn GAR NICHTS kommt —
     # deshalb hier noch einmal absichern.
@@ -1514,7 +2092,10 @@ def main(argv=None):
                     max_archive_member_bytes=args.max_archive_member_bytes,
                     max_archive_total_bytes=args.max_archive_total_bytes,
                     max_archive_ratio=args.max_archive_ratio,
-                    content_probe=content_probe)
+                    content_probe=content_probe,
+                    metadata_mode=metadata_mode,
+                    metadata_fields=args.metadata_field or None,
+                    exiftool_path=exiftool_path, **dimension_limits)
 
     # Erst alle Startpfade prüfen, dann suchen: sonst stünden bei mehreren
     # Pfaden schon Treffer auf stdout, bevor ein späterer Pfad den Fehler
@@ -1524,8 +2105,11 @@ def main(argv=None):
             print("favenio: fehler: Pfad existiert nicht: %s" % path,
                   file=sys.stderr)
             return 2
-    for path in paths:
-        search.search_path(path)
+    try:
+        for path in paths:
+            search.search_path(path)
+    finally:
+        search.close()
 
     return 0 if search.found_any else 1
 

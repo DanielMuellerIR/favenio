@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.26.0 — 2026-09-02
+
+Metadaten- und Bildmaßsuche — im Kern, in der Haupt-App und in der
+Schnellsuche. Der bisherige JSON-Pflichtsatz bleibt unverändert.
+
+- **Suche nach Pixelmaßen.** `--min-width`, `--max-width`, `--min-height`
+  und `--max-height` filtern Bilder nach Breite und Höhe. Die Maße kommen aus
+  dem Dateikopf (JPEG, PNG, GIF, BMP, WebP, TIFF, auch in Archiven) ohne
+  Abhängigkeit — 0,2 ms je Datei, über 30 370 reale Bilder ohne Abweichung
+  gegen exiftool geprüft. HEIC, AVIF, RAW und Video fallen auf exiftool
+  zurück. Die Filter gelten immer per UND zum Muster, das dann auch fehlen
+  darf: `favenio.py --min-width 3000 ~/Pictures`.
+- **Suche in Metadaten.** `--metadata` prüft das Muster gegen eine kuratierte
+  Liste von Textfeldern (Stichwörter, Titel, Beschreibung, Kommentar, Künstler,
+  Album …; `--list-metadata-fields` zeigt sie, `--metadata-field` grenzt auf
+  eines ein). Gelesen wird über das optionale exiftool in EINEM Prozess je
+  Suchlauf; ohne exiftool sagt der Kern, was fehlt. Treffer nennen Feld und
+  Wert, in JSON als `field` und `value`.
+- **Kriterien mit Kostenreihenfolge.** Name, dann Maße, dann Metadaten, dann
+  Inhalt — exiftool sieht nur Dateien, die den Maßfilter bestanden haben.
+  „Winter UND mindestens 1000 px breit" bleibt damit schnell. Der Kern ist so
+  geschnitten, dass mehrere UND-verknüpfte Begriffe später dazukommen können.
+- **Oberflächen.** Umschalter **Name | Inhalt | Metadaten** statt der
+  Checkbox „Inhalt", in der Haupt-App dazu ein Feldmenü; eine Maßzeile mit
+  Breite und Höhe je von/bis in beiden Apps. Neue Spalten **Fundstelle**
+  (Zeilennummer oder „Keywords: Winter") und **Maße**; JSONL- und CSV-Export
+  tragen die neuen Felder mit. Die Schnellsuche übergibt Modus und Maße an die
+  Haupt-App.
+
 ## 0.25.1 — 2026-09-02
 
 Korrekturen aus dem Code-Review vom 2026-09-02 (neun Funde) und der sichtbaren

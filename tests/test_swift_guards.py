@@ -706,5 +706,46 @@ print("OHNE|" + (zustand.runScopeNoteText() ?? "nil"))
         self.assertEqual(self.lines["OHNE"], "nil")
 
 
+    def test_both_apps_offer_the_mode_switch_and_size_fields(self):
+        """Name | Inhalt | Metadaten ist EIN Umschalter in beiden Apps, kein
+        Nachbau je App: Die Beschriftungen kommen aus SearchTextMode im
+        gemeinsamen Kern. Die vier Maßfelder laufen ueber PixelLimits und
+        parsePixelLimit, damit „1.000 px" ueberall dasselbe heisst."""
+        self.assertIn("enum SearchTextMode", COMMON)
+        self.assertIn("struct PixelLimits", COMMON)
+        self.assertIn("func parsePixelLimit(", COMMON)
+        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
+            with self.subTest(app=name):
+                self.assertIn("SearchTextMode.allCases.map { $0.title }",
+                              source)
+                self.assertIn("var pixelLimits: PixelLimits", source)
+                self.assertNotIn("contentCheckbox", source)
+                self.assertIn("metadata: ", source)
+                self.assertIn("pixelLimits: ", source)
+
+    def test_metadata_field_list_comes_from_the_core(self):
+        """Die kuratierte Feldliste ist EINE Konstante in favenio.py. Swift
+        fragt sie per --list-metadata-fields ab statt sie abzuschreiben —
+        sonst driften Kern und Menue auseinander."""
+        self.assertIn("--list-metadata-fields", COMMON)
+        self.assertIn("metadataFieldList()", GUI)
+        # „Keywords" darf der Selbsttest nennen (er prüft die Liste); eine
+        # abgeschriebene Liste verriete sich an den selteneren Feldern.
+        for field in ("Caption-Abstract", "PersonInImage", "XPKeywords"):
+            self.assertNotIn('"%s"' % field, GUI)
+            self.assertNotIn('"%s"' % field, QUICK)
+            self.assertNotIn('"%s"' % field, COMMON)
+
+    def test_size_filters_reach_the_core_and_allow_an_empty_pattern(self):
+        """Ohne Muster nur mit Maßfilter: searchArguments schickt dann `*`,
+        und beide Apps starten die Suche nur, wenn Muster ODER Maßfilter da
+        sind — sonst liefe bei leerem Feld eine Suche ueber alles."""
+        arguments = swift_function(COMMON, "func searchArguments(")
+        self.assertIn("args += pixelLimits.arguments", arguments)
+        self.assertIn('!pixelLimits.isEmpty ? "*" : pattern', arguments)
+        self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty", GUI)
+        self.assertIn("guard !query.isEmpty || !limits.isEmpty", QUICK)
+
+
 if __name__ == "__main__":
     unittest.main()

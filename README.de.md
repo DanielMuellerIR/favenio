@@ -128,7 +128,9 @@ Favenio ist bewusst maschinenfreundlich gebaut:
   ermitteln lässt (zum Beispiel bei einem toten Symlink). `size` ist also ein
   optionales Feld. Für „ist das ein Ordner?"
   `isDirectory` fragen, nicht `type`: Ein **Ordner innerhalb eines Archivs**
-  kommt genau wie eine Datei als `"type": "member"` an.
+  kommt genau wie eine Datei als `"type": "member"` an. Metadatentreffer
+  tragen zusätzlich `field` und `value`; mit Maßfilter tragen Treffer `width`
+  und `height` (Pixel). Alle vier sind optional.
 - **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,
   `2` = Fehler (ungültiger Regex, Pfad fehlt)
 - **Warnungen** (unlesbare Dateien, kaputte Archive) gehen nach stderr;
@@ -146,6 +148,11 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | Option | Wirkung |
 |---|---|
 | `-c`, `--content` | im Dateiinhalt suchen statt in Namen |
+| `-m`, `--metadata` | in den kuratierten Metadaten-Textfeldern suchen (Stichwörter, Titel, Beschreibung …) statt in Namen; braucht `exiftool` |
+| `--metadata-field TAG` | `--metadata` auf ein Feld eingrenzen (wiederholbar; schaltet `--metadata` ein) |
+| `--list-metadata-fields` | die kuratierte Feldliste ausgeben, eine je Zeile, und beenden |
+| `--min-width PX`, `--max-width PX` | nur Bilder ab / bis zu dieser Breite (Pixel) |
+| `--min-height PX`, `--max-height PX` | nur Bilder ab / bis zu dieser Höhe (Pixel); alle vier Maßfilter gelten per UND zusätzlich zum Muster, das dann auch fehlen darf |
 | `-r`, `--regex` | Muster als regulären Ausdruck interpretieren |
 | `-s`, `--case-sensitive` | Groß-/Kleinschreibung beachten |
 | `-e`, `--exact` | Muster muss dem GANZEN Namen entsprechen (mit `-r`: fullmatch; mit `-c` je Zeile) |
@@ -194,6 +201,34 @@ GUI „Nur Dateien" wählen.) Exakt gleichwertig wäre der Regex `\.md$`.
 
 Bei der Namenssuche zählen auch Ordnernamen als Treffer.
 
+## Metadaten- und Bildmaßsuche
+
+`--metadata` prüft das Muster gegen eine **kuratierte Liste von Textfeldern**
+(Stichwörter, Titel, Beschreibung, Kommentar, Künstler, Album …;
+`--list-metadata-fields` gibt sie aus). „Alle Metadaten" taugen nicht als
+Suchraum: In einem realen Bestand aus Bildern, PDFs und Audio sind die
+häufigsten Felder ICC-Profil-Rauschen, der nutzerrelevante Text steckt in etwa
+fünfzehn Feldern. Die Liste ist eine Konstante in `favenio.py` und darf sich
+ändern. Gelesen wird über das optionale [`exiftool`](https://exiftool.org)
+(`brew install exiftool`) in **einem** Prozess je Suchlauf (`-stay_open`); das
+kostet deutlich unter einer Millisekunde je Bild und etwa 60 ms je PDF. Nur
+Dateien mit Medienendung gehen an exiftool. Ein Metadatentreffer nennt Feld und
+Wert: in der Textausgabe als `pfad:Keywords: Winter`, in JSON als `field` und
+`value`. Einträge in Archiven und Ordner können eine Metadatensuche nicht
+erfüllen.
+
+Die vier Maßfilter `--min-width`, `--max-width`, `--min-height` und
+`--max-height` gelten immer **zusätzlich** (UND) zum Muster, egal in welchem
+Modus es läuft — `--metadata Winter --min-width 1000` findet Bilder mit
+Stichwort „Winter", die mindestens 1000 px breit sind. Breite und Höhe kommen
+aus dem Dateikopf (JPEG, PNG, GIF, BMP, WebP, TIFF; auch in Archiven) ohne
+jede Abhängigkeit; nur HEIC, AVIF, RAW und Video fallen auf `exiftool` zurück.
+Dateien ohne lesbare Maße erfüllen einen Maßfilter nie. Mit Maßfilter darf das
+Muster fehlen (`favenio.py --min-width 3000 ~/Pictures`), und JSON-Treffer
+tragen `width` und `height`. Billige Prüfungen laufen zuerst: Name, dann Maße,
+dann Metadaten, dann Inhalt — exiftool sieht nur Dateien, die den Maßfilter
+schon bestanden haben.
+
 ## Wie die Inhaltssuche liest
 
 Mit `-c` liest Favenio häppchenweise und hört beim ersten Treffer auf. Bei
@@ -217,6 +252,12 @@ Zwei Punkte, die man dazu wissen sollte:
 ## GUI (Favenio.app)
 
 EasyFind-artige Oberfläche: Suchfeld, Ordnerwahl, Optionen, Trefferliste.
+Der Umschalter **Name | Inhalt | Metadaten** sagt, wogegen das Muster läuft;
+im Metadaten-Modus grenzt ein Feldmenü auf ein Feld ein. Die Zeile
+**Bildmaße** (Breite und Höhe je von/bis) filtert per UND und funktioniert auch
+allein ohne Muster. Die Spalte **Fundstelle** zeigt die Zeilennummer eines
+Inhaltstreffers oder `Keywords: Winter` bei einem Metadatentreffer, die Spalte
+**Maße** die Pixelmaße.
 
 Aus der Trefferliste heraus:
 
@@ -287,6 +328,9 @@ gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
   Treffer im Archiv **Archive** ankreuzen
 - Der Typ-Umschalter begrenzt Treffer auf Dateien und Ordner, nur Dateien oder
   nur Ordner
+- **Name | Inhalt | Metadaten** wählt, wogegen der eine Suchbegriff läuft; die
+  `px`-Zeile (Breite und Höhe je von/bis) ergänzt Maßfilter und funktioniert
+  auch ohne Begriff
 - Die Ergebnisspalten sind sortierbar und verschiebbar; horizontales Scrollen
   macht lange Quellpfade zugänglich
 - Die Schnellsuche zeigt bis zu 20 Treffer. **Alle in Favenio** oder

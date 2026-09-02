@@ -44,7 +44,9 @@ Verbindliches CLI-Verhalten:
 
 - `--json` schreibt JSONL, ein Objekt pro Treffer. Jeder Treffer trägt
   `path`, `type`, `isDirectory`, `filesystemPath` und `archiveMembers`;
-  Inhaltstreffer zusätzlich `line`. `size` ist optional: Es steht nur dort,
+  Inhaltstreffer zusätzlich `line`, Metadatentreffer `field` und `value`,
+  Treffer eines Laufs mit Maßfilter `width` und `height`. `size` ist
+  optional: Es steht nur dort,
   wo das Format die entpackte Größe vorab nennt (normale Dateien, Zip- und
   Tar-Einträge), nicht bei einzeln komprimierten Dateien (`.gz`, `.bz2`,
   `.xz`) und nicht bei `bsdtar`-Einträgen (7z, ISO, `.tar.zst`). Dort wäre
@@ -87,6 +89,41 @@ Verbindliches CLI-Verhalten:
   `visit_file()` und `visit_member()` müssen diesen Fall gleich behandeln —
   vor 0.24.0 wurde ein `.7z`-Eintrag ohne `bsdtar` durchsucht, ein
   `.zip`-Eintrag an der Tiefengrenze dagegen übersprungen.
+- Die Suche ist eine **Kriterienliste**, die alle zutreffen müssen
+  (`Search.criteria`, ausgewertet in `evaluate()`): genau ein Textkriterium
+  — `NameCriterion`, `ContentCriterion` oder `MetadataCriterion`, je nach
+  `--content`/`--metadata` — plus `DimensionCriterion`, sobald einer der vier
+  Maßfilter gesetzt ist. Sortiert nach `cost` (Name 0, Maße 1, Metadaten 2,
+  Inhalt 3), Abbruch beim ersten Nein. Diese Reihenfolge ist ein
+  Leistungsversprechen: exiftool sieht nur Dateien, die den Maßfilter schon
+  bestanden haben, und ein Test hält sie fest. `FileProbe` beantwortet die
+  teuren Fragen (Maße, Metadaten, Inhaltszeile) je Datei genau einmal. Ein
+  weiteres Textkriterium (mehrere UND-verknüpfte Begriffe) wäre eine weitere
+  Klasse in dieser Liste — der Kern ist dafür geschnitten, die Oberflächen
+  bieten heute einen Begriff.
+- Ordner und Archiv-Einträge können nur eine reine Namenssuche erfüllen:
+  Ein Ordner hat keine Maße, ein Archiv-Eintrag keine Datei, die exiftool
+  lesen könnte. Bei `--metadata` wird deshalb gar nicht erst in Archive
+  geschaut; Maßfilter gelten dagegen auch für Archiv-Einträge, weil der
+  Maß-Leser (`image_dimensions()`) nur einen vorwärts lesbaren Strom
+  braucht — kein `seek()`, denn bsdtar liefert eine Pipe.
+- Pixelmaße kommen aus dem eigenen Kopf-Leser (JPEG, PNG, GIF, BMP, WebP,
+  TIFF; 0,198 ms je Datei, am 2026-09-02 über 30 370 reale Bilder ohne
+  Abweichung gegen exiftool geprüft). exiftool ist nur der Rückfall für die
+  Endungen in `EXIFTOOL_DIMENSION_EXTENSIONS` (HEIC, AVIF, RAW, Video).
+  Ein Bild ohne lesbare Maße erfüllt einen Maßfilter nie.
+- `--metadata` liest über exiftool die Felder aus `METADATA_TEXT_FIELDS` —
+  EINE kuratierte Konstante, bewusst leicht änderbar; die Oberflächen holen
+  sie per `--list-metadata-fields` und bauen sie nicht nach. exiftool läuft
+  als EIN Prozess je Suchlauf (`ExifToolStream`, `-stay_open True`, Pfade
+  über stdin, `-use MWG`), gestartet beim ersten Bedarf und in `close()`
+  beendet; ein Prozess je Datei kostete 44 ms statt 0,75 ms und ist
+  abgelehnt. Nur Endungen aus `METADATA_EXTENSIONS` gehen an exiftool. Ohne
+  exiftool endet `--metadata` mit Exit 2 und einem Satz, der sagt, was
+  fehlt; die Maßfilter laufen ohne. Dieselbe Bauart wie `bsdtar` und `zstd`:
+  optional, sauber erkannt, kein Pflichtpaket.
+- Fehlt das Muster, ist das nur mit Maßfilter erlaubt (`*`). Ein einziges
+  Positionsargument, das als Pfad existiert, gilt dann als Startpfad.
 - `--archive-depth` begrenzt Rekursion. Verschachtelte Archive werden im Speicher
   verarbeitet; deshalb Größen- und Tiefengrenzen nicht unbemerkt entfernen.
 - `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären
@@ -106,6 +143,18 @@ Kern und in gemeinsamen Tests spezifizieren, dann beide Frontends anpassen.
 Die Haupt-App streamt Treffer, erhält die Auswahl bei neuen Ergebnissen und
 bietet Öffnen, Öffnen mit, Finder-Anzeige, Pfadkopie, Quick Look und Drag-and-
 drop. Der `--selftest`-Pfad ist die automatische Grenze zwischen GUI und Kern.
+
+Beide Apps tragen den Umschalter **Name | Inhalt | Metadaten**
+(`SearchTextMode`, `modeControl`) und vier Maßfelder (Breite/Höhe je
+von/bis, `PixelLimits`, gelesen über `parsePixelLimit`, das „1.000 px" als
+1000 versteht). Die Haupt-App zeigt im Metadaten-Modus zusätzlich ein
+Feldmenü, dessen Einträge `metadataFieldList()` vom Kern holt. Ohne Muster
+startet eine Suche nur mit gesetztem Maßfilter; `searchArguments` schickt dann
+`*`. Die Spalte „Fundstelle" (`locationText`) zeigt Zeilennummer oder
+„Feld: Wert", die Spalte „Maße" (`dimensionsText`) die Pixel; nach Maßen wird
+nach Fläche sortiert. Die URL-Übergabe der Schnellsuche trägt `mode`, `minw`,
+`maxw`, `minh` und `maxh`; `content=1` bleibt für alte Quick-Versionen
+lesbar.
 
 Auf der Trefferliste arbeiten drei weitere Werkzeuge, alle im Menü **Ablage**
 und im Rechtsklick-Menü der Tabelle, jeweils mit sichtbarem Kürzel:

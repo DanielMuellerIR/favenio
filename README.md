@@ -125,7 +125,9 @@ Favenio is deliberately machine-friendly:
   file cannot be determined (for example, a broken symlink). So treat `size`
   as optional. Ask
   `isDirectory`, not `type`: a **folder inside an archive** arrives as
-  `"type": "member"` just like a file does.
+  `"type": "member"` just like a file does. Metadata hits add `field` and
+  `value`; with a size filter, hits add `width` and `height` (pixels). All
+  four are optional.
 - **Exit codes** as with grep: `0` = hits, `1` = no hits,
   `2` = error (invalid regex, missing path)
 - **Warnings** (unreadable files, broken archives) go to stderr;
@@ -143,6 +145,11 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | Option | Effect |
 |---|---|
 | `-c`, `--content` | search file contents instead of names |
+| `-m`, `--metadata` | search the curated metadata text fields (keywords, title, description …) instead of names; needs `exiftool` |
+| `--metadata-field TAG` | restrict `--metadata` to one field (repeatable; implies `--metadata`) |
+| `--list-metadata-fields` | print the curated field list, one per line, and exit |
+| `--min-width PX`, `--max-width PX` | only images at least / at most this wide (pixels) |
+| `--min-height PX`, `--max-height PX` | only images at least / at most this tall (pixels); all four size filters are ANDed with the pattern, which may then be omitted |
 | `-r`, `--regex` | interpret the pattern as a regular expression |
 | `-s`, `--case-sensitive` | match case-sensitively |
 | `-e`, `--exact` | pattern must match the WHOLE name (with `-r`: fullmatch; with `-c` per line) |
@@ -190,6 +197,33 @@ name. (If a *directory* ends in `.md`, additionally use `--only files` or
 
 In name search, directory names count as hits too.
 
+## Metadata and image size search
+
+`--metadata` runs the pattern against a **curated list of text fields**
+(keywords, title, description, comment, artist, album …; `--list-metadata-fields`
+prints it). "All metadata" is useless as a search space: in a real mix of
+images, PDFs and audio the most frequent fields are ICC profile noise, and the
+user-relevant text sits in about fifteen fields. The list is one constant in
+`favenio.py`, meant to be changed. Reading is done by the optional
+[`exiftool`](https://exiftool.org) (`brew install exiftool`) in **one** process
+per search (`-stay_open`), which costs well under a millisecond per image and
+about 60 ms per PDF. Only files with a media extension are handed to it. A
+metadata hit reports the field and value: in text output as
+`path:Keywords: Winter`, in JSON as `field` and `value`. Entries inside
+archives and directories cannot satisfy a metadata search.
+
+The four size filters `--min-width`, `--max-width`, `--min-height` and
+`--max-height` always apply **in addition** (AND) to the pattern, whichever mode
+it runs in — `--metadata Winter --min-width 1000` finds pictures tagged
+"Winter" that are at least 1000 px wide. Width and height are read from the
+file header (JPEG, PNG, GIF, BMP, WebP, TIFF; inside archives too) without any
+dependency; only HEIC, AVIF, RAW and video fall back to `exiftool`. Files
+without readable dimensions never match a size filter. With a size filter the
+pattern may be omitted (`favenio.py --min-width 3000 ~/Pictures`), and JSON hits
+carry `width` and `height`. Cheap checks run first: name, then size, then
+metadata, then content — `exiftool` only ever sees files that passed the size
+filter.
+
 ## How content search reads
 
 With `-c`, Favenio reads in chunks and stops at the first hit. For a fixed
@@ -211,6 +245,11 @@ Two consequences worth knowing:
 ## GUI (Favenio.app)
 
 EasyFind-style interface: search field, folder picker, options, results list.
+The **Name | Content | Metadata** switch says what the pattern runs against;
+in metadata mode a field menu narrows it to one field. The **Image size** row
+(width and height, each from/to) filters with AND and works on its own without
+a pattern. The **Location** column shows the line number of a content hit or
+`Keywords: Winter` for a metadata hit, the **Size** column the pixel dimensions.
 
 From the results list:
 
@@ -276,6 +315,9 @@ the header of a Finder window while holding **Cmd**.
   an optional switch and are **off** by default; tick **Archives** to search
   inside them
 - The type switch limits hits to files and folders, files only, or folders only
+- **Name | Content | Metadata** picks what the one search term runs against;
+  the `px` row (width and height, from/to) adds size filters and also works
+  without a term
 - The result columns are sortable and resizable; horizontal scrolling exposes
   long source paths
 - Quick search shows up to 20 hits. **All in Favenio** (or **Cmd-Return**) hands

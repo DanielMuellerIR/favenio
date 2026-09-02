@@ -129,6 +129,13 @@ struct Hit: Hashable {
     /// aus wie eine Datei (Review-Fund 2026-08-17). Der Kern schickt das
     /// Merkmal jetzt als `isDirectory` mit.
     let isDirectory: Bool
+    /// Metadatensuche: das Feld und der Wert, in dem das Muster stand
+    /// (`Keywords` / `Winter`). Nur bei `--metadata`-Treffern gesetzt.
+    var field: String? = nil
+    var value: String? = nil
+    /// Pixelmaße, wenn ein Maßfilter sie ermittelt hat; sonst nil.
+    var width: Int? = nil
+    var height: Int? = nil
 
     /// Liegt der Treffer INNERHALB eines Archivs?
     var isMember: Bool { !archiveMembers.isEmpty }
@@ -141,6 +148,19 @@ struct Hit: Hashable {
     /// Dateisystem hat dagegen sehr wohl einen Pfad, den der Finder öffnet.
     /// Die Oberflächen fragen hier, statt die Bedingung nachzubauen.
     var hasOpenableFile: Bool { !(isMember && isDirectory) }
+
+    /// Die Spalte „Fundstelle": Zeilennummer bei Inhaltstreffern,
+    /// „Feld: Wert" bei Metadatentreffern, sonst leer.
+    var locationText: String {
+        if let field, let value { return field + ": " + value }
+        return line.map { String($0) } ?? ""
+    }
+
+    /// Die Spalte „Maße": „1200×800" oder leer.
+    var dimensionsText: String {
+        guard let width, let height else { return "" }
+        return "\(width)×\(height)"
+    }
 
     /// Nur der Dateiname (letzte Komponente), für die Namensspalte.
     var displayName: String {
@@ -392,6 +412,11 @@ func compareHits(_ lhs: Hit, _ rhs: Hit, key: String,
             rhs.typeDescription)
     case "line":
         primary = compareOptionalNumbers(lhs.line, rhs.line)
+    case "dims":
+        // Nach Fläche: Das ist die Frage, die man an Bildmaße stellt.
+        primary = compareOptionalNumbers(
+            lhs.width.flatMap { w in lhs.height.map { w * $0 } },
+            rhs.width.flatMap { w in rhs.height.map { w * $0 } })
     case "path":
         primary = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
     default:
@@ -445,7 +470,11 @@ func parseHit(_ lineData: Data) -> Hit? {
                size: dict["size"] as? Int,
                filesystemPath: filesystemPath,
                archiveMembers: archiveMembers,
-               isDirectory: isDirectory)
+               isDirectory: isDirectory,
+               field: dict["field"] as? String,
+               value: dict["value"] as? String,
+               width: dict["width"] as? Int,
+               height: dict["height"] as? Int)
 }
 
 /// Übersetzt eine JSONL-Zeile in einen Fortschritts-Pfad (der Ordner bzw.
@@ -464,15 +493,116 @@ func parseProgress(_ lineData: Data) -> String? {
 /// nil, wenn favenio.py nicht auffindbar ist.
 /// `only` begrenzt Treffer auf einen Typ: "both" (Dateien & Ordner),
 /// "files" oder "dirs" — für den Drei-Wege-Umschalter der großen GUI.
+/// Pixel-Grenzen eines Suchlaufs (Breite/Höhe je von/bis). nil = keine
+/// Grenze. Die Oberflächen füllen sie aus vier Textfeldern; leer heißt
+/// „egal".
+struct PixelLimits: Equatable {
+    var minWidth: Int? = nil
+    var maxWidth: Int? = nil
+    var minHeight: Int? = nil
+    var maxHeight: Int? = nil
+
+    var isEmpty: Bool {
+        minWidth == nil && maxWidth == nil && minHeight == nil
+            && maxHeight == nil
+    }
+
+    /// Die CLI-Optionen in fester Reihenfolge.
+    var arguments: [String] {
+        var args: [String] = []
+        if let minWidth { args += ["--min-width", String(minWidth)] }
+        if let maxWidth { args += ["--max-width", String(maxWidth)] }
+        if let minHeight { args += ["--min-height", String(minHeight)] }
+        if let maxHeight { args += ["--max-height", String(maxHeight)] }
+        return args
+    }
+
+    /// Beschreibung für Statuszeilen: „B ≥ 1000, H 500–800".
+    var summary: String {
+        func span(_ label: String, _ low: Int?, _ high: Int?) -> String? {
+            switch (low, high) {
+            case (nil, nil): return nil
+            case (let low?, nil): return "\(label) ≥ \(low)"
+            case (nil, let high?): return "\(label) ≤ \(high)"
+            case (let low?, let high?): return "\(label) \(low)–\(high)"
+            }
+        }
+        return [span("B", minWidth, maxWidth),
+                span("H", minHeight, maxHeight)]
+            .compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
+/// Ein Pixel-Textfeld lesen: leer oder unbrauchbar → nil, sonst die Zahl.
+/// „1.000" und „1000 px" gelten als 1000 — man tippt so etwas.
+func parsePixelLimit(_ text: String) -> Int? {
+    let digits = text.filter { $0.isNumber }
+    guard !digits.isEmpty, let value = Int(digits), value > 0 else {
+        return nil
+    }
+    return value
+}
+
+/// Wie das Suchmuster gelesen wird: gegen Namen, Inhalt oder Metadaten.
+enum SearchTextMode: String, CaseIterable {
+    case name, content, metadata
+
+    var title: String {
+        switch self {
+        case .name: return "Name"
+        case .content: return "Inhalt"
+        case .metadata: return "Metadaten"
+        }
+    }
+}
+
+/// Die kuratierte Feldliste der Metadatensuche — vom Kern erfragt
+/// (`--list-metadata-fields`), nicht in Swift nachgebaut. Einmal je
+/// Prozess; leer, wenn der Kern nicht erreichbar ist.
+private var cachedMetadataFields: [String]?
+func metadataFieldList() -> [String] {
+    if let cachedMetadataFields { return cachedMetadataFields }
+    var fields: [String] = []
+    if let cli = findCLI() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: pythonPath)
+        process.arguments = [cli, "--list-metadata-fields"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        if (try? process.run()) != nil {
+            let raw = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            fields = String(decoding: raw, as: UTF8.self)
+                .split(separator: "\n").map(String.init)
+                .filter { !$0.isEmpty }
+        }
+    }
+    cachedMetadataFields = fields
+    return fields
+}
+
 func searchArguments(pattern: String, root: String, content: Bool,
                      regex: Bool, caseSensitive: Bool,
                      archives: Bool, progress: Bool = false,
                      only: String = "both",
                      includeHidden: Bool = false,
-                     exact: Bool = false) -> [String]? {
+                     exact: Bool = false,
+                     metadata: Bool = false,
+                     metadataField: String? = nil,
+                     pixelLimits: PixelLimits = PixelLimits()) -> [String]? {
     guard let cli = findCLI() else { return nil }
     var args = ["-u", cli, "--json"]   // -u = ungepuffert → Treffer streamen
     if content { args.append("--content") }
+    if metadata { args.append("--metadata") }
+    if let metadataField, !metadataField.isEmpty {
+        args += ["--metadata-field", metadataField]
+    }
+    args += pixelLimits.arguments
+    // Nur nach Maßen suchen: Ohne Muster kommt jedes Bild in Frage. Der
+    // Kern versteht ein fehlendes Muster nur ohne Startpfad; hier steht der
+    // Startpfad immer, also das „alles"-Muster ausdrücklich hinschreiben.
+    let pattern = pattern.isEmpty && !pixelLimits.isEmpty ? "*" : pattern
     if regex { args.append("--regex") }
     if caseSensitive { args.append("--case-sensitive") }
     if exact { args.append("--exact") }
@@ -690,6 +820,14 @@ func jsonlData(for hits: [Hit]) -> Data {
         object["archiveMembers"] = hit.archiveMembers
         if let line = hit.line { object["line"] = line }
         if let size = hit.size { object["size"] = size }
+        if let field = hit.field, let value = hit.value {
+            object["field"] = field
+            object["value"] = value
+        }
+        if let width = hit.width, let height = hit.height {
+            object["width"] = width
+            object["height"] = height
+        }
         if let encoded = try? JSONSerialization.data(withJSONObject: object) {
             data.append(encoded)
             data.append(0x0A)
@@ -1387,14 +1525,21 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
     case .jsonl:
         return jsonlData(for: hits)
     case .csv:
-        var text = "path,type,isDirectory,size,line,filesystemPath\n"
+        var text = "path,type,isDirectory,size,line,filesystemPath,"
+            + "field,value,width,height\n"
         for hit in hits {
-            text += [csvField(hit.path),
-                     csvField(hit.kind),
-                     hit.isDirectory ? "true" : "false",
-                     hit.size.map(String.init) ?? "",
-                     hit.line.map(String.init) ?? "",
-                     csvField(hit.filesystemPath)].joined(separator: ",")
+            // In Teilschritten: Ein Array-Literal mit zehn gemischten
+            // Ausdrücken bringt den Typprüfer an seine Zeitgrenze.
+            var cells: [String] = [csvField(hit.path), csvField(hit.kind)]
+            cells.append(hit.isDirectory ? "true" : "false")
+            cells.append(hit.size.map { String($0) } ?? "")
+            cells.append(hit.line.map { String($0) } ?? "")
+            cells.append(csvField(hit.filesystemPath))
+            cells.append(csvField(hit.field ?? ""))
+            cells.append(csvField(hit.value ?? ""))
+            cells.append(hit.width.map { String($0) } ?? "")
+            cells.append(hit.height.map { String($0) } ?? "")
+            text += cells.joined(separator: ",")
             text += "\n"
         }
         // BOM voran: Ohne sie liest Excel eine UTF-8-Tabelle unter macOS als

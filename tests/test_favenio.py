@@ -1537,5 +1537,347 @@ class ArchiveDirectoryFlagTest(TempTreeTest):
         self.assertTrue(records[0]["isDirectory"])
 
 
+# ---------------------------------------------------------------------------
+# Bildmaße und Metadaten (v0.26.0)
+# ---------------------------------------------------------------------------
+
+def png_bytes(width, height):
+    """Ein gültiges, winziges PNG mit den gewünschten Maßen."""
+    import struct
+    import zlib
+
+    def chunk(kind, payload):
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+    raw = b"".join(b"\x00" + b"\x10\x20\x30" * width for _ in range(height))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height,
+                                         8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def jpeg_head(width, height):
+    """Nur der Kopf eines JPEG: SOI, ein APP1-Segment (wie EXIF), ein
+    Kommentar und dann SOF0 mit den Maßen. Für den Maß-Leser reicht das —
+    er hört beim SOF-Marker auf."""
+    import struct
+    app1 = b"Exif\x00\x00" + b"\x00" * 40
+    comment = b"probe"
+    sof = struct.pack(">BHH", 8, height, width) + b"\x03" + b"\x00" * 9
+    return (b"\xff\xd8"
+            + b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1
+            + b"\xff\xfe" + struct.pack(">H", len(comment) + 2) + comment
+            + b"\xff\xc0" + struct.pack(">H", len(sof) + 2) + sof
+            + b"\xff\xd9")
+
+
+def gif_bytes(width, height):
+    import struct
+    return b"GIF89a" + struct.pack("<HH", width, height) + b"\x00" * 20
+
+
+def bmp_bytes(width, height):
+    import struct
+    return (b"BM" + struct.pack("<IHHI", 54, 0, 0, 54)
+            + struct.pack("<Iii", 40, width, -height) + b"\x00" * 28)
+
+
+def webp_vp8x_bytes(width, height):
+    return (b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"VP8X"
+            + b"\x0a\x00\x00\x00" + b"\x00" * 4
+            + (width - 1).to_bytes(3, "little")
+            + (height - 1).to_bytes(3, "little") + b"\x00" * 8)
+
+
+def webp_vp8l_bytes(width, height):
+    bits = ((width - 1) | ((height - 1) << 14))
+    return (b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"VP8L"
+            + b"\x0a\x00\x00\x00" + b"\x2f"
+            + bits.to_bytes(4, "little") + b"\x00" * 8)
+
+
+def tiff_bytes(width, height, endian="<"):
+    import struct
+    magic = b"II*\x00" if endian == "<" else b"MM\x00*"
+    entries = [(0x0100, 4, 1, width), (0x0101, 3, 1, height)]
+    ifd = struct.pack(endian + "H", len(entries))
+    for tag, kind, count, value in entries:
+        if kind == 3:
+            ifd += struct.pack(endian + "HHIH2x", tag, kind, count, value)
+        else:
+            ifd += struct.pack(endian + "HHII", tag, kind, count, value)
+    ifd += struct.pack(endian + "I", 0)
+    return magic + struct.pack(endian + "I", 8) + ifd
+
+
+class ImageDimensionsTest(unittest.TestCase):
+    """Der eingebaute Maß-Leser: nur Standardbibliothek, liest nur vorwärts
+    und gibt für jedes Kopfformat Breite und Höhe zurück."""
+
+    def dims(self, blob):
+        return favenio.image_dimensions(io.BytesIO(blob))
+
+    def test_reads_every_supported_header(self):
+        cases = {
+            "png": png_bytes(1200, 800),
+            "jpeg": jpeg_head(1200, 800),
+            "gif": gif_bytes(1200, 800),
+            "bmp": bmp_bytes(1200, 800),
+            "webp-vp8x": webp_vp8x_bytes(1200, 800),
+            "webp-vp8l": webp_vp8l_bytes(1200, 800),
+            "tiff-le": tiff_bytes(1200, 800, "<"),
+            "tiff-be": tiff_bytes(1200, 800, ">"),
+        }
+        for name, blob in cases.items():
+            with self.subTest(format=name):
+                self.assertEqual(self.dims(blob), (1200, 800))
+
+    def test_unknown_or_truncated_input_yields_none(self):
+        self.assertIsNone(self.dims(b"kein Bild, nur Text\n"))
+        self.assertIsNone(self.dims(b""))
+        self.assertIsNone(self.dims(png_bytes(10, 10)[:20]))
+        self.assertIsNone(self.dims(jpeg_head(10, 10)[:12]))
+        # Ein JPEG ohne SOF vor den Bilddaten hat keine lesbaren Maße.
+        self.assertIsNone(self.dims(b"\xff\xd8\xff\xda\x00\x02"))
+
+    def test_reader_never_seeks_backwards(self):
+        # Archiv-Einträge aus bsdtar kommen als Pipe: Der Leser darf
+        # ausschließlich read() benutzen.
+        class ForwardOnly:
+            def __init__(self, blob):
+                self.blob = io.BytesIO(blob)
+
+            def read(self, count):
+                return self.blob.read(count)
+        self.assertEqual(
+            favenio.image_dimensions(ForwardOnly(jpeg_head(640, 480))),
+            (640, 480))
+        self.assertEqual(
+            favenio.image_dimensions(ForwardOnly(tiff_bytes(640, 480))),
+            (640, 480))
+
+
+class DimensionFilterTest(TempTreeTest):
+    """--min-width/--max-width/--min-height/--max-height: Pixelfilter, die
+    immer zusätzlich (UND) zum Muster gelten."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_bytes("breit.png", png_bytes(1200, 800))
+        self.write_bytes("hoch.png", png_bytes(300, 1500))
+        self.write_bytes("foto.jpg", jpeg_head(1000, 1000))
+        self.write("notiz.txt", "kein Bild\n")
+        os.makedirs(os.path.join(self.root, "breit-ordner"))
+        with zipfile.ZipFile(os.path.join(self.root, "bilder.zip"),
+                             "w") as zf:
+            zf.writestr("drin/riesig.png", png_bytes(4000, 100))
+
+    def write_bytes(self, rel_path, blob):
+        path = os.path.join(self.root, rel_path)
+        with open(path, "wb") as handle:
+            handle.write(blob)
+        return path
+
+    def names(self, argv):
+        code, lines, err = run(argv + ["--json", self.root])
+        self.assertIn(code, (0, 1), err)
+        return sorted(os.path.basename(json.loads(line)["path"])
+                      for line in lines)
+
+    def test_min_width_finds_only_wide_images(self):
+        self.assertEqual(self.names(["--min-width", "1000"]),
+                         ["breit.png", "foto.jpg", "riesig.png"])
+
+    def test_max_height_and_exact_boundaries(self):
+        self.assertEqual(self.names(["--max-height", "800"]),
+                         ["breit.png", "riesig.png"])
+        # Grenzen sind einschließlich: min = max = 1000 trifft das Quadrat.
+        self.assertEqual(self.names(["--min-width", "1000", "--max-width",
+                                     "1000"]), ["foto.jpg"])
+        self.assertEqual(self.names(["--min-height", "1500"]), ["hoch.png"])
+
+    def test_filters_combine_with_the_name_pattern_by_and(self):
+        self.assertEqual(self.names(["hoch", "--min-width", "1000"]), [])
+        self.assertEqual(self.names(["hoch", "--min-height", "1000"]),
+                         ["hoch.png"])
+        # Auch mit der Inhaltssuche: IHDR steht in jedem PNG.
+        self.assertEqual(self.names(["--content", "IHDR", "--min-width",
+                                     "1000"]), ["breit.png", "riesig.png"])
+
+    def test_folders_and_non_images_never_match_a_size_filter(self):
+        # "breit-ordner" trüge den Namen, hat aber keine Maße; notiz.txt
+        # auch nicht.
+        self.assertEqual(self.names(["breit", "--min-width", "1"]),
+                         ["breit.png"])
+        self.assertNotIn("notiz.txt", self.names(["--min-width", "1"]))
+
+    def test_size_filter_alone_needs_no_pattern(self):
+        code, lines, err = run(["--min-width", "4000", self.root])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].endswith("bilder.zip!/drin/riesig.png"))
+
+    def test_json_carries_width_and_height_only_with_a_size_filter(self):
+        code, lines, _ = run(["--json", "--min-width", "1", self.root])
+        self.assertEqual(code, 0)
+        by_name = {os.path.basename(json.loads(line)["path"]):
+                   json.loads(line) for line in lines}
+        self.assertEqual((by_name["hoch.png"]["width"],
+                          by_name["hoch.png"]["height"]), (300, 1500))
+        code, lines, _ = run(["--json", "hoch", self.root])
+        self.assertNotIn("width", json.loads(lines[0]))
+
+    def test_min_above_max_is_rejected(self):
+        code, _, err = run(["--min-width", "2000", "--max-width", "100",
+                            self.root])
+        self.assertEqual(code, 2)
+        self.assertIn("größer", err)
+
+    def test_cheap_criteria_run_first_and_short_circuit(self):
+        # Die Reihenfolge ist Kosten: Name → Maße → Metadaten → Inhalt. Und
+        # sie schließt kurz: Scheitert der Name, werden keine Maße gelesen.
+        matcher = favenio.build_matcher("nirgends", False, False)
+        search = favenio.Search(matcher, False, 1, True, min_width=1,
+                                metadata_mode=False)
+        self.assertEqual([type(item).__name__ for item in search.criteria],
+                         ["NameCriterion", "DimensionCriterion"])
+        opened = []
+
+        def open_stream():
+            opened.append(True)
+            return open(os.path.join(self.root, "breit.png"), "rb")
+        probe = favenio.FileProbe(search, "breit.png", "breit.png",
+                                  open_stream, search.file_chunks,
+                                  os.path.join(self.root, "breit.png"))
+        with redirect_stdout(io.StringIO()):
+            search.evaluate(probe, "breit.png", "file")
+        self.assertEqual(opened, [])
+        content = favenio.Search(matcher, True, 1, True, min_width=1)
+        self.assertEqual([type(item).__name__ for item in content.criteria],
+                         ["DimensionCriterion", "ContentCriterion"])
+        meta = favenio.Search(matcher, False, 1, True, min_width=1,
+                              metadata_mode=True)
+        self.assertEqual([type(item).__name__ for item in meta.criteria],
+                         ["DimensionCriterion", "MetadataCriterion"])
+
+
+class MetadataSearchTest(TempTreeTest):
+    """--metadata liest über exiftool die kuratierten Textfelder."""
+
+    def setUp(self):
+        super().setUp()
+        self.original_path = favenio._EXIFTOOL_PATH
+        favenio._EXIFTOOL_PATH = None
+        self.addCleanup(self.restore_exiftool)
+
+    def restore_exiftool(self):
+        favenio._EXIFTOOL_PATH = self.original_path
+
+    def write_bytes(self, rel_path, blob):
+        path = os.path.join(self.root, rel_path)
+        with open(path, "wb") as handle:
+            handle.write(blob)
+        return path
+
+    def tag(self, path, **fields):
+        arguments = [favenio.find_exiftool(), "-overwrite_original", "-q"]
+        arguments.extend("-%s=%s" % item for item in fields.items())
+        subprocess.run(arguments + [path], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def test_list_metadata_fields_prints_the_curated_list(self):
+        code, lines, _ = run(["--list-metadata-fields"])
+        self.assertEqual(code, 0)
+        self.assertEqual(lines, list(favenio.METADATA_TEXT_FIELDS))
+        self.assertIn("Keywords", lines)
+
+    def test_metadata_without_exiftool_exits_2_but_size_filters_work(self):
+        favenio._EXIFTOOL_PATH = ""
+        self.write_bytes("breit.png", png_bytes(1200, 800))
+        code, lines, err = run(["--metadata", "Winter", self.root])
+        self.assertEqual(code, 2)
+        self.assertIn("exiftool", err)
+        self.assertEqual(lines, [])
+        code, lines, _ = run(["--min-width", "1000", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+
+    def test_content_and_metadata_exclude_each_other(self):
+        code, _, err = run(["--content", "--metadata", "x", self.root])
+        self.assertEqual(code, 2)
+
+    @unittest.skipUnless(favenio.find_exiftool(), "exiftool nicht installiert")
+    def test_metadata_hits_name_field_and_value(self):
+        winter = self.write_bytes("winter.png", png_bytes(1200, 800))
+        sommer = self.write_bytes("sommer.png", png_bytes(300, 1500))
+        self.write_bytes("ohne.png", png_bytes(50, 50))
+        self.write("winter.txt", "Winter steht hier nur im Inhalt\n")
+        self.tag(winter, **{"XMP-dc:Subject": "Winter",
+                            "XMP-dc:Title": "Winterlandschaft"})
+        self.tag(sommer, **{"XMP-dc:Subject": "Sommer",
+                            "XMP-dc:Description": "Winter war gestern"})
+        code, lines, err = run(["--json", "--metadata", "winter", self.root])
+        self.assertEqual(code, 0, err)
+        records = {os.path.basename(json.loads(line)["path"]):
+                   json.loads(line) for line in lines}
+        # Die Textdatei hat keine Medienendung und geht nie an exiftool.
+        self.assertEqual(sorted(records), ["sommer.png", "winter.png"])
+        self.assertEqual(records["winter.png"]["field"], "Keywords")
+        self.assertEqual(records["winter.png"]["value"], "Winter")
+        self.assertEqual(records["sommer.png"]["field"], "Description")
+        # Textausgabe nennt Feld und Wert hinter dem Pfad.
+        code, lines, _ = run(["--metadata", "Winterland", self.root])
+        self.assertEqual(lines, [winter + ":Title: Winterlandschaft"])
+
+    @unittest.skipUnless(favenio.find_exiftool(), "exiftool nicht installiert")
+    def test_metadata_field_restricts_and_combines_with_sizes(self):
+        winter = self.write_bytes("winter.png", png_bytes(1200, 800))
+        klein = self.write_bytes("klein.png", png_bytes(200, 100))
+        self.tag(winter, **{"XMP-dc:Subject": "Winter"})
+        self.tag(klein, **{"XMP-dc:Subject": "Winter",
+                           "XMP-dc:Title": "Winter klein"})
+        code, lines, _ = run(["--json", "--metadata-field", "Title",
+                              "winter", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(json.loads(lines[0])["path"].endswith("klein.png"))
+        # Daniels Beispiel: Winter UND mindestens 1000 Pixel breit.
+        code, lines, _ = run(["--json", "--metadata", "Winter",
+                              "--min-width", "1000", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        record = json.loads(lines[0])
+        self.assertTrue(record["path"].endswith("winter.png"))
+        self.assertEqual((record["width"], record["height"]), (1200, 800))
+        self.assertEqual(record["field"], "Keywords")
+
+    @unittest.skipUnless(favenio.find_exiftool(), "exiftool nicht installiert")
+    def test_exiftool_is_asked_only_once_per_file_and_only_after_sizes(self):
+        winter = self.write_bytes("winter.png", png_bytes(1200, 800))
+        klein = self.write_bytes("klein.png", png_bytes(200, 100))
+        self.tag(winter, **{"XMP-dc:Subject": "Winter"})
+        self.tag(klein, **{"XMP-dc:Subject": "Winter"})
+        matcher = favenio.build_matcher("Winter", False, False)
+        search = favenio.Search(matcher, False, 1, True, metadata_mode=True,
+                                min_width=1000,
+                                exiftool_path=favenio.find_exiftool())
+        asked = []
+        real = search.exiftool_stream()
+        self.addCleanup(search.close)
+
+        class Counting:
+            def read(self, path):
+                asked.append(os.path.basename(path))
+                return real.read(path)
+
+            def close(self):
+                real.close()
+        search._exiftool = Counting()
+        with redirect_stdout(io.StringIO()):
+            search.search_path(self.root)
+        # klein.png ist an der Maßprüfung gescheitert, bevor exiftool dran war.
+        self.assertEqual(asked, ["winter.png"])
+
+
 if __name__ == "__main__":
     unittest.main()

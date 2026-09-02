@@ -93,8 +93,21 @@ func runSelfTest() -> Int32 {
         "import zipfile,sys\n" +
         "z = zipfile.ZipFile(sys.argv[1], 'w')\n" +
         "z.writestr('inner/geheim.txt', 'FAVENIO_PROBE im Zip')\n" +
-        "z.close()",
-        tmp.appendingPathComponent("probe.zip").path]
+        "z.close()\n" +
+        // Ein echtes 1200×800-PNG für die Maßsuche (nur zlib, kein Pillow).
+        "import struct, zlib\n" +
+        "def chunk(kind, payload):\n" +
+        "    return (struct.pack('>I', len(payload)) + kind + payload\n" +
+        "            + struct.pack('>I', zlib.crc32(kind + payload)))\n" +
+        "raw = b''.join(b'\\x00' + b'\\x10\\x20\\x30' * 1200 " +
+        "for _ in range(800))\n" +
+        "png = (b'\\x89PNG\\r\\n\\x1a\\n'\n" +
+        "       + chunk(b'IHDR', struct.pack('>IIBBBBB', 1200, 800, " +
+        "8, 2, 0, 0, 0))\n" +
+        "       + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))\n" +
+        "open(sys.argv[2], 'wb').write(png)",
+        tmp.appendingPathComponent("probe.zip").path,
+        tmp.appendingPathComponent("probe.png").path]
     try? zipBuilder.run()
     zipBuilder.waitUntilExit()
 
@@ -105,6 +118,60 @@ func runSelfTest() -> Int32 {
     let hits = runSearchSync(arguments: args)
     guard hits.count == 2 else {
         print("SELFTEST FEHLER: \(hits.count) Treffer statt 2")
+        return 1
+    }
+    // ---- Maßsuche: ohne Muster, nur „mindestens 1000 px breit" ----
+    guard parsePixelLimit("1.000 px") == 1000, parsePixelLimit("") == nil,
+          parsePixelLimit("abc") == nil, parsePixelLimit("0") == nil else {
+        print("SELFTEST FEHLER: Pixelfeld wird falsch gelesen")
+        return 1
+    }
+    let limits = PixelLimits(minWidth: 1000, maxHeight: 900)
+    guard limits.arguments == ["--min-width", "1000", "--max-height", "900"],
+          limits.summary == "B ≥ 1000, H ≤ 900",
+          let sizeArgs = searchArguments(pattern: "", root: tmp.path,
+                                         content: false, regex: false,
+                                         caseSensitive: false, archives: true,
+                                         pixelLimits: limits),
+          sizeArgs.contains("--min-width"), sizeArgs.contains("*") else {
+        print("SELFTEST FEHLER: Maßfilter werden nicht an den Kern gereicht")
+        return 1
+    }
+    let sized = runSearchSync(arguments: sizeArgs)
+    guard sized.count == 1, sized[0].width == 1200, sized[0].height == 800,
+          sized[0].dimensionsText == "1200×800",
+          sized[0].displayName == "probe.png" else {
+        print("SELFTEST FEHLER: Maßsuche findet das 1200×800-PNG nicht "
+              + "(\(sized.count) Treffer)")
+        return 1
+    }
+    // Die Feldliste der Metadatensuche kommt vom Kern.
+    let fields = metadataFieldList()
+    guard fields.contains("Keywords"), fields.contains("Title") else {
+        print("SELFTEST FEHLER: Metadaten-Feldliste nicht vom Kern erhalten")
+        return 1
+    }
+    guard let metaArgs = searchArguments(pattern: "Winter", root: tmp.path,
+                                         content: false, regex: false,
+                                         caseSensitive: false, archives: true,
+                                         metadata: true,
+                                         metadataField: "Title"),
+          metaArgs.contains("--metadata"),
+          metaArgs.contains("--metadata-field") else {
+        print("SELFTEST FEHLER: Metadatensuche wird nicht an den Kern gereicht")
+        return 1
+    }
+    // Metadatentreffer überleben die JSONL-Runde in beide Richtungen.
+    let metaHit = Hit(path: "/tmp/a/winter.jpg", kind: "file", line: nil,
+                      size: 3, filesystemPath: "/tmp/a/winter.jpg",
+                      archiveMembers: [], isDirectory: false,
+                      field: "Keywords", value: "Winter", width: 4000,
+                      height: 3000)
+    guard let metaLine = jsonlData(for: [metaHit])
+            .split(separator: 0x0A).first,
+          parseHit(Data(metaLine)) == metaHit,
+          metaHit.locationText == "Keywords: Winter" else {
+        print("SELFTEST FEHLER: Metadatenfelder gehen in JSONL verloren")
         return 1
     }
     guard let member = hits.first(where: { $0.isMember }),
@@ -206,7 +273,7 @@ func runSelfTest() -> Int32 {
     let tiedEarlier = Hit(path: "/tmp/a/same.txt", kind: "file", line: 7,
                           size: 42, filesystemPath: "/tmp/a/same.txt",
                           archiveMembers: [], isDirectory: false)
-    for key in ["name", "type", "size", "line", "path"] {
+    for key in ["name", "type", "size", "line", "dims", "path"] {
         for ascending in [true, false] {
             guard !compareHits(tied, tied, key: key, ascending: ascending),
                   !(compareHits(tied, tiedEarlier, key: key,
@@ -350,7 +417,8 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
         return "CSV-Export beginnt nicht mit der UTF-8-BOM"
     }
     guard let csv = String(data: csvData.dropFirst(3), encoding: .utf8),
-          csv.hasPrefix("path,type,isDirectory,size,line,filesystemPath\n"),
+          csv.hasPrefix("path,type,isDirectory,size,line,filesystemPath,"
+                        + "field,value,width,height\n"),
           csv.contains("\"/tmp/mit,Komma und \"\"Zitat\"\".txt\"") else {
         return "CSV-Export maskiert Komma und Anführungszeichen nicht"
     }
@@ -474,8 +542,19 @@ final class MainController: NSObject, NSApplicationDelegate,
     let searchField = NSSearchField()
     let stopButton = NSButton(title: "", target: nil, action: nil)
     let folderButton = NSButton(title: "Ordner…", target: nil, action: nil)
-    let contentCheckbox = NSButton(checkboxWithTitle: "Inhalt durchsuchen",
-                                   target: nil, action: nil)
+    // Wogegen das Muster läuft: Name | Inhalt | Metadaten.
+    let modeControl = NSSegmentedControl(
+        labels: SearchTextMode.allCases.map { $0.title },
+        trackingMode: .selectOne, target: nil, action: nil)
+    // Nur bei „Metadaten": ein Feld oder alle Textfelder. Die Liste kommt
+    // vom Kern (--list-metadata-fields) und wird hier nicht nachgebaut.
+    let fieldPopup = NSPopUpButton()
+    // Bildmaße: Breite und Höhe je von/bis, leer = egal. Gelten immer
+    // zusätzlich (UND) zum Muster; das Muster darf dann auch fehlen.
+    let minWidthField = NSTextField(string: "")
+    let maxWidthField = NSTextField(string: "")
+    let minHeightField = NSTextField(string: "")
+    let maxHeightField = NSTextField(string: "")
     let archivesCheckbox = NSButton(checkboxWithTitle: "In Archiven suchen",
                                     target: nil, action: nil)
     let regexCheckbox = NSButton(checkboxWithTitle: "Regex",
@@ -849,7 +928,15 @@ final class MainController: NSObject, NSApplicationDelegate,
         }
         // Suchoptionen der Schnellsuche übernehmen (Default: aus), damit die
         // Weitersuche hier mit denselben Einstellungen läuft.
-        contentCheckbox.state = value("content") == "1" ? .on : .off
+        // Alte Quick-Versionen schicken nur content=0/1, neue den Modus.
+        let mode = SearchTextMode(rawValue: value("mode") ?? "")
+            ?? (value("content") == "1" ? .content : .name)
+        selectMode(mode)
+        selectMetadataField(value("field"))
+        minWidthField.stringValue = value("minw") ?? ""
+        maxWidthField.stringValue = value("maxw") ?? ""
+        minHeightField.stringValue = value("minh") ?? ""
+        maxHeightField.stringValue = value("maxh") ?? ""
         archivesCheckbox.state = value("archives") == "1" ? .on : .off
         hiddenCheckbox.state = value("hidden") == "1" ? .on : .off
         regexCheckbox.state = value("regex") == "1" ? .on : .off
@@ -964,14 +1051,45 @@ final class MainController: NSObject, NSApplicationDelegate,
 
         let topRow = NSStackView(views: [stopButton, searchField, folderButton])
         topRow.orientation = .horizontal
-        let optionsRow = NSStackView(views: [typeControl, contentCheckbox,
+        modeControl.selectedSegment = 0
+        modeControl.target = self
+        modeControl.action = #selector(modeChanged)
+        fieldPopup.addItem(withTitle: "Alle Textfelder")
+        fieldPopup.menu?.addItem(.separator())
+        for field in metadataFieldList() { fieldPopup.addItem(withTitle: field) }
+        fieldPopup.isHidden = true      // erst im Modus „Metadaten"
+        let optionsRow = NSStackView(views: [typeControl, modeControl,
+                                             fieldPopup,
                                              archivesCheckbox, hiddenCheckbox,
                                              exactCheckbox, regexCheckbox,
                                              caseCheckbox, templatesButton])
         optionsRow.orientation = .horizontal
         optionsRow.spacing = 12
 
-        let stack = NSStackView(views: [topRow, optionsRow, scroll,
+        // Maßzeile: „Bildmaße  Breite [min]–[max]  Höhe [min]–[max] px".
+        for (field, placeholder) in [(minWidthField, "min"),
+                                     (maxWidthField, "max"),
+                                     (minHeightField, "min"),
+                                     (maxHeightField, "max")] {
+            field.placeholderString = placeholder
+            field.alignment = .right
+            field.widthAnchor.constraint(equalToConstant: 64).isActive = true
+            field.target = self
+            field.action = #selector(startSearch)
+        }
+        let sizeRow = NSStackView(views: [
+            NSTextField(labelWithString: "Bildmaße:"),
+            NSTextField(labelWithString: "Breite"), minWidthField,
+            NSTextField(labelWithString: "–"), maxWidthField,
+            NSTextField(labelWithString: "Höhe"), minHeightField,
+            NSTextField(labelWithString: "–"), maxHeightField,
+            NSTextField(labelWithString: "px"),
+        ])
+        sizeRow.orientation = .horizontal
+        sizeRow.spacing = 6
+        sizeRow.setCustomSpacing(14, after: sizeRow.views[4])
+
+        let stack = NSStackView(views: [topRow, optionsRow, sizeRow, scroll,
                                         statusLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -989,6 +1107,7 @@ final class MainController: NSObject, NSApplicationDelegate,
                                           constant: -12),
             topRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             optionsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            sizeRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // Statuszeile an die Stack-Breite binden → kann das Fenster nicht
             // in die Breite ziehen (langer „durchsuche …"-Pfad).
@@ -1009,7 +1128,8 @@ final class MainController: NSObject, NSApplicationDelegate,
             ("name", "Name", CGFloat(220)),
             ("type", "Typ", CGFloat(140)),
             ("size", "Größe", CGFloat(90)),
-            ("line", "Zeile", CGFloat(48)),
+            ("line", "Fundstelle", CGFloat(130)),
+            ("dims", "Maße", CGFloat(84)),
             ("path", "Ort", CGFloat(460)),
         ]
         for (identifier, title, width) in columns {
@@ -1348,11 +1468,52 @@ final class MainController: NSObject, NSApplicationDelegate,
         statistics = HitStatistics()
         searchPhase = .idle
         progressPath = nil
-        guard !pattern.isEmpty else {
+        // Ohne Muster nur dann suchen, wenn ein Maßfilter gesetzt ist —
+        // „alle Bilder über 1000 px" ist eine vollständige Frage.
+        guard !pattern.isEmpty || !pixelLimits.isEmpty else {
             refreshStatus()
             return
         }
         launchSearch(pattern: pattern)
+    }
+
+    /// Die vier Maßfelder als Grenzen; leer oder unbrauchbar = keine Grenze.
+    var pixelLimits: PixelLimits {
+        PixelLimits(minWidth: parsePixelLimit(minWidthField.stringValue),
+                    maxWidth: parsePixelLimit(maxWidthField.stringValue),
+                    minHeight: parsePixelLimit(minHeightField.stringValue),
+                    maxHeight: parsePixelLimit(maxHeightField.stringValue))
+    }
+
+    var selectedMode: SearchTextMode {
+        SearchTextMode.allCases[
+            max(0, min(SearchTextMode.allCases.count - 1,
+                       modeControl.selectedSegment))]
+    }
+
+    func selectMode(_ mode: SearchTextMode) {
+        modeControl.selectedSegment =
+            SearchTextMode.allCases.firstIndex(of: mode) ?? 0
+        fieldPopup.isHidden = mode != .metadata
+    }
+
+    /// Das gewählte Metadatenfeld — nil heißt „alle Textfelder".
+    var selectedMetadataField: String? {
+        guard selectedMode == .metadata, fieldPopup.indexOfSelectedItem > 0
+        else { return nil }
+        return fieldPopup.titleOfSelectedItem
+    }
+
+    func selectMetadataField(_ field: String?) {
+        if let field, fieldPopup.itemTitles.contains(field) {
+            fieldPopup.selectItem(withTitle: field)
+        } else {
+            fieldPopup.selectItem(at: 0)
+        }
+    }
+
+    @objc func modeChanged() {
+        fieldPopup.isHidden = selectedMode != .metadata
     }
 
     /// Fertige Treffer der Schnellsuche (≤20) sofort zeigen und die Suche
@@ -1390,13 +1551,16 @@ final class MainController: NSObject, NSApplicationDelegate,
             max(0, typeControl.selectedSegment)]
         guard let arguments = searchArguments(
             pattern: pattern, root: searchRoot.path,
-            content: contentCheckbox.state == .on,
+            content: selectedMode == .content,
             regex: regexCheckbox.state == .on,
             caseSensitive: caseCheckbox.state == .on,
             archives: archivesCheckbox.state == .on,
             progress: true,
             only: only, includeHidden: hiddenCheckbox.state == .on,
-            exact: exactCheckbox.state == .on)
+            exact: exactCheckbox.state == .on,
+            metadata: selectedMode == .metadata,
+            metadataField: selectedMetadataField,
+            pixelLimits: pixelLimits)
         else {
             searchPhase = .failed("favenio.py nicht gefunden.")
             refreshStatus()
@@ -1629,7 +1793,8 @@ final class MainController: NSObject, NSApplicationDelegate,
         let hit = hits[row]
         // Zellen werden recycelt → Ausrichtung je Spalte neu setzen.
         cell?.textField?.alignment =
-            column.identifier.rawValue == "size" ? .right : .left
+            ["size", "dims"].contains(column.identifier.rawValue)
+            ? .right : .left
         switch column.identifier.rawValue {
         case "name":
             cell?.textField?.stringValue = hit.displayName
@@ -1638,7 +1803,10 @@ final class MainController: NSObject, NSApplicationDelegate,
         case "size":
             cell?.textField?.stringValue = humanSize(hit.size)
         case "line":
-            cell?.textField?.stringValue = hit.line.map { String($0) } ?? ""
+            // Zeilennummer bei Inhaltstreffern, „Feld: Wert" bei Metadaten.
+            cell?.textField?.stringValue = hit.locationText
+        case "dims":
+            cell?.textField?.stringValue = hit.dimensionsText
         default:
             cell?.textField?.stringValue = hit.path
         }
