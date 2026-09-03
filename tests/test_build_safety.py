@@ -12,17 +12,36 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
+def applications_touching_lines(source):
+    """Alle Befehlszeilen eines Shell-Skripts, die `/Applications` nennen
+    oder eine laufende App abschießen. Kommentare zählen nicht — dort DARF
+    stehen, dass der Build genau das nie tut. Eine Sperrliste aus vier
+    Literalen ließ `cp -R Favenio.app /Applications/` glatt durch."""
+    hits = []
+    for line in source.splitlines():
+        code = line.split("#", 1)[0]
+        if "/Applications" in code or "pkill" in code or "killall" in code:
+            hits.append(line.strip())
+    return hits
+
+
 class BuildSafetyTest(unittest.TestCase):
     def test_normal_build_never_mutates_applications(self):
         source = (REPO / "build-app.sh").read_text(encoding="utf-8")
-        forbidden = (
-            "rm -rf /Applications",
-            "ditto Favenio.app /Applications",
-            "ditto FavenioQuick.app /Applications",
-            "pkill -x Favenio",
-        )
-        for command in forbidden:
-            self.assertNotIn(command, source)
+        self.assertEqual(applications_touching_lines(source), [])
+
+    def test_applications_guard_catches_any_copy_not_just_known_literals(self):
+        # Der Wächter muss jede Form erkennen, nicht nur die vier Befehle,
+        # die früher wörtlich verboten waren.
+        for command in ("cp -R Favenio.app /Applications/",
+                        "rsync -a Favenio.app /Applications",
+                        'mv "$app" "/Applications/$app"',
+                        "killall Favenio"):
+            with self.subTest(command=command):
+                self.assertEqual(
+                    applications_touching_lines("# darf /Applications nennen\n"
+                                                + command + "\n"),
+                    [command])
 
     def test_release_checks_staple_and_gatekeeper_without_installing(self):
         source = (REPO / "release.sh").read_text(encoding="utf-8")

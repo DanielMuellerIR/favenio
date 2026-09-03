@@ -6,8 +6,13 @@
 # aber in keiner Optionstabelle, und das Feld `isDirectory` kam am 2026-08-17
 # in JEDEN Treffer, ohne dass eine der drei Dateien es erwähnte.
 
+import json
 import re
+import subprocess
+import sys
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -97,6 +102,38 @@ class JsonContractTest(unittest.TestCase):
         for field in self.ALWAYS:
             with self.subTest(field=field):
                 self.assertIn('"%s"' % field, body)
+
+    def test_every_kind_of_hit_really_carries_the_always_fields(self):
+        """Der Text-Test oben liest nur den Rumpf von emit(): Ein `if` vor
+        einem Feld bliebe dort unbemerkt. Deshalb zusätzlich am Verhalten,
+        über den Unterprozess wie die Apps — und für JEDE Trefferart: Datei,
+        Ordner, Archiveintrag und Ordner IM Archiv, denn gerade der letzte
+        ist der Fall, für den `isDirectory` überhaupt existiert."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "wurzel"
+            (root / "ordner").mkdir(parents=True)
+            (root / "datei.txt").write_text("x", encoding="utf-8")
+            with zipfile.ZipFile(root / "archiv.zip", "w") as archive:
+                archive.writestr("innen/", "")
+                archive.writestr("innen/eintrag.txt", "x")
+            proc = subprocess.run(
+                [sys.executable, str(REPO / "favenio.py"), "--json", "*",
+                 str(root)],
+                capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        records = [json.loads(line) for line in proc.stdout.splitlines()
+                   if line.strip()]
+        records = [r for r in records if r.get("type") != "progress"]
+        for record in records:
+            for field in self.ALWAYS:
+                with self.subTest(path=record.get("path"), field=field):
+                    self.assertIn(field, record)
+            self.assertIsInstance(record["isDirectory"], bool)
+        # Alle vier Trefferarten sind dabei — sonst prüft der Test weniger,
+        # als er verspricht.
+        kinds = {(r["type"], r["isDirectory"]) for r in records}
+        self.assertEqual(kinds, {("file", False), ("dir", True),
+                                 ("member", False), ("member", True)})
 
     def test_readmes_and_agents_name_the_always_fields(self):
         for name, text in list(READMES.items()) + [("AGENTS.md", AGENTS)]:

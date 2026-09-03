@@ -6,7 +6,7 @@
     "token_budget": 4000000,
     "status": "active",
     "started_at": "2026-09-03T10:04:57+02:00",
-    "tokens_spent": 1465000
+    "tokens_spent": 1502000
   },
   "campaign_history": [
     {
@@ -196,7 +196,7 @@
       "risk": "high",
       "priority": 2,
       "reason": "Oeffentliche Nutzerdoku und Projektkanon beschreiben denselben CLI-Vertrag wie favenio.py; Drift fuehrt Nutzer und jede spaetere Session in die Irre",
-      "state": "completed",
+      "state": "in_progress",
       "last_run": {
         "campaign_id": "20260819T200733133097+0200",
         "completed_at": "2026-08-19T20:19:00+02:00",
@@ -210,6 +210,13 @@
           "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 221 passed",
           "Gegenprobe: mit der Vorversion im CHANGELOG-Kopf meldet der neue Test genau diese Abweichung"
         ]
+      },
+      "active_run": {
+        "campaign_id": "20260903T100457590492+0200",
+        "started_at": "2026-09-03T18:07:01+02:00",
+        "required_review": "delta-plus-boundaries",
+        "status_at_start": "changed",
+        "covered_pending_paths": []
       }
     },
     {
@@ -221,27 +228,21 @@
       "risk": "high",
       "priority": 2,
       "reason": "Finder-naher asynchroner Suchlauf, Bereichsauflösung und Übergabe an die Haupt-App",
-      "state": "in_progress",
+      "state": "completed",
       "last_run": {
-        "campaign_id": "20260819T173504680851+0200",
-        "completed_at": "2026-08-19T18:17:41+02:00",
-        "observed_head": "79698706476cf768e3fc4ab715be17e1b564728e",
-        "content_sha256": "aefc16e7ee40c44343399ee5bd774739790a2000876a58d9c5b3752ab9b87a30",
+        "campaign_id": "20260903T100457590492+0200",
+        "completed_at": "2026-09-03T18:06:54+02:00",
+        "observed_head": "fad95cfef5b7fdb6c2f5ac0a7aaf6a22e9d75413",
+        "content_sha256": "96bf82d84e8baec5a2124474f3106c20eec4ddf099829806cd31f63aef45d5b2",
         "file_count": 2,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Nachbuchung: Das Delta ist der Querschnitts-Fix am Kontextmenue (ausgegraute Dateiaktionen fuer einen Ordner im Archiv, richtige Meldung beim Doppelklick) samt zugehoeriger Quellwache in tests/test_swift_guards.py.",
+        "summary": "ESC-Monitor auf eigenes Tastaturfenster begrenzt (beendete die App im Freigabedialog), Vorschau-Fokusfix der Haupt-App portiert samt previewPanel(_:handle:) und Indexpruefung, Uebergabe-URL nennt regex=0/case=0 ausdruecklich; AGENTS-Absatz zu Quick Look korrigiert",
         "tests": [
-          "./build-app.sh: beide Bundles gebaut, beide Headless-Selbsttests bestanden",
-          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
+          "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed",
+          "./build-app.sh: beide Selbsttests OK",
+          "3 Wachen gegen 699cbd0 rot"
         ]
-      },
-      "active_run": {
-        "campaign_id": "20260903T100457590492+0200",
-        "started_at": "2026-09-03T18:01:58+02:00",
-        "required_review": "delta-plus-boundaries",
-        "status_at_start": "changed",
-        "covered_pending_paths": []
       }
     },
     {
