@@ -4,9 +4,11 @@
   "campaign": {
     "id": "20260903T100457590492+0200",
     "token_budget": 4000000,
-    "status": "active",
+    "status": "complete",
     "started_at": "2026-09-03T10:04:57+02:00",
-    "tokens_spent": 1593000
+    "tokens_spent": 1629546,
+    "finished_at": "2026-09-03T18:19:48+02:00",
+    "finish_reason": "all-current"
   },
   "campaign_history": [
     {
@@ -199,13 +201,13 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:16:29+02:00",
-        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96",
-        "content_sha256": "abe4664bf7af49b96a7a01705504e5ad0e195980340f47ad67eeb7c5473bc29c",
+        "completed_at": "2026-09-03T18:19:36+02:00",
+        "observed_head": "86f71bf3c90ccd251a95f3d875f015a2b5625828",
+        "content_sha256": "f10f1c0f975871e99ffeecc751b4473618ff7b57333983e5682b8b6b038e180c",
         "file_count": 7,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta = AGENTS-Absatz und CHANGELOG-Punkt zu HitListController",
+        "summary": "Delta = CHANGELOG-Punkt zum Einfachparse",
         "tests": [
           "python3 -m unittest test_docs_contract: OK"
         ]
@@ -223,13 +225,13 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:16:29+02:00",
-        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96",
-        "content_sha256": "aca70f49a07de78e43d2391168dd8780767bb86e477d6f3c5d09da8cf22162ff",
+        "completed_at": "2026-09-03T18:19:48+02:00",
+        "observed_head": "86f71bf3c90ccd251a95f3d875f015a2b5625828",
+        "content_sha256": "6405821d5ac94551934b855d173745043cbc9442f3c6636252b826a5f4ba2c48",
         "file_count": 2,
         "review": "delta-plus-boundaries",
-        "outcome": "improved",
-        "summary": "Delta = Erbt von HitListController, Kopien entfallen, verwaister Kommentar wieder an flushPending (Theme frontend-adapter-duplication)",
+        "outcome": "reviewed-clean",
+        "summary": "Delta = Wachen in tests/test_swift_guards.py (Einfachparse, Basisklasse); FavenioQuick.swift unveraendert",
         "tests": [
           "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed"
         ]
@@ -246,13 +248,13 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:16:20+02:00",
-        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96",
-        "content_sha256": "a956e9aa45c88caa8779ed6c1a677a94477c772c8d5fb635dfb71e562a60caaa",
+        "completed_at": "2026-09-03T18:19:35+02:00",
+        "observed_head": "86f71bf3c90ccd251a95f3d875f015a2b5625828",
+        "content_sha256": "c33d7a719dadb4a30b6e0d92b1147b69904a55da7bc1301fe87a8fcee4e1139c",
         "file_count": 1,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta = HitListController-Basisklasse aus dem Theme frontend-adapter-duplication, bereits verifiziert",
+        "summary": "Delta = parseSearchLine (Theme double-json-parse), verifiziert",
         "tests": [
           "./build-app.sh: beide Selbsttests OK"
         ]
@@ -269,13 +271,13 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:16:29+02:00",
-        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96",
-        "content_sha256": "6128f275fb14eb24c6be9f9f613eca69aefa10a4eaab84caa78386a5f42fca73",
+        "completed_at": "2026-09-03T18:19:36+02:00",
+        "observed_head": "86f71bf3c90ccd251a95f3d875f015a2b5625828",
+        "content_sha256": "72eed1f5055b332ec767e29b6f487b2601ae4dc58209535ac37e7ac1db671ae3",
         "file_count": 1,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta = Erbt von HitListController, 123 Zeilen entfallen (Theme frontend-adapter-duplication)",
+        "summary": "Delta = consumeSearchLine liest ueber parseSearchLine (Theme double-json-parse)",
         "tests": [
           "./build-app.sh: Selbsttest OK"
         ]
@@ -423,14 +425,20 @@
         "quick/FavenioQuick.swift"
       ],
       "priority": 3,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-03T17:23:22+02:00",
       "campaign_id": "20260903T100457590492+0200",
       "started_at": "2026-09-03T18:16:41+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260903T100457590492+0200",
-        "started_at": "2026-09-03T18:16:41+02:00",
-        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96"
+        "completed_at": "2026-09-03T18:19:35+02:00",
+        "observed_head": "86f71bf3c90ccd251a95f3d875f015a2b5625828",
+        "summary": "parseSearchLine parst einmal und verzweigt per Enum; Kern-handleLine und GUI-consumeSearchLine umgestellt, parseHit/parseProgress als Huellen. Eigene Messung swiftc -O, 100000 Zeilen: 0,493 s -> 0,289 s",
+        "tests": [
+          "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed",
+          "./build-app.sh: beide Selbsttests OK",
+          "neue Wache gegen dca8e3d rot"
+        ]
       }
     }
   ]
