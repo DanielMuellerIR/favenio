@@ -401,6 +401,14 @@ Stand unverändert — auch dann, wenn ein Werkzeug mit einem anderen Status
 abbricht. Exit 3 heißt: Der Rollback blieb unvollständig; stderr nennt die
 verbleibenden Pfade und den Zustand, der manuell geklärt werden muss.
 
+`install.sh` lehnt geerbte `SPARKLE_FEED_URL` und
+`FAVENIO_SPARKLE_TEST_VERSION` gleich zu Beginn mit Exit 2 ab — VOR dem
+Bauen. Beide gehören zum Sparkle-Test im Projektverzeichnis; geerbt richteten
+sie die installierte App auf einen fremden Feed bzw. gaben ihr eine gefälschte
+Build-Nummer, mit der sie sich sofort selbst ein „Update" anbietet. Die
+nachgelagerte Feed-Prüfung greift erst NACH der Notarisierung und hätte einen
+Notary-Vorgang verbraucht; sie bleibt als zweite Linie.
+
 `install.sh` und `release.sh` prüfen zusätzlich den Update-Feed der erzeugten
 Bundles gegen `FAVENIO_FEED_URL` aus `notarize-lib.sh`. `build-app.sh` darf
 über `SPARKLE_FEED_URL` weiterhin einen anderen Feed bauen (Sparkle-E2E-Test
@@ -522,6 +530,20 @@ Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
   DANACH. `runScopeMismatch` hält deshalb nur die beiden Pfade,
   `runScopeNoteText()` formuliert daraus je nach Zustand — vorher stand dort
   „Suche läuft in …", obwohl die Suche fertig war.
+- In zsh läuft ein `trap … EXIT` bei SIGINT (Ctrl-C) und SIGHUP mit, bei
+  SIGTERM aber NICHT (gemessen 2026-09-03 mit Signal an die ganze
+  Prozessgruppe). `install.sh` ergänzt deshalb `trap 'exit 2' HUP INT TERM`;
+  das löst den EXIT-Trap aus, sodass `cleanup` genau einmal läuft.
+- Ein funktionslokaler `trap … EXIT` läuft in zsh beim Verlassen der Funktion,
+  auch auf dem errexit-Pfad — so räumt `notarize_apps` sein `mktemp`-Stage
+  in jedem Fall auf. Der Pfad muss dabei beim SETZEN eingesetzt werden
+  (`trap "rm -rf ${(q)stage}"`): Die Variable ist `local` und beim Auslösen
+  längst weg, unter `set -u` scheiterte der Trap sonst an „parameter not set"
+  und riss den Lauf mit.
+- `rmdir` auf den DMG-Mountpoint ist Absicht, kein Versehen: Ein `rm -rf` auf
+  einen womöglich noch eingehängten Pfad wäre gefährlich. Eine Test-Attrappe
+  für `hdiutil` muss den Mountpoint bei `detach` deshalb selbst leeren — sonst
+  bleibt je Testlauf ein Temp-Ordner liegen.
 - `set -e` schützt die Befehle innerhalb einer Shell-Funktion NICHT, wenn die
   Funktion als Bedingung eines `if` aufgerufen wird — genau so übernimmt
   `install.sh` den unterscheidbaren Status von `favenio_install_bundles`.

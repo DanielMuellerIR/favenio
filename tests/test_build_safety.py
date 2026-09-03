@@ -769,6 +769,19 @@ class InstallFromDmgTest(unittest.TestCase):
             '  [ "$prev" = "-mountpoint" ] && mount="$arg"\n'
             '  prev="$arg"\n'
             "done\n"
+            # `detach` muss den Mountpoint LEEREN — genau das tut ein
+            # echtes detach, und darauf verlässt sich das `rmdir` in
+            # cleanup(). `rmdir` ist dort Absicht: Ein `rm -rf` auf einen
+            # womöglich noch eingehängten Pfad wäre gefährlich. Ohne dieses
+            # Leeren blieb je Testlauf ein mktemp-Ordner mit beiden
+            # Attrappen-Bundles im Benutzer-Temp liegen; auf einem
+            # Entwicklungsrechner hatten sich 922 angesammelt.
+            'if [ "$1" = "detach" ]; then\n'
+            '  for app in Favenio.app FavenioQuick.app; do\n'
+            '    rm -rf "$2/$app"\n'
+            "  done\n"
+            "  exit 0\n"
+            "fi\n"
             '[ "$1" = "attach" ] || exit 0\n'
             '[ -n "$mount" ] || exit 1\n'
             "for app in Favenio.app FavenioQuick.app; do\n"
@@ -881,6 +894,197 @@ class InstallFromDmgTest(unittest.TestCase):
         code, output = self.run_install()
         self.assertEqual(code, 2, output)
         self.assertIn("keine signierte Appcast-Datei", output)
+
+
+class InheritedSparkleVariablesTest(InstallFromDmgTest):
+    """Zwei Variablen, die build-app.sh für Sparkle-Tests im
+    Projektverzeichnis kennt, dürfen nie in eine Installation
+    durchschlagen. Geerbt würden sie einfach mitgegeben."""
+
+    def run_with(self, **umgebung):
+        environment = dict(os.environ)
+        environment["PATH"] = "%s%s%s" % (self.stubs, os.pathsep,
+                                          environment["PATH"])
+        environment["STUB_PLISTS"] = str(self.plists)
+        environment.update(umgebung)
+        result = subprocess.run(
+            [str(REPO / "install.sh"), "--dmg", str(self.dmg),
+             "--verify-only"],
+            cwd=REPO, env=environment,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return result.returncode, result.stdout.decode("utf-8", "replace")
+
+    def test_a_foreign_feed_url_is_refused_before_anything_happens(self):
+        # Geerbt richtete SPARKLE_FEED_URL die installierte App dauerhaft
+        # auf einen fremden Update-Feed. Die vorhandene Feed-Prüfung greift
+        # erst NACH der Notarisierung — sie hätte einen Notary-Vorgang
+        # verbraucht und zwei fertig gestapelte Bundles hinterlassen.
+        code, output = self.run_with(
+            SPARKLE_FEED_URL="http://127.0.0.1:8000/appcast.xml")
+        self.assertEqual(code, 2, output)
+        self.assertIn("SPARKLE_FEED_URL", output)
+        # Kein Schritt darf vorher gelaufen sein.
+        self.assertNotIn("Schritt 1/3", output)
+        self.assertNotIn("Schritt 2/3", output)
+
+    def test_a_faked_build_number_is_refused(self):
+        # FAVENIO_SPARKLE_TEST_VERSION setzt eine gefälschte Build-Nummer.
+        # Die Gleichheitsprüfung in install.sh vergleicht nur die BEIDEN
+        # Bundles gegeneinander und ginge durch; die installierte App böte
+        # sich danach über Sparkle sofort selbst ein „Update" an.
+        code, output = self.run_with(FAVENIO_SPARKLE_TEST_VERSION="0.13.9")
+        self.assertEqual(code, 2, output)
+        self.assertIn("FAVENIO_SPARKLE_TEST_VERSION", output)
+
+    def test_without_them_the_run_passes_as_before(self):
+        # Gegenprobe: Die Ablehnung darf den normalen Weg nicht behindern.
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("SPARKLE_FEED_URL",
+                                      "FAVENIO_SPARKLE_TEST_VERSION")}
+        code, output = self.run_with(**{})
+        self.assertEqual(code, 0, output)
+        self.assertIn("VERIFY OK", output)
+
+
+class InstallSignalAndPromiseTest(unittest.TestCase):
+    """Zwei Zusagen von install.sh, die sich nur am Skript selbst prüfen
+    lassen — ein echter Lauf bräuchte /Applications und eine
+    Notarisierung."""
+
+    SCRIPT = (REPO / "install.sh").read_text(encoding="utf-8")
+
+    def test_a_sigterm_still_runs_the_cleanup(self):
+        # Gemessen am 2026-09-03 mit zsh 5.9, Signal an die ganze
+        # Prozessgruppe: Ein EXIT-Trap läuft bei SIGINT (Ctrl-C) und bei
+        # SIGHUP mit, bei SIGTERM aber NICHT — dann blieben das
+        # eingehängte DMG und die Installationssperre liegen.
+        self.assertIn("trap cleanup EXIT", self.SCRIPT)
+        self.assertIn("trap 'exit 2' HUP INT TERM", self.SCRIPT)
+
+    def test_exit_two_keeps_its_promise_after_the_swap(self):
+        # Exit 2 verspricht: installierter Stand UNVERÄNDERT. Nach dem
+        # Austausch stimmt das nicht mehr; erreichbar über
+        # `install.sh | head`, wo die letzten echo-Zeilen mit SIGPIPE
+        # enden.
+        self.assertIn("INSTALLED=0", self.SCRIPT)
+        self.assertIn('[ "$INSTALLED" = "1" ] && exit 0', self.SCRIPT)
+        # Die Marke muss NACH dem Austausch gesetzt werden, sonst
+        # verspricht sie das Falsche.
+        self.assertLess(self.SCRIPT.index("favenio_install_bundles"),
+                        self.SCRIPT.index("INSTALLED=1"))
+
+    def test_the_three_checks_have_only_one_home(self):
+        # Signatur, Gatekeeper und Ticket kommen aus notarize-lib.sh;
+        # install.sh darf sie nicht ein zweites Mal ausschreiben.
+        self.assertIn('notarize_verify_installed "$SOURCE_DIR/$app"',
+                      self.SCRIPT)
+        # Gemeint sind nur die BUNDLE-Prüfungen. Das DMG selbst prüft
+        # install.sh weiterhin direkt (`stapler validate "$DMG"`,
+        # `spctl --assess --type open`) — ein anderes Objekt mit einer
+        # anderen Anforderung, das gehört nicht in dieselbe Funktion.
+        for werkzeug in ("codesign", "spctl", "stapler"):
+            self.assertNotIn('%s' % werkzeug + ' --verify --strict "$SOURCE_DIR',
+                             self.SCRIPT, werkzeug)
+        for aufruf in ('codesign --verify --strict "$SOURCE_DIR/$app"',
+                       'spctl --assess --type execute "$SOURCE_DIR/$app"',
+                       'stapler validate "$SOURCE_DIR/$app"'):
+            self.assertNotIn(aufruf, self.SCRIPT, aufruf)
+        # Und das DMG wird weiterhin selbst geprüft.
+        self.assertIn('stapler validate "$DMG"', self.SCRIPT)
+        self.assertIn("spctl --assess --type open", self.SCRIPT)
+
+
+class NotarizeStageCleanupTest(unittest.TestCase):
+    """`notarize_apps` legt ein mktemp-Verzeichnis mit Kopien beider Bundles
+    an (rund 40 MB) plus das Zip. Beide Aufrufer rufen die Funktion NACKT
+    auf, errexit ist also aktiv: Ein scheiterndes `stapler staple` oder ein
+    Abbruch während `notarytool submit --wait` beendete das Skript sofort,
+    und das Verzeichnis blieb liegen — bei jedem Versuch aufs Neue."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        # macOS' `mktemp -d` ignoriert ein gesetztes TMPDIR und legt sein
+        # Verzeichnis immer im Benutzer-Temp an. Ein Test, der dort nach
+        # Resten sucht, träfe fremde Dateien und übersähe die eigenen.
+        # Deshalb protokolliert eine mktemp-Attrappe den WIRKLICH
+        # angelegten Pfad, und geprüft wird genau der.
+        self.mktemp_log = self.root / "mktemp.log"
+        self.stubs = self.root / "bin"
+        self.stubs.mkdir()
+        for app in ("Favenio.app", "FavenioQuick.app"):
+            (self.root / app / "Contents").mkdir(parents=True)
+        # `ditto` und `xcrun` als Attrappen; `xcrun` scheitert auf Wunsch.
+        # `ditto` ist der Schritt, der wirklich undicht war: Der alte Code
+        # entfernte das Verzeichnis erst NACH dem notarytool-Aufruf, die
+        # beiden ditto-Aufrufe davor liefen unter errexit ungeschützt.
+        (self.stubs / "ditto").write_text(
+            '#!/bin/sh\n[ -n "${STUB_DITTO_FAILS:-}" ] && exit 1\n'
+            'exit 0\n', encoding="utf-8")
+        (self.stubs / "xcrun").write_text(
+            '#!/bin/sh\n[ -n "${STUB_XCRUN_FAILS:-}" ] && exit 1\n'
+            'exit 0\n', encoding="utf-8")
+        (self.stubs / "spctl").write_text(
+            "#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (self.stubs / "mktemp").write_text(
+            '#!/bin/sh\nreal=$(/usr/bin/mktemp "$@") || exit 1\n'
+            'printf \'%s\\n\' "$real" >> "$STUB_MKTEMP_LOG"\n'
+            'printf \'%s\\n\' "$real"\n', encoding="utf-8")
+        for stub in self.stubs.iterdir():
+            stub.chmod(0o755)
+
+    def run_notarize(self, fails=None):
+        environment = dict(os.environ)
+        environment["PATH"] = "%s%s%s" % (self.stubs, os.pathsep,
+                                          environment["PATH"])
+        environment["STUB_MKTEMP_LOG"] = str(self.mktemp_log)
+        environment["NOTARY_PROFILE"] = "attrappe"
+        if fails is not None:
+            environment["STUB_%s_FAILS" % fails.upper()] = "1"
+        script = (
+            'set -eu\n'
+            'source "%s/notarize-lib.sh"\n'
+            'cd "%s"\n'
+            'notarize_apps\n'
+            'echo "RC=$?"\n' % (REPO, self.root))
+        result = subprocess.run(["zsh", "-c", script], env=environment,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        return result.returncode, result.stdout.decode("utf-8", "replace")
+
+    def leftovers(self):
+        """Die von diesem Lauf angelegten Temp-Verzeichnisse, die noch da
+        sind. Aufgeräumt wird hier auch selbst — ein fehlgeschlagener Test
+        soll keine 40-MB-Reste hinterlassen."""
+        if not self.mktemp_log.exists():
+            return []
+        offen = []
+        for zeile in self.mktemp_log.read_text(encoding="utf-8").split("\n"):
+            pfad = zeile.strip()
+            if pfad and os.path.exists(pfad):
+                offen.append(pfad)
+                shutil.rmtree(pfad, ignore_errors=True)
+        return offen
+
+    def test_the_stage_is_gone_after_a_successful_run(self):
+        code, output = self.run_notarize()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.leftovers(), [], output)
+
+    def test_the_stage_is_gone_when_copying_the_bundles_fails(self):
+        # Genau der Pfad, der vorher liegenblieb: `ditto` steht VOR dem
+        # `rm -rf` des alten Codes, und errexit beendet das Skript sofort.
+        code, output = self.run_notarize(fails="ditto")
+        self.assertNotEqual(code, 0, output)
+        self.assertEqual(self.leftovers(), [], output)
+
+    def test_the_stage_is_gone_when_notarisation_fails(self):
+        # Diesen Pfad räumte schon der alte Code auf — die Gegenprobe hält
+        # fest, dass er es weiterhin tut.
+        code, output = self.run_notarize(fails="xcrun")
+        self.assertNotEqual(code, 0, output)
+        self.assertEqual(self.leftovers(), [], output)
 
 
 class FeedUrlTest(unittest.TestCase):

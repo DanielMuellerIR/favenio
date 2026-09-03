@@ -99,12 +99,25 @@ notarize_require_credentials() {
 # /Applications liegt oder aus einem DMG herausgezogen wird.
 notarize_apps() {
     echo "== Bundles notarisieren (Profil: $NOTARY_PROFILE) =="
+    # Ein funktionslokaler EXIT-Trap läuft in zsh beim Verlassen der
+    # Funktion — auch auf dem errexit-Pfad. Das ist hier nötig: Die
+    # Funktion wird aus install.sh und release.sh NACKT aufgerufen, ein
+    # scheiterndes `stapler staple` oder ein Abbruch während
+    # `notarytool submit --wait` (typisch 1–10 Minuten) beendete das
+    # Skript also sofort, und rund 40 MB Bundle-Kopien plus Zip blieben
+    # unter /var/folders liegen — bei jedem Versuch aufs Neue.
+    setopt localoptions localtraps
     local stage zip app
     stage=$(mktemp -d)
+    # Der Pfad wird HIER eingesetzt, nicht erst beim Auslösen: `stage` ist
+    # `local`, und wenn der EXIT-Trap läuft, ist die Funktion schon
+    # verlassen — unter `set -u` scheiterte er dann an „parameter not set"
+    # und riss den ganzen Lauf mit. `${(q)…}` maskiert den Pfad zsh-sicher.
+    trap "rm -rf ${(q)stage}" EXIT HUP INT TERM
     mkdir "$stage/Favenio"
     for app in "${FAVENIO_APPS[@]}"; do
         [ -d "$app" ] || { echo "FEHLER: $app fehlt — zuerst bauen." >&2
-                           rm -rf "$stage"; return 2; }
+                           return 2; }
         ditto "$app" "$stage/Favenio/$app"
     done
     zip="$stage/favenio-apps.zip"
@@ -115,10 +128,8 @@ notarize_apps() {
     if ! xcrun notarytool submit "$zip" \
             --keychain-profile "$NOTARY_PROFILE" --wait; then
         echo "FEHLER: Notarisierung der Bundles fehlgeschlagen." >&2
-        rm -rf "$stage"
         return 2
     fi
-    rm -rf "$stage"
 
     for app in "${FAVENIO_APPS[@]}"; do
         xcrun stapler staple "$app"
@@ -140,11 +151,29 @@ notarize_apps() {
 # gestapelte Builds; Ad-hoc-Builds bleiben im Projektverzeichnis, und ein
 # altes DMG ohne angeheftetes Ticket wird abgelehnt.
 notarize_verify_installed() {
+    # Die drei Pflichtprüfungen an EINER Stelle — vorher standen sie
+    # zusätzlich ausgeschrieben in install.sh, und die Kopien waren schon
+    # ungleich. Jede Prüfung nennt beim Scheitern sich selbst; ein bloßes
+    # „ungültig" ließe offen, woran es lag.
     local app="$1"
-    codesign --verify --strict "$app" || return 2
-    spctl --assess --type execute "$app" >/dev/null 2>&1 || return 2
+    if ! codesign --verify --strict "$app"; then
+        echo "FEHLER: Signatur von $app ungültig." >&2
+        return 2
+    fi
+    if ! spctl --assess --type execute "$app" >/dev/null 2>&1; then
+        echo "FEHLER: Gatekeeper akzeptiert $app nicht." >&2
+        return 2
+    fi
+    # Das ANGEHEFTETE Ticket ist Pflicht, auch aus einem DMG. Nur damit
+    # startet die App offline ohne Gatekeeper-Rückfrage. Sehr alte DMGs
+    # tragen das Ticket bloß am Image; solche Bundles werden bewusst
+    # abgelehnt (Entscheidung 2026-08-03), statt sie mit einem Hinweis
+    # durchzulassen.
     if ! xcrun stapler validate "$app" >/dev/null 2>&1; then
         echo "FEHLER: $app trägt kein angeheftetes Notary-Ticket." >&2
+        echo "Nur notarisierte und gestapelte Bundles dürfen installiert" >&2
+        echo "werden. Ein aktuelles Release-DMG verwenden oder ohne --dmg" >&2
+        echo "neu bauen und notarisieren." >&2
         return 2
     fi
 }

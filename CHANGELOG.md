@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.27.3 — 2026-09-03
+
+Aus der CodeQA-Kampagne, Bereich Installation und Notarisierung.
+
+- **`install.sh` lehnt geerbte Sparkle-Testvariablen ab.** `SPARKLE_FEED_URL`
+  hätte die installierte App dauerhaft auf einen fremden Update-Feed
+  gerichtet, `FAVENIO_SPARKLE_TEST_VERSION` ihr eine gefälschte Build-Nummer
+  gegeben, mit der sie sich sofort selbst ein „Update" anbietet — die
+  Gleichheitsprüfung vergleicht nur die beiden Bundles gegeneinander und wäre
+  durchgegangen. Geprüft wird jetzt VOR dem Bauen; die nachgelagerte
+  Feed-Prüfung griff erst nach der Notarisierung und hätte einen
+  Notary-Vorgang verbraucht.
+- **SIGTERM räumt jetzt auf.** Gemessen mit zsh 5.9: Ein `trap … EXIT` läuft
+  bei Ctrl-C und bei geschlossenem Terminal mit, bei SIGTERM aber nicht —
+  dann blieben das eingehängte DMG und die Installationssperre liegen. Der
+  Austausch selbst war nie betroffen, er hat eigene, feinere Handler.
+- **Exit 2 hält seine Zusage.** Exit 2 verspricht „installierter Stand
+  unverändert". Nach dem Austausch stimmte das nicht mehr: `install.sh | head`
+  beendet die letzten Ausgabezeilen mit SIGPIPE, und der Lauf meldete
+  fälschlich, nichts geändert zu haben.
+- **`notarize_apps` lässt keine Bundle-Kopien mehr liegen.** Die Funktion legt
+  rund 40 MB Kopien plus ein Zip in einem `mktemp`-Verzeichnis an; ein
+  scheiterndes `ditto` beendete das Skript unter errexit sofort, und das
+  Verzeichnis blieb — bei jedem Versuch aufs Neue.
+- **Die drei Bundle-Prüfungen haben nur noch einen Ort.** Signatur,
+  Gatekeeper-Urteil und angeheftetes Ticket standen in `install.sh` ein
+  zweites Mal ausgeschrieben; jetzt ruft es dieselbe Funktion aus
+  `notarize-lib.sh`, die auch nach dem Austausch prüft. Sie nennt beim
+  Scheitern, welche der drei Prüfungen es war.
+- **Die Testsuite hinterlässt keine Temp-Ordner mehr.** Die `hdiutil`-Attrappe
+  leerte den Mountpoint bei `detach` nicht, und das bewusst konservative
+  `rmdir` in `cleanup()` scheiterte daran. Auf einem Entwicklungsrechner
+  hatten sich so 684 Ordner mit Attrappen-Bundles angesammelt.
+
 ## 0.27.2 — 2026-09-03
 
 Aus der CodeQA-Kampagne: ein abgebrochener oder unvollständiger Suchlauf war

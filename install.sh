@@ -32,6 +32,32 @@ DEST="/Applications"
 DMG=""
 VERIFY_ONLY=0
 MOUNT=""
+INSTALLED=0
+
+# Zwei Umgebungsvariablen, die build-app.sh für Sparkle-Tests im
+# Projektverzeichnis kennt, dürfen NIE in eine Installation nach
+# /Applications durchschlagen. Geerbt würden sie einfach mitgegeben:
+#
+#   SPARKLE_FEED_URL          richtete die installierte App dauerhaft auf
+#                             einen fremden Update-Feed.
+#   FAVENIO_SPARKLE_TEST_VERSION  setzt eine gefälschte Build-Nummer. Die
+#                             Gleichheitsprüfung weiter unten vergleicht nur
+#                             die BEIDEN Bundles gegeneinander und ginge
+#                             durch; die installierte App böte sich danach
+#                             über Sparkle sofort selbst ein „Update" an.
+#
+# Abgelehnt statt stillschweigend entfernt: Wer sie gesetzt hat, wollte
+# etwas anderes als eine Installation, und soll das merken. Geprüft wird
+# hier VOR dem Bauen — die nachgelagerte Feed-Prüfung greift erst nach der
+# Notarisierung und hätte einen Notary-Vorgang verbraucht.
+for var in SPARKLE_FEED_URL FAVENIO_SPARKLE_TEST_VERSION; do
+    if [ -n "${(P)var:-}" ]; then
+        echo "FEHLER: $var ist gesetzt — damit wird nicht installiert." >&2
+        echo "Diese Variable gehört zum Sparkle-Test im Projektverzeichnis." >&2
+        echo "Zum Installieren in einer Shell ohne sie starten." >&2
+        exit 2
+    fi
+done
 
 # Aufräumen UND fremde Werkzeug-Status auf den zugesagten Fehlercode 2 bringen.
 # Der eigene Status 3 bleibt erhalten: Er meldet ausdrücklich, dass die
@@ -51,10 +77,25 @@ cleanup() {
     case "$exit_status" in
         0) ;;
         3) exit 3 ;;
-        *) exit 2 ;;
+        *)
+            # Exit 2 verspricht: installierter Stand UNVERÄNDERT. Nach dem
+            # Austausch stimmt das nicht mehr. Erreichbar ist der Fall über
+            # `install.sh | head`: Die abschließenden echo-Zeilen enden dann
+            # mit SIGPIPE, und der Lauf meldete fälschlich, nichts geändert
+            # zu haben. Hinter dem Austausch steht deshalb nur noch Ausgabe;
+            # ein neuer Schritt, der scheitern kann, gehört DAVOR.
+            [ "$INSTALLED" = "1" ] && exit 0
+            exit 2 ;;
     esac
 }
 trap cleanup EXIT
+# Gemessen am 2026-09-03: In zsh läuft ein EXIT-Trap bei SIGINT (Ctrl-C) und
+# bei SIGHUP mit, bei SIGTERM aber NICHT — dann blieben das eingehängte DMG
+# und die Installationssperre liegen. `exit 2` löst den EXIT-Trap aus, sodass
+# cleanup genau einmal läuft. Der Austausch selbst hat eigene, feinere
+# Handler (notarize-lib.sh) und wird davon nicht berührt: Sie sind lokal und
+# gelten, solange favenio_install_bundles läuft.
+trap 'exit 2' HUP INT TERM
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -115,21 +156,12 @@ VERSION=""
 BUILD=""
 for app in "${FAVENIO_APPS[@]}"; do
     [ -d "$SOURCE_DIR/$app" ] || { echo "FEHLER: $app fehlt." >&2; exit 2; }
-    codesign --verify --strict "$SOURCE_DIR/$app" \
-        || { echo "FEHLER: Signatur von $app ungültig." >&2; exit 2; }
-    spctl --assess --type execute "$SOURCE_DIR/$app" >/dev/null 2>&1 \
-        || { echo "FEHLER: Gatekeeper akzeptiert $app nicht." >&2; exit 2; }
-    # Das ANGEHEFTETE Ticket ist Pflicht, auch aus einem DMG. Nur damit
-    # startet die App offline ohne Gatekeeper-Rückfrage. Sehr alte DMGs
-    # tragen das Ticket bloß am Image; solche Bundles werden bewusst
-    # abgelehnt (Entscheidung 2026-08-03), statt sie mit einem Hinweis
-    # durchzulassen. Früh geprüft, damit auch --verify-only es beantwortet.
-    xcrun stapler validate "$SOURCE_DIR/$app" >/dev/null 2>&1 \
-        || { echo "FEHLER: $app trägt kein angeheftetes Notary-Ticket." >&2
-             echo "Nur notarisierte und gestapelte Bundles dürfen nach $DEST." >&2
-             echo "Ein aktuelles Release-DMG verwenden oder ohne --dmg neu" >&2
-             echo "bauen und notarisieren." >&2
-             exit 2; }
+    # Signatur, Gatekeeper-Urteil und angeheftetes Ticket kommen aus EINER
+    # Funktion (notarize-lib.sh) — dieselbe, die nach dem Austausch das
+    # eingesetzte Bundle prüft. Vorher standen die drei Prüfungen hier ein
+    # zweites Mal ausgeschrieben. Früh geprüft, damit auch --verify-only
+    # sie beantwortet.
+    notarize_verify_installed "$SOURCE_DIR/$app" || exit 2
     # Gültig signiert heißt noch nicht „unser Produkt": Ohne diese Prüfung
     # könnte ein fremdes, ebenfalls notarisiertes Bundle unter demselben
     # Dateinamen die echte App ersetzen.
@@ -207,5 +239,6 @@ else
     exit "$install_status"
 fi
 
+INSTALLED=1
 echo "────────────────────────────────────────────"
 echo "INSTALL OK: $VERSION → $DEST"
