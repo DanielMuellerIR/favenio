@@ -2146,18 +2146,38 @@ class ExifToolArgumentTest(TempTreeTest):
             with self.subTest(wert=boese):
                 with self.assertRaises(argparse.ArgumentTypeError):
                     favenio.metadata_tag(boese)
-        # Was ein echter Tagname braucht, muss weiter durchgehen.
-        for gut in ("Title", "XMP-dc:Subject", "IPTC:Keywords",
-                    "Sub_Location"):
-            with self.subTest(wert=gut):
-                self.assertEqual(favenio.metadata_tag(gut), gut)
+
+    def test_option_names_are_rejected_even_though_they_look_harmless(self):
+        # Der Grund für die Positivliste: Eine bloße Zeichenregel ließe
+        # diese Wörter durch, und alle sind echte exiftool-Optionen.
+        # `--metadata-field execute` zerlegte jede Anfrage in zwei
+        # Kommandos, und die Suche lieferte für JEDE Datei „keine Treffer".
+        for option in ("execute", "charset", "p", "b", "w", "if", "ver",
+                       "TagsFromFile", "stay_open"):
+            with self.subTest(option=option):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    favenio.metadata_tag(option)
+
+    def test_every_offered_field_is_accepted_in_any_spelling(self):
+        # Die Liste IST der Vertrag: --list-metadata-fields gibt genau sie
+        # aus, und beide Oberflächen bauen ihr Feldmenü daraus. Jeder
+        # angebotene Wert muss deshalb auch durchgehen.
+        for field in favenio.METADATA_TEXT_FIELDS:
+            with self.subTest(feld=field):
+                self.assertEqual(favenio.metadata_tag(field), field)
+                # exiftool unterscheidet keine Groß-/Kleinschreibung;
+                # zurück kommt die kanonische Form.
+                self.assertEqual(favenio.metadata_tag(field.lower()), field)
+                self.assertEqual(favenio.metadata_tag(field.upper()), field)
 
     def test_the_cli_rejects_a_smuggled_field_with_exit_two(self):
-        code, lines, err = run(["--metadata-field", "Title\n-echo\nX",
-                                "muster", self.root])
-        self.assertEqual(code, 2)
-        self.assertEqual(lines, [])
-        self.assertIn("Metadaten-Feldname", err)
+        for wert in ("Title\n-echo\nX", "execute", "XMP-dc:Subject"):
+            with self.subTest(wert=wert):
+                code, lines, err = run(["--metadata-field", wert,
+                                        "muster", self.root])
+                self.assertEqual(code, 2)
+                self.assertEqual(lines, [])
+                self.assertIn("Metadatenfeld", err)
 
     def test_every_relative_path_is_prefixed_so_exiftool_reads_it_as_a_file(self):
         # "-" wäre eine Option, "#" ein Kommentar, führender Leerraum
@@ -2373,10 +2393,151 @@ class LongLineTest(TempTreeTest):
         text = "a" * 5000 + "\r\nZIEL\n"
         self.assertEqual(self.line_of("ZIEL", text), 2)
 
+    def test_an_anchored_pattern_is_never_matched_on_a_fragment(self):
+        # `--regex 'A$'` traf am Abschnitts- statt am Zeilenende und
+        # meldete einen Treffer, den grep nicht sieht. Verankerte Muster,
+        # Glob-Muster und --exact gelten für die GANZE Zeile; auf einem
+        # Bruchstück geprüft antworten sie falsch. Solche Zeilen bleiben
+        # deshalb ungeprüft — mit Meldung, statt still falsch.
+        text = "A" * 5000 + "ZZZ\n"
+        search = favenio.Search(
+            favenio.build_matcher("A$", True, False), True, 1, False)
+        gemeldet = []
+        search.warn = gemeldet.append
+        blob = text.encode()
+        chunks = [blob[i:i + 200] for i in range(0, len(blob), 200)]
+        vorher = (favenio.MAX_LINE_CHARS, favenio.LINE_OVERLAP_CHARS)
+        favenio.MAX_LINE_CHARS, favenio.LINE_OVERLAP_CHARS = 1000, 50
+        try:
+            treffer = search.match_content(iter(chunks), label="probe.txt")
+        finally:
+            (favenio.MAX_LINE_CHARS,
+             favenio.LINE_OVERLAP_CHARS) = vorher
+        self.assertIsNone(treffer)
+        self.assertEqual(len(gemeldet), 1, gemeldet)
+        self.assertIn("probe.txt", gemeldet[0])
+        self.assertIn("Zeile 1", gemeldet[0])
+        # Der reine „enthält"-Test bleibt exakt und findet weiter.
+        self.assertEqual(self.line_of("ZZZ", text), 1)
+
+    def test_a_line_after_a_skipped_one_is_checked_again(self):
+        # Übersprungen wird nur der Rest der zu langen Zeile, nicht der
+        # Rest der Datei.
+        text = "A" * 5000 + "\nZIEL\n"
+        search = favenio.Search(
+            favenio.build_matcher("^ZIEL$", True, False), True, 1, False)
+        search.warn = lambda message: None
+        blob = text.encode()
+        chunks = [blob[i:i + 200] for i in range(0, len(blob), 200)]
+        vorher = (favenio.MAX_LINE_CHARS, favenio.LINE_OVERLAP_CHARS)
+        favenio.MAX_LINE_CHARS, favenio.LINE_OVERLAP_CHARS = 1000, 50
+        try:
+            self.assertEqual(search.match_content(iter(chunks)), 2)
+        finally:
+            (favenio.MAX_LINE_CHARS,
+             favenio.LINE_OVERLAP_CHARS) = vorher
+
+    def test_a_lone_carriage_return_still_ends_a_line(self):
+        # Ein einzelnes "\r" wartet im Puffer, weil ein folgendes "\n"
+        # daraus ein CRLF machen könnte. Der Abschnittswechsel warf es
+        # samt seiner fertigen Zeile weg — jede folgende Zeilennummer war
+        # danach um eins zu klein. Klassische Mac-Dateien trennen so.
+        lang = "b" * 3000
+        for label, text in (
+                ("einzelnes CR", "a" * 199 + "\r" + lang + "ZIEL\n"),
+                ("CRLF", "a" * 198 + "\r\n" + lang + "ZIEL\n"),
+                ("LF", "a" * 199 + "\n" + lang + "ZIEL\n"),
+        ):
+            with self.subTest(trenner=label):
+                self.assertEqual(self.line_of("ZIEL", text), 2)
+        # Auch wenn der Treffer IN der langen zweiten Zeile steht.
+        self.assertEqual(
+            self.line_of("ZIEL", "a" * 199 + "\r" + "b" * 2000 + "ZIEL"
+                         + "c" * 2000 + "\n"), 2)
+
     def test_the_bound_does_not_change_short_lines(self):
         # Gegenprobe: Unterhalb der Grenze arbeitet die Funktion wie zuvor.
         text = "erste\nzweite\nZIEL\nvierte\n"
         self.assertEqual(self.line_of("ZIEL", text), 3)
+
+
+class ArchiveExtensionTest(TempTreeTest):
+    """Die Archiv-Erkennung geht nach der Endung — die ist ein Hinweis,
+    keine Zusage. `.key` ist weit häufiger ein TLS-Schlüssel als eine
+    Keynote-Datei. Trifft die Erwartung nicht zu, ist die Datei eine ganz
+    normale Datei; AGENTS verlangt, dass alle Gründe, NICHT ins Archiv zu
+    schauen, dasselbe Ergebnis liefern."""
+
+    PEM = ("-----BEGIN PRIVATE KEY-----\n"
+           "MIIEvQIBADANBgkqhkiG9w0\n"
+           "-----END PRIVATE KEY-----\n")
+
+    def test_a_file_that_is_no_archive_is_searched_as_a_plain_file(self):
+        for name in ("server.key", "notiz.pages", "tabelle.numbers",
+                     "bericht.docx", "paket.zip"):
+            with self.subTest(datei=name):
+                self.write(name, self.PEM)
+                code, lines, _ = run(["--content", "BEGIN PRIVATE",
+                                      os.path.join(self.root, name)])
+                self.assertEqual(code, 0, name)
+                self.assertEqual(len(lines), 1, lines)
+
+    def test_all_three_reasons_to_skip_an_archive_agree(self):
+        pfad = self.write("server.key", self.PEM)
+        ergebnisse = []
+        for optionen in ([], ["--no-archives"], ["--archive-depth", "0"]):
+            code, lines, _ = run(optionen + ["--content", "BEGIN PRIVATE",
+                                             pfad])
+            ergebnisse.append((code, lines))
+        self.assertEqual(ergebnisse[0], ergebnisse[1])
+        self.assertEqual(ergebnisse[0], ergebnisse[2])
+        self.assertEqual(ergebnisse[0][0], 0)
+
+    def test_a_real_iwork_container_is_still_searched_as_an_archive(self):
+        # Gegenprobe: Der Rückfall darf echte Container nicht entwerten.
+        with zipfile.ZipFile(os.path.join(self.root, "echte.key"), "w",
+                             zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("index.xml", "X" * 3000 + "PRAESENTATION")
+        code, lines, _ = run(["--content", "PRAESENTATION", self.root])
+        self.assertEqual(code, 0)
+        self.assertTrue(any("echte.key!/index.xml" in line
+                            for line in lines), lines)
+
+    def test_a_mislabelled_archive_inside_an_archive_is_read_as_a_member(self):
+        # Dieselbe Regel eine Ebene tiefer. Der Fehler zeigt sich erst ab
+        # --archive-depth 2: Bei Tiefe 1 ist die Rekursion schon
+        # aufgebraucht, der Eintrag gilt dann ohnehin als normaler
+        # Eintrag. Bei Tiefe 2 wurde er als Archiv geöffnet, das Öffnen
+        # schlug fehl, und er fiel ohne jede Meldung heraus — dieselbe
+        # Datei war je nach Tiefe mal findbar und mal nicht.
+        with zipfile.ZipFile(os.path.join(self.root, "aussen.zip"), "w",
+                             zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("server.key", self.PEM)
+        ergebnisse = []
+        for tiefe in ("1", "2", "3"):
+            code, lines, _ = run(["--archive-depth", tiefe, "--content",
+                                  "BEGIN PRIVATE", self.root])
+            ergebnisse.append((code, lines))
+            self.assertEqual(code, 0, tiefe)
+            self.assertTrue(any("aussen.zip!/server.key" in line
+                                for line in lines), (tiefe, lines))
+        self.assertEqual(ergebnisse[0], ergebnisse[1])
+        self.assertEqual(ergebnisse[1], ergebnisse[2])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "Plattform kennt kein mkfifo")
+    def test_a_fifo_with_an_archive_name_never_blocks(self):
+        # zipfile und tarfile öffnen den Pfad selbst, also an
+        # open_regular_file() vorbei. Eine Pipe namens `x.zip` ließ
+        # deshalb sogar die reine NAMENSSUCHE unbegrenzt hängen.
+        os.mkfifo(os.path.join(self.root, "x.zip"))
+        self.write("normal.txt", "TREFFER\n")
+        code, lines, _ = run(["normal*", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        code, lines, err = run(["--content", "TREFFER", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("keine reguläre Datei", err)
 
 
 class RobustTraversalTest(TempTreeTest):
@@ -2407,6 +2568,28 @@ class RobustTraversalTest(TempTreeTest):
                 code, lines, _ = run(["--content", "TREFFER", archive_path])
                 self.assertEqual(code, 0)
                 self.assertEqual(len(lines), 1)
+
+    def test_the_archive_root_entry_is_not_a_hit(self):
+        # `tar -cf x.tar -C ordner .` legt den Eintrag "./" an — das ist
+        # das Archiv selbst, kein Eintrag darin. Seit "." nicht mehr als
+        # versteckter Name gilt, kam er als Ordnertreffer mit dem Namen
+        # "." heraus, den --extract nicht auflösen kann.
+        os.makedirs(os.path.join(self.root, "quelle", "unterordner"))
+        self.write(os.path.join("quelle", "unterordner", "d.txt"), "x\n")
+        tar_path = os.path.join(self.root, "archiv.tar")
+        with tarfile.open(tar_path, "w") as archive:
+            archive.add(os.path.join(self.root, "quelle"), arcname=".")
+
+        code, lines, _ = run(["--only", "dirs", "*", tar_path])
+        self.assertEqual(code, 0)
+        self.assertNotIn(tar_path + "!/.", lines)
+        # Echte Ordner im Archiv bleiben sichtbar.
+        self.assertTrue(any(line.endswith("unterordner") for line in lines),
+                        lines)
+        # Und die Dateien darin ebenso.
+        code, lines, _ = run(["d.txt", tar_path])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1, lines)
 
     def test_really_hidden_entries_stay_hidden(self):
         # Die Gegenprobe zum Test darüber: Nur "." und ".." sind

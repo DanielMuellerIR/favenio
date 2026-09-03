@@ -83,6 +83,21 @@ Verbindliches CLI-Verhalten:
   Treffer an der Schnittstelle verloren; sie muss länger sein als jedes
   realistische Suchmuster. Und sie darf nicht 0 werden: `segment[-0:]` ist in
   Python der GANZE String, die Grenze verschwände lautlos.
+  Auf einem BRUCHSTÜCK geprüft werden darf aber nur der reine
+  „enthält"-Test — `build_matcher()` markiert ihn mit `substring_only`.
+  Verankerte Muster (`--regex` mit `^`/`$`), Glob-Muster und `--exact`
+  gelten für die ganze Zeile: `--regex 'A$'` traf am Abschnitts- statt am
+  Zeilenende und meldete einen Treffer, den `grep` nicht sieht. Für sie
+  bleibt eine zu lange Zeile ungeprüft und wird als Warnung genannt —
+  lieber gemeldet als still falsch beantwortet.
+  Ein einzelnes `\r` im Puffer beendet beim Abschnittswechsel wirklich eine
+  Zeile: Das aktuelle Häppchen hat keinen Umbruch, ein CRLF kann daraus also
+  nicht mehr werden. Ohne diesen Schritt war jede folgende Zeilennummer um
+  eins zu klein.
+- Der Wurzeleintrag `./` eines so gebauten Archivs ist das Archiv selbst und
+  wird übersprungen (`visit_member()`): Als Ordnertreffer mit dem Namen `.`
+  konnte `--extract` ihn nicht auflösen und endete mit einem nackten
+  `KeyError`.
 - Nur Punktnamen sind versteckt, nicht die Verzeichnisnamen `.` und `..`.
   `tar -cf x.tar -C ordner .` — der übliche Weg, einen Ordnerinhalt zu tarren —
   legt jeden Eintrag als `./name` ab; bis 0.26.1 fiel damit das ganze Archiv
@@ -106,6 +121,18 @@ Verbindliches CLI-Verhalten:
   der installierten Werkzeuge darüber, ob eine Datei überhaupt angefasst wird.
   Das gilt auf jeder Ebene: Auch ein Archiv IM Archiv, das die aufgebrauchte
   `--archive-depth` nicht mehr öffnet, ist ein ganz normaler Eintrag.
+  Ein VIERTER Grund kam mit 0.27.1 dazu: Die Endung ist ein Hinweis, keine
+  Zusage. Lässt sich die Datei nicht als das Format öffnen, das ihre Endung
+  verspricht (`FORMAT_MISMATCH_ERRORS`), ist sie ebenfalls eine ganz
+  normale Datei — ohne Warnung, denn `.key` ist weit häufiger ein
+  TLS-Schlüssel als eine Keynote-Datei. `visit_file()` und `visit_member()`
+  müssen auch diesen Rückfall gleich behandeln; bis 0.27.0 fiel ein
+  `server.key` in einem Zip ab `--archive-depth 2` lautlos aus der Suche,
+  während er bei Tiefe 1 gefunden wurde.
+  In ein Archiv wird außerdem nur geschaut, wenn der Pfad eine reguläre
+  Datei ist: `zipfile` und `tarfile` öffnen ihn selbst, also an
+  `open_regular_file()` vorbei — eine benannte Pipe namens `x.zip` ließ
+  sonst sogar die reine Namenssuche unbegrenzt hängen.
   `visit_file()` und `visit_member()` müssen diesen Fall gleich behandeln —
   vor 0.24.0 wurde ein `.7z`-Eintrag ohne `bsdtar` durchsucht, ein
   `.zip`-Eintrag an der Tiefengrenze dagegen übersprungen.
@@ -156,11 +183,16 @@ Verbindliches CLI-Verhalten:
   Zeilenrand wird abgeschnitten. Deshalb bekommt JEDER relative Pfad ein
   `./` davor, und ein Pfad mit Zeilenumbruch oder Leerraum am Ende geht über
   `read_once()` durch EINEN eigenen Prozess, statt still zu verschwinden.
-  Aus demselben Grund prüft `metadata_tag()` die Werte von
-  `--metadata-field` streng (Buchstaben, Ziffern, `-`, `_`, `:`, nicht mit
-  `-` beginnend): Ein Zeilenumbruch im Feldnamen schob sonst beliebige
-  weitere exiftool-Optionen ein — über `-p` mit einem Perl-Ausdruck bis hin
-  zum Shell-Aufruf. Bricht der Prozess mitten im Lauf weg, ist das eine
+  Aus demselben Grund nimmt `metadata_tag()` für `--metadata-field` nur
+  Werte aus `METADATA_TEXT_FIELDS` — eine POSITIVLISTE, keine Zeichenregel.
+  Eine Zeichenregel reicht nachweislich nicht: Sie ließ `execute`,
+  `charset`, `p`, `b`, `w`, `if`, `ver` und `TagsFromFile` durch, allesamt
+  echte exiftool-Optionen; schon `--metadata-field execute` zerlegte jede
+  Anfrage in zwei Kommandos und lieferte für JEDE Datei „keine Treffer".
+  Ein Zeilenumbruch im Wert schöbe darüber hinaus beliebige weitere
+  Optionen ein — über `-p` mit einem Perl-Ausdruck bis hin zum
+  Shell-Aufruf. Die Liste ist ohnehin der Vertrag: `--list-metadata-fields`
+  gibt genau sie aus, und beide Oberflächen bauen ihr Feldmenü daraus. Bricht der Prozess mitten im Lauf weg, ist das eine
   Warnung; vorher lieferte er für jede weitere Datei stillschweigend nichts,
   und der Lauf endete als „keine Treffer". Nur Endungen aus `METADATA_EXTENSIONS` gehen an exiftool. Ohne
   exiftool endet `--metadata` mit Exit 2 und einem Satz, der sagt, was

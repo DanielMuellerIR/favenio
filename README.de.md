@@ -149,7 +149,7 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 |---|---|
 | `-c`, `--content` | im Dateiinhalt suchen statt in Namen |
 | `-m`, `--metadata` | in den kuratierten Metadaten-Textfeldern suchen (Stichwörter, Titel, Beschreibung …) statt in Namen; braucht `exiftool` |
-| `--metadata-field TAG` | `--metadata` auf ein Feld eingrenzen (wiederholbar; schaltet `--metadata` ein) |
+| `--metadata-field TAG` | `--metadata` auf ein Feld der kuratierten Liste eingrenzen (wiederholbar; schaltet `--metadata` ein) |
 | `--list-metadata-fields` | die kuratierte Feldliste ausgeben, eine je Zeile, und beenden |
 | `--min-width PX`, `--max-width PX` | nur Bilder ab / bis zu dieser Breite (Pixel) |
 | `--min-height PX`, `--max-height PX` | nur Bilder ab / bis zu dieser Höhe (Pixel); alle vier Maßfilter gelten per UND zusätzlich zum Muster, das dann auch fehlen darf |

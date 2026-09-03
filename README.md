@@ -147,7 +147,7 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 |---|---|
 | `-c`, `--content` | search file contents instead of names |
 | `-m`, `--metadata` | search the curated metadata text fields (keywords, title, description …) instead of names; needs `exiftool` |
-| `--metadata-field TAG` | restrict `--metadata` to one field (repeatable; implies `--metadata`) |
+| `--metadata-field TAG` | restrict `--metadata` to one field from the curated list (repeatable; implies `--metadata`) |
 | `--list-metadata-fields` | print the curated field list, one per line, and exit |
 | `--min-width PX`, `--max-width PX` | only images at least / at most this wide (pixels) |
 | `--min-height PX`, `--max-height PX` | only images at least / at most this tall (pixels); all four size filters are ANDed with the pattern, which may then be omitted |

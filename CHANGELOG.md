@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.27.1 — 2026-09-03
+
+Aus dem Nachlese-Durchgang des Reviews vom 2026-09-03. Vier der sechs Funde
+sind Regressionen aus 0.27.0 vom selben Tag — der Durchgang liest die frisch
+geänderten Zeilen noch einmal, gerade weil sie neu sind.
+
+- **`.key`-Dateien fielen aus der Inhaltssuche.** Mit den iWork-Endungen kam
+  `.key` in die Zip-Liste — auf einem Server ist das aber fast immer ein
+  TLS-Schlüssel. Die Datei wurde als Archiv geöffnet, das Öffnen scheiterte,
+  und sie war weg (Exit 1 plus „File is not a zip file"), während
+  `--no-archives` sie fand. Die Endung ist jetzt ein Hinweis, keine Zusage:
+  Lässt sich die Datei nicht als das versprochene Format öffnen, ist sie eine
+  ganz normale Datei — genau wie bei `--no-archives` und `--archive-depth 0`.
+  Betrifft ebenso `.pages`, `.numbers` und eine beschädigte `.docx`.
+- **Dieselbe Datei war je nach Archivtiefe mal findbar, mal nicht.** Ein
+  `server.key` in einem Zip wurde bei `--archive-depth 1` gefunden, ab Tiefe 2
+  nicht mehr — dort galt er als Archiv. `visit_member()` kennt den Rückfall
+  jetzt genauso wie `visit_file()`.
+- **Eine benannte Pipe mit Archiv-Endung ließ den Lauf hängen.** Die
+  FIFO-Sperre aus 0.27.0 sitzt in `visit_file()`; `zipfile` und `tarfile`
+  öffnen den Pfad aber selbst. Eine Pipe namens `x.zip` blockierte deshalb
+  weiterhin — sogar die reine Namenssuche, die vorher nie betroffen war. In
+  ein Archiv wird jetzt nur geschaut, wenn der Pfad eine reguläre Datei ist.
+- **Verankerte Muster trafen am Abschnitts- statt am Zeilenende.** Die
+  Begrenzung langer Zeilen aus 0.27.0 prüft das Muster gegen ein Bruchstück.
+  Für den reinen „enthält"-Test ist das exakt, für `--regex`, Glob-Muster und
+  `--exact` nicht: `--regex 'A$'` meldete auf einer 9-MiB-Zeile einen
+  Treffer, den `grep` nicht sieht. Bruchstücke sieht jetzt nur noch der
+  „enthält"-Test; für die anderen bleibt eine zu lange Zeile ungeprüft und
+  wird als Warnung genannt.
+- **Zeilennummern nach einem einzelnen `\r`.** Ein `\r` wartet im Puffer,
+  weil ein folgendes `\n` daraus ein CRLF machen könnte. Der
+  Abschnittswechsel warf es samt seiner fertigen Zeile weg, und jede folgende
+  Zeilennummer war um eins zu klein. Betraf Dateien, die mit einzelnen `\r`
+  trennen (klassisches Mac-Format).
+- **Der Wurzeleintrag `./` erschien als Ordnertreffer.** Seit `.` nicht mehr
+  als versteckter Name gilt, lieferte ein mit `tar -C ordner .` gebautes
+  Archiv einen Treffer namens `.` — das Archiv selbst, kein Eintrag darin.
+  `--extract` endete darauf mit einem nackten `KeyError`.
+- **`--metadata-field` nimmt nur noch Felder der kuratierten Liste.** Die
+  Zeichenregel aus 0.27.0 ließ `execute`, `charset`, `p`, `b`, `w`, `if`,
+  `ver` und `TagsFromFile` durch — allesamt echte exiftool-Optionen. Schon
+  `--metadata-field execute` zerlegte jede Anfrage in zwei Kommandos und
+  lieferte für JEDE Datei „keine Treffer". Statt einer Zeichenregel gilt
+  jetzt eine Positivliste: die Felder aus `--list-metadata-fields`, in
+  beliebiger Schreibweise. Das ist enger als zuvor; Gruppenschreibweisen wie
+  `XMP-dc:Subject` gehen nicht mehr.
+
 ## 0.27.0 — 2026-09-03
 
 Aus dem projektweiten Code-Review vom 2026-09-03, Bereich Suchkern. Vier der

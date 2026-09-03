@@ -47,7 +47,7 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.27.0"
+__version__ = "0.27.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-03"
@@ -440,6 +440,13 @@ EXPECTED_ARCHIVE_ERRORS = (
 )
 
 
+# „Diese Datei ist kein Archiv dieses Formats" — im Unterschied zu einem
+# beschädigten Archiv, das eine Warnung verdient. Nur diese beiden Fehler
+# sind eindeutig: zipfile und tarfile werfen sie, wenn schon die Signatur
+# nicht passt.
+FORMAT_MISMATCH_ERRORS = (zipfile.BadZipFile, tarfile.ReadError)
+
+
 # Obergrenze für die Namensliste EINES Archivs, das nur bsdtar lesen kann.
 #
 # ArchiveBudget zählt nur Eintrags-INHALTE; der Namenskatalog läuft daran
@@ -677,10 +684,18 @@ def build_matcher(pattern, use_regex, case_sensitive, exact=False):
         lowered_exact = pattern.lower()
         return lambda text: text.lower() == lowered_exact
 
+    # Nur der reine „enthält"-Test darf auf einem BRUCHSTÜCK einer Zeile
+    # laufen (siehe match_content und MAX_LINE_CHARS): Ein Teilstring bleibt
+    # ein Teilstring, egal wo die Zeile zerschnitten wird. Bei --regex, bei
+    # Glob-Mustern und bei --exact gilt das nicht — sie sind am Zeilenanfang
+    # oder -ende verankert und träfen auf einem Bruchstück falsch.
     if case_sensitive:
-        return lambda text: pattern in text
-    lowered_pattern = pattern.lower()
-    return lambda text: lowered_pattern in text.lower()
+        matcher = lambda text: pattern in text        # noqa: E731
+    else:
+        lowered_pattern = pattern.lower()
+        matcher = lambda text: lowered_pattern in text.lower()  # noqa: E731
+    matcher.substring_only = True
+    return matcher
 
 
 def positive_int(value):
@@ -691,22 +706,30 @@ def positive_int(value):
 
 
 def metadata_tag(value):
-    """Ein exiftool-Feldname aus --metadata-field.
+    """Ein Feldname aus --metadata-field — nur aus METADATA_TEXT_FIELDS.
 
-    Streng geprüft, weil der Name ungeprüft als Option an exiftool geht:
-    Die Argumentdatei von `-stay_open` ist ZEILENWEISE, ein Zeilenumbruch
-    im Wert schöbe deshalb beliebige weitere exiftool-Optionen ein — über
-    `-p` mit einem Perl-Ausdruck bis hin zu einem Shell-Aufruf. Erlaubt
-    ist genau das, was ein Tagname wirklich braucht: Buchstaben, Ziffern,
-    Bindestrich, Unterstrich und der Doppelpunkt der Gruppenschreibweise
-    wie in "XMP-dc:Subject"."""
-    # Der erste Buchstabe darf kein "-" sein: Der Name wird mit "-"
-    # verkettet, "-execute" würde damit zur exiftool-Steueroption.
-    if not re.fullmatch(r"[A-Za-z0-9_:][A-Za-z0-9_:-]{0,63}", value):
+    Eine POSITIVLISTE, keine Zeichenregel. Der Name wird mit "-" verkettet
+    und geht als Argument an exiftool; die Argumentdatei von `-stay_open`
+    ist dabei zeilenweise. Eine Zeichenregel reicht dagegen nicht: Sie
+    ließe `execute`, `charset`, `p`, `b`, `w`, `if` und `ver` durch —
+    allesamt echte exiftool-Optionen. Schon `--metadata-field execute`
+    zerlegte jede Anfrage in zwei Kommandos, und die Suche lieferte für
+    JEDE Datei „keine Treffer". Ein Zeilenumbruch im Wert schöbe darüber
+    hinaus beliebige weitere Optionen ein, über `-p` mit einem
+    Perl-Ausdruck bis hin zum Shell-Aufruf.
+
+    Die Liste ist ohnehin der Vertrag: `--list-metadata-fields` gibt genau
+    sie aus, und die Oberflächen bauen ihr Feldmenü daraus. Die
+    Schreibweise ist frei — exiftool unterscheidet dort keine Groß- und
+    Kleinschreibung —, zurück kommt die kanonische Form."""
+    erlaubt = {field.lower(): field for field in METADATA_TEXT_FIELDS}
+    kanonisch = erlaubt.get(value.strip().lower())
+    if kanonisch is None:
         raise argparse.ArgumentTypeError(
-            "ungültiger Metadaten-Feldname (erlaubt sind Buchstaben, "
-            "Ziffern, - _ und :): %r" % value)
-    return value
+            "unbekanntes Metadatenfeld %r — erlaubt sind: %s "
+            "(siehe --list-metadata-fields)"
+            % (value, ", ".join(METADATA_TEXT_FIELDS)))
+    return kanonisch
 
 
 def install_termination_handlers():
@@ -1609,7 +1632,8 @@ class Search:
         if self.content_probe is None:
             with probe.open_stream() as handle:
                 return self.match_content(
-                    probe.chunker(handle, free_bytes=head_bytes))
+                    probe.chunker(handle, free_bytes=head_bytes),
+                    label=probe.label)
         probed_bytes = 0
 
         def tally(chunks):
@@ -1631,11 +1655,12 @@ class Search:
             # genaue Lauf weiter, zählt der Rest wieder mit.
             return self.match_content(
                 probe.chunker(handle,
-                              free_bytes=max(probed_bytes, head_bytes)))
+                              free_bytes=max(probed_bytes, head_bytes)),
+                label=probe.label)
 
     # ---------- Inhalts-Matching ----------
 
-    def match_content(self, chunks):
+    def match_content(self, chunks, label=None):
         """Sucht das Muster im Datei-Inhalt. Liefert die Zeilennummer des
         ersten Treffers oder None.
 
@@ -1652,6 +1677,10 @@ class Search:
         pending = []          # Bruchstücke der noch nicht beendeten Zeile
         pending_chars = 0     # deren Gesamtlänge, ohne sie zusammenzusetzen
         number = 0
+        # Darf der Matcher ein Bruchstück sehen? Nur der reine
+        # „enthält"-Test; alles andere ist verankert (siehe build_matcher).
+        piecewise = getattr(self.matcher, "substring_only", False)
+        skipping = False      # Zeile zu lang und mit diesem Muster ungeprüft
         for text in codecs.iterdecode(chunks, "utf-8", errors="replace"):
             if not text:
                 continue
@@ -1666,21 +1695,58 @@ class Search:
             if "\n" not in text and len(text.splitlines()) == 1 \
                     and text[-1] not in LINE_BREAKS:
                 if pending_chars > MAX_LINE_CHARS:
-                    # Die Zeile ist noch nicht zu Ende, aber schon zu lang.
-                    # Den bisherigen Abschnitt prüfen und nur den Schwanz
-                    # behalten; die Zeilennummer bleibt dieselbe, denn es
-                    # ist weiterhin EINE Zeile.
                     segment = "".join(pending)
-                    if self.matcher(segment):
-                        return number + 1
-                    # Nicht segment[-LINE_OVERLAP_CHARS:] ohne Prüfung:
-                    # Bei einer Überlappung von 0 wäre das segment[0:],
-                    # also der GANZE Abschnitt — die Grenze verschwände
-                    # lautlos, und genau der Speicherfehler wäre zurück.
-                    tail = (segment[-LINE_OVERLAP_CHARS:]
-                            if LINE_OVERLAP_CHARS > 0 else "")
-                    pending = [tail]
-                    pending_chars = len(tail)
+                    # Im Puffer kann trotzdem ein Zeilenende stecken: ein
+                    # einzelnes "\r" aus einem früheren Häppchen, das dort
+                    # wartete, weil ein "\n" daraus ein CRLF machen könnte.
+                    # DIESES Häppchen hat keinen Umbruch, also wird daraus
+                    # keines mehr — die Zeilen sind fertig und werden ganz
+                    # normal gezählt. Ohne diesen Schritt verschwanden sie
+                    # mit dem Abschnitt, und jede folgende Zeilennummer war
+                    # um eins zu klein.
+                    finished = segment.splitlines()
+                    if len(finished) > 1:
+                        for line in finished[:-1]:
+                            number += 1
+                            if skipping:
+                                skipping = False
+                            elif self.matcher(line):
+                                return number
+                        segment = finished[-1]
+                    if len(segment) > MAX_LINE_CHARS:
+                        # Die Zeile ist noch nicht zu Ende, aber schon zu
+                        # lang. Die Zeilennummer bleibt dieselbe, denn es
+                        # ist weiterhin EINE Zeile.
+                        if piecewise and not skipping:
+                            if self.matcher(segment):
+                                return number + 1
+                            # Nicht segment[-LINE_OVERLAP_CHARS:] ohne
+                            # Prüfung: Bei einer Überlappung von 0 wäre das
+                            # segment[0:], also der GANZE Abschnitt — die
+                            # Grenze verschwände lautlos, und genau der
+                            # Speicherfehler wäre zurück.
+                            segment = (segment[-LINE_OVERLAP_CHARS:]
+                                       if LINE_OVERLAP_CHARS > 0 else "")
+                        else:
+                            # Verankerte Muster (--regex mit ^ oder $,
+                            # Glob, --exact) gelten für die GANZE Zeile.
+                            # Auf einem Bruchstück geprüft träfen sie
+                            # falsch: `--regex 'A$'` traf am Abschnitts-
+                            # statt am Zeilenende und meldete einen
+                            # Treffer, den grep nicht sieht. Diese Zeile
+                            # bleibt deshalb ungeprüft — gemeldet, statt
+                            # still falsch beantwortet.
+                            if not skipping:
+                                self.warn(
+                                    "%s: Zeile %d ist länger als %d "
+                                    "Zeichen und wird mit diesem Muster "
+                                    "nicht geprüft"
+                                    % (label or "<Eingabe>", number + 1,
+                                       MAX_LINE_CHARS))
+                                skipping = True
+                            segment = ""
+                    pending = [segment]
+                    pending_chars = len(segment)
                 continue
             buffer = "".join(pending)
             pending.clear()
@@ -1701,6 +1767,11 @@ class Search:
                 pending_chars = len(rest)
             for line in lines:
                 number += 1
+                if skipping:
+                    # Nur der REST der zu langen Zeile wird übersprungen;
+                    # ab der nächsten Zeile wird wieder normal geprüft.
+                    skipping = False
+                    continue
                 if self.matcher(line):
                     return number
         # Rest: die letzte noch offene Zeile prüfen. Den Decoder leert
@@ -1708,6 +1779,9 @@ class Search:
         # Dateiende steht dann schon als Ersatzzeichen im Puffer.
         for line in "".join(pending).splitlines():
             number += 1
+            if skipping:
+                skipping = False
+                continue
             if self.matcher(line):
                 return number
         return None
@@ -1775,8 +1849,15 @@ class Search:
         archive_kind = classify_archive(name)
         # Bei einer Metadatensuche lohnt der Blick ins Archiv nicht: Ein
         # Eintrag hat keine Datei, die exiftool lesen könnte.
+        # `os.path.isfile` erst als letzte Bedingung: Der Aufruf kostet
+        # ein stat und läuft deshalb nur für Dateien, deren Endung
+        # überhaupt ein Archiv verspricht. Er ist nötig, weil zipfile und
+        # tarfile den Pfad selbst öffnen — an `open_regular_file()` vorbei.
+        # Eine benannte Pipe namens `x.zip` ließ sonst den ganzen Lauf
+        # hängen, sogar die reine Namenssuche.
         descend = (archive_kind is not None and self.archive_depth >= 1
-                   and self.text_mode != "metadata")
+                   and self.text_mode != "metadata"
+                   and os.path.isfile(path))
         # Wird NICHT in das Archiv geschaut — weil --no-archives bzw.
         # --archive-depth 0 das verbietet oder weil die Endung gar kein
         # Archiv ist —, dann ist die Datei eine ganz normale Datei und
@@ -1785,13 +1866,24 @@ class Search:
         # unterscheiden, sonst hinge es vom Zufall der installierten
         # Werkzeuge ab, ob eine Datei überhaupt angefasst wird. Bei der
         # Namenssuche zählt das Archiv selbst immer auch als Datei.
-        if self.type_allowed(False) \
-                and (self.text_mode != "content" or not descend):
+        def as_plain_file():
             probe = FileProbe(self, path, name,
                               open_stream=lambda: open_regular_file(path),
                               chunker=self.file_chunks,
                               filesystem_path=path)
             self.evaluate(probe, path, "file")
+
+        if self.type_allowed(False) \
+                and (self.text_mode != "content" or not descend):
+            as_plain_file()
+        elif descend and self.type_allowed(False):
+            # Nur hier ist die Datei bisher ÜBERSPRUNGEN worden, weil ihr
+            # Inhalt aus dem Archiv kommen sollte. Ist sie keines, muss
+            # sie nachträglich als normale Datei geprüft werden.
+            if not self.search_archive(path, None, archive_kind, path,
+                                       self.archive_depth):
+                as_plain_file()
+            return
         if descend:
             self.search_archive(path, None, archive_kind, path,
                                 self.archive_depth)
@@ -1806,7 +1898,11 @@ class Search:
 
         display ist der Anzeige-Pfad, z. B. "ordner/paket.zip" oder
         verschachtelt "aussen.zip!/innen.zip". depth zählt runter:
-        bei 0 steigen wir nicht weiter in Unter-Archive ein."""
+        bei 0 steigen wir nicht weiter in Unter-Archive ein.
+
+        Liefert False, wenn die Datei trotz passender Endung gar kein
+        Archiv dieses Formats ist — dann muss der Aufrufer sie wie eine
+        ganz normale Datei behandeln. Sonst True."""
         self.report_progress(display)
         if archive_path is None:
             archive_path = fs_path
@@ -1831,8 +1927,18 @@ class Search:
             else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
                 self.walk_single(kind, fs_path, fileobj, display, depth,
                                  archive_path, archive_members)
+        except FORMAT_MISMATCH_ERRORS:
+            # Die Endung versprach ein Archiv, der Inhalt ist keines.
+            # Das ist keine Störung, sondern der Normalfall bei einer
+            # Endung, die mehrere Bedeutungen hat: `.key` ist weit
+            # häufiger ein TLS-Schlüssel als eine Keynote-Datei. Der
+            # Aufrufer behandelt sie dann wie bei `--no-archives` — und
+            # genau das verlangt der Vertrag: Alle Gründe, NICHT ins
+            # Archiv zu schauen, müssen dasselbe Ergebnis liefern.
+            return False
         except EXPECTED_ARCHIVE_ERRORS as err:
             self.warn("%s: %s" % (display, err))
+        return True
 
     @staticmethod
     def member_is_hidden(member_path):
@@ -1856,6 +1962,14 @@ class Search:
                      aufgerufen, wenn wir den Inhalt wirklich brauchen).
         size:        entpackte Größe des Eintrags in Bytes (bei Ordnern None).
         """
+        # Der Wurzeleintrag eines mit `tar -cf x.tar -C ordner .` gebauten
+        # Archivs heißt "./" — das ist das Archiv selbst, kein Eintrag
+        # darin. Seit "." nicht mehr als versteckter Name gilt, käme er
+        # sonst als Ordnertreffer mit dem Namen "." heraus, den
+        # `--extract` nicht auflösen kann (nackter KeyError, Exit 2).
+        if member_path.strip("/") in ("", ".", ".."):
+            return
+
         full_display = display + "!/" + member_path
         member_chain = tuple(archive_members) + (member_path,)
         name = os.path.basename(member_path.rstrip("/"))
@@ -1882,8 +1996,7 @@ class Search:
         # sein roher Inhalt wird durchsucht. Ohne das entschiede auch
         # hier der Grund über das Ergebnis — ein .7z ohne bsdtar wurde
         # durchsucht, ein .zip an der Tiefengrenze dagegen nicht.
-        if self.type_allowed(False) \
-                and (self.text_mode != "content" or not nested):
+        def as_plain_member():
             def chunker(handle, free_bytes=0):
                 return self.archive_budget.iter_chunks(
                     handle, full_display, size, compressed_size,
@@ -1896,6 +2009,10 @@ class Search:
                           filesystem_path=archive_path,
                           archive_members=member_chain)
 
+        if self.type_allowed(False) \
+                and (self.text_mode != "content" or not nested):
+            as_plain_member()
+
         if nested:
             # Archiv im Archiv: Inhalt in den Speicher holen und rekursiv
             # weitersuchen (depth sinkt um 1).
@@ -1906,10 +2023,18 @@ class Search:
             except EXPECTED_ARCHIVE_ERRORS as err:
                 self.warn("%s: %s" % (full_display, err))
                 return
-            self.search_archive(None, io.BytesIO(data), nested_kind,
-                                full_display, depth - 1,
-                                archive_path=archive_path,
-                                archive_members=member_chain)
+            opened = self.search_archive(None, io.BytesIO(data), nested_kind,
+                                         full_display, depth - 1,
+                                         archive_path=archive_path,
+                                         archive_members=member_chain)
+            # Dieselbe Regel wie eine Ebene höher in visit_file(): Verspricht
+            # die Endung ein Archiv und ist der Eintrag keines, dann ist er
+            # ein ganz normaler Eintrag. Ohne das fiel ein `server.key` in
+            # einem Zip ab `--archive-depth 2` ohne jede Meldung aus der
+            # Inhaltssuche — bei `--archive-depth 1` wurde er gefunden.
+            if not opened and self.type_allowed(False) \
+                    and self.text_mode == "content":
+                as_plain_member()
 
     def walk_zip(self, archive, display, depth, archive_path,
                  archive_members):
