@@ -756,6 +756,7 @@ final class QuickController: NSObject, NSApplicationDelegate,
         hits = []
         openButton.isEnabled = false
         runScopeMismatch = nil
+        skippedCount = 0
         previewURLs = []
         tableView.reloadData()
         showInfo(Self.hint)
@@ -859,10 +860,16 @@ final class QuickController: NSObject, NSApplicationDelegate,
                 guard let self, generation == self.searchGeneration
                 else { return }   // abgebrochen/übergeben → verwerfen
                 self.runningProcess = nil
+                // Der Kern nennt den Grund auf stderr, und
+                // runSearchStreaming reicht ihn jetzt durch. Vorher riet
+                // die Zeile hier zu einer Neuinstallation — bei einem
+                // fehlenden exiftool oder einem ungültigen regulären
+                // Ausdruck half die nicht das Geringste.
                 let errorText = searchExitIsError(searchExit.status,
                                                   reason: searchExit.reason)
-                    ? "Suche fehlgeschlagen. Bitte Favenio erneut installieren."
+                    ? searchFailureText(searchExit)
                     : nil
+                self.skippedCount = searchExit.warningCount
                 self.finish(query: query, errorText: errorText)
             }
         }
@@ -943,6 +950,12 @@ final class QuickController: NSObject, NSApplicationDelegate,
         }
     }
 
+    /// Wie viele Objekte der letzte Lauf überspringen musste. Ohne diese
+    /// Zahl sieht ein Lauf, der ein kaputtes Archiv oder einen gesperrten
+    /// Ordner auslassen musste, genauso vollständig aus wie einer, der
+    /// alles gelesen hat.
+    var skippedCount = 0
+
     /// Suche natürlich fertig (weniger als 20 Treffer): Endstand zeigen.
     func finish(query: String, errorText: String?) {
         flushPending()
@@ -958,9 +971,10 @@ final class QuickController: NSObject, NSApplicationDelegate,
         let criterion = query.isEmpty
             ? (pixelLimits.summary.isEmpty ? "" : " (\(pixelLimits.summary))")
             : " für „\(query)“"
-        let summary = hits.isEmpty
+        let summary = (hits.isEmpty
             ? "Keine Treffer\(criterion) in \(abbreviateHome(searchRoot))."
-            : "\(hits.count) Treffer\(criterion)."
+            : "\(hits.count) Treffer\(criterion).")
+            + skippedNote(skippedCount)
         // Gerade wenn NICHTS gefunden wurde, muss ein unklarer Suchbereich
         // dabeistehen — sonst sucht man den Fehler beim Suchbegriff.
         if let problem = scopeProblem ?? runScopeNoteText() {

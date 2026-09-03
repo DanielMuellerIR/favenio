@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.27.2 — 2026-09-03
+
+Aus der CodeQA-Kampagne: ein abgebrochener oder unvollständiger Suchlauf war
+für beide Apps von einem leeren Ergebnis nicht zu unterscheiden. Zwei
+Ursachen, beide behoben.
+
+- **Ein Absturz sah aus wie „keine Treffer".** Python beendet sich bei jeder
+  unbehandelten Ausnahme mit Status 1 — genau dem Status, den der Vertrag für
+  „keine Treffer" vergibt, und beide Apps lassen 0 und 1 als normal durch. Ein
+  Fehler mitten im Lauf kam dort deshalb als vollständige, nur eben kürzere
+  Trefferliste an. `main()` fängt einen unerwarteten Fehler jetzt ab, nennt ihn
+  auf stderr und endet mit 2. Erwartete Lesefehler einzelner Objekte bleiben
+  eine Warnung, und die Suche läuft weiter.
+- **Beide Apps warfen den Grund weg.** stderr des Kerns hing auf `nullDevice`.
+  Ein fehlendes exiftool, ein ungültiger regulärer Ausdruck und ein gelöschter
+  Startordner kamen alle als „Suche fehlgeschlagen." an; die Schnellsuche riet
+  sogar zu einer Neuinstallation, die nichts half. Jetzt steht der Satz des
+  Kerns in der Fußzeile („Suche fehlgeschlagen: --metadata braucht exiftool,
+  das nicht gefunden wurde …").
+- **Übersprungene Objekte sind sichtbar.** Musste ein Lauf ein kaputtes Archiv
+  oder einen gesperrten Ordner auslassen, sah er genauso vollständig aus wie
+  einer, der alles gelesen hat. Die Fußzeile nennt die Zahl jetzt („· 3
+  Objekte übersprungen").
+- **Drei Fallen dabei, alle mit einer Wache belegt.** stderr wird nebenläufig
+  geleert — mit 900 übersprungenen Objekten läuft der Selbsttest ohne das
+  nicht zu Ende, weil eine volle Pipe den Kern anhält. Gezählt wird beim
+  Durchlaufen, sonst wäre die Zahl auf ein gedeckeltes Textstück beschränkt.
+  Und die Schreibseite wird vor dem Lesen geschlossen, weil `availableData`
+  sonst unbegrenzt wartet, wenn der Prozess gar nicht erst startete.
+- **Sechs Vertragswachen liefen auf keinem Rechner ohne Xcode-Werkzeuge.** Die
+  Absicherung der Metadaten- und Maßsuche aus 0.26.0 stand versehentlich in
+  einer Klasse mit `@skipUnless(swiftc)`, obwohl sie nur Quelltext liest; die
+  Suite meldete trotzdem `OK`. Ohne `swiftc` werden jetzt 7 statt 13 Tests
+  übersprungen. Die Wachen lesen ihre Dateien außerdem gegen das Repo statt
+  gegen das Arbeitsverzeichnis — aus einem anderen Ordner gestartet brachen
+  sie vorher schon beim Import ab.
+
 ## 0.27.1 — 2026-09-03
 
 Aus dem Nachlese-Durchgang des Reviews vom 2026-09-03. Vier der sechs Funde

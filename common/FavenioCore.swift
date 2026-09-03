@@ -661,9 +661,147 @@ func searchArguments(pattern: String, root: String, content: Bool,
 /// Vollständiges Ende eines Suchprozesses. `status` allein reicht nicht:
 /// Foundation meldet bei einem Signal dessen Nummer, sodass etwa SIGHUP und
 /// der reguläre grep-Status „keine Treffer" beide den Zahlenwert 1 tragen.
+/// Sammelt, was der Kern nach stderr schreibt — nebenläufig und gedeckelt.
+///
+/// Nebenläufig ist Pflicht: Eine zweite Pipe, die niemand leert, läuft nach
+/// rund 64 KiB voll und hält den Kern an. Er wartete dann auf Platz in
+/// stderr, die App auf seine Treffer in stdout — beide Seiten stünden.
+/// Deshalb hängt der Sammler an einem eigenen `readabilityHandler`.
+///
+/// Gedeckelt, weil eine Suche über einen unlesbaren Baum beliebig viele
+/// Warnungen erzeugen kann. Gebraucht wird ohnehin nur der Anfang: die
+/// erste Fehlerzeile und die Zahl der Warnungen.
+final class SearchDiagnostics {
+    /// Höchstlänge einer einzelnen stderr-Zeile, die noch zusammengesetzt
+    /// wird. Ein Kern, der eine endlos lange Zeile schriebe, soll den
+    /// Puffer nicht wachsen lassen.
+    static let lineLimit = 64 * 1024
+    /// Die Präfixe, die `favenio.py` seinen stderr-Zeilen voranstellt.
+    static let errorPrefix = "favenio: fehler: "
+    static let warningPrefix = "favenio: warnung: "
+
+    private let lock = NSLock()
+    private var carry = Data()        // angefangene Zeile zwischen Häppchen
+    private var warnings = 0
+    private var firstError: String?
+
+    /// Hängt sich an die stderr-Pipe und leert sie fortlaufend.
+    func collect(from pipe: Pipe) {
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            self?.append(chunk)
+        }
+    }
+
+    /// Nach dem Prozessende: Handler lösen und den Rest nachlesen.
+    ///
+    /// Die Schreibseite wird VOR dem Lesen geschlossen. `availableData`
+    /// blockiert nämlich, solange irgendein Deskriptor die Pipe noch zum
+    /// Schreiben offen hält — und genau das ist der Fall, wenn
+    /// `process.run()` gescheitert ist: Dann hat das Kind die Pipe nie
+    /// bekommen, und niemand sonst schließt sie. Ohne dieses Schließen
+    /// hing der Aufruf unbegrenzt. Ein zweites Schließen ist harmlos,
+    /// deshalb `try?`.
+    func finish(_ pipe: Pipe) {
+        let handle = pipe.fileHandleForReading
+        handle.readabilityHandler = nil
+        try? pipe.fileHandleForWriting.close()
+        append(handle.availableData)
+        lock.lock()
+        defer { lock.unlock() }
+        if !carry.isEmpty {          // letzte Zeile ohne Umbruch
+            consume(String(decoding: carry, as: UTF8.self))
+            carry.removeAll()
+        }
+    }
+
+    /// Gezählt wird beim DURCHLAUFEN, nicht am Ende aus einem gedeckelten
+    /// Text: Ein Lauf über einen unlesbaren Baum erzeugt beliebig viele
+    /// Warnungen, und „470 Objekte übersprungen" wäre schlicht falsch,
+    /// wenn es 5000 waren. Gespeichert wird deshalb nichts außer der
+    /// ersten Fehlerzeile und dem Zähler.
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        carry.append(chunk)
+        while let newline = carry.firstIndex(of: 0x0A) {
+            let lineData = carry.subdata(in: carry.startIndex..<newline)
+            carry.removeSubrange(carry.startIndex...newline)
+            consume(String(decoding: lineData, as: UTF8.self))
+        }
+        if carry.count > SearchDiagnostics.lineLimit {
+            carry.removeAll(keepingCapacity: true)
+        }
+    }
+
+    /// Nur mit gehaltenem `lock` aufrufen.
+    private func consume(_ line: String) {
+        if line.hasPrefix(SearchDiagnostics.warningPrefix) {
+            warnings += 1
+        } else if firstError == nil,
+                  line.hasPrefix(SearchDiagnostics.errorPrefix) {
+            firstError = String(
+                line.dropFirst(SearchDiagnostics.errorPrefix.count))
+        }
+    }
+
+    /// Die erste Fehlerzeile des Kerns, ohne Präfix — oder nil.
+    var errorMessage: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return firstError
+    }
+
+    /// Wie viele Objekte der Lauf überspringen musste.
+    var warningCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return warnings
+    }
+}
+
 struct SearchExit {
     let status: Int32
     let reason: Process.TerminationReason
+    /// Der Grund eines Fehlschlags, wie der Kern ihn auf stderr genannt hat.
+    var errorMessage: String? = nil
+    /// Wie viele Objekte der Lauf überspringen musste.
+    var warningCount: Int = 0
+}
+
+/// Der Satz, den die Oberfläche bei einem gescheiterten Lauf zeigt.
+///
+/// Der Kern sagt auf stderr, WAS schiefging — „--metadata braucht exiftool,
+/// das nicht gefunden wurde" etwa, oder „ungültiger regulärer Ausdruck".
+/// Bis 0.27.1 hing stderr auf `nullDevice`, und beide Apps rieten
+/// stattdessen: Die Haupt-App zeigte nur „Suche fehlgeschlagen.", die
+/// Schnellsuche riet zu einer Neuinstallation, die nichts half.
+func searchFailureText(_ exit: SearchExit) -> String {
+    if let message = exit.errorMessage, !message.isEmpty {
+        return "Suche fehlgeschlagen: " + message
+    }
+    if exit.reason != .exit {
+        return "Suche abgebrochen (Signal \(exit.status))."
+    }
+    return "Suche fehlgeschlagen (Status \(exit.status))."
+}
+
+/// Zusatz für die Fußzeile, wenn der Lauf Objekte überspringen musste.
+///
+/// Ohne ihn sieht ein Lauf, der ein kaputtes Archiv oder einen gesperrten
+/// Ordner auslassen musste, genauso vollständig aus wie einer, der alles
+/// gelesen hat.
+func skippedNote(_ count: Int) -> String {
+    switch count {
+    case 0: return ""
+    case 1: return " · 1 Objekt übersprungen"
+    default: return " · \(count) Objekte übersprungen"
+    }
 }
 
 /// grep-Semantik des Python-Kerns: Nur ein REGULÄRER Exit 0 (Treffer) oder 1
@@ -725,9 +863,16 @@ func runSearchStreaming(arguments: [String],
     process.arguments = arguments
     let pipe = Pipe()
     process.standardOutput = pipe
-    process.standardError = FileHandle.nullDevice
+    // stderr wird MITGELESEN, nicht verworfen: Dort steht der Grund eines
+    // Fehlschlags und jede Warnung über ein übersprungenes Objekt.
+    let errPipe = Pipe()
+    let diagnostics = SearchDiagnostics()
+    process.standardError = errPipe
+    diagnostics.collect(from: errPipe)
     do { try process.run() } catch {
-        return SearchExit(status: 2, reason: .exit)
+        diagnostics.finish(errPipe)
+        return SearchExit(status: 2, reason: .exit,
+                          errorMessage: error.localizedDescription)
     }
     register?(process)   // Aufrufer kann den Lauf ab jetzt abbrechen
 
@@ -755,8 +900,11 @@ func runSearchStreaming(arguments: [String],
     }
     handleLine(buffer)   // letzte Zeile, falls ohne Zeilenumbruch
     process.waitUntilExit()
+    diagnostics.finish(errPipe)
     return SearchExit(status: process.terminationStatus,
-                      reason: process.terminationReason)
+                      reason: process.terminationReason,
+                      errorMessage: diagnostics.errorMessage,
+                      warningCount: diagnostics.warningCount)
 }
 
 /// Appweiter Cache: jede Aktion auf denselben Archivtreffer verwendet dieselbe

@@ -63,6 +63,12 @@ Verbindliches CLI-Verhalten:
   gehen Fortschritte nach stderr.
 - Warnungen und Diagnose gehören nach stderr; stdout bleibt parsebar.
 - Exit-Codes folgen grep: 0 = Treffer, 1 = keine Treffer, 2 = Fehler.
+  Zu den Fehlern gehört ausdrücklich JEDER unerwartete Abbruch: `main()`
+  fängt ihn ab, nennt ihn auf stderr und endet mit 2. Ohne das beendete
+  sich Python mit Status 1 — genau dem Status für „keine Treffer" —, und
+  beide Apps zeigten eine halbe Trefferliste als vollständiges Ergebnis.
+  Erwartete Lesefehler EINZELNER Objekte bleiben davon unberührt; sie sind
+  weiter eine Warnung, und die Suche läuft weiter.
 - Glob-Muster matchen den vollständigen Namen. Substring-Suche gilt nur ohne
   Platzhalter. Eine Änderung dieser Semantik wäre ein Breaking Change.
 - Inhalt wird als UTF-8 mit `errors="replace"` gelesen. Dadurch bleiben Treffer
@@ -228,6 +234,24 @@ Beide Apps sind programmatische AppKit-Frontends ohne Xcode-Projekt.
 `common/FavenioCore.swift` enthält das Hit-Modell, JSONL-Parsing,
 Unterprozessaufrufe und `materializeHit()`. Änderungen am JSONL-Schema zuerst im
 Kern und in gemeinsamen Tests spezifizieren, dann beide Frontends anpassen.
+
+Beide Apps LESEN stderr des Kerns mit, statt ihn zu verwerfen
+(`SearchDiagnostics`). Dort steht, WAS schiefging — „--metadata braucht
+exiftool", „ungültiger regulärer Ausdruck" —, und jede Warnung über ein
+übersprungenes Objekt. Bis 0.27.1 hing die Pipe auf `nullDevice`: Die
+Haupt-App zeigte nur „Suche fehlgeschlagen.", die Schnellsuche riet zu einer
+Neuinstallation, die nichts half. Drei Eigenschaften sind dabei Pflicht und
+je durch eine Wache festgehalten:
+
+- Die Pipe wird NEBENLÄUFIG geleert (`collect(from:)`, vor `process.run()`).
+  Eine volle stderr-Pipe hält den Kern an, während die App auf seine Treffer
+  in stdout wartet — beide Seiten stehen dann. Belegt: mit 900 übersprungenen
+  Objekten läuft der Selbsttest ohne dieses Leeren nicht zu Ende.
+- Gezählt wird beim DURCHLAUFEN, nicht am Ende aus einem gedeckelten Text.
+  Sonst wäre „470 Objekte übersprungen" falsch, wenn es 5000 waren.
+- `finish()` schließt die Schreibseite VOR dem Lesen: `availableData`
+  blockiert, solange irgendein Deskriptor die Pipe noch zum Schreiben offen
+  hält — genau der Fall, wenn `process.run()` gescheitert ist.
 
 Die Haupt-App streamt Treffer, erhält die Auswahl bei neuen Ergebnissen und
 bietet Öffnen, Öffnen mit, Finder-Anzeige, Pfadkopie, Quick Look und Drag-and-

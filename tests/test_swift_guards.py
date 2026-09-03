@@ -5,9 +5,12 @@ import unittest
 from pathlib import Path
 
 
-COMMON = Path("common/FavenioCore.swift").read_text(encoding="utf-8")
-GUI = Path("gui/FavenioGUI.swift").read_text(encoding="utf-8")
-QUICK = Path("quick/FavenioQuick.swift").read_text(encoding="utf-8")
+# Gegen das Repo, nicht gegen das Arbeitsverzeichnis: Ein Lauf aus einem
+# anderen Ordner brach sonst schon beim Import ab, statt zu prüfen.
+REPO = Path(__file__).resolve().parent.parent
+COMMON = (REPO / "common/FavenioCore.swift").read_text(encoding="utf-8")
+GUI = (REPO / "gui/FavenioGUI.swift").read_text(encoding="utf-8")
+QUICK = (REPO / "quick/FavenioQuick.swift").read_text(encoding="utf-8")
 
 
 def swift_function(source, signature):
@@ -530,6 +533,158 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("deadline: .now() + 6", finder)
         self.assertIn("killer = nil", finder)
 
+    def test_the_search_never_throws_away_the_reason_it_failed(self):
+        """stderr des Kerns trägt den Grund — er darf nicht ins Leere gehen.
+
+        Bis 0.27.1 hing er auf nullDevice: Ein fehlendes exiftool, ein
+        ungültiger regulärer Ausdruck und ein gelöschter Startordner kamen
+        alle als „Suche fehlgeschlagen." an, und die Schnellsuche riet zu
+        einer Neuinstallation, die nichts half.
+        """
+        streaming = swift_function(
+            COMMON, "func runSearchStreaming(arguments: [String],")
+        self.assertNotIn("standardError = FileHandle.nullDevice", streaming)
+        self.assertIn("process.standardError = errPipe", streaming)
+        # Nebenläufig leeren, sonst hält eine volle Pipe den Kern an.
+        self.assertIn("diagnostics.collect(from: errPipe)", streaming)
+        launch = streaming.index("try process.run()")
+        self.assertLess(streaming.index("diagnostics.collect(from: errPipe)"),
+                        launch,
+                        "stderr muss VOR dem Start geleert werden")
+
+        # Die Haupt-App streamt über einen eigenen Lauf — dieselbe Regel.
+        start = swift_function(GUI, "func launchSearch(pattern: String)")
+        self.assertNotIn("standardError = FileHandle.nullDevice", start)
+        self.assertIn("process.standardError = errPipe", start)
+        self.assertIn("run.diagnostics.collect(from: errPipe)", start)
+
+    def test_both_apps_name_the_reason_instead_of_guessing(self):
+        body = swift_function(
+            GUI, "func finishSearchRunIfReady(_ run: ActiveSearchRun)")
+        self.assertIn("searchFailureText(", body, "GUI")
+        # Die Schnellsuche wertet das Ende in startSearch() aus.
+        self.assertIn("searchFailureText(",
+                      swift_function(QUICK, "func startSearch()"), "Quick")
+        # Der falsche Rat der Schnellsuche darf nicht zurückkehren.
+        self.assertNotIn("erneut installieren", QUICK)
+        # Und kein Frontend darf den Grund durch einen festen Satz ersetzen.
+        self.assertNotIn('.failed("Suche fehlgeschlagen.")', GUI)
+
+    def test_skipped_objects_are_counted_while_streaming(self):
+        """Gezählt wird beim Durchlaufen, nicht aus einem gedeckelten Text.
+
+        Ein Lauf über einen unlesbaren Baum erzeugt beliebig viele
+        Warnungen; „470 Objekte übersprungen" wäre falsch, wenn es 5000
+        waren.
+        """
+        append = swift_function(COMMON, "func append(_ chunk: Data)")
+        self.assertIn("warnings += 1", swift_function(
+            COMMON, "private func consume(_ line: String)"))
+        self.assertIn("while let newline = carry.firstIndex(of: 0x0A)",
+                      append)
+        # Beide Oberflächen zeigen die Zahl auch an.
+        for label, source in (("GUI", GUI), ("Quick", QUICK)):
+            self.assertIn("skippedNote(skippedCount)", source, label)
+
+    def test_the_diagnostics_reader_can_never_block(self):
+        """`availableData` blockiert, solange die Schreibseite offen ist.
+
+        Genau das passiert, wenn `process.run()` gescheitert ist: Das Kind
+        hat die Pipe nie bekommen, und niemand sonst schließt sie.
+        """
+        finish = swift_function(COMMON, "func finish(_ pipe: Pipe)")
+        schliessen = finish.index("fileHandleForWriting.close()")
+        lesen = finish.index("availableData")
+        self.assertLess(schliessen, lesen,
+                        "Schreibseite muss VOR dem Lesen geschlossen werden")
+
+    # --- Vertragswachen der Metadaten- und Maßsuche (0.26.0) ---
+    # Sie standen bis 0.27.2 versehentlich in
+    # QuickScopeNoteBehaviourTest, die @skipUnless(swiftc) trägt und
+    # in setUpClass Swift übersetzt: Auf einem Rechner ohne
+    # Xcode-Werkzeuge fiel damit die gesamte Absicherung lautlos aus,
+    # und die Suite meldete trotzdem OK. Sie brauchen keinen
+    # Übersetzer — sie lesen nur Quelltext.
+    def test_both_apps_offer_the_mode_switch_and_size_fields(self):
+        """Name | Inhalt | Metadaten ist EIN Umschalter in beiden Apps, kein
+        Nachbau je App: Die Beschriftungen kommen aus SearchTextMode im
+        gemeinsamen Kern. Die vier Maßfelder laufen ueber PixelLimits und
+        parsePixelLimit, damit „1.000 px" ueberall dasselbe heisst."""
+        self.assertIn("enum SearchTextMode", COMMON)
+        self.assertIn("struct PixelLimits", COMMON)
+        self.assertIn("func parsePixelLimit(", COMMON)
+        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
+            with self.subTest(app=name):
+                self.assertIn("SearchTextMode.allCases.map { $0.title }",
+                              source)
+                self.assertIn("var pixelLimits: PixelLimits", source)
+                self.assertNotIn("contentCheckbox", source)
+                self.assertIn("metadata: ", source)
+                self.assertIn("pixelLimits: ", source)
+    def test_metadata_field_list_comes_from_the_core(self):
+        """Die kuratierte Feldliste ist EINE Konstante in favenio.py. Swift
+        fragt sie per --list-metadata-fields ab statt sie abzuschreiben —
+        sonst driften Kern und Menue auseinander."""
+        self.assertIn("--list-metadata-fields", COMMON)
+        self.assertIn("metadataFieldList()", GUI)
+        # „Keywords" darf der Selbsttest nennen (er prüft die Liste); eine
+        # abgeschriebene Liste verriete sich an den selteneren Feldern.
+        for field in ("Caption-Abstract", "PersonInImage", "XPKeywords"):
+            self.assertNotIn('"%s"' % field, GUI)
+            self.assertNotIn('"%s"' % field, QUICK)
+            self.assertNotIn('"%s"' % field, COMMON)
+    def test_size_filters_reach_the_core_and_allow_an_empty_pattern(self):
+        """Ohne Muster nur mit Maßfilter: searchArguments laesst das Muster
+        ganz weg (der Kern laeuft dann ohne Textkriterium; ein kuenstliches
+        `*` war unter --regex ein ungueltiger Ausdruck), und beide Apps
+        starten die Suche nur, wenn Muster ODER Maßfilter da sind."""
+        arguments = swift_function(COMMON, "func searchArguments(")
+        self.assertIn("args += pixelLimits.arguments", arguments)
+        self.assertNotIn('"*"', arguments)
+        self.assertIn("if hasPattern { args.append(pattern) }", arguments)
+        # --content/--metadata sagen, WOGEGEN das Muster laeuft, und lehnt
+        # der Kern ohne Muster ab.
+        self.assertIn("if content && hasPattern", arguments)
+        self.assertIn("if metadata && hasPattern", arguments)
+        self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty", GUI)
+        self.assertIn("guard !query.isEmpty || !limits.isEmpty", QUICK)
+    def test_a_size_only_search_can_be_handed_over_and_continued(self):
+        """Der Knopf „Alle in Favenio" und ⌘↩ brachen bei leerem Suchfeld ab,
+        obwohl die Schnellsuche mit gesetztem Maßfilter laeuft; die
+        Fortsetzung in der Haupt-App ebenso. Beide Uebergabewege haengen
+        jetzt an derselben Bedingung wie der Suchstart."""
+        handover = swift_function(QUICK, "@objc func openInMainApp() {")
+        self.assertIn("guard !query.isEmpty || !pixelLimits.isEmpty",
+                      handover)
+        # ⌘↩ geht nicht ueber den Knopf, sondern ueber den Tastaturmonitor —
+        # der muss dieselbe Bedingung tragen, sonst faellt die Taste bei
+        # leerem Suchfeld kommentarlos ins Feld durch.
+        launched = swift_function(
+            QUICK, "func applicationDidFinishLaunching(")
+        self.assertIn("|| !self.pixelLimits.isEmpty", launched)
+        continue_search = swift_function(
+            GUI, "func continueSearch(from file: URL) {")
+        self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty",
+                      continue_search)
+    def test_a_size_only_result_line_names_the_size_filter(self):
+        """Ohne Suchbegriff schrieb die Endmeldung „für „"" mit leeren
+        Anfuehrungszeichen. Bei einer reinen Maßsuche nennt sie stattdessen
+        den Filter, nach dem wirklich gesucht wurde."""
+        finish = swift_function(
+            QUICK, "func finish(query: String, errorText: String?) {")
+        self.assertIn("pixelLimits.summary", finish)
+        self.assertIn("query.isEmpty", finish)
+    def test_area_sort_cannot_overflow(self):
+        """Die Maß-Spalte sortiert nach Flaeche. Ein praeparierter Bildkopf
+        mit 0xffffffff je Kante liess `width * height` ueber Int.max laufen
+        und beendete die App; der Kern lehnt solche Kopfmaße zusaetzlich ab."""
+        compare = swift_function(COMMON, "func compareHits")
+        self.assertIn("lhs.pixelArea, rhs.pixelArea", compare)
+        self.assertNotIn("w * $0", compare)
+        self.assertIn("multipliedReportingOverflow", COMMON)
+        self.assertIn("MAX_IMAGE_EDGE", Path("favenio.py").read_text(
+            encoding="utf-8"))
+
 
 @unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")
 class QuickScopeRefreshBehaviourTest(unittest.TestCase):
@@ -706,90 +861,11 @@ print("OHNE|" + (zustand.runScopeNoteText() ?? "nil"))
         self.assertEqual(self.lines["OHNE"], "nil")
 
 
-    def test_both_apps_offer_the_mode_switch_and_size_fields(self):
-        """Name | Inhalt | Metadaten ist EIN Umschalter in beiden Apps, kein
-        Nachbau je App: Die Beschriftungen kommen aus SearchTextMode im
-        gemeinsamen Kern. Die vier Maßfelder laufen ueber PixelLimits und
-        parsePixelLimit, damit „1.000 px" ueberall dasselbe heisst."""
-        self.assertIn("enum SearchTextMode", COMMON)
-        self.assertIn("struct PixelLimits", COMMON)
-        self.assertIn("func parsePixelLimit(", COMMON)
-        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
-            with self.subTest(app=name):
-                self.assertIn("SearchTextMode.allCases.map { $0.title }",
-                              source)
-                self.assertIn("var pixelLimits: PixelLimits", source)
-                self.assertNotIn("contentCheckbox", source)
-                self.assertIn("metadata: ", source)
-                self.assertIn("pixelLimits: ", source)
 
-    def test_metadata_field_list_comes_from_the_core(self):
-        """Die kuratierte Feldliste ist EINE Konstante in favenio.py. Swift
-        fragt sie per --list-metadata-fields ab statt sie abzuschreiben —
-        sonst driften Kern und Menue auseinander."""
-        self.assertIn("--list-metadata-fields", COMMON)
-        self.assertIn("metadataFieldList()", GUI)
-        # „Keywords" darf der Selbsttest nennen (er prüft die Liste); eine
-        # abgeschriebene Liste verriete sich an den selteneren Feldern.
-        for field in ("Caption-Abstract", "PersonInImage", "XPKeywords"):
-            self.assertNotIn('"%s"' % field, GUI)
-            self.assertNotIn('"%s"' % field, QUICK)
-            self.assertNotIn('"%s"' % field, COMMON)
 
-    def test_size_filters_reach_the_core_and_allow_an_empty_pattern(self):
-        """Ohne Muster nur mit Maßfilter: searchArguments laesst das Muster
-        ganz weg (der Kern laeuft dann ohne Textkriterium; ein kuenstliches
-        `*` war unter --regex ein ungueltiger Ausdruck), und beide Apps
-        starten die Suche nur, wenn Muster ODER Maßfilter da sind."""
-        arguments = swift_function(COMMON, "func searchArguments(")
-        self.assertIn("args += pixelLimits.arguments", arguments)
-        self.assertNotIn('"*"', arguments)
-        self.assertIn("if hasPattern { args.append(pattern) }", arguments)
-        # --content/--metadata sagen, WOGEGEN das Muster laeuft, und lehnt
-        # der Kern ohne Muster ab.
-        self.assertIn("if content && hasPattern", arguments)
-        self.assertIn("if metadata && hasPattern", arguments)
-        self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty", GUI)
-        self.assertIn("guard !query.isEmpty || !limits.isEmpty", QUICK)
 
-    def test_a_size_only_search_can_be_handed_over_and_continued(self):
-        """Der Knopf „Alle in Favenio" und ⌘↩ brachen bei leerem Suchfeld ab,
-        obwohl die Schnellsuche mit gesetztem Maßfilter laeuft; die
-        Fortsetzung in der Haupt-App ebenso. Beide Uebergabewege haengen
-        jetzt an derselben Bedingung wie der Suchstart."""
-        handover = swift_function(QUICK, "@objc func openInMainApp() {")
-        self.assertIn("guard !query.isEmpty || !pixelLimits.isEmpty",
-                      handover)
-        # ⌘↩ geht nicht ueber den Knopf, sondern ueber den Tastaturmonitor —
-        # der muss dieselbe Bedingung tragen, sonst faellt die Taste bei
-        # leerem Suchfeld kommentarlos ins Feld durch.
-        launched = swift_function(
-            QUICK, "func applicationDidFinishLaunching(")
-        self.assertIn("|| !self.pixelLimits.isEmpty", launched)
-        continue_search = swift_function(
-            GUI, "func continueSearch(from file: URL) {")
-        self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty",
-                      continue_search)
 
-    def test_a_size_only_result_line_names_the_size_filter(self):
-        """Ohne Suchbegriff schrieb die Endmeldung „für „"" mit leeren
-        Anfuehrungszeichen. Bei einer reinen Maßsuche nennt sie stattdessen
-        den Filter, nach dem wirklich gesucht wurde."""
-        finish = swift_function(
-            QUICK, "func finish(query: String, errorText: String?) {")
-        self.assertIn("pixelLimits.summary", finish)
-        self.assertIn("query.isEmpty", finish)
 
-    def test_area_sort_cannot_overflow(self):
-        """Die Maß-Spalte sortiert nach Flaeche. Ein praeparierter Bildkopf
-        mit 0xffffffff je Kante liess `width * height` ueber Int.max laufen
-        und beendete die App; der Kern lehnt solche Kopfmaße zusaetzlich ab."""
-        compare = swift_function(COMMON, "func compareHits")
-        self.assertIn("lhs.pixelArea, rhs.pixelArea", compare)
-        self.assertNotIn("w * $0", compare)
-        self.assertIn("multipliedReportingOverflow", COMMON)
-        self.assertIn("MAX_IMAGE_EDGE", Path("favenio.py").read_text(
-            encoding="utf-8"))
 
 
 class ParsePixelLimitBehaviourTest(unittest.TestCase):

@@ -2461,6 +2461,45 @@ class LongLineTest(TempTreeTest):
         self.assertEqual(self.line_of("ZIEL", text), 3)
 
 
+class UnexpectedErrorTest(TempTreeTest):
+    """Ein abgebrochener Lauf darf nicht wie ein leeres Ergebnis aussehen.
+
+    Python beendet sich bei jeder unbehandelten Ausnahme mit Status 1 —
+    genau dem Status, den der Vertrag für „keine Treffer" vergibt. Beide
+    Apps lassen 0 und 1 als normal durch; ein Absturz mitten im Lauf kam
+    dort deshalb als vollständige, nur eben kürzere Trefferliste an."""
+
+    def test_an_unexpected_error_ends_with_exit_two_and_says_so(self):
+        self.write("a.txt", "aaa\n")
+        echt = favenio.build_matcher
+
+        def kaputt(*args, **kwargs):
+            def matcher(text):
+                raise ZeroDivisionError("künstlicher Fehler mitten im Lauf")
+            return matcher
+
+        favenio.build_matcher = kaputt
+        self.addCleanup(setattr, favenio, "build_matcher", echt)
+        code, lines, err = run(["aaa", self.root])
+        self.assertEqual(code, 2)
+        self.assertEqual(lines, [])
+        self.assertIn("unerwarteter Fehler", err)
+        self.assertIn("ZeroDivisionError", err)
+        # Der Traceback gehört als Diagnose dazu — aber nach stderr.
+        self.assertIn("Traceback", err)
+
+    def test_an_expected_read_error_stays_a_warning(self):
+        # Gegenprobe: Der Auffangzweig darf die Warnungen einzelner
+        # Objekte nicht an sich ziehen. Ein kaputtes Archiv ist weiterhin
+        # eine Warnung, und der Lauf endet normal.
+        self.write("kaputt.zip", "das ist kein Zip\n")
+        self.write("treffer.txt", "aaa\n")
+        code, lines, err = run(["--content", "aaa", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1, lines)
+        self.assertNotIn("unerwarteter Fehler", err)
+
+
 class ArchiveExtensionTest(TempTreeTest):
     """Die Archiv-Erkennung geht nach der Endung — die ist ein Hinweis,
     keine Zusage. `.key` ist weit häufiger ein TLS-Schlüssel als eine

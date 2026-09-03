@@ -130,7 +130,8 @@ Favenio is deliberately machine-friendly:
   `value`; with a size filter, hits add `width` and `height` (pixels). All
   four are optional.
 - **Exit codes** as with grep: `0` = hits, `1` = no hits,
-  `2` = error (invalid regex, missing path)
+  `2` = error (invalid regex, missing path, and any unexpected error that
+  cut the run short — an aborted run must never look like an empty result)
 - **Warnings** (unreadable files, broken archives) go to stderr;
   the search continues and stdout stays cleanly parseable.
 

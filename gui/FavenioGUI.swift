@@ -41,6 +41,85 @@ struct FavenioApp {
 
 // MARK: - Headless-Selbsttest
 
+/// Kommt an, WAS der Kern gemeldet hat — oder nur, DASS etwas schiefging?
+///
+/// Bis 0.27.1 hing stderr des Kerns in beiden Apps auf `nullDevice`. Ein
+/// fehlendes exiftool, ein ungültiger regulärer Ausdruck und ein gelöschter
+/// Startordner kamen deshalb alle als „Suche fehlgeschlagen." an, und die
+/// Schnellsuche riet zu einer Neuinstallation, die nichts half. Ebenso
+/// unsichtbar war, dass ein Lauf Objekte überspringen musste: Er sah
+/// genauso vollständig aus wie einer, der alles gelesen hat.
+func checkDiagnosticsReachTheSurface(sandbox: URL) -> String? {
+    guard let cli = findCLI() else { return "favenio.py nicht gefunden" }
+
+    // 1. Ein Lauf, der mit Exit 2 endet, muss seinen GRUND mitbringen.
+    let broken = runSearchStreaming(
+        arguments: [cli, "--json", "--content", "--regex", "[unfertig",
+                    "--", sandbox.path],
+        onProgress: { _ in })
+    guard searchExitIsError(broken.status, reason: broken.reason) else {
+        return "ungültiger regulärer Ausdruck galt als erfolgreicher Lauf"
+    }
+    guard let reason = broken.errorMessage, !reason.isEmpty else {
+        return "Exit 2 ohne Grund — stderr des Kerns kommt nicht an"
+    }
+    let text = searchFailureText(broken)
+    guard text.contains(reason), text != "Suche fehlgeschlagen." else {
+        return "Fehlertext nennt den Grund nicht: \(text)"
+    }
+
+    // 2. Ein Lauf, der etwas überspringen musste, muss das sagen können.
+    //    Eine benannte Pipe ist dafür der verlässlichste Anlass: Der Kern
+    //    liest sie nicht und meldet genau eine Warnung.
+    let noisy = sandbox.appendingPathComponent("diagnose")
+    try? FileManager.default.createDirectory(at: noisy,
+                                             withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: noisy) }
+    try? "FAVENIO_PROBE\n".write(to: noisy.appendingPathComponent("a.txt"),
+                                 atomically: true, encoding: .utf8)
+    guard mkfifo(noisy.appendingPathComponent("pipe.txt").path, 0o600) == 0
+    else { return "Testpipe ließ sich nicht anlegen" }
+
+    let skipping = runSearchStreaming(
+        arguments: [cli, "--json", "--content", "FAVENIO_PROBE",
+                    "--", noisy.path],
+        onProgress: { _ in })
+    guard !searchExitIsError(skipping.status, reason: skipping.reason) else {
+        return "Lauf mit übersprungener Pipe galt als Fehlschlag"
+    }
+    guard skipping.warningCount == 1 else {
+        return "übersprungenes Objekt nicht gezählt "
+            + "(\(skipping.warningCount) statt 1)"
+    }
+
+    // 3. Mehr Warnungen, als in eine Pipe passen. Genau dafür wird stderr
+    //    NEBENLÄUFIG geleert: Eine volle Pipe (rund 64 KiB) hält den Kern
+    //    an, während die App auf seine Treffer wartet — beide Seiten
+    //    stünden. Und gezählt werden muss beim Durchlaufen, sonst wäre
+    //    die Zahl auf das gedeckelte Textstück beschränkt.
+    let many = 900
+    for index in 0..<many {
+        let name = String(format: "pipe%04d.txt", index)
+        _ = mkfifo(noisy.appendingPathComponent(name).path, 0o600)
+    }
+    let flooded = runSearchStreaming(
+        arguments: [cli, "--json", "--content", "FAVENIO_PROBE",
+                    "--", noisy.path],
+        onProgress: { _ in })
+    guard !searchExitIsError(flooded.status, reason: flooded.reason) else {
+        return "Lauf mit vielen Warnungen galt als Fehlschlag"
+    }
+    guard flooded.warningCount == many + 1 else {
+        return "Warnungen jenseits der Pipe-Größe nicht vollständig gezählt "
+            + "(\(flooded.warningCount) statt \(many + 1))"
+    }
+    guard skippedNote(1).contains("1 Objekt"), skippedNote(0).isEmpty,
+          skippedNote(3).contains("3 Objekte") else {
+        return "Fußzeilen-Zusatz für übersprungene Objekte stimmt nicht"
+    }
+    return nil
+}
+
 func runSelfTest() -> Int32 {
     defer { cleanupMaterializedHits() }
     guard findCLI() != nil else {
@@ -334,6 +413,10 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: " + failure)
         return 1
     }
+    if let failure = checkDiagnosticsReachTheSurface(sandbox: tmp) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
     print("SELFTEST OK — Suche, Archiv-Extraktion, Trefferlisten-Werkzeuge "
           + "und Sparkle-Anbindung funktionieren")
     return 0
@@ -552,14 +635,20 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
 final class ActiveSearchRun {
     let process: Process
     let pipe: Pipe
+    /// stderr des Kerns — dort steht der Grund eines Fehlschlags und jede
+    /// Warnung über ein übersprungenes Objekt. Bis 0.27.1 hing die Pipe
+    /// auf nullDevice, und die Fußzeile konnte nur raten.
+    let errPipe: Pipe
+    let diagnostics = SearchDiagnostics()
     var lineBuffer = Data()
     var reachedEOF = false
     var terminationStatus: Int32?
     var terminationReason: Process.TerminationReason?
 
-    init(process: Process, pipe: Pipe) {
+    init(process: Process, pipe: Pipe, errPipe: Pipe) {
         self.process = process
         self.pipe = pipe
+        self.errPipe = errPipe
     }
 }
 
@@ -654,6 +743,11 @@ final class MainController: NSObject, NSApplicationDelegate,
         case failed(String)      // Grund, den die Fußzeile wörtlich zeigt
     }
     var searchPhase: SearchPhase = .idle
+    /// Wie viele Objekte der letzte Lauf überspringen musste (kaputtes
+    /// Archiv, fehlende Leserechte). Ohne diese Zahl sieht ein Lauf, der
+    /// etwas auslassen musste, genauso vollständig aus wie einer, der
+    /// alles gelesen hat.
+    var skippedCount = 0
     /// Ordner oder Archiv, das der Kern gerade durchsucht (nur bei .running).
     var progressPath: String?
     /// Kennzahlen der Trefferliste (Treffer, Datenmenge, Ordner) für die
@@ -1006,6 +1100,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         seenPaths = Set(loaded.map { $0.path })
         trashedPaths = TrashedPaths()
         statistics = .over(hits)
+        skippedCount = 0
         searchPhase = .handedOver
         progressPath = nil
         applyHitsToTable(keepingSelection: [])
@@ -1216,7 +1311,7 @@ final class MainController: NSObject, NSApplicationDelegate,
             case .stopped:
                 return "Suche gestoppt — keine Treffer."
             default:
-                return "Keine Treffer."
+                return "Keine Treffer." + skippedNote(skippedCount)
             }
         }
         var text = hitStatisticsText(
@@ -1232,7 +1327,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         default:
             break
         }
-        return text
+        return text + skippedNote(skippedCount)
     }
 
     func setSearchRoot(_ url: URL) {
@@ -1500,6 +1595,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
         statistics = HitStatistics()
+        skippedCount = 0
         searchPhase = .idle
         progressPath = nil
         // Ohne Muster nur dann suchen, wenn ein Maßfilter gesetzt ist —
@@ -1565,6 +1661,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         seenPaths = Set(seed.map { $0.path })
         trashedPaths = TrashedPaths()
         statistics = .over(hits)
+        skippedCount = 0
         searchPhase = .handedOver
         progressPath = nil
         applyHitsToTable(keepingSelection: [])
@@ -1609,8 +1706,13 @@ final class MainController: NSObject, NSApplicationDelegate,
         process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        let run = ActiveSearchRun(process: process, pipe: pipe)
+        let errPipe = Pipe()
+        process.standardError = errPipe
+        let run = ActiveSearchRun(process: process, pipe: pipe,
+                                  errPipe: errPipe)
+        // Muss nebenläufig geleert werden: Eine volle stderr-Pipe hielte
+        // den Kern an, während die App auf seine Treffer wartet.
+        run.diagnostics.collect(from: errPipe)
         activeSearchRun = run
 
         // Treffer kommen zeilenweise über die Pipe herein (Hintergrund-
@@ -1645,6 +1747,7 @@ final class MainController: NSObject, NSApplicationDelegate,
         do { try process.run() } catch {
             activeSearchRun = nil
             pipe.fileHandleForReading.readabilityHandler = nil
+            errPipe.fileHandleForReading.readabilityHandler = nil
             process.terminationHandler = nil
             searchPhase = .failed("Suche ließ sich nicht starten: "
                                   + error.localizedDescription)
@@ -1652,6 +1755,7 @@ final class MainController: NSObject, NSApplicationDelegate,
             return
         }
         stopButton.isEnabled = true
+        skippedCount = 0
         searchPhase = .running
         progressPath = nil
         refreshStatus()
@@ -1789,11 +1893,16 @@ final class MainController: NSObject, NSApplicationDelegate,
         flushTimer = nil
         run.pipe.fileHandleForReading.readabilityHandler = nil
         run.process.terminationHandler = nil
+        run.diagnostics.finish(run.errPipe)
         activeSearchRun = nil
         stopButton.isEnabled = false
         progressPath = nil
+        let exit = SearchExit(status: status, reason: reason,
+                              errorMessage: run.diagnostics.errorMessage,
+                              warningCount: run.diagnostics.warningCount)
+        skippedCount = exit.warningCount
         searchPhase = searchExitIsError(status, reason: reason)
-            ? .failed("Suche fehlgeschlagen.")
+            ? .failed(searchFailureText(exit))
             : .finished
         refreshStatus()
     }

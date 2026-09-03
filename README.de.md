@@ -132,7 +132,9 @@ Favenio ist bewusst maschinenfreundlich gebaut:
   tragen zusätzlich `field` und `value`; mit Maßfilter tragen Treffer `width`
   und `height` (Pixel). Alle vier sind optional.
 - **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,
-  `2` = Fehler (ungültiger Regex, Pfad fehlt)
+  `2` = Fehler (ungültiger Regex, Pfad fehlt, und jeder unerwartete Fehler,
+  der den Lauf abgebrochen hat — ein abgebrochener Lauf darf nie wie ein
+  leeres Ergebnis aussehen)
 - **Warnungen** (unlesbare Dateien, kaputte Archive) gehen nach stderr;
   die Suche läuft weiter, und stdout bleibt sauber parsebar.
 

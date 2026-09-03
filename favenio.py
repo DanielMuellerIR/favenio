@@ -44,10 +44,11 @@ import sys
 import tarfile
 import tempfile
 import time
+import traceback
 import zipfile
 import zlib
 
-__version__ = "0.27.1"
+__version__ = "0.27.2"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-03"
@@ -2621,6 +2622,21 @@ def main(argv=None):
     try:
         for path in paths:
             search.search_path(path)
+    except Exception as err:            # noqa: BLE001 — siehe Kommentar
+        # Ein unerwarteter Fehler MUSS als Fehler enden. Python beendet
+        # sich sonst mit Status 1 — genau dem Status, den der Vertrag für
+        # „keine Treffer" vergibt. Ein abgebrochener Lauf war damit von
+        # einem leeren Ergebnis nicht unterscheidbar: Beide Apps zeigten
+        # eine halbe Trefferliste als vollständiges Ergebnis an, ohne
+        # jeden Hinweis. Erwartete Lesefehler einzelner Objekte fängt
+        # dagegen weiter unten `evaluate()` ab und meldet sie als Warnung.
+        #
+        # Der Traceback bleibt erhalten und geht nach stderr: Er ist
+        # Diagnose, und stdout muss parsebar bleiben.
+        print("favenio: fehler: unerwarteter Fehler, Suche unvollständig: "
+              "%s: %s" % (type(err).__name__, err), file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return 2
     finally:
         search.close()
         restore_termination_handlers(previous_handlers)
