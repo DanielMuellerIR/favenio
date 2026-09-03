@@ -119,18 +119,15 @@ class SwiftGuardTests(unittest.TestCase):
         Fuer einen Ordner im Archiv gibt es keine Datei; das Panel ginge leer
         auf. Deshalb baut togglePreview() die Vorschau-URLs SELBST auf und
         bricht bei leerer Liste mit einem Hinweis ab."""
-        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
-            toggle = swift_function(source, "@objc func togglePreview() {")
-            with self.subTest(app=name):
-                self.assertIn("guard !previewURLs.isEmpty else {", toggle)
-                self.assertIn("showActionIssue(selection)", toggle)
-                # Das Panel wird erst NACH dem Aufbau der Liste gezeigt —
-                # egal ob als Tastaturfenster (Quick) oder nur nach vorn
-                # geholt (Haupt-App, siehe test_quicklook_keeps_the_focus…).
-                shown = min(index for index in (
-                    toggle.find("panel.makeKeyAndOrderFront"),
-                    toggle.find("panel.orderFront(nil)")) if index >= 0)
-                self.assertLess(toggle.index("rebuildPreviewURLs()"), shown)
+        # Seit 0.28.2 steht togglePreview() EINMAL in der Basisklasse
+        # HitListController (common), beide Apps erben es.
+        toggle = swift_function(COMMON, "@objc func togglePreview() {")
+        self.assertIn("guard !previewURLs.isEmpty else {", toggle)
+        self.assertIn("showActionIssue(selection)", toggle)
+        # Das Panel wird erst NACH dem Aufbau der Liste gezeigt (nur nach
+        # vorn geholt, siehe test_quicklook_keeps_the_focus…).
+        self.assertLess(toggle.index("rebuildPreviewURLs()"),
+                        toggle.index("panel.orderFront(nil)"))
         issue = swift_function(COMMON, "func hitActionIssue(")
         self.assertIn("Ordner im Archiv", issue)
         self.assertIn("Kein Treffer ausgewählt", issue)
@@ -229,33 +226,30 @@ class SwiftGuardTests(unittest.TestCase):
         den Fokus danach zurueckzuholen verlor das Rennen (2026-09-02 am
         Fenster geprueft). Ohne Wechsel des Tastaturfensters findet QuickLook
         seinen Controller nicht selbst — Datenquelle ausdruecklich setzen."""
-        # Beide Apps, nicht nur die Haupt-App: Der Fix vom 2026-09-02 landete
-        # zuerst nur dort, die Schnellsuche machte das Panel weiter zum
-        # Tastaturfenster (Review-Fund 2026-09-03).
+        # Der Fix vom 2026-09-02 landete zuerst nur in der Haupt-App, die
+        # Schnellsuche machte das Panel weiter zum Tastaturfenster
+        # (Review-Fund 2026-09-03). Seit 0.28.2 steht der Vorschau-Block
+        # EINMAL in der Basisklasse HitListController, und beide Apps erben
+        # ihn — keine App darf eine eigene Fassung daneben halten.
+        toggle = swift_function(COMMON, "@objc func togglePreview(")
+        self.assertNotIn("makeKeyAndOrderFront", toggle)
+        self.assertNotIn("DispatchQueue.main.async", toggle)
+        self.assertIn("panel.dataSource = self", toggle)
+        self.assertIn("panel.orderFront(nil)", toggle)
+        self.assertIn("window.makeFirstResponder(tableView)", toggle)
+        # Und wird das Panel doch Tastaturfenster (am 2026-09-02 am Fenster
+        # gemessen: nach der Leertaste war es das), leitet der Delegate wie
+        # der Finder Pfeil hoch/runter an die Tabelle weiter und ⎋ schliesst.
+        handler = swift_function(
+            COMMON, "func previewPanel(_ panel: QLPreviewPanel!, handle event:")
+        self.assertIn("tableView.keyDown(with: event)", handler)
+        self.assertIn("panel.orderOut(nil)", handler)
         for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
             with self.subTest(app=name):
-                toggle = swift_function(source, "@objc func togglePreview(")
-                self.assertNotIn("makeKeyAndOrderFront", toggle)
-                self.assertNotIn("DispatchQueue.main.async", toggle)
-                self.assertIn("panel.dataSource = self", toggle)
-                self.assertIn("panel.orderFront(nil)", toggle)
-                self.assertIn("window.makeFirstResponder(tableView)", toggle)
-                # Und wird das Panel doch Tastaturfenster (am 2026-09-02 am
-                # Fenster gemessen: nach der Leertaste war es das), leitet
-                # der Delegate wie der Finder Pfeil hoch/runter an die
-                # Tabelle weiter und ⎋ schliesst.
-                handler = swift_function(
-                    source,
-                    "func previewPanel(_ panel: QLPreviewPanel!, handle event:")
-                self.assertIn("tableView.keyDown(with: event)", handler)
-                self.assertIn("panel.orderOut(nil)", handler)
-                # Das Panel fragt nach einer kuerzeren Liste noch seinen
-                # alten Index ab; ohne Pruefung beendete das die App.
-                item = swift_function(
-                    source,
-                    "func previewPanel(_ panel: QLPreviewPanel!,\n"
-                    "                      previewItemAt index: Int)")
-                self.assertIn("index < previewURLs.count", item)
+                self.assertIn(": HitListController,", source)
+                self.assertNotIn("func togglePreview(", source)
+                self.assertNotIn("previewItemAt index", source)
+                self.assertNotIn("func ctxCopyPath()", source)
         # ⎋ schliesst die Vorschau vom Hauptfenster aus, weil das Panel sich
         # als Nicht-Tastaturfenster nicht mehr selbst schliessen kann.
         self.assertIn("case 53 where modifiers.isEmpty", GUI)
@@ -1001,9 +995,9 @@ class MainAppResultListTest(unittest.TestCase):
         # Das Panel fragt seinen ALTEN Index auch dann noch ab, wenn die
         # Liste inzwischen kuerzer ist: ⌫ oder ⌘⌫ kuerzt previewURLs und
         # ruft danach reloadData().
-        body = swift_function(GUI, "    func previewPanel(_ panel: "
-                                   "QLPreviewPanel!,\n"
-                                   "                      previewItemAt")
+        body = swift_function(COMMON, "    func previewPanel(_ panel: "
+                                      "QLPreviewPanel!,\n"
+                                      "                      previewItemAt")
         self.assertIn("index < previewURLs.count", body)
 
     def test_fresh_hits_are_merged_instead_of_resorting_everything(self):

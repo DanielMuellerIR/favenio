@@ -20,6 +20,12 @@ Aus der CodeQA-Kampagne, Schnellsuche.
   hat beide Schalter nicht und sucht immer ohne sie; die Haupt-App schaltet
   sie beim Fortsetzen aus, damit die übergebenen Treffer zur weiteren Suche
   passen. Das stand bisher nur als fehlender Wert in der URL.
+- **Intern: ein Unterbau für beide Trefferlisten.** Vorschau, „Öffnen mit",
+  „Im Finder zeigen", „Pfad kopieren" und die Auswahl-Helfer standen mit
+  123 Zeilen wörtlich gleich in beiden Apps und liefen bereits auseinander
+  (siehe die beiden Punkte oben). Sie stehen jetzt einmal in
+  `HitListController` (`common/FavenioCore.swift`), von dem beide
+  Controller erben. Verhalten unverändert.
 
 ## 0.28.1 — 2026-09-03
 

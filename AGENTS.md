@@ -236,6 +236,13 @@ Beide Apps sind programmatische AppKit-Frontends ohne Xcode-Projekt.
 `common/FavenioCore.swift` enthält das Hit-Modell, JSONL-Parsing,
 Unterprozessaufrufe und `materializeHit()`. Änderungen am JSONL-Schema zuerst im
 Kern und in gemeinsamen Tests spezifizieren, dann beide Frontends anpassen.
+Dort steht auch `HitListController`, die Basisklasse BEIDER Controller:
+Trefferliste, wirksame Zeilenmenge (`actionRows`), Quick-Look-Vorschau samt
+Tastenweiterleitung und die Kontextmenü-Aktionen „Öffnen mit", „Im Finder
+zeigen" und „Pfad kopieren" gibt es genau einmal. Was eine App anders macht
+(wohin eine Meldung geht: `presentActionIssue`), überschreibt sie. Eine
+Korrektur an einem dieser Mechanismen gehört in die Basisklasse — bis 0.28.1
+liefen die beiden Kopien auseinander, ein Wächter-Test verbietet neue Kopien.
 
 Beide Apps LESEN stderr des Kerns mit, statt ihn zu verwerfen
 (`SearchDiagnostics`). Dort steht, WAS schiefging — „--metadata braucht

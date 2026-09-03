@@ -652,16 +652,17 @@ final class ActiveSearchRun {
     }
 }
 
-final class MainController: NSObject, NSApplicationDelegate,
+/// Erbt von HitListController (common/FavenioCore.swift): Trefferliste,
+/// Vorschau und die gemeinsamen Kontextmenü-Aktionen stehen dort EINMAL
+/// für beide Apps.
+final class MainController: HitListController, NSApplicationDelegate,
                             NSTableViewDataSource, NSTableViewDelegate,
                             NSMenuDelegate, NSMenuItemValidation,
-                            NSSearchFieldDelegate,
-                            QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+                            NSSearchFieldDelegate {
 
     /// Ein Controller pro App-Prozess; Sparkle hält darüber Update-Zustand,
     /// Download und Installation über die gesamte App-Laufzeit zusammen.
     private let updaterController = makeUpdaterController()
-    var window: NSWindow!
     let searchField = NSSearchField()
     let stopButton = NSButton(title: "", target: nil, action: nil)
     let folderButton = NSButton(title: "Ordner…", target: nil, action: nil)
@@ -698,10 +699,7 @@ final class MainController: NSObject, NSApplicationDelegate,
     let templatesButton = NSButton(title: "Regex-Vorlagen ▾",
                                    target: nil, action: nil)
     let statusLabel = NSTextField(labelWithString: "Bereit.")
-    let tableView = NSTableView()
 
-    var hits: [Hit] = []            // was die Tabelle zeigt
-    var pending: [Hit] = []         // frisch gestreamte, noch nicht gezeigte
     var seenPaths = Set<String>()   // schon gezeigte Pfade → keine Doppelten
     // Was dieser Lauf in den Papierkorb gelegt hat. Ein noch laufender
     // Suchprozess kennt den Papierkorb nicht und streamt Treffer unter einem
@@ -727,9 +725,7 @@ final class MainController: NSObject, NSApplicationDelegate,
     var searchRoot = FileManager.default.homeDirectoryForCurrentUser
     var activeSearchRun: ActiveSearchRun?
     var flushTimer: Timer?
-    var contextRow = -1             // Zeile, auf die der Rechtsklick ging
     var pendingURL: URL?            // favenio://-URL, die vor dem Fenster kam
-    var previewURLs: [URL] = []     // gerade in der QuickLook-Vorschau
     /// Zustand der Suche für die Fußzeile. Gespeichert wird der ZUSTAND, nie
     /// ein fertig formulierter Satz — sonst steht dort später „Suche läuft…",
     /// obwohl sie längst fertig ist. Dieselbe Falle umgeht FavenioQuick mit
@@ -893,105 +889,6 @@ final class MainController: NSObject, NSApplicationDelegate,
             .version: favenioDate,                       // Versionsdatum
             .credits: credits,
         ])
-    }
-
-    // ---------- QuickLook-Vorschau ----------
-
-    /// Vorschau der ausgewählten Treffer ein-/ausblenden. Archiv-Einträge
-    /// werden dafür (wie beim Öffnen) in einen Temp-Ordner ausgepackt.
-    @objc func togglePreview() {
-        guard let panel = QLPreviewPanel.shared() else { return }
-        if QLPreviewPanel.sharedPreviewPanelExists() && panel.isVisible {
-            panel.orderOut(nil)
-            return
-        }
-        // Erst nachsehen, ob es überhaupt etwas zu zeigen gibt. Ein ORDNER im
-        // Archiv hat keine Datei: materializeHit() liefert nil, das Panel
-        // bliebe leer. Im Kontextmenü ist die Vorschau dafür schon grau — über
-        // die Leertaste war sie trotzdem erreichbar (Review-Fund 2026-08-20).
-        let selection = rebuildPreviewURLs()
-        guard !previewURLs.isEmpty else {
-            showActionIssue(selection)
-            return
-        }
-        showActionIssue(selection)
-        // Das Panel wird NUR nach vorn geholt, nicht zum Tastaturfenster
-        // gemacht. Sonst gehen Pfeil hoch/runter dorthin und die Vorschau
-        // lässt sich nicht durch die Trefferliste blättern — genau das, was
-        // der Finder kann.
-        //
-        // Ein erster Versuch holte den Fokus danach per DispatchQueue zurück.
-        // Das ist ein Rennen und verliert: Am 2026-09-02 am laufenden Fenster
-        // gemessen blieb das Panel Tastaturfenster, die Auswahl in der Tabelle
-        // wurde grau und die Pfeiltaste bewegte nichts. Deshalb wird der
-        // Fokus gar nicht erst abgegeben.
-        //
-        // Damit entfällt auch der Weg, über den QuickLook seinen Controller
-        // sonst sucht: `beginPreviewPanelControl` kommt über die
-        // Responder-Kette beim Wechsel des Tastaturfensters. Ohne diesen
-        // Wechsel muss die Datenquelle hier ausdrücklich gesetzt werden,
-        // sonst bliebe das Panel leer.
-        panel.dataSource = self
-        panel.delegate = self
-        panel.orderFront(nil)
-        panel.reloadData()
-        // Der Fokus gehört in die Tabelle — von dort blättern die Pfeiltasten.
-        window.makeFirstResponder(tableView)
-    }
-
-    @discardableResult
-    func rebuildPreviewURLs() -> MaterializedHitSelection {
-        let selection = materializeHitSelection(hits, rows: actionRows())
-        previewURLs = selection.urls
-        return selection
-    }
-
-    // QuickLook fragt diese Methoden über die Responder-Kette + den
-    // App-Delegate ab (informelles Protokoll auf NSResponder).
-    @objc override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!)
-        -> Bool { true }
-    @objc override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        rebuildPreviewURLs()
-        panel.dataSource = self
-        panel.delegate = self
-    }
-    @objc override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
-
-    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-        previewURLs.count
-    }
-    func previewPanel(_ panel: QLPreviewPanel!,
-                      previewItemAt index: Int) -> QLPreviewItem! {
-        // Das Panel fragt seinen ALTEN Index auch dann noch ab, wenn die
-        // Liste inzwischen kürzer ist: ⌫ oder ⌘⌫ auf der Auswahl kürzt
-        // previewURLs und ruft danach reloadData(). Ohne diese Prüfung
-        // griff der Zugriff ins Leere und beendete die App.
-        guard index >= 0, index < previewURLs.count else { return nil }
-        return previewURLs[index] as NSURL
-    }
-
-    /// Tasten, die beim Vorschaufenster landen.
-    ///
-    /// `orderFront` genügt nicht, um das Panel vom Tastaturfokus fernzuhalten:
-    /// Am 2026-09-02 am laufenden Fenster gemessen wurde es nach der Leertaste
-    /// trotzdem Tastaturfenster (Auswahl grau, Pfeiltasten wirkungslos), erst
-    /// ein Klick ins Hauptfenster holte den Fokus zurück. Deshalb der Weg, den
-    /// auch der Finder geht: Pfeil hoch/runter blättern die Trefferliste, ⎋
-    /// schließt — egal, welches Fenster gerade die Tastatur hat. Der Monitor
-    /// oben deckt den anderen Fall ab (Hauptfenster ist Tastaturfenster).
-    func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!)
-        -> Bool {
-        guard event.type == .keyDown else { return false }
-        switch event.keyCode {
-        case 125, 126:                                   // ↓ ↑
-            tableView.keyDown(with: event)
-            return true
-        case 53:                                         // ⎋
-            panel.orderOut(nil)
-            return true
-        default:
-            return false
-        }
     }
 
     /// Auswahl geändert, während die Vorschau offen ist → mitziehen.
@@ -1825,14 +1722,6 @@ final class MainController: NSObject, NSApplicationDelegate,
         }
     }
 
-    /// Die ausgewählten Treffer als Pfade — modellbezogen statt über
-    /// Zeilennummern, die ein `reloadData()` nicht überlebt.
-    func selectedHitPaths() -> Set<String> {
-        Set(tableView.selectedRowIndexes.compactMap {
-            $0 < hits.count ? hits[$0].path : nil
-        })
-    }
-
     /// Sortieren, neu laden und dieselben Treffer wieder auswählen.
     ///
     /// Jede Trefferübernahme muss hier durch: `continueSearch()` und
@@ -2049,20 +1938,9 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     /// Zeilen, auf die sich eine Aktion bezieht: die Auswahl, oder —
     /// falls außerhalb der Auswahl geklickt wurde — die geklickte Zeile.
-    func actionRows() -> [Int] {
-        hitActionRows(selectedRows: tableView.selectedRowIndexes,
-                      contextRow: contextRow)
-    }
-
-    func actionSelection() -> MaterializedHitSelection {
-        materializeHitSelection(hits, rows: actionRows())
-    }
-
-    func showActionIssue(_ selection: MaterializedHitSelection) {
-        guard let issue = hitActionIssue(selection) else { return }
-        statusLabel.stringValue = issue.detail.map {
-            issue.summary + " " + $0
-        } ?? issue.summary
+    /// Was sich nicht öffnen ließ, steht in der Fußzeile.
+    override func presentActionIssue(summary: String, detail: String?) {
+        statusLabel.stringValue = detail.map { summary + " " + $0 } ?? summary
     }
 
     /// Der Doppelklick-Weg. Hier gilt, worauf geklickt wurde — und wenn
@@ -2124,40 +2002,6 @@ final class MainController: NSObject, NSApplicationDelegate,
         let selection = actionSelection()
         selection.urls.forEach { NSWorkspace.shared.open($0) }
         showActionIssue(selection)
-    }
-
-    @objc func ctxOpenWith(_ sender: NSMenuItem) {
-        guard let appURL = sender.representedObject as? URL else { return }
-        let selection = actionSelection()
-        guard !selection.urls.isEmpty else {
-            showActionIssue(selection)
-            return
-        }
-        NSWorkspace.shared.open(selection.urls, withApplicationAt: appURL,
-                                configuration: NSWorkspace.OpenConfiguration())
-        showActionIssue(selection)
-    }
-
-    @objc func ctxReveal() {
-        // Für Archiv-Einträge zeigt das die ausgepackte Temp-Kopie —
-        // das ist genau die Datei, die man beim Öffnen/Ziehen bekommt.
-        let selection = actionSelection()
-        if !selection.urls.isEmpty {
-            NSWorkspace.shared.activateFileViewerSelecting(selection.urls)
-        }
-        showActionIssue(selection)
-    }
-
-    @objc func ctxCopyPath() {
-        // Bewusst der ORIGINAL-Pfad inkl. !/-Notation — den versteht
-        // auch favenio.py --extract wieder.
-        let paths = actionRows().compactMap { row in
-            row < hits.count ? hits[row].path : nil
-        }
-        guard !paths.isEmpty else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
     // ---------- Trefferliste verfeinern, exportieren, löschen ----------
