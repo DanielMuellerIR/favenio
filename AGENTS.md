@@ -38,7 +38,8 @@ Werkzeug muss sauber erkannt werden und darf den bisherigen Kern nicht brechen.
 `Search` kapselt Muster, Optionen und Trefferausgabe. `visit_member()` ist der
 gemeinsame Pfad für Zip- und Tar-Einträge. Archive werden derzeit anhand der
 Dateiendung erkannt. Neben klassischen Archiven gehören auch ZIP-basierte
-Dokumentformate wie JAR, WHL, EPUB, DOCX, XLSX, PPTX, ODT, ODS und ODP dazu.
+Dokumentformate wie JAR, WHL, EPUB, DOCX, XLSX, PPTX, ODT, ODS, ODP
+sowie die iWork-Formate PAGES, NUMBERS und KEY dazu.
 
 Verbindliches CLI-Verhalten:
 
@@ -67,6 +68,25 @@ Verbindliches CLI-Verhalten:
 - Inhalt wird als UTF-8 mit `errors="replace"` gelesen. Dadurch bleiben Treffer
   in teilweise binären Dateien möglich; andere Textkodierungen werden nicht
   versprochen.
+- Gelesen wird nur, was nachweislich eine reguläre Datei ist
+  (`open_regular_file()`, `O_NONBLOCK` plus `fstat`). Ein gewöhnliches
+  `open()` auf eine benannte Pipe ohne Schreiber wartet unbegrenzt: Bis
+  0.26.1 standen `--content` und jeder Maßfilter dabei still — kein Fehler,
+  kein Ergebnis, kein Abbruch. Alles andere wird gemeldet und übersprungen.
+  Die Namenssuche ist davon unberührt, sie öffnet die Datei gar nicht, und
+  eine Pipe bleibt dort ein normaler Treffer.
+- Eine Zeile ohne Umbruch wird abschnittsweise geprüft
+  (`MAX_LINE_CHARS`, `LINE_OVERLAP_CHARS`). Minifiziertes JSON oder eine
+  mysqldump-Zeile pufferte `match_content()` sonst vollständig: gemessen am
+  2026-09-03 auf 144 MB Text 488 MB gegen 18 MB bei derselben Datenmenge MIT
+  Umbrüchen. Die Überlappung ist Pflicht, nicht Vorsicht — ohne sie geht ein
+  Treffer an der Schnittstelle verloren; sie muss länger sein als jedes
+  realistische Suchmuster. Und sie darf nicht 0 werden: `segment[-0:]` ist in
+  Python der GANZE String, die Grenze verschwände lautlos.
+- Nur Punktnamen sind versteckt, nicht die Verzeichnisnamen `.` und `..`.
+  `tar -cf x.tar -C ordner .` — der übliche Weg, einen Ordnerinhalt zu tarren —
+  legt jeden Eintrag als `./name` ab; bis 0.26.1 fiel damit das ganze Archiv
+  ohne Meldung aus jeder Suche.
 - Die Inhaltssuche ist zweistufig: `ContentProbe` prüft billig, ob der Suchtext
   überhaupt vorkommt, `match_content` bestimmt danach die Zeilennummer. Der
   Vortest darf nie einen Treffer verschlucken — er entscheidet nur „sicher
@@ -98,8 +118,13 @@ Verbindliches CLI-Verhalten:
   ganz; ein synthetisches `*` gab es bis 0.26.0 und war unter `--regex` ein
   ungültiger Ausdruck. Sortiert nach `cost` (Name 0, Maße 1, Metadaten 2,
   Inhalt 3), Abbruch beim ersten Nein. Diese Reihenfolge ist ein
-  Leistungsversprechen: exiftool sieht nur Dateien, die den Maßfilter schon
-  bestanden haben, und ein Test hält sie fest. `FileProbe` beantwortet die
+  Leistungsversprechen — aber nur für die Formate, deren Maße der eingebaute
+  Kopf-Leser liefert: Dort sieht exiftool ausschließlich Dateien, die den
+  Maßfilter schon bestanden haben. Für die Endungen aus
+  `EXIFTOOL_DIMENSION_EXTENSIONS` (HEIC, AVIF, RAW, Video) gilt es nicht und
+  kann es nicht gelten, denn dort kommen die Maße selbst von exiftool; es
+  wird also schon im Maßkriterium gefragt. Zwei Tests halten beide Hälften
+  fest — der ältere prüfte nur PNGs und hätte die zweite nie bemerkt. `FileProbe` beantwortet die
   teuren Fragen (Maße, Metadaten, Inhaltszeile) je Datei genau einmal. Ein
   weiteres Textkriterium (mehrere UND-verknüpfte Begriffe) wäre eine weitere
   Klasse in dieser Liste — der Kern ist dafür geschnitten, die Oberflächen
@@ -126,19 +151,34 @@ Verbindliches CLI-Verhalten:
   als EIN Prozess je Suchlauf (`ExifToolStream`, `-stay_open True`, Pfade
   über stdin, `-use MWG`), gestartet beim ersten Bedarf und in `close()`
   beendet; ein Prozess je Datei kostete 44 ms statt 0,75 ms und ist
-  abgelehnt. Die Argumentdatei ist zeilenweise — ein Dateiname mit
-  Zeilenumbruch geht deshalb über `read_once()` durch EINEN eigenen Prozess,
-  statt still zu verschwinden; ein Pfad mit führendem `-` bekommt ein `./`,
-  sonst liest exiftool ihn als Option. Nur Endungen aus `METADATA_EXTENSIONS` gehen an exiftool. Ohne
+  abgelehnt. Die Argumentdatei ist zeilenweise, und exiftool deutet den
+  Zeilenanfang: `-` beginnt eine Option, `#` einen Kommentar, Leerraum am
+  Zeilenrand wird abgeschnitten. Deshalb bekommt JEDER relative Pfad ein
+  `./` davor, und ein Pfad mit Zeilenumbruch oder Leerraum am Ende geht über
+  `read_once()` durch EINEN eigenen Prozess, statt still zu verschwinden.
+  Aus demselben Grund prüft `metadata_tag()` die Werte von
+  `--metadata-field` streng (Buchstaben, Ziffern, `-`, `_`, `:`, nicht mit
+  `-` beginnend): Ein Zeilenumbruch im Feldnamen schob sonst beliebige
+  weitere exiftool-Optionen ein — über `-p` mit einem Perl-Ausdruck bis hin
+  zum Shell-Aufruf. Bricht der Prozess mitten im Lauf weg, ist das eine
+  Warnung; vorher lieferte er für jede weitere Datei stillschweigend nichts,
+  und der Lauf endete als „keine Treffer". Nur Endungen aus `METADATA_EXTENSIONS` gehen an exiftool. Ohne
   exiftool endet `--metadata` mit Exit 2 und einem Satz, der sagt, was
   fehlt; die Maßfilter laufen ohne. Dieselbe Bauart wie `bsdtar` und `zstd`:
   optional, sauber erkannt, kein Pflichtpaket.
 - Fehlt das Muster, ist das nur mit Maßfilter erlaubt; die Suche läuft dann
   ohne Textkriterium. `--content` und `--metadata` sagen, WOGEGEN das Muster
   läuft, und enden ohne Muster mit Exit 2 statt still falsch zu antworten.
-  Ein einziges Positionsargument, das als Pfad existiert, gilt als Startpfad.
+  Positionsargumente gelten als Startpfade, sobald sie ALLE als Pfad
+  existieren — auch mehrere. Bis 0.26.1 galt das nur für genau eines, und
+  `--min-width 100 dirA dirB` las `dirA` still als Namensmuster.
 - `--archive-depth` begrenzt Rekursion. Verschachtelte Archive werden im Speicher
   verarbeitet; deshalb Größen- und Tiefengrenzen nicht unbemerkt entfernen.
+  `ArchiveBudget` zählt nur Eintrags-INHALTE; die Namensliste eines
+  bsdtar-Formats läuft daran vorbei und braucht ihre eigene Grenze
+  (`MAX_ARCHIVE_LISTING_BYTES`, gelesen über `bsdtar_list()`). Bei 7z, ISO
+  und tar.zst liegt der Katalog komprimiert im Archiv: 307 KB Archiv mit
+  200 000 Einträgen ergaben 182 MB Spitzenspeicher.
 - `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären
   Ordner. Öffnen, Finder-Anzeige und Drag-and-drop müssen dieselbe Datei sehen.
 - `bsdtar` liest das Eintrags-Argument als **Suchmuster**, nicht als festen Namen.
@@ -383,6 +423,12 @@ Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
 
 ## Verifizierte Fallen
 
+- Ein `finally` läuft bei SIGTERM NICHT. Genau so brechen beide Apps jede
+  Suche ab (`terminate()`), die Schnellsuche bei jedem Tastendruck — der
+  `exiftool -stay_open`-Prozess blieb deshalb als Waise stehen, auf einem
+  Entwicklungsrechner zwei Stück über 18 Stunden. `install_termination_handlers()`
+  übersetzt SIGTERM und SIGHUP in ein normales Programmende; gegen SIGKILL
+  hilft nichts.
 - `time.monotonic()` kann beim System-Python nahe null starten. Für „noch keine
   Fortschrittsmeldung“ `None` verwenden; ein Startwert `0.0` kann die erste
   Meldung verschlucken.

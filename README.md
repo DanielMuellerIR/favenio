@@ -7,7 +7,8 @@
 Favenio is an index-free file search for macOS in the spirit of EasyFind: it
 scans the file system directly (no index, no Spotlight) for file names or file
 contents. What sets it apart: **Favenio also looks inside archives.** Supported
-are the zip family (zip, jar, whl, epub, docx, xlsx, pptx, odt, ods, odp), the
+are the zip family (zip, jar, whl, epub, docx, xlsx, pptx, odt, ods, odp,
+pages, numbers, key), the
 tar family (tar, tar.gz/tgz, tar.bz2/tbz2, tar.xz/txz) and singly compressed
 files (gz, bz2, xz — e.g. `notes.txt.gz` contains `notes.txt`) — optionally
 even archives nested inside archives.
@@ -219,11 +220,14 @@ it runs in — `--metadata Winter --min-width 1000` finds pictures tagged
 file header (JPEG, PNG, GIF, BMP, WebP, TIFF; inside archives too) without any
 dependency; only HEIC, AVIF, RAW and video fall back to `exiftool`. Files
 without readable dimensions never match a size filter. With a size filter the
-pattern may be omitted (`favenio.py --min-width 3000 ~/Pictures`); the search
-then runs without a text criterion, so `--content` and `--metadata` — which say
-what the pattern runs against — need one. JSON hits carry `width` and `height`. Cheap checks run first: name, then size, then
-metadata, then content — `exiftool` only ever sees files that passed the size
-filter.
+pattern may be omitted (`favenio.py --min-width 3000 ~/Pictures`, and several
+start paths work too); the search then runs without a text criterion, so
+`--content` and `--metadata` — which say what the pattern runs against — need
+one. JSON hits carry `width` and `height`. Cheap checks run first: name, then
+size, then metadata, then content. For the formats the built-in reader knows,
+`exiftool` therefore only sees files that already passed the size filter. For
+HEIC, AVIF, RAW and video it is asked earlier, because there the dimensions
+themselves come from `exiftool` — there is no cheaper way to learn them.
 
 ## How content search reads
 

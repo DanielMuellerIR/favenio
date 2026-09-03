@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.27.0 — 2026-09-03
+
+Aus dem projektweiten Code-Review vom 2026-09-03, Bereich Suchkern. Vier der
+Fehler beendeten den Suchlauf oder ließen ihn hängen; weil Python bei einer
+unbehandelten Ausnahme mit Status 1 endet — genau dem Status für „keine
+Treffer" —, sah das in beiden Apps wie ein vollständiges, leeres Ergebnis aus.
+Neu suchbar sind die iWork-Formate; eine CLI-Form kommt dazu.
+
+- **Archive mit `./`-Präfix waren komplett unsichtbar.** `tar -cf x.tar -C
+  ordner .` — der übliche Weg, einen Ordnerinhalt zu tarren — legt jeden
+  Eintrag als `./name` ab. Die Komponente `.` galt als versteckter Name,
+  deshalb fiel das ganze Archiv ohne Meldung aus jeder Suche. `.` und `..`
+  benennen ein Verzeichnis und sind kein versteckter Name; echte Punktnamen
+  bleiben wie bisher hinter `--hidden`.
+- **Abgeschnittene WebP-Datei beendete den ganzen Lauf.** Ein halber Download
+  ließ den VP8L-Zweig des Maß-Lesers mit `bits[1]` ins Leere greifen; der
+  `IndexError` wurde nicht gefangen. Ein abgeschnittener VP8X-Kopf las aus
+  leeren Slices still 1×1 Pixel und erzeugte damit Falschtreffer. Beide Zweige
+  prüfen jetzt die Kopflänge.
+- **Zip mit falschem UTF-8-Flag beendete den ganzen Lauf.** Windows-Packer
+  setzen gelegentlich das Flag, obwohl die Eintragsnamen CP932-/Latin-1-Bytes
+  tragen; `zipfile` wirft dann schon beim Öffnen. `UnicodeDecodeError` gehört
+  jetzt zu den erwarteten Archivfehlern: Warnung auf stderr, Suche läuft weiter.
+- **Eine benannte Pipe ließ die Suche hängen.** `open()` auf eine FIFO ohne
+  Schreiber wartet unbegrenzt — `--content` und jeder Maßfilter standen still,
+  ohne Fehler und ohne Ergebnis. Gelesen wird jetzt nur, was nachweislich eine
+  reguläre Datei ist; alles andere wird gemeldet und übersprungen. Die
+  Namenssuche zeigt eine Pipe weiterhin an, sie öffnet die Datei ja nicht.
+- **exiftool überlebte jeden Suchabbruch.** Beide Apps brechen mit
+  `terminate()` ab, die Schnellsuche bei jedem Tastendruck; bei SIGTERM lief
+  das `finally` nicht, und der `-stay_open`-Prozess blieb als Waise stehen (auf
+  einem Entwicklungsrechner zwei Stück seit 18 Stunden). SIGTERM und SIGHUP
+  enden jetzt geordnet. Zusätzlich schließt `close()` beide Pipes — auch auf
+  dem Fehlerpfad.
+- **Ein Feldname konnte exiftool-Optionen einschleusen.** Die Argumentdatei von
+  `-stay_open` ist zeilenweise; ein Zeilenumbruch in `--metadata-field` schob
+  beliebige weitere exiftool-Optionen ein, über `-p` mit einem Perl-Ausdruck
+  bis hin zu einem Shell-Aufruf. Erlaubt sind jetzt nur Buchstaben, Ziffern,
+  `-`, `_` und `:`; alles andere endet mit Exit 2. Die Haupt-App war nie
+  betroffen, sie prüft gegen ihre Feldliste.
+- **Wegbrechendes exiftool wird gemeldet.** Starb der Prozess mitten im Lauf,
+  lieferte er für jede weitere Datei stillschweigend nichts — der Lauf endete
+  mit „keine Treffer" und war von einer wirklich leeren Suche nicht zu
+  unterscheiden.
+- **Pfade mit `#` oder führendem Leerzeichen fielen aus `--metadata`.**
+  exiftool liest eine solche Zeile als Kommentar bzw. schneidet den Leerraum
+  ab. Jeder relative Pfad bekommt jetzt `./` davor; Leerraum am Zeilenende
+  geht über einen eigenen Prozess.
+- **Zeilen ohne Umbruch sprengten den Speicher.** Minifiziertes JSON, ein
+  Base64-Block oder eine mysqldump-Zeile haben über hunderte Megabyte keinen
+  Umbruch; `match_content()` pufferte die Datei vollständig. Gemessen auf
+  144 MB Text: 488 MB Spitzenspeicher gegenüber 18 MB bei derselben Datenmenge
+  MIT Umbrüchen. Geprüft wird jetzt abschnittsweise mit 64 Ki Zeichen
+  Überlappung, damit ein Treffer an der Schnittstelle erhalten bleibt: 58 MB
+  statt 488 MB, Ergebnisse unverändert, Laufzeit leicht besser.
+- **Die bsdtar-Namensliste hatte keine Grenze.** `ArchiveBudget` zählt nur
+  Eintrags-Inhalte. Bei 7z, ISO und tar.zst liegt der Namenskatalog
+  komprimiert im Archiv: 307 KB Archiv mit 200 000 Einträgen ergaben 182 MB
+  Spitzenspeicher. Über 32 MiB Auflistung wird das Archiv jetzt mit Meldung
+  übersprungen (58 MB). `--extract` wertet dabei denselben Status aus wie die
+  Suche, statt bei einem unlesbaren Archiv einen fehlenden Eintrag zu melden.
+- **iWork-Dokumente werden durchsucht.** `.pages`, `.numbers` und `.key` sind
+  Zip-Container wie `.docx` — auf einem Mac die häufigsten überhaupt. Der Text
+  wurde in der `.docx` gefunden, in der `.pages` daneben nicht, und der Lauf
+  meldete das als Erfolg.
+- **Mehrere Startpfade bei reiner Maßsuche.** `--min-width 100 dirA dirB` las
+  `dirA` still als Namensmuster: Beide Ordner einzeln lieferten Treffer,
+  zusammen kam Exit 1 und keine Zeile. Befördert wird jetzt, wenn alle
+  Positionsargumente als Pfad existieren.
+- **Aufräumen in den Tests.** `--extract` legt seinen Ordner bewusst im
+  Temp-Verzeichnis an und räumt ihn nicht auf; die Testsuite hinterließ deshalb
+  je Lauf über zwanzig `hit-*`-Ordner im Benutzer-Temp-Verzeichnis. Jetzt
+  landen sie in einem Ordner, der mit dem Test verschwindet.
+
 ## 0.26.1 — 2026-09-02
 
 Korrekturen aus dem Code-Review vom 2026-09-02 (neun Funde) zur Metadaten- und

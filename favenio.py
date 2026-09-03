@@ -36,6 +36,8 @@ import lzma
 import os
 import re
 import shutil
+import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -45,10 +47,10 @@ import time
 import zipfile
 import zlib
 
-__version__ = "0.26.1"
+__version__ = "0.27.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-09-02"
+__date__ = "2026-09-03"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -56,6 +58,11 @@ __date__ = "2026-09-02"
 ZIP_EXTENSIONS = (
     ".zip", ".jar", ".whl", ".epub",
     ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp",
+    # Die iWork-Formate sind auf einem Mac die häufigsten Zip-Dokumente
+    # überhaupt. Ohne sie fand `--content Rechnungsnummer` den Text in
+    # einer .docx, in einer .pages daneben aber nicht — und meldete das
+    # als erfolgreiche Suche.
+    ".pages", ".numbers", ".key",
 )
 
 # Dateiendungen der Tar-Familie (unkomprimiert und komprimiert).
@@ -309,6 +316,24 @@ DEFAULT_MAX_ARCHIVE_RATIO = 1000.0
 # um zu erkennen, ob ein Häppchen mit einer vollständigen Zeile endet.
 LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 
+# Ab wann eine Zeile ohne Umbruch abschnittsweise geprüft wird, und wie viel
+# Text dabei aus dem vorigen Abschnitt stehen bleibt.
+#
+# Minifiziertes JSON, ein Base64-Block oder eine mysqldump-Zeile haben über
+# hunderte Megabyte keinen einzigen Umbruch. Ohne Grenze puffert
+# match_content() eine solche Datei vollständig: gemessen am 2026-09-03 mit
+# dem System-Python auf 144 MB Text 488 MB Spitzenspeicher, gegenüber 18 MB
+# bei derselben Datenmenge MIT Umbrüchen. Eine 4-GB-Datei dieser Bauart
+# hätte den Prozess vom System abschießen lassen. Mit Grenze sind es 58 MB,
+# bei unveränderten Ergebnissen und leicht besserer Laufzeit.
+#
+# Die Überlappung ist der Preis dafür, dass ein Treffer an der Schnittstelle
+# nicht verlorengeht: Der Schwanz des vorigen Abschnitts bleibt stehen.
+# Gefunden wird damit jeder Treffer, der nicht länger als die Überlappung
+# ist — 64 Ki Zeichen, also weit jenseits jedes realistischen Suchbegriffs.
+MAX_LINE_CHARS = 8 * 1024 * 1024
+LINE_OVERLAP_CHARS = 64 * 1024
+
 
 # Die beiden Kleinformen des griechischen Sigma. Welche davon str.lower() aus
 # einem großen „Σ" macht, hängt davon ab, ob das Zeichen am Wortende steht —
@@ -320,7 +345,11 @@ GREEK_SIGMAS = GREEK_SMALL_SIGMA + GREEK_FINAL_SIGMA
 
 
 class ArchiveReadError(Exception):
-    """Kontrollierter Lesefehler eines einzelnen Archiveintrags."""
+    """Kontrollierter Lesefehler EINES Eintrags oder EINER Datei.
+
+    Der Name kommt aus der Archivsuche, gilt aber allgemein: Alles, was
+    hiermit endet, wird als Warnung gemeldet und übersprungen — der
+    restliche Suchlauf läuft weiter."""
 
 
 class ArchiveLimitError(ArchiveReadError):
@@ -402,7 +431,71 @@ EXPECTED_ARCHIVE_ERRORS = (
     tarfile.TarError,
     lzma.LZMAError,        # kaputter xz-Strom
     zlib.error,            # kaputte Deflate-Daten in gzip
+    UnicodeDecodeError,    # Zip mit gesetztem UTF-8-Flag, dessen
+                           # Eintragsnamen aber CP932-/Latin-1-Bytes
+                           # tragen (verbreitet bei Windows-Packern).
+                           # zipfile wirft schon beim Öffnen; ohne diesen
+                           # Eintrag beendete EIN solches Archiv den
+                           # ganzen Suchlauf statt nur sich selbst.
 )
+
+
+# Obergrenze für die Namensliste EINES Archivs, das nur bsdtar lesen kann.
+#
+# ArchiveBudget zählt nur Eintrags-INHALTE; der Namenskatalog läuft daran
+# vorbei. Bei 7z, ISO und tar.zst liegt er komprimiert im Archiv und wirkt
+# deshalb mit Verstärkungsfaktor: gemessen am 2026-09-03 trieb ein .tar.zst
+# von 307 KB mit 200 000 Einträgen den Speicher auf 182 MB — Faktor 600.
+# Dieselbe Bauart im zweistelligen MB-Bereich reichte für den GB-Bereich.
+# Mit Grenze sind es 58 MB, und das Archiv wird mit Meldung übersprungen.
+MAX_ARCHIVE_LISTING_BYTES = 32 * 1024 * 1024
+
+
+def bsdtar_list(bsdtar, path, env, limit=None):
+    """Die Ausgabe von `bsdtar -tf`, aber höchstens `limit` Bytes lang.
+
+    `subprocess.run(stdout=PIPE)` liest, was kommt — hier ist genau das
+    die Lücke (siehe MAX_ARCHIVE_LISTING_BYTES). Deshalb wird der Strom
+    häppchenweise gelesen und der Prozess beendet, sobald die Grenze
+    überschritten ist.
+
+    stderr geht in eine temporäre Datei statt in eine Pipe: Eine zweite
+    Pipe, die niemand leert, während wir stdout lesen, könnte volllaufen
+    und beide Seiten blockieren.
+
+    Liefert (stdout, stderr, returncode). Reißt die Grenze, ist das ein
+    ArchiveReadError — das Archiv wird übersprungen und gemeldet, statt
+    den Speicher des ganzen Laufs aufzubrauchen."""
+    if limit is None:
+        limit = MAX_ARCHIVE_LISTING_BYTES
+    parts = []
+    total = 0
+    too_large = False
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen([bsdtar, "-tf", path],
+                                   stdout=subprocess.PIPE,
+                                   stderr=errors, env=env)
+        try:
+            while True:
+                chunk = process.stdout.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit:
+                    too_large = True
+                    process.kill()
+                    break
+                parts.append(chunk)
+        finally:
+            process.stdout.close()
+            process.wait()
+        errors.seek(0)
+        stderr = errors.read(CHUNK_SIZE)
+    if too_large:
+        raise ArchiveReadError(
+            "Eintragsliste größer als %d Bytes — Archiv übersprungen"
+            % limit)
+    return b"".join(parts), stderr, process.returncode
 
 
 def bsdtar_listing_names(raw_stdout):
@@ -595,6 +688,63 @@ def positive_int(value):
     if parsed <= 0:
         raise argparse.ArgumentTypeError("muss größer als 0 sein")
     return parsed
+
+
+def metadata_tag(value):
+    """Ein exiftool-Feldname aus --metadata-field.
+
+    Streng geprüft, weil der Name ungeprüft als Option an exiftool geht:
+    Die Argumentdatei von `-stay_open` ist ZEILENWEISE, ein Zeilenumbruch
+    im Wert schöbe deshalb beliebige weitere exiftool-Optionen ein — über
+    `-p` mit einem Perl-Ausdruck bis hin zu einem Shell-Aufruf. Erlaubt
+    ist genau das, was ein Tagname wirklich braucht: Buchstaben, Ziffern,
+    Bindestrich, Unterstrich und der Doppelpunkt der Gruppenschreibweise
+    wie in "XMP-dc:Subject"."""
+    # Der erste Buchstabe darf kein "-" sein: Der Name wird mit "-"
+    # verkettet, "-execute" würde damit zur exiftool-Steueroption.
+    if not re.fullmatch(r"[A-Za-z0-9_:][A-Za-z0-9_:-]{0,63}", value):
+        raise argparse.ArgumentTypeError(
+            "ungültiger Metadaten-Feldname (erlaubt sind Buchstaben, "
+            "Ziffern, - _ und :): %r" % value)
+    return value
+
+
+def install_termination_handlers():
+    """Übersetzt SIGTERM und SIGHUP in ein normales Programmende.
+
+    Ohne das läuft der `finally`-Block in main() NICHT, und der
+    exiftool-Prozess mit `-stay_open` bleibt als Waise stehen. Das ist
+    kein Randfall: Beide Apps brechen jede Suche mit `terminate()` ab —
+    also SIGTERM —, und die Schnellsuche startet die Suche bei jedem
+    Tastendruck neu. SIGINT braucht nichts, das ist bereits ein
+    KeyboardInterrupt. Gegen SIGKILL hilft nichts; das lässt sich nicht
+    abfangen.
+
+    Liefert die vorherigen Handler zurück, damit ein Aufrufer im selben
+    Prozess (die Tests rufen main() direkt) sie wiederherstellen kann."""
+    previous = {}
+
+    def stop(signal_number, _frame):
+        raise SystemExit(128 + signal_number)
+
+    for name in ("SIGTERM", "SIGHUP"):
+        number = getattr(signal, name, None)
+        if number is None:
+            continue
+        try:
+            previous[number] = signal.signal(number, stop)
+        except (ValueError, OSError):
+            pass          # etwa beim Aufruf aus einem Nebenthread
+    return previous
+
+
+def restore_termination_handlers(previous):
+    """Setzt zurück, was install_termination_handlers() gesetzt hat."""
+    for number, handler in previous.items():
+        try:
+            signal.signal(number, handler)
+        except (ValueError, OSError):
+            pass
 
 
 def positive_float(value):
@@ -799,7 +949,10 @@ def image_dimensions(handle):
     239 reale Bilder, 239 davon korrekt."""
     try:
         dims = _image_dimensions(_ForwardReader(handle))
-    except (EOFError, ValueError, struct.error):
+    except (EOFError, ValueError, struct.error, IndexError):
+        # IndexError als Netz: Ein kaputter Kopf darf nie den ganzen
+        # Suchlauf beenden. Ein Bild ohne lesbare Maße erfüllt einen
+        # Maßfilter einfach nie — so steht es auch im Vertrag.
         return None
     if dims is None:
         return None
@@ -821,16 +974,23 @@ def _image_dimensions(reader):
         return abs(width), abs(height)             # negativ = von oben
     if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         chunk = head[12:16]
-        if chunk == b"VP8 ":
+        # Die Längenprüfungen sind Pflicht, nicht Vorsicht: Bei einer
+        # abgeschnittenen Datei (halber Download) liefert read(30) weniger
+        # Bytes. VP8L griff dann mit bits[1] ins Leere — ein IndexError,
+        # den image_dimensions() nicht fing und der den GANZEN Suchlauf
+        # beendete; VP8X las aus leeren Slices still 1×1 Pixel und erzeugte
+        # damit einen Falschtreffer. Die Zahlen sind das jeweils zuletzt
+        # gebrauchte Byte: VP8L braucht 25, VP8 und VP8X je 30.
+        if chunk == b"VP8 " and len(head) >= 30:
             width, height = struct.unpack("<HH", head[26:30])
             return width & 0x3FFF, height & 0x3FFF
-        if chunk == b"VP8L":
+        if chunk == b"VP8L" and len(head) >= 25:
             bits = head[21:25]
             width = 1 + (((bits[1] & 0x3F) << 8) | bits[0])
             height = 1 + (((bits[3] & 0x0F) << 10) | (bits[2] << 2)
                           | ((bits[1] & 0xC0) >> 6))
             return width, height
-        if chunk == b"VP8X":
+        if chunk == b"VP8X" and len(head) >= 30:
             return (int.from_bytes(head[24:27], "little") + 1,
                     int.from_bytes(head[27:30], "little") + 1)
         return None
@@ -901,10 +1061,15 @@ class ExifToolStream:
     weiter, statt erst alle Pfade zu sammeln. Je Datei kommt ein JSON-Array
     zurück, abgeschlossen durch die Zeile `{ready}`."""
 
-    def __init__(self, executable, fields):
+    def __init__(self, executable, fields, warn=None):
         self.executable = executable
         self.fields = list(fields)
         self.broken = False
+        # Ohne Warnkanal blieb der Tod des Prozesses unsichtbar: read()
+        # lieferte danach für JEDE weitere Datei None, der Lauf endete mit
+        # „keine Treffer" und war von einer wirklich leeren Suche nicht zu
+        # unterscheiden.
+        self.warn = warn if warn is not None else (lambda message: None)
         self.process = subprocess.Popen(
             [executable, "-stay_open", "True", "-@", "-"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -919,11 +1084,14 @@ class ExifToolStream:
         arguments = ["-json", "-use", "MWG", "-m", "-charset",
                      "filename=utf8"]
         arguments.extend("-" + field for field in self.fields)
-        # Ein Pfad, der mit "-" beginnt, wäre für exiftool eine Option —
-        # `favenio --metadata Winter -- -bilder` liest sonst statt der
-        # Dateien eine erfundene Option. "./" davor macht ihn eindeutig zum
-        # Dateinamen und zeigt auf dieselbe Datei.
-        arguments.append("./" + path if path.startswith("-") else path)
+        # Die Argumentdatei von -stay_open ist zeilenweise, und exiftool
+        # deutet den Zeilenanfang: "-" beginnt eine Option, "#" einen
+        # Kommentar, führender Leerraum wird abgeschnitten. Ein "./" davor
+        # macht aus JEDEM relativen Pfad einen eindeutigen Dateinamen, der
+        # auf dieselbe Datei zeigt. Vorher galt die Regel nur für "-", und
+        # "#tag.jpg" wie " bilder/foto.jpg" fielen ohne jede Meldung aus
+        # der Suche. Ein absoluter Pfad beginnt mit "/" und braucht nichts.
+        arguments.append(path if path.startswith("/") else "./" + path)
         return arguments
 
     @staticmethod
@@ -942,7 +1110,11 @@ class ExifToolStream:
         """Die angeforderten Felder EINER Datei als dict — oder None."""
         if self.broken:
             return None
-        if "\n" in path or "\r" in path:
+        # Leerraum am Zeilenende schneidet exiftool ab; ein Zeilenumbruch
+        # im Pfad zerlegte die Zeile ganz. Beides beantwortet ein eigener
+        # Prozess. Führenden Leerraum und ein "#" am Anfang entschärft
+        # dagegen schon das "./" aus arguments().
+        if "\n" in path or "\r" in path or path != path.rstrip():
             return self.read_once(path)
         arguments = self.arguments(path) + ["-execute"]
         try:
@@ -957,8 +1129,10 @@ class ExifToolStream:
                 if line.strip() == b"{ready}":
                     break
                 buffer.append(line)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as err:
             self.broken = True
+            self.warn("exiftool weggebrochen, ab hier gibt es keine "
+                      "Metadaten und keine Maße daraus mehr: %s" % err)
             return None
         return self.parse(b"".join(buffer))
 
@@ -990,6 +1164,19 @@ class ExifToolStream:
         except (OSError, ValueError, subprocess.TimeoutExpired):
             self.process.kill()
             self.process.wait()
+        finally:
+            # Beide Pipes gehören uns. Ohne dieses Schließen bleibt je
+            # Suchlauf ein Dateideskriptor offen, bis der Sammler ihn
+            # irgendwann einzieht (sichtbar als ResourceWarning) — und auf
+            # dem Fehlerpfad, wo der Prozess schon tot ist und der Aufruf
+            # oben gar nicht bis zum stdin.close() kommt, sogar zwei.
+            # Mehrfaches close() ist gefahrlos.
+            for pipe in (self.process.stdin, self.process.stdout):
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
 
 
 def metadata_values(value):
@@ -1001,6 +1188,30 @@ def metadata_values(value):
 
 
 MISSING = object()   # „noch nicht ermittelt" — auch None ist ein Ergebnis
+
+
+def open_regular_file(path):
+    """Öffnet NUR eine reguläre Datei zum Lesen.
+
+    Eine benannte Pipe (FIFO) ohne Schreiber lässt ein gewöhnliches
+    `open()` unbegrenzt warten: Die Suche steht dann still — kein
+    Ergebnis, kein Fehler, kein Abbruch. `O_NONBLOCK` kehrt beim Öffnen
+    sofort zurück, danach sagt `fstat`, was wirklich dahintersteckt.
+    Für das anschließende Lesen wird das Blockieren wieder eingeschaltet,
+    sonst bräche `read()` auf einer langsamen Quelle vorzeitig ab.
+
+    Die Namenssuche ist nicht betroffen — sie öffnet die Datei gar nicht.
+    Betroffen waren `--content` und jeder Maßfilter."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ArchiveReadError(
+                "keine reguläre Datei (Pipe, Socket oder Gerät)")
+        os.set_blocking(descriptor, True)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return open(descriptor, "rb")
 
 
 class FileProbe:
@@ -1179,7 +1390,6 @@ class Search:
             self.text_mode = "metadata"
         else:
             self.text_mode = "name"
-        self.content_mode = content_mode      # True = Inhalt (Altname)
         self.metadata_fields = list(metadata_fields or METADATA_TEXT_FIELDS)
         # Die Kriterienliste — siehe Kommentar über NameCriterion.
         criteria = []
@@ -1331,7 +1541,8 @@ class Search:
             if self.exiftool_path and self.exiftool_fields:
                 try:
                     self._exiftool = ExifToolStream(self.exiftool_path,
-                                                    self.exiftool_fields)
+                                                    self.exiftool_fields,
+                                                    warn=self.warn)
                 except OSError as err:
                     self.warn("exiftool nicht startbar: %s" % err)
         return self._exiftool
@@ -1428,10 +1639,10 @@ class Search:
         """Sucht das Muster im Datei-Inhalt. Liefert die Zeilennummer des
         ersten Treffers oder None.
 
-        chunks ist eine Folge von Byte-Häppchen: bei Dateien liest der
-        Aufrufer sie portionsweise von der Platte, bei Archiv-Einträgen ist
-        es genau ein Häppchen. Beim ersten Treffer steigen wir sofort aus —
-        der Rest der Datei wird dann gar nicht mehr gelesen.
+        chunks ist eine Folge von Byte-Häppchen zu je CHUNK_SIZE — bei
+        Dateien von der Platte, bei Archiv-Einträgen aus dem budgetierten
+        Chunker. Beim ersten Treffer steigen wir sofort aus; der Rest der
+        Datei wird dann gar nicht mehr gelesen.
 
         Dekodiert wird als UTF-8 mit errors="replace", damit die Suche auch
         in „halb-binären" Dateien funktioniert, ohne dass das Programm
@@ -1439,11 +1650,13 @@ class Search:
         Häppchengrenzen hinweg korrekt zusammen; das Ergebnis ist deshalb
         identisch zum Dekodieren der ganzen Datei am Stück."""
         pending = []          # Bruchstücke der noch nicht beendeten Zeile
+        pending_chars = 0     # deren Gesamtlänge, ohne sie zusammenzusetzen
         number = 0
         for text in codecs.iterdecode(chunks, "utf-8", errors="replace"):
             if not text:
                 continue
             pending.append(text)
+            pending_chars += len(text)
             # Steckt in diesem Häppchen überhaupt ein Umbruch? Wenn nicht,
             # gibt es keine fertige Zeile und wir puffern nur weiter — würden
             # wir den wachsenden Puffer bei jedem Häppchen neu zusammensetzen,
@@ -1452,19 +1665,40 @@ class Search:
             # kosten die selteneren Umbruchzeichen einen splitlines()-Lauf.
             if "\n" not in text and len(text.splitlines()) == 1 \
                     and text[-1] not in LINE_BREAKS:
+                if pending_chars > MAX_LINE_CHARS:
+                    # Die Zeile ist noch nicht zu Ende, aber schon zu lang.
+                    # Den bisherigen Abschnitt prüfen und nur den Schwanz
+                    # behalten; die Zeilennummer bleibt dieselbe, denn es
+                    # ist weiterhin EINE Zeile.
+                    segment = "".join(pending)
+                    if self.matcher(segment):
+                        return number + 1
+                    # Nicht segment[-LINE_OVERLAP_CHARS:] ohne Prüfung:
+                    # Bei einer Überlappung von 0 wäre das segment[0:],
+                    # also der GANZE Abschnitt — die Grenze verschwände
+                    # lautlos, und genau der Speicherfehler wäre zurück.
+                    tail = (segment[-LINE_OVERLAP_CHARS:]
+                            if LINE_OVERLAP_CHARS > 0 else "")
+                    pending = [tail]
+                    pending_chars = len(tail)
                 continue
             buffer = "".join(pending)
             pending.clear()
+            pending_chars = 0
             lines = buffer.splitlines()
             if buffer[-1] not in LINE_BREAKS:
                 # Die letzte Zeile ist noch offen; sie wird im nächsten
                 # Häppchen fortgesetzt.
-                pending.append(lines.pop())
+                rest = lines.pop()
+                pending.append(rest)
+                pending_chars = len(rest)
             elif buffer.endswith("\r"):
                 # Umbruch noch offen: folgt im nächsten Häppchen ein \n,
                 # sind beide zusammen EIN Umbruch (CRLF) — sonst zählten
                 # wir hier eine Zeile zu viel.
-                pending.append(lines.pop() + "\r")
+                rest = lines.pop() + "\r"
+                pending.append(rest)
+                pending_chars = len(rest)
             for line in lines:
                 number += 1
                 if self.matcher(line):
@@ -1554,7 +1788,7 @@ class Search:
         if self.type_allowed(False) \
                 and (self.text_mode != "content" or not descend):
             probe = FileProbe(self, path, name,
-                              open_stream=lambda: open(path, "rb"),
+                              open_stream=lambda: open_regular_file(path),
                               chunker=self.file_chunks,
                               filesystem_path=path)
             self.evaluate(probe, path, "file")
@@ -1604,8 +1838,13 @@ class Search:
     def member_is_hidden(member_path):
         """Prüft jede Pfadkomponente, nicht nur den sichtbaren Blattnamen."""
         components = re.split(r"[/\\]+", member_path)
+        # "." und ".." benennen ein Verzeichnis, sie sind kein versteckter
+        # NAME. Ohne diese Ausnahme galt jeder Eintrag eines mit
+        # `tar -cf x.tar -C ordner .` gebauten Archivs als versteckt —
+        # also der übliche Weg, einen Ordnerinhalt zu tarren —, und das
+        # ganze Archiv fiel ohne Meldung aus jeder Suche.
         return any(component.startswith(".") for component in components
-                   if component)
+                   if component and component not in (".", ".."))
 
     def visit_member(self, member_path, is_dir, open_member, display, depth,
                      archive_path, archive_members, size=None,
@@ -1772,14 +2011,12 @@ class Search:
                     handle.write(fileobj.getvalue())
                 temp_path = handle.name
                 path = temp_path
-            listing = subprocess.run(
-                [bsdtar, "-tf", path],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
-            if listing.returncode != 0:
+            raw, errors, status = bsdtar_list(bsdtar, path, env)
+            if status != 0:
                 raise ArchiveReadError(
-                    listing.stderr.decode("utf-8", "replace").strip()
+                    errors.decode("utf-8", "replace").strip()
                     or "bsdtar konnte das Archiv nicht lesen")
-            names = bsdtar_listing_names(listing.stdout)
+            names = bsdtar_listing_names(raw)
             dir_names = set()
             for name in names:
                 clean = name.rstrip("/")
@@ -1877,7 +2114,6 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
 
     kind = classify_archive(fs_path)
     data = None    # Bytes des aktuellen Archivs (None = liegt als Datei vor)
-    member = members[-1]
     # Name des Archivs der aktuellen Ebene — bei Einzelkompression bestimmt
     # er den einzig gültigen Eintragsnamen (Dateiname ohne Endung).
     container_name = os.path.basename(fs_path.rstrip("/"))
@@ -1940,14 +2176,24 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                     if ambiguous:
                         # Eintragsliste nur im mehrdeutigen Fall erfragen —
                         # sie kostet einen eigenen bsdtar-Prozess.
-                        listing = subprocess.run(
-                            [bsdtar, "-tf", path], stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, env=env, check=False)
+                        # Derselbe Weg wie in walk_bsdtar — Suche und
+                        # --extract müssen denselben Eintragsnamen sehen.
+                        # Der Status wird ausgewertet: Blieb er früher
+                        # unbeachtet, war `names` bei einem kaputten
+                        # Archiv einfach leer, pick_member() fiel auf
+                        # remaining[0] zurück und der Nutzer bekam eine
+                        # Meldung über einen fehlenden Eintrag statt über
+                        # das unlesbare Archiv.
+                        raw, errors, status = bsdtar_list(bsdtar, path, env)
+                        if status != 0:
+                            raise ArchiveReadError(
+                                errors.decode("utf-8", "replace").strip()
+                                or "bsdtar konnte das Archiv nicht lesen")
                         # rstrip("/") wie in walk_bsdtar: Ein Ordnereintrag
                         # steht im Treffer ohne Schrägstrich, und genau
                         # diesen Namen sucht pick_member() hier wieder.
                         names = [name.rstrip("/") for name
-                                 in bsdtar_listing_names(listing.stdout)]
+                                 in bsdtar_listing_names(raw)]
                     member, used = pick_member(remaining, names)
                     proc = subprocess.Popen(
                         [bsdtar, "-xOf", path, "--", bsdtar_escape(member)],
@@ -2026,7 +2272,7 @@ def main(argv=None):
                              "wörter, Titel, Beschreibung …) statt in "
                              "Dateinamen; braucht exiftool")
     parser.add_argument("--metadata-field", action="append", metavar="TAG",
-                        default=[],
+                        default=[], type=metadata_tag,
                         help="nur dieses Metadatenfeld durchsuchen (wieder"
                              "holbar; schaltet --metadata ein)")
     parser.add_argument("--list-metadata-fields", action="store_true",
@@ -2169,13 +2415,18 @@ def main(argv=None):
     if args.min_height is not None and args.max_height is not None \
             and args.min_height > args.max_height:
         parser.error("--min-height ist größer als --max-height")
-    if wants_dimensions and args.pattern and not args.paths \
-            and os.path.exists(args.pattern):
-        # `favenio.py --min-width 1000 ~/Bilder`: Das einzige Positions-
-        # argument ist ein Pfad, kein Muster. Wer wirklich nach einem Namen
-        # sucht, der zufällig auch als Pfad existiert, schreibt das Muster
-        # und den Startpfad beide hin.
-        args.paths = [args.pattern]
+    if wants_dimensions and args.pattern and os.path.exists(args.pattern) \
+            and all(os.path.exists(path) for path in args.paths):
+        # `favenio.py --min-width 1000 ~/Bilder`: Das erste Positions-
+        # argument ist ein Pfad, kein Muster. Das gilt auch für MEHRERE
+        # Ordner — vorher griff die Regel nur bei genau einem Argument,
+        # und `--min-width 100 dirA dirB` las dirA still als Namensmuster:
+        # Beide Ordner einzeln lieferten Treffer, zusammen kam Exit 1 und
+        # keine Zeile. Befördert wird nur, wenn ALLE Positionsargumente
+        # als Pfad existieren; wer nach einem Namen sucht, der zufällig
+        # auch ein Pfad ist, hat dann weiterhin ein Argument, das keiner
+        # ist.
+        args.paths = [args.pattern] + list(args.paths)
         args.pattern = None
     if not args.pattern and not wants_dimensions:
         # parser.error() gibt die Usage aus und beendet mit Exit-Code 2.
@@ -2241,11 +2492,13 @@ def main(argv=None):
             print("favenio: fehler: Pfad existiert nicht: %s" % path,
                   file=sys.stderr)
             return 2
+    previous_handlers = install_termination_handlers()
     try:
         for path in paths:
             search.search_path(path)
     finally:
         search.close()
+        restore_termination_handlers(previous_handlers)
 
     return 0 if search.found_any else 1
 

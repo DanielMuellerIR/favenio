@@ -5,18 +5,22 @@
 # Temp-Ordner: normale Dateien, ein Zip, ein tar.gz und ein Zip,
 # das ein weiteres Zip enthält (für die Verschachtelungs-Tests).
 
+import argparse
 import bz2
 import gzip
 import io
 import json
 import lzma
 import os
+import struct
+import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
 import zipfile
+import zlib
 from contextlib import redirect_stderr, redirect_stdout
 
 # favenio.py liegt eine Ebene über tests/ — Pfad dafür ergänzen.
@@ -57,6 +61,20 @@ class TempTreeTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = self.tmp.name
         self.addCleanup(self.tmp.cleanup)
+        # Was der Kern selbst im Temp-Verzeichnis anlegt — der Zielordner
+        # von --extract und die Zwischendatei für ein Archiv im Archiv —,
+        # soll mit dem Test verschwinden. `--extract` räumt bewusst nicht
+        # auf (das tut die App über --extract-root), deshalb blieb je
+        # Testlauf über zwanzig `hit-*`-Ordner im Benutzer-Temp-Verzeichnis
+        # liegen; auf einem Entwicklungsrechner hatten sich 693 angesammelt,
+        # in denen ein echtes Leck gar nicht mehr aufgefallen wäre.
+        # Eigener Ordner NEBEN self.root, nicht darin: Sonst liefe eine
+        # Suche über self.root mitten durch die Zwischendateien.
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        vorheriges_temp = tempfile.tempdir
+        tempfile.tempdir = self.scratch.name
+        self.addCleanup(setattr, tempfile, "tempdir", vorheriges_temp)
 
     def write(self, rel_path, text):
         path = os.path.join(self.root, rel_path)
@@ -1232,6 +1250,38 @@ class BsdtarFormatsTest(TempTreeTest):
                 check=True)
         return archive
 
+    def test_an_oversized_entry_list_is_skipped_with_a_warning(self):
+        # Der Namenskatalog läuft an ArchiveBudget vorbei — das zählt nur
+        # Eintrags-INHALTE. Bei 7z, ISO und tar.zst liegt er komprimiert
+        # im Archiv und wirkt deshalb mit Verstärkungsfaktor: 307 KB
+        # Archiv trieben den Speicher auf 182 MB.
+        # Geprüft wird mit einer winzigen Grenze, damit der Test schnell
+        # bleibt; die echte Konstante steht daneben.
+        bsdtar = favenio.external_archive_tools()[0]
+        if bsdtar is None:
+            self.skipTest("bsdtar nicht verfügbar")
+        archive = self.make_archive(
+            "viele.7z", "7zip",
+            {"ordner/datei_%03d.txt" % i: self.CONTENT for i in range(40)})
+        self.write("danach.txt", self.CONTENT)
+
+        vorher = favenio.MAX_ARCHIVE_LISTING_BYTES
+        favenio.MAX_ARCHIVE_LISTING_BYTES = 64
+        try:
+            code, lines, err = run(["--content", "NADEL", self.root])
+        finally:
+            favenio.MAX_ARCHIVE_LISTING_BYTES = vorher
+        self.assertIn("Eintragsliste größer", err)
+        # Das Archiv fällt aus, aber der Lauf geht weiter.
+        self.assertEqual(code, 0)
+        self.assertTrue(any(line.endswith("danach.txt:2") for line in lines),
+                        lines)
+        # Ohne die kleine Grenze wird dasselbe Archiv normal durchsucht.
+        code, lines, err = run(["--content", "NADEL", self.root])
+        self.assertEqual(code, 0)
+        self.assertNotIn("Eintragsliste größer", err)
+        self.assertTrue(any("viele.7z!/" in line for line in lines), lines)
+
     def test_7z_content_hit_with_line_number(self):
         archive = self.make_archive("arch.7z", "7zip",
                                     {"docs/brief.txt": self.CONTENT})
@@ -1667,6 +1717,25 @@ class ImageDimensionsTest(unittest.TestCase):
         # Ein JPEG ohne SOF vor den Bilddaten hat keine lesbaren Maße.
         self.assertIsNone(self.dims(b"\xff\xd8\xff\xda\x00\x02"))
 
+    def test_truncated_webp_headers_yield_none_instead_of_crashing(self):
+        # Ein halber Download endet mitten im Kopf. Bis 0.26.1 griff der
+        # VP8L-Zweig dann mit bits[1] ins Leere: ein IndexError, den
+        # image_dimensions() nicht fing und der den GANZEN Suchlauf
+        # beendete. VP8X las aus leeren Slices still 1×1 Pixel — ein
+        # Falschtreffer für jeden --max-width-Lauf.
+        riff = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP"
+        for label, blob in {
+                "vp8l-abgeschnitten": riff + b"VP8L\x00\x00\x00\x00\x2f\x00",
+                "vp8x-abgeschnitten": riff + b"VP8X\x00\x00\x00\x00",
+                "vp8-abgeschnitten": riff + b"VP8 \x00\x00\x00\x00",
+                "nur-signatur": riff,
+        }.items():
+            with self.subTest(fall=label):
+                self.assertIsNone(self.dims(blob))
+        # Die vollständigen Köpfe müssen weiterhin gelesen werden.
+        self.assertEqual(self.dims(webp_vp8l_bytes(1200, 800)), (1200, 800))
+        self.assertEqual(self.dims(webp_vp8x_bytes(1200, 800)), (1200, 800))
+
     def test_reader_never_seeks_backwards(self):
         # Archiv-Einträge aus bsdtar kommen als Pipe: Der Leser darf
         # ausschließlich read() benutzen.
@@ -1997,6 +2066,420 @@ class MetadataSearchTest(TempTreeTest):
             search.search_path(self.root)
         # klein.png ist an der Maßprüfung gescheitert, bevor exiftool dran war.
         self.assertEqual(asked, ["winter.png"])
+
+    def test_formats_without_a_built_in_reader_ask_exiftool_for_the_size(self):
+        # Die andere Hälfte der Kostenreihenfolge, die bis 0.26.1 weder
+        # dokumentiert noch geprüft war: Für HEIC, AVIF, RAW und Video gibt
+        # es keinen billigen Kopf-Leser — die Maße kommen von exiftool
+        # selbst, also wird es schon IM Maßkriterium gefragt. Der ältere
+        # Test daneben legt nur PNGs an und hätte das nie bemerkt.
+        self.assertIn(".heic", favenio.EXIFTOOL_DIMENSION_EXTENSIONS)
+        # Jede Endung mit exiftool-Rückfall muss auch an exiftool gehen
+        # dürfen; sonst wäre der Rückfall tot, ohne dass etwas auffällt.
+        self.assertTrue(
+            set(favenio.EXIFTOOL_DIMENSION_EXTENSIONS)
+            <= set(favenio.METADATA_EXTENSIONS),
+            "Endung mit Maß-Rückfall, die METADATA_EXTENSIONS nicht kennt")
+
+        self.write_bytes("ohne_leser.heic", b"nicht wirklich ein HEIC")
+        # Ohne Muster, damit wirklich nur das Maßkriterium läuft: Ein
+        # Namenskriterium hätte die Datei schon vorher aussortiert.
+        search = favenio.Search(None, False, 1, True, min_width=1000,
+                                exiftool_path=favenio.find_exiftool())
+        gefragt = []
+        real = search.exiftool_stream()
+        self.addCleanup(search.close)
+
+        class Counting:
+            def read(self, path):
+                gefragt.append(os.path.basename(path))
+                return real.read(path)
+
+            def close(self):
+                real.close()
+        search._exiftool = Counting()
+        with redirect_stdout(io.StringIO()):
+            search.search_path(self.root)
+        self.assertEqual(gefragt, ["ohne_leser.heic"])
+
+
+# Eine exiftool-Attrappe: schreibt jede empfangene Argumentzeile mit und
+# antwortet auf "-execute" wie das Original. So lässt sich prüfen, WAS
+# der Kern übergibt, ohne ein installiertes exiftool vorauszusetzen.
+EXIFTOOL_STUB = """#!/usr/bin/env python3
+import os, sys
+log = open(os.environ["FAVENIO_STUB_LOG"], "a")
+for line in sys.stdin:
+    log.write(line)
+    log.flush()
+    if line.strip() == "-execute":
+        sys.stdout.write('[{"SourceFile": "x"}]\\n{ready}\\n')
+        sys.stdout.flush()
+"""
+
+
+class ExifToolArgumentTest(TempTreeTest):
+    """Die Argumentdatei von `-stay_open` ist zeilenweise, und exiftool
+    deutet den Zeilenanfang. Jede Zeile, die der Kern dorthin schreibt,
+    ist deshalb eine Schnittstelle mit eigenen Regeln."""
+
+    def make_stub(self):
+        path = os.path.join(self.root, "exiftool_stub.py")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(EXIFTOOL_STUB)
+        os.chmod(path, 0o755)
+        self.log = os.path.join(self.root, "stub.log")
+        os.environ["FAVENIO_STUB_LOG"] = self.log
+        self.addCleanup(os.environ.pop, "FAVENIO_STUB_LOG", None)
+        return path
+
+    def stub_lines(self):
+        with open(self.log, encoding="utf-8") as handle:
+            return [line.rstrip("\n") for line in handle]
+
+    def test_a_field_name_can_never_smuggle_in_an_option(self):
+        # Ein Zeilenumbruch im Feldnamen zerlegte die Zeile und schob
+        # BELIEBIGE weitere exiftool-Optionen ein — über `-p` mit einem
+        # Perl-Ausdruck bis hin zu einem Shell-Aufruf.
+        for boese in ("Title\n-echo\nEINGESCHLEUST", "Title -p x",
+                      "Title\r-ver", "-execute", "Title;id", ""):
+            with self.subTest(wert=boese):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    favenio.metadata_tag(boese)
+        # Was ein echter Tagname braucht, muss weiter durchgehen.
+        for gut in ("Title", "XMP-dc:Subject", "IPTC:Keywords",
+                    "Sub_Location"):
+            with self.subTest(wert=gut):
+                self.assertEqual(favenio.metadata_tag(gut), gut)
+
+    def test_the_cli_rejects_a_smuggled_field_with_exit_two(self):
+        code, lines, err = run(["--metadata-field", "Title\n-echo\nX",
+                                "muster", self.root])
+        self.assertEqual(code, 2)
+        self.assertEqual(lines, [])
+        self.assertIn("Metadaten-Feldname", err)
+
+    def test_every_relative_path_is_prefixed_so_exiftool_reads_it_as_a_file(self):
+        # "-" wäre eine Option, "#" ein Kommentar, führender Leerraum
+        # würde abgeschnitten. Alle drei fielen ohne Meldung aus der Suche.
+        stream = favenio.ExifToolStream.__new__(favenio.ExifToolStream)
+        stream.fields = ["Title"]
+        for path, erwartet in (
+                ("-bilder/a.jpg", "./-bilder/a.jpg"),
+                ("#tag.jpg", "./#tag.jpg"),
+                (" leer/b.jpg", "./ leer/b.jpg"),
+                ("normal/c.jpg", "./normal/c.jpg"),
+                ("/absolut/d.jpg", "/absolut/d.jpg"),
+        ):
+            with self.subTest(pfad=path):
+                self.assertEqual(stream.arguments(path)[-1], erwartet)
+
+    def test_a_path_the_argument_file_cannot_carry_gets_its_own_process(self):
+        # exiftool schneidet Leerraum am Zeilenende ab und kann einen
+        # Zeilenumbruch gar nicht übertragen. macOS erlaubt in einem
+        # Dateinamen aber jedes Zeichen außer "/" und NUL.
+        stream = favenio.ExifToolStream.__new__(favenio.ExifToolStream)
+        stream.fields = ["Title"]
+        stream.broken = False
+        einzeln = []
+        stream.read_once = lambda path: einzeln.append(path)
+        for path in ("mit\numbruch.jpg", "mit\rwagen.jpg",
+                     "endet mit leerzeichen.jpg ", "endet mit tab.jpg\t"):
+            with self.subTest(pfad=path):
+                einzeln.clear()
+                stream.read(path)
+                self.assertEqual(einzeln, [path])
+
+    def test_a_broken_exiftool_is_reported_instead_of_swallowed(self):
+        # Stirbt der eine Prozess mitten im Lauf, lieferte read() für
+        # jede weitere Datei None — der Lauf endete mit „keine Treffer"
+        # und war von einer wirklich leeren Suche nicht zu unterscheiden.
+        gemeldet = []
+        stream = favenio.ExifToolStream(self.make_stub(), ["Title"],
+                                        warn=gemeldet.append)
+        self.addCleanup(stream.close)
+        self.assertIsNotNone(stream.read(os.path.join(self.root, "a.jpg")))
+        stream.process.kill()
+        stream.process.wait()
+        self.assertIsNone(stream.read(os.path.join(self.root, "b.jpg")))
+        self.assertTrue(stream.broken)
+        self.assertEqual(len(gemeldet), 1, gemeldet)
+        self.assertIn("exiftool", gemeldet[0])
+
+    def test_a_search_hands_its_warning_channel_to_exiftool(self):
+        # Ohne diese Verdrahtung landet die Meldung oben im Nichts.
+        search = favenio.Search(favenio.build_matcher("x", False, False),
+                                False, 1, False, metadata_mode=True,
+                                exiftool_path=self.make_stub())
+        self.addCleanup(search.close)
+        stream = search.exiftool_stream()
+        self.assertIsNotNone(stream)
+        self.assertEqual(stream.warn, search.warn)
+
+
+class TerminationHandlerTest(unittest.TestCase):
+    """SIGTERM ist der Weg, auf dem beide Apps eine Suche abbrechen —
+    die Schnellsuche bei JEDEM Tastendruck. Ohne Handler lief das
+    finally in main() nicht, und der exiftool-Prozess blieb als Waise
+    stehen."""
+
+    def test_sigterm_becomes_a_normal_program_end(self):
+        previous = favenio.install_termination_handlers()
+        try:
+            self.assertIn(signal.SIGTERM, previous)
+            handler = signal.getsignal(signal.SIGTERM)
+            self.assertTrue(callable(handler))
+            with self.assertRaises(SystemExit) as caught:
+                handler(signal.SIGTERM, None)
+            self.assertEqual(caught.exception.code, 128 + signal.SIGTERM)
+        finally:
+            favenio.restore_termination_handlers(previous)
+        self.assertEqual(signal.getsignal(signal.SIGTERM),
+                         previous[signal.SIGTERM])
+
+
+class IWorkContainerTest(TempTreeTest):
+    """Pages, Numbers und Keynote sind Zip-Container wie docx — auf einem
+    Mac die häufigsten überhaupt. Sie fehlten in ZIP_EXTENSIONS: Der Text
+    wurde in der .docx gefunden, in der .pages daneben nicht, und der Lauf
+    meldete das als Erfolg (Exit 0)."""
+
+    def test_iwork_documents_are_searched_like_every_other_zip(self):
+        # Gut komprimierbarer Inhalt: So kann der Treffer NICHT zufällig
+        # als Rohbyte-Fund im unkomprimierten Container entstehen.
+        text = "X" * 5000 + "RECHNUNGSNUMMER4711" + "Y" * 5000
+        for ext in (".pages", ".numbers", ".key", ".docx", ".odt"):
+            with zipfile.ZipFile(
+                    os.path.join(self.root, "probe" + ext), "w",
+                    zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("index.xml", text)
+
+        code, lines, _ = run(["--content", "RECHNUNGSNUMMER4711", self.root])
+        self.assertEqual(code, 0)
+        gefunden = {os.path.splitext(line.split("!/")[0])[1]
+                    for line in lines if "!/" in line}
+        self.assertEqual(
+            gefunden,
+            {".pages", ".numbers", ".key", ".docx", ".odt"}, lines)
+
+
+class DimensionStartPathTest(TempTreeTest):
+    """Ohne Muster ist das erste Positionsargument einer Maßsuche ein
+    Startpfad. Das galt nur bei genau EINEM Argument: `--min-width 100
+    dirA dirB` las dirA still als Namensmuster — beide Ordner einzeln
+    lieferten Treffer, zusammen kam Exit 1 und keine Zeile."""
+
+    def setUp(self):
+        super().setUp()
+        for ordner in ("dirA", "dirB"):
+            os.makedirs(os.path.join(self.root, ordner))
+            with open(os.path.join(self.root, ordner, ordner + ".png"),
+                      "wb") as handle:
+                handle.write(png_bytes(120, 80))
+
+    def test_several_start_paths_work_without_a_pattern(self):
+        a = os.path.join(self.root, "dirA")
+        b = os.path.join(self.root, "dirB")
+        for argumente in ([a], [b]):
+            code, lines, _ = run(["--min-width", "100"] + argumente)
+            self.assertEqual(code, 0)
+            self.assertEqual(len(lines), 1)
+        code, lines, _ = run(["--min-width", "100", a, b])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 2, lines)
+
+    def test_a_pattern_that_is_no_path_stays_a_pattern(self):
+        # Gegenprobe: Befördert wird nur, wenn ALLE Positionsargumente als
+        # Pfad existieren.
+        code, lines, _ = run(["--min-width", "100", "dirA*",
+                              os.path.join(self.root, "dirA"),
+                              os.path.join(self.root, "dirB")])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1, lines)
+
+
+class LongLineTest(TempTreeTest):
+    """Eine Zeile ohne Umbruch darf den Speicher nicht sprengen.
+
+    Minifiziertes JSON, ein Base64-Block oder eine mysqldump-Zeile haben
+    über hunderte Megabyte keinen Umbruch; match_content() pufferte eine
+    solche Datei vollständig (144 MB Text → 488 MB Spitzenspeicher). Der
+    Puffer wird deshalb abschnittsweise geleert, mit einer Überlappung,
+    damit ein Treffer an der Schnittstelle nicht verlorengeht."""
+
+    def line_of(self, needle, haystack, max_chars=1000, overlap=50,
+                chunk=200):
+        search = favenio.Search(
+            favenio.build_matcher(needle, False, False), True, 1, False)
+        blob = haystack.encode("utf-8")
+        chunks = [blob[i:i + chunk] for i in range(0, len(blob), chunk)]
+        vorher = (favenio.MAX_LINE_CHARS, favenio.LINE_OVERLAP_CHARS)
+        favenio.MAX_LINE_CHARS = max_chars
+        favenio.LINE_OVERLAP_CHARS = overlap
+        try:
+            return search.match_content(iter(chunks))
+        finally:
+            (favenio.MAX_LINE_CHARS,
+             favenio.LINE_OVERLAP_CHARS) = vorher
+
+    def test_a_hit_is_found_anywhere_in_an_endless_line(self):
+        # 5000 Zeichen ohne Umbruch bei einer Abschnittsgrenze von 1000:
+        # Der Treffer muss an jeder Stelle gefunden werden und immer als
+        # Zeile 1 zählen — es ist ja EINE Zeile.
+        for stelle in (0, 500, 999, 1000, 2500, 4990):
+            with self.subTest(stelle=stelle):
+                text = ("a" * stelle + "ZIEL"
+                        + "a" * (5000 - stelle - 4))
+                self.assertEqual(self.line_of("ZIEL", text), 1)
+
+    def test_a_hit_across_a_section_boundary_survives(self):
+        # Genau der Fall, für den die Überlappung da ist. Wo die
+        # Abschnittsgrenze wirklich liegt, hängt von der Häppchengröße ab
+        # (geleert wird beim ERSTEN Häppchen jenseits der Grenze, hier bei
+        # 1200) — deshalb wird jede Stelle über einen ganzen Bereich
+        # geprüft, statt eine Grenze auszurechnen, die sich verschieben
+        # kann. Ohne Überlappung fallen genau die Stellen durch, an denen
+        # das Muster über den Schnitt reicht.
+        needle = "ZIELMARKE"
+        verfehlt = []
+        for stelle in range(900, 2500):
+            text = ("a" * stelle + needle
+                    + "a" * (4000 - stelle - len(needle)))
+            if self.line_of(needle, text) != 1:
+                verfehlt.append(stelle)
+        self.assertEqual(verfehlt, [])
+
+    def test_the_overlap_must_be_long_enough_for_the_pattern(self):
+        # Die Zusicherung hinter der Konstante: Ein Muster, das länger ist
+        # als die Überlappung, kann an der Schnittstelle verlorengehen.
+        # Mit 64 Ki Zeichen liegt die Grenze weit jenseits jedes
+        # realistischen Suchbegriffs — dieser Test hält fest, WARUM die
+        # Zahl nicht klein sein darf.
+        needle = "ZIELMARKE"
+        zu_kurz = [stelle for stelle in range(1100, 1300)
+                   if self.line_of(needle, "a" * stelle + needle
+                                   + "a" * (4000 - stelle - len(needle)),
+                                   overlap=4) != 1]
+        self.assertTrue(zu_kurz, "zu kurze Überlappung muss auffallen")
+        self.assertLess(len(needle), favenio.LINE_OVERLAP_CHARS)
+
+    def test_nothing_is_invented_when_the_needle_is_absent(self):
+        self.assertIsNone(self.line_of("ZIEL", "a" * 5000))
+
+    def test_line_numbers_still_count_after_a_very_long_line(self):
+        # Die lange Zeile bleibt EINE Zeile; was danach kommt, ist Zeile 2.
+        text = "a" * 5000 + "\nZIEL\n"
+        self.assertEqual(self.line_of("ZIEL", text), 2)
+        text = "a" * 5000 + "\r\nZIEL\n"
+        self.assertEqual(self.line_of("ZIEL", text), 2)
+
+    def test_the_bound_does_not_change_short_lines(self):
+        # Gegenprobe: Unterhalb der Grenze arbeitet die Funktion wie zuvor.
+        text = "erste\nzweite\nZIEL\nvierte\n"
+        self.assertEqual(self.line_of("ZIEL", text), 3)
+
+
+class RobustTraversalTest(TempTreeTest):
+    """Ein einzelner kaputter oder ungewöhnlicher Eintrag darf nie den
+    ganzen Suchlauf beenden — er gehört als Warnung auf stderr, und die
+    Suche läuft weiter. Alle drei Fälle beendeten den Prozess vor 0.26.2
+    mit Status 1, den beide Apps als „keine Treffer" lesen."""
+
+    def test_dot_prefixed_archive_entries_are_not_hidden(self):
+        # `tar -cf x.tar -C ordner .` ist der übliche Weg, einen
+        # Ordnerinhalt zu tarren; jeder Eintrag heißt dann "./name".
+        # Die Komponente "." galt als versteckter Name, deshalb fiel das
+        # ganze Archiv ohne Meldung aus jeder Suche.
+        self.write("notiz.txt", "TREFFER\n")
+        tar_path = os.path.join(self.root, "punkt.tar")
+        with tarfile.open(tar_path, "w") as archive:
+            archive.add(os.path.join(self.root, "notiz.txt"),
+                        arcname="./notiz.txt")
+        zip_path = os.path.join(self.root, "punkt.zip")
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("./notiz.txt", "TREFFER\n")
+
+        for label, archive_path in (("tar", tar_path), ("zip", zip_path)):
+            with self.subTest(format=label):
+                code, lines, _ = run(["notiz", archive_path])
+                self.assertEqual(code, 0)
+                self.assertEqual(len(lines), 1)
+                code, lines, _ = run(["--content", "TREFFER", archive_path])
+                self.assertEqual(code, 0)
+                self.assertEqual(len(lines), 1)
+
+    def test_really_hidden_entries_stay_hidden(self):
+        # Die Gegenprobe zum Test darüber: Nur "." und ".." sind
+        # ausgenommen, ein echter Punktname bleibt versteckt.
+        self.write("sichtbar.txt", "x\n")
+        tar_path = os.path.join(self.root, "h.tar")
+        with tarfile.open(tar_path, "w") as archive:
+            archive.add(os.path.join(self.root, "sichtbar.txt"),
+                        arcname="./.geheim.txt")
+        code, lines, _ = run(["geheim", tar_path])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        code, lines, _ = run(["--hidden", "geheim", tar_path])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+
+    def test_zip_with_undecodable_entry_name_only_warns(self):
+        # Windows-Packer setzen gelegentlich das UTF-8-Flag, obwohl die
+        # Eintragsnamen CP932-/Latin-1-Bytes tragen. zipfile wirft dann
+        # schon beim Öffnen einen UnicodeDecodeError.
+        name = b"\xff\xfe_boese.txt"
+        data = b"TREFFER"
+        crc = zlib.crc32(data) & 0xFFFFFFFF
+        local = (b"PK\x03\x04"
+                 + struct.pack("<5H3L2H", 20, 0x800, 0, 0, 0, crc,
+                               len(data), len(data), len(name), 0)
+                 + name + data)
+        central = (b"PK\x01\x02"
+                   + struct.pack("<6H3L5H2L", 20, 20, 0x800, 0, 0, 0, crc,
+                                 len(data), len(data), len(name),
+                                 0, 0, 0, 0, 0, 0)
+                   + name)
+        end = (b"PK\x05\x06"
+               + struct.pack("<4H2LH", 0, 0, 1, 1, len(central),
+                             len(local), 0))
+        with open(os.path.join(self.root, "boese.zip"), "wb") as handle:
+            handle.write(local + central + end)
+        self.write("zzz_danach.txt", "TREFFER\n")
+
+        code, lines, err = run(["--content", "TREFFER", self.root])
+        self.assertEqual(code, 0)
+        self.assertIn("warnung", err)
+        # Die Datei HINTER dem kaputten Archiv muss erreicht werden.
+        self.assertTrue(any(line.endswith("zzz_danach.txt:1")
+                            for line in lines), lines)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "Plattform kennt kein mkfifo")
+    def test_a_fifo_never_blocks_the_search(self):
+        # Ein gewöhnliches open() auf eine benannte Pipe ohne Schreiber
+        # wartet unbegrenzt: Die Suche stand still, ohne Fehler und ohne
+        # Ergebnis. Die Namenssuche war nie betroffen, weil sie die Datei
+        # gar nicht öffnet — geprüft werden deshalb Inhalt und Maßfilter.
+        os.mkfifo(os.path.join(self.root, "pipe.txt"))
+        self.write("normal.txt", "TREFFER\n")
+
+        code, lines, err = run(["--content", "TREFFER", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("keine reguläre Datei", err)
+
+        code, _, _ = run(["--min-width", "10", self.root])
+        self.assertEqual(code, 1)
+
+    def test_a_name_search_still_sees_a_fifo(self):
+        # Gegenprobe: Die Sperre gilt nur fürs Lesen. Eine Pipe ist eine
+        # Datei mit Namen und muss in der Namenssuche auftauchen.
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("Plattform kennt kein mkfifo")
+        os.mkfifo(os.path.join(self.root, "pipe.txt"))
+        code, lines, err = run(["pipe*", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(err, "")
 
 
 if __name__ == "__main__":

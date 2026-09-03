@@ -8,7 +8,7 @@ Favenio ist eine indexlose Dateisuche für macOS im Stil von EasyFind: Sie
 durchsucht das Dateisystem direkt (ohne Index, ohne Spotlight) nach Dateinamen
 oder Dateiinhalten. Die Besonderheit: **Favenio schaut auch in Archive
 hinein.** Unterstützt werden die Zip-Familie (zip, jar, whl, epub, docx, xlsx,
-pptx, odt, ods, odp), die Tar-Familie (tar, tar.gz/tgz, tar.bz2/tbz2,
+pptx, odt, ods, odp, pages, numbers, key), die Tar-Familie (tar, tar.gz/tgz, tar.bz2/tbz2,
 tar.xz/txz) und einzeln komprimierte Dateien (gz, bz2, xz — `notiz.txt.gz`
 enthält also `notiz.txt`), auf Wunsch auch Archive in Archiven.
 
@@ -224,12 +224,14 @@ Stichwort „Winter", die mindestens 1000 px breit sind. Breite und Höhe kommen
 aus dem Dateikopf (JPEG, PNG, GIF, BMP, WebP, TIFF; auch in Archiven) ohne
 jede Abhängigkeit; nur HEIC, AVIF, RAW und Video fallen auf `exiftool` zurück.
 Dateien ohne lesbare Maße erfüllen einen Maßfilter nie. Mit Maßfilter darf das
-Muster fehlen (`favenio.py --min-width 3000 ~/Pictures`); die Suche läuft dann
-ganz ohne Textkriterium, weshalb `--content` und `--metadata` — die sagen,
-wogegen das Muster läuft — eines brauchen. JSON-Treffer tragen `width` und
-`height`. Billige Prüfungen laufen zuerst: Name, dann Maße,
-dann Metadaten, dann Inhalt — exiftool sieht nur Dateien, die den Maßfilter
-schon bestanden haben.
+Muster fehlen (`favenio.py --min-width 3000 ~/Pictures`, auch mit mehreren
+Startpfaden); die Suche läuft dann ganz ohne Textkriterium, weshalb
+`--content` und `--metadata` — die sagen, wogegen das Muster läuft — eines
+brauchen. JSON-Treffer tragen `width` und `height`. Billige Prüfungen laufen
+zuerst: Name, dann Maße, dann Metadaten, dann Inhalt. Für die Formate, die der
+eingebaute Leser kennt, sieht exiftool deshalb nur Dateien, die den Maßfilter
+schon bestanden haben. Bei HEIC, AVIF, RAW und Video wird es früher gefragt —
+dort kommen die Maße selbst von exiftool, billiger sind sie nicht zu haben.
 
 ## Wie die Inhaltssuche liest
 
