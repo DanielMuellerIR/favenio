@@ -10,6 +10,17 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
    Durchlauf am Bildschirm.
 
+## Flackernder Test 2026-09-03
+
+`test_sigterm_during_the_swap_restores_both_bundles`
+(`tests/test_build_safety.py`) schlug am 2026-09-03 zweimal fehl und war
+danach in sieben Läufen hintereinander grün. Beide Male lag die Systemlast
+des Rechners bei rund 100 (fremde Prozesse anderer Projekte). Der Test
+schickt SIGTERM an ein Shell-Skript und prüft danach den Zustand — unter
+extremer Last ist das zeitkritisch. Zu klären: ob der Test auf eine feste
+Wartezeit baut, die sich durch ein Warten auf einen Zustand ersetzen lässt.
+Nicht reproduziert, deshalb keine Änderung.
+
 ## Offen aus der Code-Review-Triage 2026-08-02
 
 - Leerer Ordner in einem ISO wird als Datei geführt. `bsdtar -tf` listet ihn

@@ -57,7 +57,9 @@ Verbindliches CLI-Verhalten:
   Beispiel bei einem toten Symlink). `isDirectory`
   ist nötig, weil `type` es nicht verrät: Ein Ordner IM Archiv kommt wie eine
   Datei als `member` an. Die Frontends dürfen den Typ nicht aus dem Pfad oder
-  aus `type` erraten.
+  aus `type` erraten. `parseHit()` verwirft eine Zeile ohne das Feld
+  deshalb, statt zu raten; beide Erzeuger — `emit()` im Kern und
+  `jsonlData()` in Swift — schreiben es immer.
 - `--progress` erzeugt gedrosselte Fortschrittsobjekte. Im JSON-Modus stehen sie
   im selben stdout-Strom und sind über `type: progress` erkennbar. Ohne JSON
   gehen Fortschritte nach stderr.
@@ -272,7 +274,12 @@ Favenio" und ⌘↩ bei einer reinen Maßsuche wirkungslos. Die Spalte
 „Fundstelle" (`locationText`) zeigt Zeilennummer oder „Feld: Wert", die Spalte
 „Maße" (`dimensionsText`) die Pixel; nach Maßen wird nach Fläche sortiert —
 über `Hit.pixelArea`, das den Überlauf deckelt, weil eine fangende
-`Int`-Multiplikation die App beendet. Die URL-Übergabe der Schnellsuche trägt `mode`, `minw`,
+`Int`-Multiplikation die App beendet. Die Spalte „Typ" geht über
+`TypeDescriptionCache`, EINEN Eintrag je Endung:
+`UTType(filenameExtension:)` samt `localizedDescription` ist eine
+Datenbankabfrage (11,65 µs), und der Vergleicher ruft sie zweimal je
+Vergleich. Gemessen am 2026-09-03 mit `swiftc -O` über 100 000 Treffer:
+46,6 s ohne, 1,2 s mit Zwischenspeicher. Die URL-Übergabe der Schnellsuche trägt `mode`, `minw`,
 `maxw`, `minh` und `maxh`; `content=1` bleibt für alte Quick-Versionen
 lesbar.
 
@@ -292,6 +299,11 @@ und im Rechtsklick-Menü der Tabelle, jeweils mit sichtbarem Kürzel:
   still statt einen fremden Systemton zu spielen.
 - **Treffer exportieren (⌘E / ⇧⌘E)** schreibt Pfade zeilenweise, Pfade
   NUL-getrennt, JSONL im Format von `--json` oder CSV mit UTF-8-BOM. Die
+  BOM sagt, wohin die Tabelle geht — deshalb entschärft `csvField()` auch
+  Formel-Präfixe: Beginnt ein Zellwert mit `=`, `+`, `-`, `@` oder einem
+  Tabulator, wertet Excel ihn als FORMEL, auch in Anführungszeichen. Ein
+  Dateiname darf unter macOS jedes Zeichen außer `/` und NUL enthalten,
+  eine Datei `=cmd|'/c calc'!A1.txt` landete also in der ersten Spalte. Die
   NUL-Form ist kein Beiwerk: Ein Dateiname darf unter macOS jedes Zeichen außer
   `/` und NUL enthalten, auch einen Zeilenumbruch. In beiden Pfadformaten steht
   der Pfad in `!/`-Notation, den `--extract` wieder liest. Diese Notation ist

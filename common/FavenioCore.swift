@@ -187,13 +187,41 @@ struct Hit: Hashable {
         if isDirectory { return "Ordner" }
         let ext = (displayName as NSString).pathExtension
         if ext.isEmpty { return "Datei" }
-        if let type = UTType(filenameExtension: ext.lowercased()),
-           let description = type.localizedDescription {
-            return description
-        }
-        return ext.uppercased()
+        return typeDescriptions.description(for: ext.lowercased())
     }
 }
+
+/// Zwischenspeicher der Typbeschreibungen, EINER je Endung.
+///
+/// `UTType(filenameExtension:)` samt `localizedDescription` ist eine
+/// Datenbankabfrage: gemessen am 2026-09-03 mit 11,65 µs je Aufruf. Die
+/// Sortierung nach der Typ-Spalte ruft sie ZWEIMAL je Vergleich, und die
+/// Trefferliste wird während des Streamens mehrmals pro Sekunde neu
+/// sortiert — bei 100 000 Treffern kostete ein einzelner Sortierlauf
+/// dadurch 47,3 s auf dem Main-Thread, das Fenster stand.
+///
+/// Die Antwort hängt ausschließlich an der Endung, ein Eintrag je Endung
+/// genügt also. Die Sperre ist nötig, weil auch der Zellenaufbau und ein
+/// künftiger Hintergrundpfad hier hereinkommen können.
+final class TypeDescriptionCache {
+    private let lock = NSLock()
+    private var byExtension: [String: String] = [:]
+
+    func description(for ext: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = byExtension[ext] { return cached }
+        var result = ext.uppercased()
+        if let type = UTType(filenameExtension: ext),
+           let localized = type.localizedDescription {
+            result = localized
+        }
+        byExtension[ext] = result
+        return result
+    }
+}
+
+let typeDescriptions = TypeDescriptionCache()
 
 /// Selektoren der fünf Dateiaktionen im gemeinsamen Kontextmenü. Die beiden
 /// Apps verwenden andere Methoden für „Öffnen", der Menüaufbau selbst bleibt
@@ -449,6 +477,14 @@ func findCLI() -> String? {
     if let bundled = Bundle.main.path(forResource: "favenio", ofType: "py") {
         return bundled
     }
+    // Der Rückfall auf das Arbeitsverzeichnis gilt nur für einen NACKTEN
+    // Testbinär. In einem App-Bundle wäre er ein Einfallstor: Fehlt das
+    // gebündelte favenio.py, führte eine notarisierte App mit Automations-
+    // und Festplatten-Freigaben fremdes Python mit ihren Rechten aus —
+    // `cd ~/Downloads/entpackt && open -a Favenio .` genügte. Im regulären
+    // Build kann der Zweig ohnehin nicht greifen: build-app.sh kopiert
+    // favenio.py in beide Resources-Ordner.
+    guard Bundle.main.bundleURL.pathExtension != "app" else { return nil }
     let local = FileManager.default.currentDirectoryPath + "/favenio.py"
     if FileManager.default.fileExists(atPath: local) { return local }
     return nil
@@ -475,7 +511,14 @@ func parseHit(_ lineData: Data) -> Hit? {
             : [])
     // Ältere Kern-Ausgaben kennen `isDirectory` nicht; dort bleibt der
     // Rückfall auf den Typ, der wenigstens Dateisystem-Ordner richtig erkennt.
-    let isDirectory = dict["isDirectory"] as? Bool ?? (kind == "dir")
+    // KEIN Rückfall auf `kind == "dir"`: Der Vertrag verlangt ausdrücklich,
+    // dass die Frontends den Typ nicht erraten. Ein ORDNER im Archiv kommt
+    // als `member` an und sähe damit aus wie eine Datei — genau der
+    // Review-Fund vom 2026-08-17, bei dem ein Doppelklick eine leere Datei
+    // erzeugte. Beide Erzeuger (emit() im Kern, jsonlData() hier) schreiben
+    // das Feld immer; eine Zeile ohne es stammt nicht von uns und wird
+    // verworfen, statt einen falschen Typ zu behaupten.
+    guard let isDirectory = dict["isDirectory"] as? Bool else { return nil }
     return Hit(path: path, kind: kind, line: dict["line"] as? Int,
                size: dict["size"] as? Int,
                filesystemPath: filesystemPath,
@@ -1694,9 +1737,24 @@ enum HitExportFormat: String, CaseIterable {
 /// Ein CSV-Feld nach RFC 4180: Anführungszeichen nur, wo sie nötig sind, und
 /// ein enthaltenes Anführungszeichen wird verdoppelt.
 func csvField(_ value: String) -> String {
-    guard value.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n"
-                                    || $0 == "\r" }) else { return value }
-    return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    // Formel-Präfixe entschärfen. Beginnt ein Zellwert mit "=", "+", "-",
+    // "@" oder einem Tabulator, wertet Excel ihn als FORMEL — auch in
+    // Anführungszeichen. Und macOS erlaubt in einem Dateinamen jedes
+    // Zeichen außer "/" und NUL: Eine Datei `=cmd|'/c calc'!A1.txt` in
+    // einem Downloads- oder Freigabeordner landete beim Export in der
+    // ersten Spalte und bot Excel eine DDE-Ausführung an. Dass Excel das
+    // Ziel ist, steht im Export selbst — er schreibt eine BOM genau dafür.
+    // Das vorangestellte Apostroph ist die übliche Entschärfung: Excel
+    // liest die Zelle dann als Text und zeigt es nicht an.
+    var text = value
+    if let first = text.first,
+       first == "=" || first == "+" || first == "-" || first == "@"
+        || first == "\t" || first == "\r" {
+        text = "'" + text
+    }
+    guard text.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n"
+                                    || $0 == "\r" }) else { return text }
+    return "\"" + text.replacingOccurrences(of: "\"", with: "\"\"") + "\""
 }
 
 /// Serialisiert die Trefferliste in das gewählte Exportformat.

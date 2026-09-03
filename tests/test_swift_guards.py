@@ -939,9 +939,169 @@ class ParsePixelLimitBehaviourTest(unittest.TestCase):
         self.assertEqual(self.gelesen["10.500"], "10500")
 
 
+class ParsedHitTypeTest(unittest.TestCase):
+    """`isDirectory` kommt vom Kern und darf nicht erraten werden.
+
+    Ein ORDNER im Archiv kommt als `member` an und saehe ohne das Feld aus
+    wie eine Datei — genau der Review-Fund vom 2026-08-17, bei dem ein
+    Doppelklick eine leere Datei erzeugte. Der Vertrag in AGENTS.md sagt
+    dazu woertlich: „Die Frontends duerfen den Typ nicht aus dem Pfad oder
+    aus `type` erraten."
+    """
+
+    def test_a_line_without_the_field_is_rejected_not_guessed(self):
+        body = swift_function(COMMON, "func parseHit(")
+        self.assertIn('guard let isDirectory = dict["isDirectory"] as? Bool',
+                      body)
+        self.assertNotIn('?? (kind == "dir")', body)
+
+    def test_our_own_serialiser_always_writes_it(self):
+        # Sonst wäre die strenge Prüfung oben ein Datenverlust: Die
+        # Übergabe der Schnellsuche geht durch genau diesen Weg.
+        body = swift_function(COMMON, "func jsonlData(")
+        self.assertIn('"isDirectory": hit.isDirectory', body)
+
+    def test_the_bundled_core_is_never_taken_from_the_working_directory(self):
+        # Fehlt das gebündelte favenio.py, führte eine notarisierte App mit
+        # Automations- und Festplatten-Freigaben sonst fremdes Python mit
+        # ihren Rechten aus.
+        body = swift_function(COMMON, "func findCLI()")
+        self.assertIn('Bundle.main.bundleURL.pathExtension != "app"', body)
+        self.assertLess(body.index("pathExtension != \"app\""),
+                        body.index("currentDirectoryPath"))
+
+
+class CsvFieldBehaviourTest(unittest.TestCase):
+    """csvField() haengt von nichts ab und laesst sich deshalb wirklich
+    AUSFUEHREN: Die Funktion wird unveraendert aus FavenioCore.swift
+    geschnitten, uebersetzt und mit echten Dateinamen aufgerufen.
+
+    macOS erlaubt in einem Dateinamen jedes Zeichen ausser "/" und NUL.
+    Beginnt ein Zellwert mit "=", "+", "-", "@" oder einem Tabulator,
+    wertet Excel ihn als FORMEL — auch in Anfuehrungszeichen. Eine Datei
+    `=cmd|'/c calc'!A1.txt` landete beim Export in der ersten Spalte."""
+
+    EINGABEN = ["harmlos.txt", "mit,Komma.txt", 'mit"Anfuehrung.txt',
+                "=cmd|'/c calc'!A1.txt", "=1+1", "+42", "-minus.txt",
+                "@SUM(A1)", "\tTab.txt", "=gefaehrlich,mit Komma.txt",
+                "", "0=keine Formel.txt"]
+
+    @classmethod
+    def setUpClass(cls):
+        if shutil.which("swiftc") is None:
+            raise unittest.SkipTest("swiftc nicht gefunden")
+        body = swift_function(COMMON, "func csvField(")
+        calls = "\n".join(
+            'print("%d|" + csvField(%s))' % (index, _swift_literal(text))
+            for index, text in enumerate(cls.EINGABEN))
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "main.swift"
+            source.write_text("import Foundation\n" + body + "\n"
+                              + calls + "\n", encoding="utf-8")
+            binary = Path(tmp) / "csvtest"
+            subprocess.run(["swiftc", "-o", str(binary), str(source)],
+                           check=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+            result = subprocess.run([str(binary)], check=True,
+                                    stdout=subprocess.PIPE)
+        antworten = dict(
+            line.split("|", 1) for line
+            in result.stdout.decode("utf-8").split("\n") if line)
+        cls.gelesen = {text: antworten[str(index)]
+                       for index, text in enumerate(cls.EINGABEN)}
+
+    def test_a_formula_prefix_is_defused(self):
+        for text in ("=cmd|'/c calc'!A1.txt", "=1+1", "+42", "-minus.txt",
+                     "@SUM(A1)", "\tTab.txt"):
+            with self.subTest(eingabe=text):
+                wert = self.gelesen[text]
+                # Das Apostroph steht VOR dem gefährlichen Zeichen — in
+                # Anführungszeichen gesetzt eben dahinter.
+                kern = wert[1:-1] if wert.startswith('"') else wert
+                self.assertTrue(kern.startswith("'"), wert)
+
+    def test_ordinary_names_are_untouched(self):
+        self.assertEqual(self.gelesen["harmlos.txt"], "harmlos.txt")
+        self.assertEqual(self.gelesen[""], "")
+        # Eine Ziffer am Anfang ist keine Formel.
+        self.assertEqual(self.gelesen["0=keine Formel.txt"],
+                         "0=keine Formel.txt")
+
+    def test_quoting_still_works(self):
+        self.assertEqual(self.gelesen["mit,Komma.txt"], '"mit,Komma.txt"')
+        self.assertEqual(self.gelesen['mit"Anfuehrung.txt'],
+                         '"mit""Anfuehrung.txt"')
+        # Beides zusammen: entschärft UND korrekt gequotet.
+        self.assertEqual(self.gelesen["=gefaehrlich,mit Komma.txt"],
+                         '"\'=gefaehrlich,mit Komma.txt"')
+
+
+class TypeDescriptionCacheTest(unittest.TestCase):
+    """Der Zwischenspeicher muss dieselben Antworten geben wie die direkte
+    Abfrage. `UTType(filenameExtension:)` samt `localizedDescription` ist
+    eine Datenbankabfrage (gemessen 11,65 µs); die Sortierung nach der
+    Typ-Spalte ruft sie zweimal je Vergleich, und bei 100 000 Treffern
+    kostete ein Sortierlauf dadurch 46,6 s — mit Zwischenspeicher 1,2 s
+    (gemessen 2026-09-03, swiftc -O)."""
+
+    ENDUNGEN = ["txt", "pdf", "png", "jpg", "zip", "swift", "heic", "mov",
+                "gibtsnicht", "TXT"]
+
+    def test_the_cache_answers_exactly_like_a_direct_lookup(self):
+        if shutil.which("swiftc") is None:
+            self.skipTest("swiftc nicht gefunden")
+        body = swift_function(COMMON, "final class TypeDescriptionCache {")
+        pruefungen = "\n".join(
+            'print("%d|" + cache.description(for: %s) + "|" + direkt(%s))'
+            % (index, _swift_literal(ext.lower()),
+               _swift_literal(ext.lower()))
+            for index, ext in enumerate(self.ENDUNGEN))
+        programm = (
+            "import Foundation\nimport UniformTypeIdentifiers\n"
+            + body + "\n"
+            "func direkt(_ ext: String) -> String {\n"
+            "    if let t = UTType(filenameExtension: ext),\n"
+            "       let l = t.localizedDescription { return l }\n"
+            "    return ext.uppercased()\n"
+            "}\n"
+            "let cache = TypeDescriptionCache()\n"
+            # Zweimal durchlaufen: Der zweite Lauf trifft den Speicher.
+            + pruefungen + "\n" + pruefungen + "\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "main.swift"
+            source.write_text(programm, encoding="utf-8")
+            binary = Path(tmp) / "typetest"
+            subprocess.run(["swiftc", "-o", str(binary), str(source)],
+                           check=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+            result = subprocess.run([str(binary)], check=True,
+                                    stdout=subprocess.PIPE)
+        zeilen = [z for z in result.stdout.decode("utf-8").split("\n") if z]
+        self.assertEqual(len(zeilen), 2 * len(self.ENDUNGEN))
+        for zeile in zeilen:
+            index, aus_cache, direkt = zeile.split("|", 2)
+            with self.subTest(endung=self.ENDUNGEN[int(index)]):
+                self.assertEqual(aus_cache, direkt)
+
+    def test_the_hit_type_goes_through_the_cache(self):
+        # Ohne diese Wache fiele die Sortierung beim nächsten Umbau
+        # unbemerkt auf 46,6 s zurück.
+        body = swift_function(COMMON, "    var typeDescription: String {")
+        self.assertIn("typeDescriptions.description(for:", body)
+        self.assertNotIn("UTType(filenameExtension:", body)
+
+
 def _swift_literal(text):
-    """Ein Swift-String-Literal aus einem Python-Text."""
-    return '"%s"' % text.replace("\\", "\\\\").replace('"', '\\"')
+    """Ein Swift-String-Literal aus einem Python-Text.
+
+    Steuerzeichen muessen maskiert werden: Swift lehnt einen rohen
+    Tabulator im Quelltext mit „unprintable ASCII character" ab. Und ein
+    Dateiname darf unter macOS jedes Zeichen ausser "/" und NUL
+    enthalten, Tabulatoren und Umbrueche also auch."""
+    escaped = (text.replace("\\", "\\\\").replace('"', '\\"')
+               .replace("\t", "\\t").replace("\n", "\\n")
+               .replace("\r", "\\r"))
+    return '"%s"' % escaped
 
 
 if __name__ == "__main__":

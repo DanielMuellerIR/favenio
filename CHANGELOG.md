@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.28.0 — 2026-09-03
+
+Aus der CodeQA-Kampagne, gemeinsame Swift-Schicht.
+
+- **Sortieren nach der Spalte „Typ" ließ die App einfrieren.**
+  `UTType(filenameExtension:)` samt `localizedDescription` ist eine
+  Datenbankabfrage (gemessen 11,65 µs), und der Vergleicher ruft sie zweimal
+  je Vergleich. Ein Sortierlauf über 100 000 Treffer kostete damit 46,6 s auf
+  dem Main-Thread — und sortiert wird während des Streamens mehrmals pro
+  Sekunde. Ein Zwischenspeicher mit einem Eintrag je Endung bringt das auf
+  1,2 s bei identischen Ergebnissen (gemessen mit `swiftc -O`).
+- **Der CSV-Export entschärft Formel-Präfixe.** Beginnt ein Zellwert mit `=`,
+  `+`, `-`, `@` oder einem Tabulator, wertet Excel ihn als Formel — auch in
+  Anführungszeichen. Unter macOS darf ein Dateiname jedes Zeichen außer `/`
+  und NUL enthalten: Eine Datei `=cmd|'/c calc'!A1.txt` in einem Downloads-
+  oder Freigabeordner landete beim Export in der ersten Spalte und bot Excel
+  eine DDE-Ausführung an. Dass Excel das Ziel ist, stand im Export schon
+  vorher — er schreibt eine BOM genau dafür.
+- **Der Typ eines Treffers wird nicht mehr geraten.** Fehlte `isDirectory` in
+  einer JSONL-Zeile, schloss der Parser aus `type` — und ein ORDNER im Archiv
+  kommt als `member` an, sah damit aus wie eine Datei und erzeugte beim
+  Doppelklick wieder eine leere Datei. Der Vertrag verbietet dieses Raten
+  ausdrücklich; solche Zeilen werden jetzt verworfen. Beide Erzeuger
+  schreiben das Feld immer.
+- **Kein Kern aus dem Arbeitsverzeichnis in einem App-Bundle.** Fehlte das
+  gebündelte `favenio.py`, fiel die Suche auf `./favenio.py` zurück: Eine
+  notarisierte App mit Automations- und Festplatten-Freigaben hätte damit
+  fremdes Python mit ihren Rechten ausgeführt. Der Rückfall gilt jetzt nur
+  noch für einen nackten Testbinär.
+- **Der Testhelfer maskiert Steuerzeichen.** Ein Dateiname mit Tabulator ließ
+  die erzeugte Swift-Datei nicht mehr übersetzen („unprintable ASCII
+  character") — genau solche Namen gehören aber in die Testfälle.
+
 ## 0.27.4 — 2026-09-03
 
 Aus der CodeQA-Kampagne, Bereich Release und Appcast.
