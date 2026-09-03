@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.28.1 — 2026-09-03
+
+Aus der CodeQA-Kampagne, Haupt-App.
+
+- **Absturz beim Entfernen vieler Treffer.** `applyHitsToTable` verkleinert
+  die Trefferliste, BEVOR `reloadData()` läuft — dazwischen sortiert und
+  deselektiert es noch, und NSTableView hält solange die alte Zeilenzahl.
+  Fragte AppKit in diesem Moment eine Zelle jenseits des Endes an, endete die
+  App mit „Index out of range". Die Schnellsuche hatte diese Prüfung an
+  derselben Stelle immer.
+- **Absturz der offenen Vorschau nach ⌫ oder ⌘⌫.** Das Quick-Look-Panel fragt
+  seinen alten Index auch dann noch ab, wenn die Liste inzwischen kürzer ist.
+- **Kein Neusortieren bei jedem Nachschub.** Der Flush läuft alle 0,15 s und
+  sortierte jedes Mal die ganze Liste neu; der Aufwand wuchs über den Lauf
+  hinweg quadratisch. Frischer Nachschub wird jetzt eingemischt. Gemessen über
+  einen ganzen Lauf mit 50 000 Treffern in Blöcken von 500 und dem echten
+  Namensvergleicher: 1,02 s vorher, 0,62 s jetzt, Ergebnis identisch.
+- **Doppelklick in den leeren Bereich öffnet die markierte Datei.** Vorher
+  blieb der gemerkte Rechtsklick stehen: Zeile 2 markiert, auf Zeile 7
+  rechtsgeklickt, das Menü mit ⎋ geschlossen, dann unter die letzte Zeile
+  doppelgeklickt — geöffnet wurde Datei 7. Das Rechtsklick-Menü behält seinen
+  Klickort und geht dafür jetzt einen eigenen Weg.
+
 ## 0.28.0 — 2026-09-03
 
 Aus der CodeQA-Kampagne, gemeinsame Swift-Schicht.

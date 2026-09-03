@@ -962,7 +962,12 @@ final class MainController: NSObject, NSApplicationDelegate,
     }
     func previewPanel(_ panel: QLPreviewPanel!,
                       previewItemAt index: Int) -> QLPreviewItem! {
-        previewURLs[index] as NSURL
+        // Das Panel fragt seinen ALTEN Index auch dann noch ab, wenn die
+        // Liste inzwischen kürzer ist: ⌫ oder ⌘⌫ auf der Auswahl kürzt
+        // previewURLs und ruft danach reloadData(). Ohne diese Prüfung
+        // griff der Zugriff ins Leere und beendete die App.
+        guard index >= 0, index < previewURLs.count else { return nil }
+        return previewURLs[index] as NSURL
     }
 
     /// Tasten, die beim Vorschaufenster landen.
@@ -1840,8 +1845,9 @@ final class MainController: NSObject, NSApplicationDelegate,
     /// keine Auswahl-Benachrichtigung aus, sonst flackerte die Vorschau bei
     /// jedem Nachschub; am Ende wird sie nur nachgeladen, wenn sie jetzt
     /// andere Dateien meint.
-    func applyHitsToTable(keepingSelection selectedPaths: Set<String>) {
-        sortHits()
+    func applyHitsToTable(keepingSelection selectedPaths: Set<String>,
+                          resort: Bool = true) {
+        if resort { sortHits() }
         isRestoringSelection = true
         tableView.deselectAll(nil)
         tableView.reloadData()
@@ -1874,9 +1880,15 @@ final class MainController: NSObject, NSApplicationDelegate,
         // Lauf wird diese Methode viele Male aufgerufen, und jedes Mal die
         // ganze Liste durchzurechnen kostete quadratisch.
         for hit in pending { statistics.add(hit) }
-        hits.append(contentsOf: pending)
+        if let comparator = hitComparator() {
+            mergeSortedHits(pending, using: comparator)
+        } else {
+            hits.append(contentsOf: pending)
+        }
         pending = []
-        applyHitsToTable(keepingSelection: selectedPaths)
+        // `resort: false`: Die Liste ist gerade schon in der richtigen
+        // Ordnung — entweder eingemischt oder unsortiert angehängt.
+        applyHitsToTable(keepingSelection: selectedPaths, resort: false)
         refreshStatus()
     }
 
@@ -1914,7 +1926,14 @@ final class MainController: NSObject, NSApplicationDelegate,
     func tableView(_ tableView: NSTableView,
                    viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
-        guard let column = tableColumn else { return nil }
+        // `row < hits.count` ist Pflicht, nicht Vorsicht: applyHitsToTable
+        // verkleinert `hits` VOR dem reloadData(), und dazwischen laufen
+        // noch sortHits() und deselectAll(nil) — NSTableView hält solange
+        // die alte Zeilenzahl. Fragt AppKit in diesem Fenster dann eine
+        // Zelle für eine Zeile jenseits des Endes an, beendete sich die App
+        // mit „Index out of range". Die Schnellsuche hatte die Prüfung an
+        // dieser Stelle immer, die Haupt-App nicht.
+        guard let column = tableColumn, row < hits.count else { return nil }
         var cell = tableView.makeView(withIdentifier: column.identifier,
                                       owner: nil) as? NSTableCellView
         if cell == nil {
@@ -1967,11 +1986,49 @@ final class MainController: NSObject, NSApplicationDelegate,
 
     /// Sortiert `hits` nach dem aktiven Sortierkriterium (oder lässt die
     /// Einfüge-Reihenfolge, wenn keins gesetzt ist).
-    func sortHits() {
+    /// Der aktive Vergleicher der Trefferliste — oder nil, wenn der Nutzer
+    /// keine Spalte zum Sortieren gewählt hat.
+    func hitComparator() -> ((Hit, Hit) -> Bool)? {
         guard let descriptor = tableView.sortDescriptors.first,
-              let key = descriptor.key else { return }
+              let key = descriptor.key else { return nil }
         let ascending = descriptor.ascending
-        hits.sort { compareHits($0, $1, key: key, ascending: ascending) }
+        return { compareHits($0, $1, key: key, ascending: ascending) }
+    }
+
+    func sortHits() {
+        guard let comparator = hitComparator() else { return }
+        hits.sort(by: comparator)
+    }
+
+    /// Fügt frische Treffer in die BEREITS sortierte Liste ein.
+    ///
+    /// Vorher sortierte jeder Nachschub die ganze Liste neu — der Flush
+    /// läuft alle 0,15 s, also bis zu siebenmal pro Sekunde. Der Aufwand
+    /// wuchs damit über den Lauf hinweg quadratisch: Bei 100 000 Treffern
+    /// kostete ein einzelner Sortierlauf 1,2 s auf dem Main-Thread (vor
+    /// dem Typ-Zwischenspeicher sogar 46,6 s), und das siebenmal je
+    /// Sekunde. Einsortieren ist dagegen linear: Der Nachschub wird
+    /// einmal sortiert und dann zusammengeführt.
+    func mergeSortedHits(_ fresh: [Hit],
+                         using comparator: (Hit, Hit) -> Bool) {
+        var frisch = fresh
+        frisch.sort(by: comparator)
+        var zusammen: [Hit] = []
+        zusammen.reserveCapacity(hits.count + frisch.count)
+        var links = hits.startIndex
+        var rechts = frisch.startIndex
+        while links < hits.endIndex && rechts < frisch.endIndex {
+            if comparator(frisch[rechts], hits[links]) {
+                zusammen.append(frisch[rechts])
+                rechts += 1
+            } else {
+                zusammen.append(hits[links])
+                links += 1
+            }
+        }
+        zusammen.append(contentsOf: hits[links...])
+        zusammen.append(contentsOf: frisch[rechts...])
+        hits = zusammen
     }
 
     /// Drag & Drop: die gezogene Zeile liefert eine Datei-URL —
@@ -2003,11 +2060,18 @@ final class MainController: NSObject, NSApplicationDelegate,
         } ?? issue.summary
     }
 
+    /// Der Doppelklick-Weg. Hier gilt, worauf geklickt wurde — und wenn
+    /// das NICHTS war, die Auswahl.
+    ///
+    /// `clickedRow` ist -1 bei einem Doppelklick unter der letzten Zeile.
+    /// Vorher blieb dann der `contextRow` eines früheren Rechtsklicks
+    /// stehen und bestimmte die Aktion: Wer Zeile 2 markiert, auf Zeile 7
+    /// rechtsklickt, das Menü mit ⎋ schließt und dann in den leeren Bereich
+    /// doppelklickt, öffnete Datei 7. Dieselbe Regel wie im Hauptmenü
+    /// (`rows(for:)`): Ohne Klickort gilt die Auswahl.
     @objc func openSelected() {
-        if tableView.clickedRow >= 0 { contextRow = tableView.clickedRow }
-        let selection = actionSelection()
-        selection.urls.forEach { NSWorkspace.shared.open($0) }
-        showActionIssue(selection)
+        contextRow = tableView.clickedRow
+        openActionRows()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -2046,7 +2110,16 @@ final class MainController: NSObject, NSApplicationDelegate,
                 moveToTrash: #selector(trashSelected(_:))))
     }
 
-    @objc func ctxOpen() { openSelected() }
+    /// Aus dem Rechtsklick-Menü: Dort hat `menuNeedsUpdate` den `contextRow`
+    /// gesetzt, und der gilt — deshalb NICHT über `openSelected`, das ihn
+    /// für den Doppelklick-Weg neu bestimmt.
+    @objc func ctxOpen() { openActionRows() }
+
+    private func openActionRows() {
+        let selection = actionSelection()
+        selection.urls.forEach { NSWorkspace.shared.open($0) }
+        showActionIssue(selection)
+    }
 
     @objc func ctxOpenWith(_ sender: NSMenuItem) {
         guard let appURL = sender.representedObject as? URL else { return }

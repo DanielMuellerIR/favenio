@@ -939,6 +939,63 @@ class ParsePixelLimitBehaviourTest(unittest.TestCase):
         self.assertEqual(self.gelesen["10.500"], "10500")
 
 
+class MainAppResultListTest(unittest.TestCase):
+    """Drei Stellen der Trefferliste, an denen die Haupt-App entweder
+    abstuerzte, einfror oder die falsche Datei traf."""
+
+    def test_the_cell_builder_never_reads_past_the_end(self):
+        # applyHitsToTable verkleinert `hits` VOR dem reloadData(), und
+        # dazwischen laufen noch sortHits() und deselectAll(nil) —
+        # NSTableView haelt solange die alte Zeilenzahl. Fragt AppKit dann
+        # eine Zelle jenseits des Endes an, endet die App mit
+        # "Index out of range". Die Schnellsuche hatte die Pruefung immer.
+        for label, source in (("GUI", GUI), ("Quick", QUICK)):
+            body = swift_function(
+                source, "                   viewFor tableColumn:")
+            self.assertIn("row < hits.count else { return nil }", body,
+                          label)
+
+    def test_the_preview_panel_never_reads_past_the_end(self):
+        # Das Panel fragt seinen ALTEN Index auch dann noch ab, wenn die
+        # Liste inzwischen kuerzer ist: ⌫ oder ⌘⌫ kuerzt previewURLs und
+        # ruft danach reloadData().
+        body = swift_function(GUI, "    func previewPanel(_ panel: "
+                                   "QLPreviewPanel!,\n"
+                                   "                      previewItemAt")
+        self.assertIn("index < previewURLs.count", body)
+
+    def test_fresh_hits_are_merged_instead_of_resorting_everything(self):
+        """Jeder Nachschub sortierte die GANZE Liste neu — der Flush laeuft
+        alle 0,15 s. Gemessen ueber einen ganzen Lauf mit 50 000 Treffern
+        in Bloecken von 500 und dem echten Namensvergleicher: 1,02 s beim
+        Neusortieren, 0,62 s beim Einmischen, Ergebnis identisch."""
+        flush = swift_function(GUI, "func flushPending()")
+        self.assertIn("mergeSortedHits(pending, using: comparator)", flush)
+        self.assertIn("resort: false", flush)
+        # Der volle Sortierlauf bleibt fuer Spaltenwechsel und Entfernen.
+        self.assertIn("if resort { sortHits() }",
+                      swift_function(GUI, "func applyHitsToTable("))
+        merge = swift_function(GUI, "func mergeSortedHits(")
+        # Linear zusammenfuehren, nicht wieder sortieren.
+        self.assertNotIn("hits.sort", merge)
+        self.assertIn("while links < hits.endIndex", merge)
+
+    def test_a_double_click_on_nothing_uses_the_selection(self):
+        """`clickedRow` ist -1 bei einem Doppelklick unter der letzten
+        Zeile. Vorher blieb der contextRow eines frueheren Rechtsklicks
+        stehen: Zeile 2 markiert, auf Zeile 7 rechtsgeklickt, Menue mit ⎋
+        geschlossen, dann in den leeren Bereich doppelgeklickt — geoeffnet
+        wurde Datei 7."""
+        body = swift_function(GUI, "@objc func openSelected()")
+        self.assertIn("contextRow = tableView.clickedRow", body)
+        self.assertNotIn("if tableView.clickedRow >= 0", body)
+        # Das Rechtsklick-Menue behaelt seinen contextRow und geht
+        # deshalb NICHT durch openSelected.
+        ctx = swift_function(GUI, "@objc func ctxOpen()")
+        self.assertNotIn("openSelected()", ctx)
+        self.assertIn("openActionRows()", ctx)
+
+
 class ParsedHitTypeTest(unittest.TestCase):
     """`isDirectory` kommt vom Kern und darf nicht erraten werden.
 

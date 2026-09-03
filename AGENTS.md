@@ -336,6 +336,21 @@ Entfernen zeigt dieselbe Nummer auf einen anderen Treffer. Die Zwischenschritte
 lösen keine Auswahl-Benachrichtigung aus; die Vorschau wird am Ende nur
 nachgeladen, wenn sie jetzt andere Dateien meint.
 
+Frischer Nachschub wird in die schon sortierte Liste EINGEMISCHT
+(`mergeSortedHits`), nicht durch ein Neusortieren der ganzen Liste
+eingeordnet: Der Flush läuft alle 0,15 s, der Aufwand wüchse also über den
+Lauf hinweg quadratisch. Gemessen am 2026-09-03 über einen ganzen Lauf mit
+50 000 Treffern in Blöcken von 500 und dem echten Namensvergleicher: 1,02 s
+beim Neusortieren, 0,62 s beim Einmischen, Ergebnis identisch. Der volle
+Sortierlauf bleibt für den Spaltenwechsel und fürs Entfernen — dafür trägt
+`applyHitsToTable` den Schalter `resort`.
+
+`tableView(_:viewFor:row:)` und `previewPanel(_:previewItemAt:)` prüfen ihren
+Index. Das ist Pflicht: `applyHitsToTable` verkleinert `hits` VOR dem
+`reloadData()`, und NSTableView hält solange die alte Zeilenzahl; das
+Quick-Look-Panel fragt nach einem Entfernen ebenfalls noch seinen alten
+Index ab. Beides beendete die App mit „Index out of range".
+
 Die Fußzeile zeigt Treffer, Datenmenge und Anzahl der Ordner, ab zwei
 markierten Zeilen auch die Auswahlgröße. Sie wird über `statusText()` aus dem
 Zustand formuliert; die Kennzahlen schreibt `flushPending()` fort, statt beim
