@@ -1060,7 +1060,12 @@ final class MainController: NSObject, NSApplicationDelegate,
             setSearchRoot(URL(fileURLWithPath: root))
         }
         // Suchoptionen der Schnellsuche übernehmen (Default: aus), damit die
-        // Weitersuche hier mit denselben Einstellungen läuft.
+        // Weitersuche hier mit denselben Einstellungen läuft. „Aus" ist bei
+        // regex, case und field kein Verlust: Die Schnellsuche hat diese
+        // Schalter nicht und sucht immer ohne sie; ein hier gesetzter Wert
+        // muss deshalb zurückgesetzt werden, sonst passen die übergebenen
+        // Treffer nicht zur fortgesetzten Suche. Neue Quick-Versionen
+        // schicken regex=0 und case=0 ausdrücklich mit.
         // Alte Quick-Versionen schicken nur content=0/1, neue den Modus.
         let mode = SearchTextMode(rawValue: value("mode") ?? "")
             ?? (value("content") == "1" ? .content : .name)

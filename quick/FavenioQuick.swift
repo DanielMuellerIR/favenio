@@ -163,10 +163,31 @@ final class QuickController: NSObject, NSApplicationDelegate,
         // Leertaste in der Trefferliste zeigt die QuickLook-Vorschau.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [weak self] event in
-            guard let self else { return event }
-            if event.keyCode == 53, self.field.stringValue.isEmpty {  // Escape
-                NSApp.terminate(nil)
-                return nil
+            // Das Ereignis muss aus dem SUCHFENSTER kommen, und das muss das
+            // Tastaturfenster sein. Ein lokaler Monitor feuert auch, während
+            // ein NSAlert in runModal() läuft: Beim allerersten Start
+            // beendete ⎋ im Hinweis zur Finder-Freigabe die ganze App, statt
+            // den Dialog zu schließen (Review-Fund 2026-09-03). Dieselbe
+            // Wache wie im Tastaturmonitor der Haupt-App.
+            guard let self,
+                  event.window === self.window,
+                  self.window.isKeyWindow
+            else { return event }
+            if event.keyCode == 53 {                       // 53 = Escape
+                // Die Vorschau ist nicht das Tastaturfenster (siehe
+                // togglePreview) und kann sich deshalb nicht selbst
+                // schließen: ⎋ schließt zuerst sie, erst ein leeres Suchfeld
+                // beendet die App.
+                if QLPreviewPanel.sharedPreviewPanelExists(),
+                   QLPreviewPanel.shared().isVisible {
+                    QLPreviewPanel.shared().orderOut(nil)
+                    return nil
+                }
+                if self.field.stringValue.isEmpty {
+                    NSApp.terminate(nil)
+                    return nil
+                }
+                return event
             }
             if event.keyCode == 36,                        // 36 = Return
                event.modifierFlags.contains(.command),
@@ -1044,6 +1065,15 @@ final class QuickController: NSObject, NSApplicationDelegate,
                          value: hiddenCheckbox.state == .on ? "1" : "0"),
             URLQueryItem(name: "exact",
                          value: exactCheckbox.state == .on ? "1" : "0"),
+            // Die Schnellsuche hat keine Schalter für Regex und
+            // Groß/Kleinschreibung und sucht immer ohne beide
+            // (startSearch: regex: false, caseSensitive: false). Die
+            // Haupt-App muss sie beim Fortsetzen deshalb AUSSCHALTEN, sonst
+            // passen die übergebenen Treffer nicht zur weiteren Suche.
+            // Ausdrücklich mitschicken statt es dem Leser als „fehlt" zu
+            // überlassen — so steht der Vertrag in der URL selbst.
+            URLQueryItem(name: "regex", value: "0"),
+            URLQueryItem(name: "case", value: "0"),
             URLQueryItem(name: "only", value: selectedOnly),
             URLQueryItem(name: "continue", value: "1"),
         ]
@@ -1192,7 +1222,20 @@ final class QuickController: NSObject, NSApplicationDelegate,
             return
         }
         showActionIssue(selection)
-        panel.makeKeyAndOrderFront(nil)
+        // Das Panel wird NUR nach vorn geholt, nicht zum Tastaturfenster
+        // gemacht — sonst gehen Pfeil hoch/runter dorthin, und die Vorschau
+        // lässt sich nicht durch die Trefferliste blättern. Derselbe Weg wie
+        // in der Haupt-App (dort am 2026-09-02 am Fenster geprüft; ein
+        // nachträgliches Zurückholen des Fokus verliert das Rennen). Ohne
+        // Wechsel des Tastaturfensters kommt `beginPreviewPanelControl`
+        // nicht über die Responder-Kette, deshalb die Datenquelle hier
+        // ausdrücklich setzen — sonst bliebe das Panel leer.
+        panel.dataSource = self
+        panel.delegate = self
+        panel.orderFront(nil)
+        panel.reloadData()
+        // Der Fokus gehört in die Tabelle — von dort blättern die Pfeiltasten.
+        window.makeFirstResponder(tableView)
     }
 
     @discardableResult
@@ -1216,7 +1259,31 @@ final class QuickController: NSObject, NSApplicationDelegate,
     }
     func previewPanel(_ panel: QLPreviewPanel!,
                       previewItemAt index: Int) -> QLPreviewItem! {
-        previewURLs[index] as NSURL
+        // Das Panel fragt seinen ALTEN Index auch dann noch ab, wenn die
+        // Liste inzwischen kürzer ist (Auswahl verkleinert, Tippen leert die
+        // Treffer). Ohne diese Prüfung beendete der Zugriff die App.
+        guard index >= 0, index < previewURLs.count else { return nil }
+        return previewURLs[index] as NSURL
+    }
+
+    /// Tasten, die beim Vorschaufenster landen, falls es doch Tastaturfenster
+    /// wird (in der Haupt-App am 2026-09-02 nach der Leertaste beobachtet):
+    /// Pfeil hoch/runter blättern die Trefferliste, ⎋ schließt — wie im
+    /// Finder. Den anderen Fall (Suchfenster ist Tastaturfenster) deckt der
+    /// Monitor in applicationDidFinishLaunching ab.
+    func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!)
+        -> Bool {
+        guard event.type == .keyDown else { return false }
+        switch event.keyCode {
+        case 125, 126:                                   // ↓ ↑
+            tableView.keyDown(with: event)
+            return true
+        case 53:                                         // ⎋
+            panel.orderOut(nil)
+            return true
+        default:
+            return false
+        }
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {

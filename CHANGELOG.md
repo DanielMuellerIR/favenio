@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.28.2 — 2026-09-03
+
+Aus der CodeQA-Kampagne, Schnellsuche.
+
+- **⎋ im Freigabedialog beendete die ganze Schnellsuche.** Der
+  Tastaturmonitor prüfte nur, ob das Suchfeld leer ist, nicht, aus welchem
+  Fenster die Taste kommt — und ein lokaler Monitor feuert auch, während ein
+  Hinweisdialog läuft. Beim allerersten Start schloss ⎋ den Hinweis zur
+  Finder-Freigabe also nicht, sondern die App. Jetzt gilt dieselbe Wache wie
+  in der Haupt-App: Die Taste muss aus dem Suchfenster kommen, und das muss
+  das Tastaturfenster sein.
+- **Pfeiltasten blättern die Vorschau durch die Trefferliste.** Die
+  Leertaste machte das Quick-Look-Panel zum Tastaturfenster, die Pfeiltasten
+  gingen dorthin. Der Fix der Haupt-App vom 2026-09-02 gilt jetzt auch hier:
+  Das Panel wird nur nach vorn geholt, ↑/↓ und ⎋ leitet es weiter. ⎋
+  schließt zuerst die Vorschau; erst ein leeres Suchfeld beendet die App.
+- **Übergabe nennt Regex und Groß/klein ausdrücklich.** Die Schnellsuche
+  hat beide Schalter nicht und sucht immer ohne sie; die Haupt-App schaltet
+  sie beim Fortsetzen aus, damit die übergebenen Treffer zur weiteren Suche
+  passen. Das stand bisher nur als fehlender Wert in der URL.
+
 ## 0.28.1 — 2026-09-03
 
 Aus der CodeQA-Kampagne, Haupt-App.

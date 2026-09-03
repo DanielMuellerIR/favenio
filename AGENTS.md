@@ -356,9 +356,18 @@ markierten Zeilen auch die Auswahlgröße. Sie wird über `statusText()` aus dem
 Zustand formuliert; die Kennzahlen schreibt `flushPending()` fort, statt beim
 Streamen jedes Mal die ganze Liste neu aufzusummieren.
 
-Die Leertaste öffnet Quick Look und gibt den Tastaturfokus sofort ans
-Hauptfenster zurück. Ohne das gehen die Pfeiltasten an das Vorschaufenster, und
-die Vorschau lässt sich nicht durch die Trefferliste blättern.
+Die Leertaste öffnet Quick Look, ohne das Panel zum Tastaturfenster zu machen
+(`orderFront`, dann `makeFirstResponder(tableView)`) — in BEIDEN Apps.
+Sonst gehen die Pfeiltasten an das Vorschaufenster, und die Vorschau lässt
+sich nicht durch die Trefferliste blättern. Den Fokus NACH
+`makeKeyAndOrderFront` zurückzuholen ist der verworfene Weg: Das ist ein
+Rennen und verlor am 2026-09-02 am laufenden Fenster. Wird das Panel doch
+Tastaturfenster, leitet `previewPanel(_:handle:)` ↑/↓ an die Tabelle weiter
+und schließt bei ⎋; ist das Hauptfenster Tastaturfenster, schließt der
+Tastaturmonitor die Vorschau bei ⎋. Der Monitor der Schnellsuche verlangt wie
+der der Haupt-App, dass das Ereignis aus dem eigenen Fenster kommt und dieses
+Tastaturfenster ist — ein lokaler Monitor feuert auch während `runModal()`,
+und ⎋ im Freigabedialog beendete sonst die ganze App.
 
 FavenioQuick ist ein `LSUIElement`-Panel. Es sucht im Hintergrund, zeigt den
 aktuellen Pfad und übergibt fertige Treffer an die Haupt-App. Primär wird das

@@ -229,22 +229,64 @@ class SwiftGuardTests(unittest.TestCase):
         den Fokus danach zurueckzuholen verlor das Rennen (2026-09-02 am
         Fenster geprueft). Ohne Wechsel des Tastaturfensters findet QuickLook
         seinen Controller nicht selbst — Datenquelle ausdruecklich setzen."""
-        toggle = swift_function(GUI, "@objc func togglePreview(")
-        self.assertNotIn("makeKeyAndOrderFront", toggle)
-        self.assertNotIn("DispatchQueue.main.async", toggle)
-        self.assertIn("panel.dataSource = self", toggle)
-        self.assertIn("panel.orderFront(nil)", toggle)
-        self.assertIn("window.makeFirstResponder(tableView)", toggle)
+        # Beide Apps, nicht nur die Haupt-App: Der Fix vom 2026-09-02 landete
+        # zuerst nur dort, die Schnellsuche machte das Panel weiter zum
+        # Tastaturfenster (Review-Fund 2026-09-03).
+        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
+            with self.subTest(app=name):
+                toggle = swift_function(source, "@objc func togglePreview(")
+                self.assertNotIn("makeKeyAndOrderFront", toggle)
+                self.assertNotIn("DispatchQueue.main.async", toggle)
+                self.assertIn("panel.dataSource = self", toggle)
+                self.assertIn("panel.orderFront(nil)", toggle)
+                self.assertIn("window.makeFirstResponder(tableView)", toggle)
+                # Und wird das Panel doch Tastaturfenster (am 2026-09-02 am
+                # Fenster gemessen: nach der Leertaste war es das), leitet
+                # der Delegate wie der Finder Pfeil hoch/runter an die
+                # Tabelle weiter und ⎋ schliesst.
+                handler = swift_function(
+                    source,
+                    "func previewPanel(_ panel: QLPreviewPanel!, handle event:")
+                self.assertIn("tableView.keyDown(with: event)", handler)
+                self.assertIn("panel.orderOut(nil)", handler)
+                # Das Panel fragt nach einer kuerzeren Liste noch seinen
+                # alten Index ab; ohne Pruefung beendete das die App.
+                item = swift_function(
+                    source,
+                    "func previewPanel(_ panel: QLPreviewPanel!,\n"
+                    "                      previewItemAt index: Int)")
+                self.assertIn("index < previewURLs.count", item)
         # ⎋ schliesst die Vorschau vom Hauptfenster aus, weil das Panel sich
         # als Nicht-Tastaturfenster nicht mehr selbst schliessen kann.
         self.assertIn("case 53 where modifiers.isEmpty", GUI)
-        # Und wird das Panel doch Tastaturfenster (am 2026-09-02 am Fenster
-        # gemessen: nach der Leertaste war es das), leitet der Delegate wie
-        # der Finder Pfeil hoch/runter an die Tabelle weiter und ⎋ schliesst.
-        handler = swift_function(
-            GUI, "func previewPanel(_ panel: QLPreviewPanel!, handle event:")
-        self.assertIn("tableView.keyDown(with: event)", handler)
-        self.assertIn("panel.orderOut(nil)", handler)
+        launch = swift_function(QUICK, "func applicationDidFinishLaunching(")
+        self.assertIn("QLPreviewPanel.shared().orderOut(nil)", launch)
+
+    def test_quick_key_monitor_only_acts_on_its_own_key_window(self):
+        """Ein lokaler Monitor feuert auch waehrend runModal(): Beim
+        allerersten Start beendete ⎋ im Hinweis zur Finder-Freigabe die
+        ganze Schnellsuche, statt den Dialog zu schliessen. Dieselbe Wache
+        wie in der Haupt-App: Ereignis aus dem eigenen Fenster, und das ist
+        Tastaturfenster."""
+        launch = swift_function(QUICK, "func applicationDidFinishLaunching(")
+        monitor = launch[launch.index("addLocalMonitorForEvents"):]
+        guard = monitor[:monitor.index("event.keyCode == 53")]
+        self.assertIn("event.window === self.window", guard)
+        self.assertIn("self.window.isKeyWindow", guard)
+        self.assertIn("NSApp.terminate(nil)", monitor)
+
+    def test_quick_handoff_states_regex_and_case_explicitly(self):
+        """Die Schnellsuche sucht immer ohne Regex und ohne Gross/klein; die
+        Haupt-App liest beide Werte und schaltet sie beim Fortsetzen aus.
+        Der Vertrag steht in der URL selbst, statt als fehlender Wert vom
+        Leser erraten zu werden."""
+        handoff = swift_function(QUICK, "func openMainApp(")
+        self.assertIn('URLQueryItem(name: "regex", value: "0")', handoff)
+        self.assertIn('URLQueryItem(name: "case", value: "0")', handoff)
+        start = swift_function(QUICK, "func startSearch()")
+        self.assertIn("regex: false, caseSensitive: false", start)
+        self.assertIn('regexCheckbox.state = value("regex") == "1"', GUI)
+        self.assertIn('caseCheckbox.state = value("case") == "1"', GUI)
 
     def test_path_export_is_offered_in_the_form_pipes_really_need(self):
         """Ein Dateiname darf unter macOS jedes Zeichen ausser / und NUL

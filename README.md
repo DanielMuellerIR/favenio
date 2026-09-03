@@ -329,7 +329,7 @@ the header of a Finder window while holding **Cmd**.
   long source paths
 - Quick search shows up to 20 hits. **All in Favenio** (or **Cmd-Return**) hands
   them to the main app, which continues the same search without duplicates
-- **Esc** (with an empty field) quits the quick search
+- **Esc** closes an open preview; with an empty field it quits the quick search
 
 The search scope is never guessed silently. While the Finder is being asked,
 the menu says so and a search waits briefly instead of starting somewhere else.

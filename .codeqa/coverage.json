@@ -1,14 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project": "favenio",
   "campaign": {
-    "id": "20260819T200733133097+0200",
-    "token_budget": 2000000,
-    "status": "complete",
-    "started_at": "2026-08-19T20:07:33+02:00",
-    "tokens_spent": 82408,
-    "finished_at": "2026-08-19T20:19:18+02:00",
-    "finish_reason": "all-current"
+    "id": "20260903T100457590492+0200",
+    "token_budget": 4000000,
+    "status": "active",
+    "started_at": "2026-09-03T10:04:57+02:00",
+    "tokens_spent": 1465000
   },
   "campaign_history": [
     {
@@ -27,6 +25,15 @@
       "started_at": "2026-08-19T17:35:04+02:00",
       "tokens_spent": 451000,
       "finished_at": "2026-08-19T18:25:03+02:00",
+      "finish_reason": "all-current"
+    },
+    {
+      "id": "20260819T200733133097+0200",
+      "token_budget": 2000000,
+      "status": "complete",
+      "started_at": "2026-08-19T20:07:33+02:00",
+      "tokens_spent": 82408,
+      "finished_at": "2026-08-19T20:19:18+02:00",
       "finish_reason": "all-current"
     }
   ],
@@ -77,16 +84,16 @@
       "reason": "Schreibt nach /Applications; Identitätsprüfung, atomarer Austausch und Rollback schützen Nutzerdaten",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260819T173504680851+0200",
-        "completed_at": "2026-08-19T18:17:40+02:00",
-        "observed_head": "79698706476cf768e3fc4ab715be17e1b564728e",
-        "content_sha256": "676e55c9329e176a2209df117a0e004fd6dcc98a8094fe26f8596a9538d6bab6",
+        "campaign_id": "20260903T100457590492+0200",
+        "completed_at": "2026-09-03T17:04:42+02:00",
+        "observed_head": "157021a48729fdf917f783849cf85ef36dde4576",
+        "content_sha256": "6594591e0b05ed8793f57e5e802dfdb9586e012017c4b16930ec18122dc1cf84",
         "file_count": 3,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Nachbuchung: Das Delta seit dem Abschluss dieses Bereichs sind ausschliesslich die in dieser Kampagne selbst geschriebenen und verifizierten Wachen in tests/test_build_safety.py (Release-Mountpoint, Sparkle-Schluessel in notarize-lib.sh). install.sh und notarize-lib.sh sind unveraendert.",
+        "summary": "Nachbuchung: release.sh-Wachen und repo-relative Lesezugriffe in tests/test_build_safety.py; Delta ist genau der im Bereich release-appcast verifizierte Diff.",
         "tests": [
-          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: je 346 passed"
         ]
       }
     },
@@ -101,19 +108,16 @@
       "reason": "Einzige Suchsemantik; Traversierung, Archive, Extraktion und JSONL-Vertrag",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260819T200733133097+0200",
-        "completed_at": "2026-08-19T20:16:20+02:00",
-        "observed_head": "9230be4016c7ce01acfb1edc63b8792f3f292ca2",
-        "content_sha256": "9aa6879ebd0cd3dc5cdd9e3625b9c8935980564d520495b223d9dba7bf912c20",
+        "campaign_id": "20260903T100457590492+0200",
+        "completed_at": "2026-09-03T15:06:54+02:00",
+        "observed_head": "ca473cbc40bea73f0681667d42e9ba902afebe0e",
+        "content_sha256": "c3364cec888331f4abf9880f9f63f70e1f52774dd8f35de468de87978958b3cd",
         "file_count": 2,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta war die 0.23.0-Regel 'nicht hineinschauen heisst nicht auslassen'. Die Grenzpruefung zeigte, dass sie nur eine Ebene tief galt: In visit_member() entschied weiter der Grund ueber das Ergebnis — ein .7z-Eintrag ohne bsdtar wurde durchsucht, ein .zip-Eintrag an der aufgebrauchten --archive-depth uebersprungen. Empirisch belegt an outer.zip mit inner.zip und fake.7z ohne bsdtar im PATH. visit_member() behandelt den Fall jetzt wie visit_file(); Version 0.24.0.",
+        "summary": "Nachbuchung des Querschnitts-Funds incomplete-run-invisible: main() beendet einen unerwarteten Abbruch mit Exit 2 statt mit 1, erwartete Lesefehler einzelner Objekte bleiben Warnungen. Delta ist genau der dort verifizierte Diff.",
         "tests": [
-          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 220 passed",
-          "Gegenprobe: auf dem Vorzustand des Kerns sind der neue Test und die drei angepassten Tiefentests rot",
-          "./build-app.sh: beide Bundles 0.24.0 gebaut, beide Headless-Selbsttests bestanden",
-          "--extract auf dem neuen Behaeltertreffer outer.zip!/inner.zip: Exit 0, Datei materialisiert"
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: je 323 passed"
         ]
       }
     },
@@ -131,19 +135,19 @@
       "reason": "Öffentliche Lieferkette, Signatur-, Notarisierungs- und Update-Feed-Tore",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260819T173504680851+0200",
-        "completed_at": "2026-08-19T17:53:50+02:00",
-        "observed_head": "4e8726806fb90b530d908d614ca17a850ab40320",
-        "content_sha256": "c57dfc31d61811df9cfa5b9d5315c3db80387dcdb8c099cb19ecfd9e44fee8ad",
+        "campaign_id": "20260903T100457590492+0200",
+        "completed_at": "2026-09-03T17:04:42+02:00",
+        "observed_head": "157021a48729fdf917f783849cf85ef36dde4576",
+        "content_sha256": "8bd4055c81a9eebe750384a2e0a174ab42d247ed099a01ffcac2f82ecb19c02f",
         "file_count": 5,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Regression aus dem Delta gefunden und behoben: release.sh haengte das Arbeits-Image unter einen eigenen Mountpoint, das Finder-Layout spricht die Platte aber ueber ihren Volume-Namen an — der Finder fuehrt sie dort unter dem Ordnernamen des Mountpoints, sodass der Standardlauf in Schritt 3 abbrach (mit Wegwerf-Image verifiziert, AppleScript -1700). Mountpoint zurueck nach /Volumes, die Absicherungen gegen fremde Volumes und fremde Attaches bleiben; Test haelt beide Zeilen zusammen.",
+        "summary": "release.sh raeumt bei SIGTERM auf (fester Mountpoint /Volumes/Favenio blockierte sonst jeden weiteren Lauf); die Bundle-Pruefung im DMG nutzt dieselbe Funktion wie install.sh und prueft damit auch spctl, das die fruehere Kopie auslies; das Appcast-Tor laesst kein mktemp-Verzeichnis mehr liegen (gemessen drei Reste je Lauf, jetzt keiner); die Testmodule lesen repo-relativ und laufen aus jedem Arbeitsverzeichnis; eine Wache prueft jetzt den Wert von MAX_IMAGE_EDGE statt nur ihren Namen im Quelltext.",
         "tests": [
-          "python3 3.14.5 -m unittest discover -s tests: 209 passed",
-          "/usr/bin/python3 3.9.6 -m unittest discover -s tests: 209 passed",
-          "zsh -n release.sh: Syntax OK",
-          "Wegwerf-Image: disk-Zugriff ueber Volume-Namen scheitert ausserhalb /Volumes (-1700), gelingt unter /Volumes"
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: je 346 passed",
+          "alle vier Testmodule aus /private/tmp: passed",
+          "./build-app.sh inkl. beider Headless-Selbsttests: passed",
+          "neue Temp-Wache gegen 70ae4bd: rot"
         ]
       }
     },
@@ -217,7 +221,7 @@
       "risk": "high",
       "priority": 2,
       "reason": "Finder-naher asynchroner Suchlauf, Bereichsauflösung und Übergabe an die Haupt-App",
-      "state": "completed",
+      "state": "in_progress",
       "last_run": {
         "campaign_id": "20260819T173504680851+0200",
         "completed_at": "2026-08-19T18:17:41+02:00",
@@ -231,6 +235,13 @@
           "./build-app.sh: beide Bundles gebaut, beide Headless-Selbsttests bestanden",
           "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
         ]
+      },
+      "active_run": {
+        "campaign_id": "20260903T100457590492+0200",
+        "started_at": "2026-09-03T18:01:58+02:00",
+        "required_review": "delta-plus-boundaries",
+        "status_at_start": "changed",
+        "covered_pending_paths": []
       }
     },
     {
@@ -243,17 +254,19 @@
       "reason": "Gemeinsame Prozess-, JSONL-, Materialisierungs-, Übergabe- und Finder/TCC-Grenze beider Apps",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260819T173504680851+0200",
-        "completed_at": "2026-08-19T18:17:41+02:00",
-        "observed_head": "79698706476cf768e3fc4ab715be17e1b564728e",
-        "content_sha256": "fabced61278fc264af572d1fda2b85cbf2a170eb44ffe6cdc8825a8b4cc7b814",
+        "campaign_id": "20260903T100457590492+0200",
+        "completed_at": "2026-09-03T17:19:24+02:00",
+        "observed_head": "fc9be12f057b9844f06b57010276ff8a96d866f3",
+        "content_sha256": "948d9728e33db67eea64b2915ab00a9f7ca3e7b4f004df799480c3789a9b521f",
         "file_count": 1,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Nachbuchung: Das Delta ist die im Querschnitts-Fund archive-directory-actions ergaenzte Auskunft Hit.hasOpenableFile — eine reine Ergaenzung ohne Aenderung an bestehendem Verhalten, durch den Headless-Selbsttest samt Gegenprobe belegt.",
+        "summary": "Typ-Sortierung ueber einen Zwischenspeicher je Endung: 46,6 s auf 1,2 s bei 100000 Treffern (swiftc -O gemessen), Ergebnisse identisch. CSV-Export entschaerft Formel-Praefixe (=+-@ und Tabulator). parseHit verwirft eine Zeile ohne isDirectory statt den Typ aus type zu raten. findCLI faellt nur noch fuer einen nackten Testbinaer auf das Arbeitsverzeichnis zurueck. Testhelfer maskiert Steuerzeichen.",
         "tests": [
-          "./build-app.sh: beide Headless-Selbsttests bestanden, inklusive der neuen Pruefung von hasOpenableFile gegen materializeHit",
-          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: je 354 passed",
+          "./build-app.sh inkl. beider Headless-Selbsttests: passed",
+          "Sortiermessung 100000 Treffer: 46,6 s ohne, 1,2 s mit Zwischenspeicher, Ergebnis gleich",
+          "neue Wachen gegen 157021a: rot"
         ]
       }
     },
@@ -267,29 +280,31 @@
       "reason": "Streaming-Suchlauf, Auswahlzustand und Dateiaktionen der Haupt-App",
       "state": "completed",
       "last_run": {
-        "campaign_id": "20260819T173504680851+0200",
-        "completed_at": "2026-08-19T18:17:41+02:00",
-        "observed_head": "79698706476cf768e3fc4ab715be17e1b564728e",
-        "content_sha256": "d15027a30fa92c45a6f8d83ca625cb5c0be4a56f82460593ffb51aafb6026b1a",
+        "campaign_id": "20260903T100457590492+0200",
+        "completed_at": "2026-09-03T17:25:52+02:00",
+        "observed_head": "699cbd0541ade5b6b0de1d1b04e2912642395c76",
+        "content_sha256": "11ab55075292d07e6e4dfa302e688e9ae7a4ce9975d1b0a91cac85f9d25a5ed5",
         "file_count": 1,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Nachbuchung: Das Delta ist der Querschnitts-Fix am Kontextmenue und die Erweiterung des Headless-Selbsttests um die Pruefung von hasOpenableFile gegen materializeHit (mit Gegenprobe).",
+        "summary": "Zwei Absturzstellen abgesichert (Zellenaufbau und Vorschau-Panel lasen ueber das Ende der verkleinerten Liste hinaus); frischer Nachschub wird eingemischt statt die ganze Liste je Flush neu zu sortieren (1,02 s auf 0,62 s ueber einen ganzen Lauf gemessen, Ergebnis identisch); ein Doppelklick in den leeren Bereich nutzt wieder die Auswahl statt des gemerkten Rechtsklicks.",
         "tests": [
-          "./build-app.sh: beide Headless-Selbsttests bestanden; Gegenprobe mit falschem hasOpenableFile bricht den Selbsttest ab",
-          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: je 358 passed",
+          "./build-app.sh inkl. beider Headless-Selbsttests: passed",
+          "Merge-Messung 50000 Treffer, echter Namensvergleicher: 1,02 s auf 0,62 s, Ergebnis gleich",
+          "vier neue Wachen gegen fc9be12: rot"
         ]
       }
     }
   ],
   "architecture": {
-    "campaign_id": "20260815T134538404716+0200",
-    "recorded_at": "2026-08-15T13:45:47+02:00",
-    "observed_head": "c9b8f41e886cedddf4cf97eab6da82349d891273",
-    "summary": "favenio.py besitzt die gesamte Suchsemantik; FavenioCore übersetzt Prozess und JSONL; Haupt-App und Schnellsuche bleiben AppKit-Adapter; Build und Release bilden eine getrennte Sicherheitsgrenze",
-    "paradigm": "Schichtenmodell mit einem gemeinsamen Suchkern und dünnen AppKit-Adaptern",
+    "campaign_id": "20260903T100457590492+0200",
+    "recorded_at": "2026-09-03T10:05:28+02:00",
+    "observed_head": "ac04c9738c5a9b3b1aa7e2c01ba41bd37a71a42a",
+    "summary": "Die Trennung haelt: favenio.py besitzt die gesamte Suchsemantik, die Swift-Apps bauen keine nach — im Review gezielt geprueft, es gibt in den Frontends keine Endungslisten, keine Archiv-Erkennung, keine Glob-Regeln und keine Metadaten-Feldliste. Die Spannung liegt NICHT zwischen den Schichten, sondern innerhalb der Adapterschicht: rund 145 Zeilen stehen woertlich gleich in beiden Apps, statt in common/FavenioCore.swift.",
+    "paradigm": "Schichtenmodell mit einem gemeinsamen Suchkern und duennen AppKit-Adaptern",
     "fit": "passt",
-    "recommendation": "Architektur beibehalten; lokale Duplikation in den Frontends bereichsweise reduzieren und die Sicherheitsgrenzen der Lieferpipeline weiter durch Tests härten, kein Paradigmenwechsel"
+    "recommendation": "Kein Paradigmenwechsel noetig und keiner empfohlen. Stattdessen die Adapterschicht zusammenfuehren: Trefferlisten-Aktionen, QuickLook-Protokoll, Zellenaufbau und Finder-Generationswaechter nach common/. Beleg fuer die Kosten: der QuickLook-Fokusfix vom 2026-09-02 landete nur in der Haupt-App, die Schnellsuche hat weiterhin den alten Stand."
   },
   "themes": [
     {
@@ -361,6 +376,60 @@
           "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 213 passed"
         ]
       }
+    },
+    {
+      "id": "frontend-adapter-duplication",
+      "summary": "Rund 145 Zeilen stehen woertlich gleich in gui/FavenioGUI.swift und quick/FavenioQuick.swift, obwohl common/FavenioCore.swift genau dafuer da ist: Kontextmenue-Handler, QuickLook-Protokollmethoden, Zellenaufbau, Finder-Generationswaechter, actionRows/actionSelection. Die Kopien laufen bereits auseinander (Fokusfix nur in der Haupt-App, Bereichspruefung row<hits.count nur in der Schnellsuche, Segment-Klammerung nur in der Schnellsuche).",
+      "evidence": [
+        "gui/FavenioGUI.swift",
+        "quick/FavenioQuick.swift",
+        "common/FavenioCore.swift"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-09-03T10:05:28+02:00",
+      "campaign_id": "20260903T100457590492+0200"
+    },
+    {
+      "id": "incomplete-run-invisible",
+      "summary": "Ein abgebrochener oder unvollstaendiger Suchlauf ist fuer beide Apps von einem leeren Ergebnis nicht unterscheidbar. Python beendet sich bei jeder unbehandelten Ausnahme mit Status 1 — genau dem Status, den der Vertrag fuer 'keine Treffer' vergibt (searchExitIsError laesst 0 und 1 durch), und stderr haengt in beiden Apps an nullDevice, sodass Warnungen und der Grund eines Exit 2 nirgends ankommen. Braucht einen eigenen Status fuer 'Lauf unvollstaendig' im Kern plus Auswertung und Anzeige in beiden Frontends; beruehrt AGENTS, beide READMEs und die Tests.",
+      "evidence": [
+        "favenio.py",
+        "common/FavenioCore.swift",
+        "gui/FavenioGUI.swift",
+        "quick/FavenioQuick.swift",
+        "AGENTS.md"
+      ],
+      "priority": 1,
+      "state": "completed",
+      "noted_at": "2026-09-03T10:14:23+02:00",
+      "campaign_id": "20260903T100457590492+0200",
+      "started_at": "2026-09-03T14:38:42+02:00",
+      "completed": {
+        "campaign_id": "20260903T100457590492+0200",
+        "completed_at": "2026-09-03T15:06:41+02:00",
+        "observed_head": "ca473cbc40bea73f0681667d42e9ba902afebe0e",
+        "summary": "Kern beendet einen unerwarteten Abbruch mit Exit 2 statt mit 1; beide Apps lesen stderr des Kerns mit (SearchDiagnostics), zeigen den genannten Grund in der Fusszeile und nennen die Zahl uebersprungener Objekte. Drei belegte Fallen dabei: nebenlaeufiges Leeren der Pipe (sonst haelt eine volle stderr-Pipe den Kern an), Zaehlen beim Durchlaufen statt aus gedeckeltem Text, und Schliessen der Schreibseite vor dem Lesen.",
+        "tests": [
+          "python3 und /usr/bin/python3 -m unittest discover -s tests: je 323 passed",
+          "./build-app.sh inkl. beider Headless-Selbsttests: passed",
+          "erweiterter Selbsttest gegen 560ffb1: SELFTEST FEHLER (Exit 2 ohne Grund)",
+          "ohne nebenlaeufiges Leeren blockiert der Selbsttest (Zeitgrenze 150 s)"
+        ]
+      }
+    },
+    {
+      "id": "double-json-parse",
+      "summary": "Jede Trefferzeile geht zweimal durch JSONSerialization: parseProgress parst die ganze Zeile, verwirft sie am type-Feld, danach parst parseHit dieselben Bytes erneut. Gemessen 1,42 us je Parse, bei 100000 Treffern also 0,14 s reine Doppelarbeit — und in der Haupt-App auf dem Main-Thread, weil consume ueber DispatchQueue.main.async laeuft. Sauber waere EIN Parse und eine Verzweigung am type-Feld (parseSearchLine mit einem Enum); beruehrt common/FavenioCore.swift und beide Apps.",
+      "evidence": [
+        "common/FavenioCore.swift",
+        "gui/FavenioGUI.swift",
+        "quick/FavenioQuick.swift"
+      ],
+      "priority": 3,
+      "state": "pending",
+      "noted_at": "2026-09-03T17:23:22+02:00",
+      "campaign_id": "20260903T100457590492+0200"
     }
   ]
 }

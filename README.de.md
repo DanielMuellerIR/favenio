@@ -342,7 +342,7 @@ gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
 - Die Schnellsuche zeigt bis zu 20 Treffer. **Alle in Favenio** oder
   **Cmd-Return** übergibt sie an die Haupt-App, die dieselbe Suche ohne
   Duplikate fortsetzt
-- **Esc** (bei leerem Feld) beendet die Schnellsuche
+- **Esc** schließt eine offene Vorschau; bei leerem Feld beendet es die Schnellsuche
 
 Der Suchbereich wird nie stillschweigend geraten. Solange der Finder befragt
 wird, sagt das Menü das, und eine Suche wartet kurz, statt anderswo zu starten.
