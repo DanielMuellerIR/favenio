@@ -6,7 +6,7 @@
     "token_budget": 4000000,
     "status": "active",
     "started_at": "2026-09-03T10:04:57+02:00",
-    "tokens_spent": 1502000
+    "tokens_spent": 1593000
   },
   "campaign_history": [
     {
@@ -199,16 +199,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:09:23+02:00",
-        "observed_head": "67098dcf2f13df4528186f8180bcc0a036de10f4",
-        "content_sha256": "6a64a73dda2783ecdaba8e913d517810c1f4bb9ced66b98b02146e218f7981a6",
+        "completed_at": "2026-09-03T18:16:29+02:00",
+        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96",
+        "content_sha256": "abe4664bf7af49b96a7a01705504e5ad0e195980340f47ad67eeb7c5473bc29c",
         "file_count": 7,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "JSONL-Pflichtfelder jetzt am Verhalten fuer alle vier Trefferarten geprueft (Mutationsprobe rot), /Applications-Wache in test_build_safety ohne Literal-Sperrliste, AGENTS-Absatz zu Quick Look korrigiert (fad95cf); README-Delta gegen Code geprueft",
+        "summary": "Delta = AGENTS-Absatz und CHANGELOG-Punkt zu HitListController",
         "tests": [
-          "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed",
-          "Mutation isDirectory-nur-bei-Ordnern: neuer Test rot"
+          "python3 -m unittest test_docs_contract: OK"
         ]
       }
     },
@@ -224,17 +223,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:06:54+02:00",
-        "observed_head": "fad95cfef5b7fdb6c2f5ac0a7aaf6a22e9d75413",
-        "content_sha256": "96bf82d84e8baec5a2124474f3106c20eec4ddf099829806cd31f63aef45d5b2",
+        "completed_at": "2026-09-03T18:16:29+02:00",
+        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96",
+        "content_sha256": "aca70f49a07de78e43d2391168dd8780767bb86e477d6f3c5d09da8cf22162ff",
         "file_count": 2,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "ESC-Monitor auf eigenes Tastaturfenster begrenzt (beendete die App im Freigabedialog), Vorschau-Fokusfix der Haupt-App portiert samt previewPanel(_:handle:) und Indexpruefung, Uebergabe-URL nennt regex=0/case=0 ausdruecklich; AGENTS-Absatz zu Quick Look korrigiert",
+        "summary": "Delta = Erbt von HitListController, Kopien entfallen, verwaister Kommentar wieder an flushPending (Theme frontend-adapter-duplication)",
         "tests": [
-          "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed",
-          "./build-app.sh: beide Selbsttests OK",
-          "3 Wachen gegen 699cbd0 rot"
+          "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed"
         ]
       }
     },
@@ -249,18 +246,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T17:19:24+02:00",
-        "observed_head": "fc9be12f057b9844f06b57010276ff8a96d866f3",
-        "content_sha256": "948d9728e33db67eea64b2915ab00a9f7ca3e7b4f004df799480c3789a9b521f",
+        "completed_at": "2026-09-03T18:16:20+02:00",
+        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96",
+        "content_sha256": "a956e9aa45c88caa8779ed6c1a677a94477c772c8d5fb635dfb71e562a60caaa",
         "file_count": 1,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Typ-Sortierung ueber einen Zwischenspeicher je Endung: 46,6 s auf 1,2 s bei 100000 Treffern (swiftc -O gemessen), Ergebnisse identisch. CSV-Export entschaerft Formel-Praefixe (=+-@ und Tabulator). parseHit verwirft eine Zeile ohne isDirectory statt den Typ aus type zu raten. findCLI faellt nur noch fuer einen nackten Testbinaer auf das Arbeitsverzeichnis zurueck. Testhelfer maskiert Steuerzeichen.",
+        "summary": "Delta = HitListController-Basisklasse aus dem Theme frontend-adapter-duplication, bereits verifiziert",
         "tests": [
-          "python3 und /usr/bin/python3 -m unittest discover -s tests: je 354 passed",
-          "./build-app.sh inkl. beider Headless-Selbsttests: passed",
-          "Sortiermessung 100000 Treffer: 46,6 s ohne, 1,2 s mit Zwischenspeicher, Ergebnis gleich",
-          "neue Wachen gegen 157021a: rot"
+          "./build-app.sh: beide Selbsttests OK"
         ]
       }
     },
@@ -275,13 +269,13 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:09:42+02:00",
-        "observed_head": "67098dcf2f13df4528186f8180bcc0a036de10f4",
-        "content_sha256": "65943e7b00846f1e1ac43091331f4de499b41afd66d9ca1a804cf0eed164d5a1",
+        "completed_at": "2026-09-03T18:16:29+02:00",
+        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96",
+        "content_sha256": "6128f275fb14eb24c6be9f9f613eca69aefa10a4eaab84caa78386a5f42fca73",
         "file_count": 1,
         "review": "delta-plus-boundaries",
-        "outcome": "reviewed-clean",
-        "summary": "Delta ist ein Kommentar am URL-Leser (regex/case/field werden bewusst zurueckgesetzt), kein Code",
+        "outcome": "improved",
+        "summary": "Delta = Erbt von HitListController, 123 Zeilen entfallen (Theme frontend-adapter-duplication)",
         "tests": [
           "./build-app.sh: Selbsttest OK"
         ]
@@ -377,14 +371,19 @@
         "common/FavenioCore.swift"
       ],
       "priority": 2,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-03T10:05:28+02:00",
       "campaign_id": "20260903T100457590492+0200",
       "started_at": "2026-09-03T18:10:03+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260903T100457590492+0200",
-        "started_at": "2026-09-03T18:10:03+02:00",
-        "observed_head": "67098dcf2f13df4528186f8180bcc0a036de10f4"
+        "completed_at": "2026-09-03T18:16:20+02:00",
+        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96",
+        "summary": "123 identische Zeilen beider Apps in Basisklasse HitListController (common) zusammengefuehrt; nur presentActionIssue je App. Nur aehnliche Stuecke (Zellenaufbau, menuNeedsUpdate, Finder-Auffrischung) bewusst belassen, sie unterscheiden sich fachlich",
+        "tests": [
+          "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed",
+          "./build-app.sh: beide Selbsttests OK, 0 Warnungen"
+        ]
       }
     },
     {
@@ -424,9 +423,15 @@
         "quick/FavenioQuick.swift"
       ],
       "priority": 3,
-      "state": "pending",
+      "state": "in_progress",
       "noted_at": "2026-09-03T17:23:22+02:00",
-      "campaign_id": "20260903T100457590492+0200"
+      "campaign_id": "20260903T100457590492+0200",
+      "started_at": "2026-09-03T18:16:41+02:00",
+      "active_run": {
+        "campaign_id": "20260903T100457590492+0200",
+        "started_at": "2026-09-03T18:16:41+02:00",
+        "observed_head": "dca8e3d2ed6a3788ed45d51f38d3913cdf344d96"
+      }
     }
   ]
 }

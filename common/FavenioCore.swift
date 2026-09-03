@@ -491,17 +491,30 @@ func findCLI() -> String? {
     return nil
 }
 
-/// Übersetzt EINE JSONL-Zeile der Suche in einen Hit (oder nil bei Müll).
-/// Fortschritts-Zeilen (type=progress, von --progress) sind KEINE Treffer
-/// und werden hier bewusst verworfen — dafür gibt es parseProgress().
-func parseHit(_ lineData: Data) -> Hit? {
+/// EINE Zeile des JSONL-Stroms der Suche: ein Fortschrittsobjekt
+/// (`type: progress`, der Ordner bzw. das Archiv, das der Kern gerade
+/// durchsucht) oder ein Treffer. Alles andere — Müll, fremde Zeilen, ein
+/// Treffer ohne `isDirectory` — ist nil.
+enum SearchLine {
+    case progress(String)
+    case hit(Hit)
+}
+
+/// Parst eine JSONL-Zeile GENAU EINMAL und verzweigt am `type`-Feld.
+///
+/// Bis 0.28.2 liefen zwei getrennte Parser hintereinander: parseProgress
+/// parste die ganze Zeile, verwarf sie am type-Feld, danach parste parseHit
+/// dieselben Bytes noch einmal. Gemessen am 2026-09-03 mit `swiftc -O`
+/// über 100 000 Zeilen: 0,493 s für beide Parser, 0,289 s für diesen einen
+/// — und in der Haupt-App lief das auf dem Main-Thread.
+func parseSearchLine(_ lineData: Data) -> SearchLine? {
     guard
         let object = try? JSONSerialization.jsonObject(with: lineData),
         let dict = object as? [String: Any],
         let path = dict["path"] as? String,
-        let kind = dict["type"] as? String,
-        kind != "progress"
+        let kind = dict["type"] as? String
     else { return nil }
+    if kind == "progress" { return .progress(path) }
     let filesystemPath = dict["filesystemPath"] as? String
         ?? (kind == "member"
             ? path.components(separatedBy: "!/").first ?? path
@@ -520,27 +533,31 @@ func parseHit(_ lineData: Data) -> Hit? {
     // das Feld immer; eine Zeile ohne es stammt nicht von uns und wird
     // verworfen, statt einen falschen Typ zu behaupten.
     guard let isDirectory = dict["isDirectory"] as? Bool else { return nil }
-    return Hit(path: path, kind: kind, line: dict["line"] as? Int,
-               size: dict["size"] as? Int,
-               filesystemPath: filesystemPath,
-               archiveMembers: archiveMembers,
-               isDirectory: isDirectory,
-               field: dict["field"] as? String,
-               value: dict["value"] as? String,
-               width: dict["width"] as? Int,
-               height: dict["height"] as? Int)
+    return .hit(Hit(path: path, kind: kind, line: dict["line"] as? Int,
+                    size: dict["size"] as? Int,
+                    filesystemPath: filesystemPath,
+                    archiveMembers: archiveMembers,
+                    isDirectory: isDirectory,
+                    field: dict["field"] as? String,
+                    value: dict["value"] as? String,
+                    width: dict["width"] as? Int,
+                    height: dict["height"] as? Int))
 }
 
-/// Übersetzt eine JSONL-Zeile in einen Fortschritts-Pfad (der Ordner bzw.
-/// das Archiv, das der Kern gerade durchsucht) — nil für alles andere.
+/// Übersetzt EINE JSONL-Zeile in einen Hit (oder nil bei Müll und bei
+/// Fortschrittszeilen). Für Übergabedateien, Export-Rückprobe und Tests —
+/// wer den laufenden Strom liest, nimmt parseSearchLine() und parst nur
+/// einmal.
+func parseHit(_ lineData: Data) -> Hit? {
+    if case .hit(let hit)? = parseSearchLine(lineData) { return hit }
+    return nil
+}
+
+/// Übersetzt eine JSONL-Zeile in einen Fortschritts-Pfad — nil für alles
+/// andere. Gleiche Regel wie bei parseHit(): nicht im laufenden Strom.
 func parseProgress(_ lineData: Data) -> String? {
-    guard
-        let object = try? JSONSerialization.jsonObject(with: lineData),
-        let dict = object as? [String: Any],
-        dict["type"] as? String == "progress",
-        let path = dict["path"] as? String
-    else { return nil }
-    return path
+    if case .progress(let path)? = parseSearchLine(lineData) { return path }
+    return nil
 }
 
 /// Baut die Argumentliste für einen Suchlauf des Python-Kerns.
@@ -924,10 +941,13 @@ func runSearchStreaming(arguments: [String],
 
     func handleLine(_ lineData: Data) {
         if lineData.isEmpty { return }
-        if let path = parseProgress(lineData) {
+        switch parseSearchLine(lineData) {
+        case .progress(let path)?:
             DispatchQueue.main.async { onProgress(path) }
-        } else if let hit = parseHit(lineData) {
+        case .hit(let hit)?:
             if let onHit { DispatchQueue.main.async { onHit(hit) } }
+        case nil:
+            break
         }
     }
 

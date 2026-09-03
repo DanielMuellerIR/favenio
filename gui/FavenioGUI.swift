@@ -1709,16 +1709,21 @@ final class MainController: HitListController, NSApplicationDelegate,
     func consumeSearchLine(_ lineData: Data) {
         // Fortschritt (welcher Ordner/welches Archiv gerade dran ist)
         // wie in der Schnellsuche laufend anzeigen.
-        if let path = parseProgress(lineData) {
+        // Ein Parse je Zeile: Dieser Weg läuft auf dem Main-Thread.
+        switch parseSearchLine(lineData) {
+        case .progress(let path)?:
             progressPath = path
             refreshStatus()
-        } else if let hit = parseHit(lineData),
-                  !trashedPaths.contains(hit.filesystemPath),
-                  seenPaths.insert(hit.path).inserted {
+        case .hit(let hit)?:
             // Schon gezeigte Pfade (z. B. die aus der Schnellsuche
             // übernommenen 20) nicht erneut auflisten — und nichts, was
             // dieser Lauf schon in den Papierkorb gelegt hat.
-            pending.append(hit)
+            if !trashedPaths.contains(hit.filesystemPath),
+               seenPaths.insert(hit.path).inserted {
+                pending.append(hit)
+            }
+        case nil:
+            break
         }
     }
 

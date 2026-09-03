@@ -26,6 +26,10 @@ Aus der CodeQA-Kampagne, Schnellsuche.
   (siehe die beiden Punkte oben). Sie stehen jetzt einmal in
   `HitListController` (`common/FavenioCore.swift`), von dem beide
   Controller erben. Verhalten unverändert.
+- **Intern: jede Trefferzeile wird nur noch einmal geparst.** Vorher liefen
+  zwei Parser hintereinander über dieselben Bytes, in der Haupt-App auf dem
+  Main-Thread. Gemessen mit `swiftc -O` über 100 000 Zeilen: 0,493 s
+  vorher, 0,289 s jetzt.
 
 ## 0.28.1 — 2026-09-03
 

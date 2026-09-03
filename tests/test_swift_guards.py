@@ -256,6 +256,27 @@ class SwiftGuardTests(unittest.TestCase):
         launch = swift_function(QUICK, "func applicationDidFinishLaunching(")
         self.assertIn("QLPreviewPanel.shared().orderOut(nil)", launch)
 
+    def test_the_live_stream_parses_every_line_only_once(self):
+        """parseProgress und parseHit hintereinander parsten jede Trefferzeile
+        zweimal. Gemessen am 2026-09-03 mit swiftc -O ueber 100 000 Zeilen:
+        0,493 s gegen 0,289 s mit einem Parse. Die beiden Leser des
+        laufenden Stroms nehmen deshalb parseSearchLine(); die alten
+        Funktionen bleiben fuer Uebergabedatei, Export-Rueckprobe und Tests."""
+        self.assertIn("enum SearchLine", COMMON)
+        for source, signature in ((COMMON, "func handleLine(_ lineData: Data)"),
+                                  (GUI, "func consumeSearchLine(")):
+            body = swift_function(source, signature)
+            with self.subTest(reader=signature):
+                self.assertIn("switch parseSearchLine(lineData)", body)
+                self.assertNotIn("parseProgress(", body)
+                self.assertNotIn("parseHit(", body)
+        # Und die Huellen bauen auf demselben Parser auf, statt eine dritte
+        # Fassung der Feldregeln zu halten.
+        for signature in ("func parseHit(_ lineData: Data)",
+                          "func parseProgress(_ lineData: Data)"):
+            self.assertIn("parseSearchLine(lineData)",
+                          swift_function(COMMON, signature))
+
     def test_quick_key_monitor_only_acts_on_its_own_key_window(self):
         """Ein lokaler Monitor feuert auch waehrend runModal(): Beim
         allerersten Start beendete ⎋ im Hinweis zur Finder-Freigabe die
@@ -1043,7 +1064,9 @@ class ParsedHitTypeTest(unittest.TestCase):
     """
 
     def test_a_line_without_the_field_is_rejected_not_guessed(self):
-        body = swift_function(COMMON, "func parseHit(")
+        # Seit 0.28.2 liest parseSearchLine() die Felder; parseHit() ist nur
+        # noch eine Huelle darum.
+        body = swift_function(COMMON, "func parseSearchLine(")
         self.assertIn('guard let isDirectory = dict["isDirectory"] as? Bool',
                       body)
         self.assertNotIn('?? (kind == "dir")', body)
