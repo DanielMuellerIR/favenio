@@ -1,3 +1,4 @@
+import re
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,14 @@ REPO = Path(__file__).resolve().parent.parent
 COMMON = (REPO / "common/FavenioCore.swift").read_text(encoding="utf-8")
 GUI = (REPO / "gui/FavenioGUI.swift").read_text(encoding="utf-8")
 QUICK = (REPO / "quick/FavenioQuick.swift").read_text(encoding="utf-8")
+
+
+def favenio_constant(name):
+    """Der Wert einer Konstante aus favenio.py — repo-relativ gelesen."""
+    quelle = (REPO / "favenio.py").read_text(encoding="utf-8")
+    treffer = re.search(r"^%s = (.+)$" % re.escape(name), quelle, re.M)
+    assert treffer is not None, "Konstante %s fehlt in favenio.py" % name
+    return str(eval(treffer.group(1), {"__builtins__": {}}, {}))
 
 
 def swift_function(source, signature):
@@ -679,11 +688,17 @@ class SwiftGuardTests(unittest.TestCase):
         mit 0xffffffff je Kante liess `width * height` ueber Int.max laufen
         und beendete die App; der Kern lehnt solche Kopfmaße zusaetzlich ab."""
         compare = swift_function(COMMON, "func compareHits")
+        # Sortiert wird über die gedeckelte Fläche, nicht über eine
+        # fangende Multiplikation im Vergleicher selbst.
         self.assertIn("lhs.pixelArea, rhs.pixelArea", compare)
-        self.assertNotIn("w * $0", compare)
-        self.assertIn("multipliedReportingOverflow", COMMON)
-        self.assertIn("MAX_IMAGE_EDGE", Path("favenio.py").read_text(
-            encoding="utf-8"))
+        area = swift_function(COMMON, "var pixelArea")
+        self.assertIn("multipliedReportingOverflow", area)
+        # Die zweite Hälfte gehört dem Kern: Er lehnt unplausible
+        # Kopfmaße ab. Geprüft wird das VERHALTEN, nicht der Name der
+        # Konstante — ein `assertIn("MAX_IMAGE_EDGE", …)` auf den
+        # Quelltext bestätigte nur sich selbst.
+        grenze = favenio_constant("MAX_IMAGE_EDGE")
+        self.assertEqual(grenze, str(2 ** 31 - 1))
 
 
 @unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.27.4 — 2026-09-03
+
+Aus der CodeQA-Kampagne, Bereich Release und Appcast.
+
+- **`release.sh` räumt bei SIGTERM auf.** Gemessen mit zsh 5.9: Ein
+  `trap … EXIT` läuft bei Ctrl-C und bei geschlossenem Terminal mit, bei
+  SIGTERM nicht. Hier wiegt das schwerer als bei der Installation, weil der
+  Mountpoint ein FESTER Pfad ist: Ein liegengebliebenes `/Volumes/Favenio`
+  lässt jeden weiteren Release-Lauf absichtlich abbrechen, bis jemand von
+  Hand auswirft.
+- **Ein Release prüft die Bundles jetzt so streng wie eine Installation.** Die
+  Prüfung im fertigen DMG kannte nur Signatur und angeheftetes Ticket und ließ
+  `spctl` weg. Beide Wege rufen jetzt dieselbe Funktion aus `notarize-lib.sh`.
+- **Das Appcast-Tor lässt kein Temp-Verzeichnis liegen.** Die Feed-Prüfung
+  kehrt an mehreren Stellen mit einem Fehler zurück und legte je Aufruf ein
+  `mktemp`-Verzeichnis an. Im CI-Läufer harmlos, in den lokalen Tests dieses
+  Blocks nicht: Dort hatten sich Hunderte angesammelt.
+- **Die Testmodule laufen aus jedem Arbeitsverzeichnis.** Siebzehn
+  Lesezugriffe gingen gegen das aktuelle Verzeichnis statt gegen das Repo; aus
+  einem anderen Ordner gestartet brachen die Tests ab, statt zu prüfen.
+- **Eine Wache prüft Verhalten statt einen Namen.** Die Absicherung der
+  Flächensortierung bestätigte mit `assertIn("MAX_IMAGE_EDGE", …)` nur sich
+  selbst und suchte zusätzlich eine Zeichenkette, die nie im Code stand. Jetzt
+  wird der Wert der Konstante geprüft.
+
 ## 0.27.3 — 2026-09-03
 
 Aus der CodeQA-Kampagne, Bereich Installation und Notarisierung.

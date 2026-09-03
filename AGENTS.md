@@ -374,7 +374,13 @@ Die drei Skripte sind bewusst getrennt und dürfen nicht zusammenwachsen:
 | `release.sh` | bauen, notarisieren, DMG bauen und notarisieren | nein |
 
 Die Notarisierung der Bundles ist EIN Weg für beide: `notarize-lib.sh` wird von
-`install.sh` und `release.sh` eingebunden (nur `source`, nie ausführen). Beide
+`install.sh` und `release.sh` eingebunden (nur `source`, nie ausführen). Auch
+die drei Pflichtprüfungen eines Bundles — Signatur, Gatekeeper-Urteil und
+angeheftetes Ticket — kommen aus EINER Funktion dort
+(`notarize_verify_installed`), von beiden Skripten UND vom Austausch selbst
+gerufen. Die frühere Kopie in `release.sh` ließ `spctl` weg; ein Release ging
+damit über eine schwächere Hürde als eine lokale Installation. Das DMG selbst
+prüft `install.sh` weiterhin direkt — anderes Objekt, andere Anforderung. Beide
 Bundles gehen zusammen in einem Zip zu Apple — `notarytool` nimmt kein nacktes
 `.app` — und werden anschließend einzeln gestapelt. Deshalb tragen auch aus dem
 DMG herausgezogene Apps ihr Ticket und starten offline.

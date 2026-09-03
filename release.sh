@@ -105,6 +105,14 @@ favenio_release_cleanup() {
     rm -rf "$STAGING"
 }
 trap favenio_release_cleanup EXIT
+# Gemessen am 2026-09-03 mit zsh 5.9 (Signal an die ganze Prozessgruppe): Ein
+# EXIT-Trap läuft bei SIGINT und SIGHUP mit, bei SIGTERM aber NICHT. Hier
+# wiegt das schwerer als in install.sh, weil MOUNT_DIR ein FESTER Pfad ist:
+# Ein liegengebliebenes /Volumes/Favenio lässt jeden weiteren Release-Lauf
+# absichtlich abbrechen („gehört nicht diesem Lauf"), bis jemand von Hand
+# auswirft. `exit 1` löst den EXIT-Trap aus, sodass die Aufräumung genau
+# einmal läuft.
+trap 'exit 1' HUP INT TERM
 
 # Hintergrundbild reproduzierbar erzeugen und als HiDPI-TIFF aufbereiten:
 # Retina-scharf zeigt der Finder es nur, wenn das TIFF 1x UND 2x enthält.
@@ -188,10 +196,13 @@ VERIFY_MOUNT=$(mktemp -d)
 hdiutil attach "$DMG_PATH" -mountpoint "$VERIFY_MOUNT" -quiet -nobrowse
 VERIFY_MOUNTED=1
 for app in "${FAVENIO_APPS[@]}"; do
-    codesign --verify --strict "$VERIFY_MOUNT/$app"
-    # Das Ticket aus Schritt 2 muss die DMG-Erstellung überlebt haben —
-    # sonst braucht eine herausgezogene App beim ersten Start Netz.
-    xcrun stapler validate "$VERIFY_MOUNT/$app" >/dev/null
+    # Dieselbe Funktion wie in install.sh: Signatur, Gatekeeper-Urteil und
+    # das angeheftete Ticket aus Schritt 2, das die DMG-Erstellung überlebt
+    # haben muss — sonst braucht eine herausgezogene App beim ersten Start
+    # Netz. Die frühere Kopie hier prüfte nur zwei der drei Punkte und ließ
+    # `spctl` weg; ein Release ging damit über eine schwächere Hürde als
+    # eine lokale Installation.
+    notarize_verify_installed "$VERIFY_MOUNT/$app" || exit 1
     # Ein geerbtes SPARKLE_FEED_URL wäre über build-app.sh in die Bundles
     # gewandert und richtete jede ausgelieferte App dauerhaft auf einen
     # fremden Update-Feed. Ein Release darf das nicht mitnehmen.

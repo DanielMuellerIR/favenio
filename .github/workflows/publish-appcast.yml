@@ -451,6 +451,13 @@ jobs:
             fi
 
             work="$(mktemp -d)"
+            # Die Funktion kehrt an mehreren Stellen mit `return 1` zurück.
+            # Ohne Aufräumung blieb je Aufruf ein Temp-Verzeichnis liegen —
+            # im CI-Läufer harmlos, in den lokalen Tests dieses Blocks nicht:
+            # Dort hatten sich Hunderte angesammelt. Der Pfad wird beim
+            # SETZEN eingesetzt, damit der Trap ihn auch dann kennt, wenn die
+            # Variable längst überschrieben ist.
+            trap "rm -rf \"$work\"" RETURN
             head -c "$length" "$feed" > "$work/signed-part.xml"
             # Der signierte Teil muss der Feed selbst sein, nicht bloß ein
             # Anfangsstück davon.

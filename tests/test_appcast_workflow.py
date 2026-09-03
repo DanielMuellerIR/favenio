@@ -508,6 +508,54 @@ class CheckFeedTest(unittest.TestCase):
                                 stderr=subprocess.STDOUT)
         return result.stdout.decode("utf-8", "replace")
 
+    def test_no_temp_directory_is_left_behind(self):
+        """Die Funktion kehrt an mehreren Stellen mit `return 1` zurück.
+
+        Ohne Aufräumung blieb je Aufruf ein mktemp-Verzeichnis mit
+        `signed-part.xml` und `verify-ed25519.swift` liegen — im
+        CI-Läufer harmlos, in den lokalen Tests dieses Blocks nicht:
+        Dort hatten sich Hunderte angesammelt. Geprüft wird über eine
+        mktemp-Attrappe, weil macOS' `mktemp -d` ein gesetztes TMPDIR
+        ignoriert und ein Zählen im Benutzer-Temp fremde Ordner träfe.
+        """
+        stubs = self.tmp / "bin"
+        stubs.mkdir()
+        log = self.tmp / "mktemp.log"
+        stub = stubs / "mktemp"
+        stub.write_text(
+            '#!/bin/sh\nreal=$(/usr/bin/mktemp "$@") || exit 1\n'
+            'printf \'%s\\n\' "$real" >> "$STUB_MKTEMP_LOG"\n'
+            'printf \'%s\\n\' "$real"\n', encoding="utf-8")
+        stub.chmod(0o755)
+
+        environment = dict(os.environ)
+        environment["PATH"] = "%s%s%s" % (stubs, os.pathsep,
+                                          environment["PATH"])
+        environment["STUB_MKTEMP_LOG"] = str(log)
+
+        # Beide Wege prüfen: bestandene Signatur und ein Fehlerpfad.
+        for label, feed in (("gültig", self.write_feed()),
+                            ("Signatur falsch",
+                             self.write_feed(signature="AAAA"))):
+            with self.subTest(fall=label):
+                script = ("set -euo pipefail\n" + self.BLOCK + "\n"
+                          'favenio_check_feed "$1" "$2" || true\n')
+                path = self.tmp / "leak-harness.sh"
+                path.write_text(script, encoding="utf-8")
+                subprocess.run(["bash", str(path), str(feed), FIXTURE_KEY],
+                               cwd=REPO, env=environment,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+
+        self.assertTrue(log.exists(), "mktemp-Attrappe wurde nicht benutzt")
+        offen = []
+        for zeile in log.read_text(encoding="utf-8").split("\n"):
+            pfad = zeile.strip()
+            if pfad and os.path.exists(pfad):
+                offen.append(pfad)
+                shutil.rmtree(pfad, ignore_errors=True)
+        self.assertEqual(offen, [])
+
     def test_signature_matching_the_bundle_key_passes(self):
         feed = self.write_feed()
         self.assertIn("</rss><!-- sparkle-signatures:",

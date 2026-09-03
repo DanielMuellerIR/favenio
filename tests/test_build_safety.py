@@ -14,7 +14,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 class BuildSafetyTest(unittest.TestCase):
     def test_normal_build_never_mutates_applications(self):
-        source = Path("build-app.sh").read_text(encoding="utf-8")
+        source = (REPO / "build-app.sh").read_text(encoding="utf-8")
         forbidden = (
             "rm -rf /Applications",
             "ditto Favenio.app /Applications",
@@ -25,11 +25,35 @@ class BuildSafetyTest(unittest.TestCase):
             self.assertNotIn(command, source)
 
     def test_release_checks_staple_and_gatekeeper_without_installing(self):
-        source = Path("release.sh").read_text(encoding="utf-8")
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
         self.assertIn('xcrun stapler validate "$DMG_PATH"', source)
         self.assertIn('spctl --assess --type open', source)
         self.assertNotIn(" /Applications/Favenio.app", source)
         self.assertNotIn(" /Applications/FavenioQuick.app", source)
+
+    def test_release_checks_the_bundles_as_strictly_as_an_install(self):
+        # Die Kopie in release.sh prüfte nur Signatur und Ticket und ließ
+        # `spctl` weg: Ein Release ging damit über eine schwächere Hürde
+        # als eine lokale Installation. Beide rufen jetzt dieselbe
+        # Funktion aus notarize-lib.sh.
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
+        self.assertIn('notarize_verify_installed "$VERIFY_MOUNT/$app"',
+                      source)
+        self.assertNotIn('codesign --verify --strict "$VERIFY_MOUNT/$app"',
+                         source)
+        self.assertNotIn('stapler validate "$VERIFY_MOUNT/$app"', source)
+
+    def test_release_cleans_up_on_a_sigterm(self):
+        # Gemessen am 2026-09-03 mit zsh 5.9, Signal an die ganze
+        # Prozessgruppe: Ein EXIT-Trap läuft bei SIGINT und SIGHUP mit, bei
+        # SIGTERM nicht. Hier wiegt das schwerer als in install.sh, weil
+        # MOUNT_DIR ein FESTER Pfad ist: Ein liegengebliebenes
+        # /Volumes/Favenio lässt jeden weiteren Lauf absichtlich abbrechen,
+        # bis jemand von Hand auswirft.
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
+        self.assertIn("trap favenio_release_cleanup EXIT", source)
+        self.assertIn("trap 'exit 1' HUP INT TERM", source)
+        self.assertIn('MOUNT_DIR="/Volumes/$VOL_NAME"', source)
 
     def test_release_mounts_where_the_finder_can_address_the_disk(self):
         """Das Finder-Layout spricht die Platte als `disk "$VOL_NAME"` an.
@@ -38,7 +62,7 @@ class BuildSafetyTest(unittest.TestCase):
         Mountpoint gibt es `disk "Favenio"` gar nicht (Fehler -1700), und der
         Standardlauf von release.sh bricht in Schritt 3 ab. Beide Zeilen
         gehören deshalb zusammen."""
-        source = Path("release.sh").read_text(encoding="utf-8")
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
         if 'tell disk "$VOL_NAME"' in source:
             self.assertIn('MOUNT_DIR="/Volumes/$VOL_NAME"', source)
         # Der feste Pfad bleibt nur zulässig, solange ein fremdes Volume
@@ -49,18 +73,18 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertIn('if [ "$BUILD_MOUNTED" = "1" ]; then', source)
 
     def test_release_checks_the_update_feed_of_both_bundles(self):
-        source = Path("release.sh").read_text(encoding="utf-8")
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
         self.assertIn('favenio_verify_feed_url "$VERIFY_MOUNT/$app"', source)
 
     def test_release_requires_and_checks_the_developer_team(self):
-        source = Path("release.sh").read_text(encoding="utf-8")
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
         self.assertIn("favenio_require_team_id", source)
         self.assertIn(
             'favenio_verify_identity "$VERIFY_MOUNT/$app" "$app"', source)
 
     def test_install_distinguishes_an_incomplete_rollback(self):
-        install = Path("install.sh").read_text(encoding="utf-8")
-        library = Path("notarize-lib.sh").read_text(encoding="utf-8")
+        install = (REPO / "install.sh").read_text(encoding="utf-8")
+        library = (REPO / "notarize-lib.sh").read_text(encoding="utf-8")
         self.assertIn("3 = Rollback unvollständig", install)
         self.assertIn("return 3", library)
 
@@ -88,8 +112,8 @@ class BuildSafetyTest(unittest.TestCase):
         """notarize-lib.sh prüft gegen eine Kopie des Defaults aus
         build-app.sh. Läuft die auseinander, prüft die Installation gegen
         eine URL, die gar nicht mehr gebaut wird."""
-        build = Path("build-app.sh").read_text(encoding="utf-8")
-        library = Path("notarize-lib.sh").read_text(encoding="utf-8")
+        build = (REPO / "build-app.sh").read_text(encoding="utf-8")
+        library = (REPO / "notarize-lib.sh").read_text(encoding="utf-8")
         self.assertIn(
             'SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-%s}"'
             % InstallFromDmgTest.FEED_URL, build)
@@ -103,8 +127,8 @@ class BuildSafetyTest(unittest.TestCase):
         DIESE Kopie prüfen install.sh und release.sh jedes Bundle. Die ersten
         beiden Kopien hält test_appcast_workflow zusammen, die dritte war
         ungeprüft."""
-        build = Path("build-app.sh").read_text(encoding="utf-8")
-        library = Path("notarize-lib.sh").read_text(encoding="utf-8")
+        build = (REPO / "build-app.sh").read_text(encoding="utf-8")
+        library = (REPO / "notarize-lib.sh").read_text(encoding="utf-8")
         self.assertIn('SPARKLE_PUBLIC_KEY="%s"' % InstallFromDmgTest.SPARKLE_KEY,
                       build)
         self.assertIn(
@@ -115,7 +139,7 @@ class BuildSafetyTest(unittest.TestCase):
         """Eine URL darf XML-Zeichen wie `&` enthalten. Der Wert muss daher
         vom Plist-Werkzeug serialisiert werden statt roh im Here-Dokument zu
         landen."""
-        source = Path("build-app.sh").read_text(encoding="utf-8")
+        source = (REPO / "build-app.sh").read_text(encoding="utf-8")
         self.assertNotIn("<string>${SPARKLE_FEED_URL}</string>", source)
         self.assertIn(
             '/usr/bin/plutil -replace SUFeedURL -string "$SPARKLE_FEED_URL"',
@@ -126,7 +150,7 @@ class BuildSafetyTest(unittest.TestCase):
     def test_ad_hoc_build_omits_hardened_runtime(self):
         """Ohne Developer-ID haben App und Framework keine gemeinsame
         Team-ID. Hardened Runtime würde Sparkle dann beim Laden ablehnen."""
-        source = Path("build-app.sh").read_text(encoding="utf-8")
+        source = (REPO / "build-app.sh").read_text(encoding="utf-8")
         self.assertIn(
             'if [ -n "$SIGN_ID" ] && [ "$SIGN_ID" != "-" ]; then', source)
         self.assertIn('NESTED_SIGN=(--force --sign -)', source)
@@ -135,7 +159,8 @@ class BuildSafetyTest(unittest.TestCase):
             '--sign -)', source)
 
     def test_ci_explicitly_exercises_ad_hoc_build(self):
-        workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        workflow = (REPO / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8")
         self.assertIn('FAVENIO_SIGN_ID: "-"', workflow)
 
 
