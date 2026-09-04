@@ -137,6 +137,18 @@ Verbindliches CLI-Verhalten:
   müssen auch diesen Rückfall gleich behandeln; bis 0.27.0 fiel ein
   `server.key` in einem Zip ab `--archive-depth 2` lautlos aus der Suche,
   während er bei Tiefe 1 gefunden wurde.
+  Dieser Rückfall gilt aber NUR ohne Archiv-Signatur (`ARCHIVE_SIGNATURES`,
+  geprüft von `announces_archive_format()` auf den ersten
+  `ARCHIVE_SIGNATURE_BYTES`). Denn `BadZipFile` und `ReadError` sagen nicht,
+  WARUM sich die Datei nicht öffnen ließ — derselbe Fehler kommt beim
+  Klartext mit der Endung `.zip` wie beim echten, aber abgeschnittenen Zip.
+  Trägt die Datei die Signatur, ist sie ein BESCHÄDIGTES Archiv: Warnung
+  und überspringen (seit 0.28.3). Sie stattdessen als Rohbytes zu
+  durchsuchen lieferte Unsinn — ein unkomprimiert abgelegter Eintrag eines
+  abgeschnittenen Zips kam als ganz gewöhnlicher DATEItreffer heraus, nicht
+  von einem Klartext mit `.zip`-Endung zu unterscheiden, und dass das
+  Archiv kaputt ist, erfuhr niemand. Ein sehr altes v7-Tar ohne „ustar"
+  kündigt sich nicht an und bleibt beim stillen Rückfall.
   In ein Archiv wird außerdem nur geschaut, wenn der Pfad eine reguläre
   Datei ist: `zipfile` und `tarfile` öffnen ihn selbst, also an
   `open_regular_file()` vorbei — eine benannte Pipe namens `x.zip` ließ
@@ -219,6 +231,16 @@ Verbindliches CLI-Verhalten:
   (`MAX_ARCHIVE_LISTING_BYTES`, gelesen über `bsdtar_list()`). Bei 7z, ISO
   und tar.zst liegt der Katalog komprimiert im Archiv: 307 KB Archiv mit
   200 000 Einträgen ergaben 182 MB Spitzenspeicher.
+  Der Inhalt EINES Eintrags belastet das Gesamtbudget nur EINMAL, auch wenn
+  ihn `visit_member()` zweimal liest — einmal für den Blick ins Unterarchiv
+  und einmal als ganz normalen Eintrag, oder bei einer Maßsuche erst den
+  Bildkopf und dann den Rest. Die Marke `counted` im gemeinsamen `chunker`
+  führt den Höchststand mit und gibt ihn als `free_bytes` weiter; alles
+  darüber hinaus zählt wie immer voll. Ohne sie entschied allein die
+  erlaubte Tiefe darüber, ob ein Eintrag durchsuchbar ist: Bis 0.28.2
+  verschwand ein 20-Byte-Eintrag `fake.zip` bei
+  `--max-archive-total-bytes 20` ab `--archive-depth 2` hinter der Warnung
+  „Gesamtbudget überschritten", während `--archive-depth 1` ihn fand.
 - `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären
   Ordner. Öffnen, Finder-Anzeige und Drag-and-drop müssen dieselbe Datei sehen.
 - `bsdtar` liest das Eintrags-Argument als **Suchmuster**, nicht als festen Namen.
@@ -450,13 +472,16 @@ Stand unverändert — auch dann, wenn ein Werkzeug mit einem anderen Status
 abbricht. Exit 3 heißt: Der Rollback blieb unvollständig; stderr nennt die
 verbleibenden Pfade und den Zustand, der manuell geklärt werden muss.
 
-`install.sh` lehnt geerbte `SPARKLE_FEED_URL` und
-`FAVENIO_SPARKLE_TEST_VERSION` gleich zu Beginn mit Exit 2 ab — VOR dem
-Bauen. Beide gehören zum Sparkle-Test im Projektverzeichnis; geerbt richteten
-sie die installierte App auf einen fremden Feed bzw. gaben ihr eine gefälschte
+`install.sh` und `release.sh` lehnen geerbte `SPARKLE_FEED_URL` und
+`FAVENIO_SPARKLE_TEST_VERSION` gleich zu Beginn ab — VOR dem Bauen
+(`install.sh` mit Exit 2, `release.sh` mit Exit 1). Beide gehören zum
+Sparkle-Test im Projektverzeichnis; geerbt richteten sie die installierte
+oder ausgelieferte App auf einen fremden Feed bzw. gaben ihr eine gefälschte
 Build-Nummer, mit der sie sich sofort selbst ein „Update" anbietet. Die
 nachgelagerte Feed-Prüfung greift erst NACH der Notarisierung und hätte einen
-Notary-Vorgang verbraucht; sie bleibt als zweite Linie.
+Notary-Vorgang bei Apple verbraucht; sie bleibt als zweite Linie. In
+`release.sh` fehlte bis 0.28.3 die Hälfte: Nur die gefälschte Build-Nummer
+wurde früh abgelehnt, ein geerbtes `SPARKLE_FEED_URL` erst im fertigen DMG.
 
 `install.sh` und `release.sh` prüfen zusätzlich den Update-Feed der erzeugten
 Bundles gegen `FAVENIO_FEED_URL` aus `notarize-lib.sh`. `build-app.sh` darf

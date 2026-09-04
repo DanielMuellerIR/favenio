@@ -2563,6 +2563,149 @@ class ArchiveExtensionTest(TempTreeTest):
         self.assertEqual(ergebnisse[0], ergebnisse[1])
         self.assertEqual(ergebnisse[1], ergebnisse[2])
 
+    def truncated_zip(self, text):
+        """Ein echtes Zip, dem das zentrale Verzeichnis fehlt — der übliche
+        Zustand eines abgebrochenen Downloads. Es trägt die Zip-Signatur,
+        lässt sich aber nicht öffnen; der Eintrag liegt ungepackt darin."""
+        puffer = io.BytesIO()
+        with zipfile.ZipFile(puffer, "w", zipfile.ZIP_STORED) as archive:
+            archive.writestr("drin.txt", text)
+        roh = puffer.getvalue()
+        return roh[:roh.index(b"PK\x01\x02")]
+
+    def test_a_damaged_archive_is_reported_instead_of_read_as_raw_bytes(self):
+        # Ein abgeschnittenes Zip trägt seine Signatur und ist trotzdem
+        # nicht zu öffnen. Als Rohbytes durchsucht kam sein ungepackter
+        # Eintrag als ganz gewöhnlicher DATEItreffer heraus — nicht von
+        # einem Klartext mit der Endung `.zip` zu unterscheiden, und dass
+        # das Archiv kaputt ist, erfuhr niemand.
+        with open(os.path.join(self.root, "kaputt.zip"), "wb") as datei:
+            datei.write(self.truncated_zip("hier steht NADEL drin\n"))
+        code, lines, err = run(["--content", "NADEL", self.root])
+        self.assertEqual(code, 1, err)
+        self.assertEqual(lines, [])
+        self.assertIn("beschädigtes Archiv", err)
+        self.assertIn("kaputt.zip", err)
+
+    def test_a_damaged_archive_inside_an_archive_is_reported_too(self):
+        # Dieselbe Regel eine Ebene tiefer: Der Eintrag geht durch
+        # visit_member(), und der Signaturtest muss dort auf dem schon
+        # entpackten Puffer arbeiten statt auf einem Dateipfad.
+        with zipfile.ZipFile(os.path.join(self.root, "aussen.zip"), "w",
+                             zipfile.ZIP_STORED) as archive:
+            archive.writestr("kaputt.zip",
+                             self.truncated_zip("hier steht NADEL drin\n"))
+        code, lines, err = run(["--archive-depth", "3", "--content", "NADEL",
+                                self.root])
+        self.assertEqual(code, 1, err)
+        self.assertEqual(lines, [])
+        self.assertIn("beschädigtes Archiv", err)
+        self.assertIn("aussen.zip!/kaputt.zip", err)
+
+    def test_a_damaged_tar_is_reported_as_well(self):
+        puffer = io.BytesIO()
+        with tarfile.open(fileobj=puffer, mode="w") as archive:
+            inhalt = b"hier steht NADEL drin\n"
+            eintrag = tarfile.TarInfo("drin.txt")
+            eintrag.size = len(inhalt)
+            archive.addfile(eintrag, io.BytesIO(inhalt))
+        # Abgeschnitten, aber lang genug für das „ustar" an Position 257.
+        with open(os.path.join(self.root, "kaputt.tar"), "wb") as datei:
+            datei.write(puffer.getvalue()[:600])
+        code, lines, err = run(["--content", "NADEL", self.root])
+        self.assertEqual(code, 1, err)
+        self.assertEqual(lines, [])
+        self.assertIn("beschädigtes Archiv", err)
+
+    def test_a_file_with_a_misleading_extension_stays_silent(self):
+        # Die Gegenprobe und der wichtigere der beiden Fälle: Ohne
+        # Signatur war die Endung schlicht mehrdeutig. Diese Datei bleibt
+        # eine ganz normale Datei — ohne Warnung, sonst meldete jeder
+        # TLS-Schlüssel namens `server.key` ein kaputtes Keynote-Dokument.
+        for name in ("server.key", "paket.zip", "sicherung.tar",
+                     "bericht.docx"):
+            with self.subTest(datei=name):
+                pfad = self.write(name, self.PEM)
+                code, lines, err = run(["--content", "BEGIN PRIVATE", pfad])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(len(lines), 1, lines)
+                self.assertEqual(err.strip(), "")
+
+    def test_the_signature_test_knows_both_answers(self):
+        self.assertTrue(favenio.announces_archive_format(
+            "zip", b"PK\x03\x04rest"))
+        self.assertTrue(favenio.announces_archive_format(
+            "tar", b"\x1f\x8bgzip-huelle"))
+        self.assertTrue(favenio.announces_archive_format(
+            "tar", b"\x00" * 257 + b"ustar\x0000"))
+        self.assertFalse(favenio.announces_archive_format(
+            "zip", b"-----BEGIN PRIVATE KEY-----"))
+        # Ein blankes Tar ohne „ustar" (sehr altes v7-Format) kündigt sich
+        # nicht an und bleibt deshalb beim stillen Rückfall.
+        self.assertFalse(favenio.announces_archive_format(
+            "tar", b"\x00" * 512))
+        # Formate ohne hinterlegte Signatur werfen diese Fehler gar nicht
+        # erst; sie dürfen trotzdem nicht versehentlich zusagen.
+        self.assertFalse(favenio.announces_archive_format(
+            "bsdtar", b"PK\x03\x04"))
+
+    def test_a_mislabelled_member_costs_the_total_budget_only_once(self):
+        # Derselbe Eintrag wird zweimal gelesen: einmal für den Blick ins
+        # vermeintliche Unterarchiv, danach als ganz normaler Eintrag. Es
+        # sind beide Male dieselben Bytes, und das Gesamtbudget darf davon
+        # nur einmal belastet werden. Sonst entscheidet allein die erlaubte
+        # Tiefe darüber, ob ein Eintrag durchsuchbar ist: Bei Tiefe 1 wurde
+        # er gefunden, ab Tiefe 2 verschwand er hinter der Warnung
+        # „Gesamtbudget überschritten".
+        with zipfile.ZipFile(os.path.join(self.root, "aussen.zip"), "w",
+                             zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("fake.zip", self.PEM)
+        budget = str(len(self.PEM.encode("utf-8")))
+        ergebnisse = []
+        for tiefe in ("1", "2", "3"):
+            code, lines, err = run(["--archive-depth", tiefe,
+                                    "--max-archive-total-bytes", budget,
+                                    "--content", "BEGIN PRIVATE", self.root])
+            self.assertEqual(code, 0, (tiefe, err))
+            self.assertNotIn("Gesamtbudget", err)
+            ergebnisse.append(lines)
+        self.assertEqual(ergebnisse[0], ergebnisse[1])
+        self.assertEqual(ergebnisse[1], ergebnisse[2])
+
+    def test_the_budget_still_stops_a_member_that_is_truly_too_big(self):
+        # Gegenprobe zur Marke: Ein Byte weniger Budget, als der Eintrag
+        # groß ist, muss weiterhin greifen — sonst wäre die Grenze nur noch
+        # Dekoration.
+        with zipfile.ZipFile(os.path.join(self.root, "aussen.zip"), "w",
+                             zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("fake.zip", self.PEM)
+        knapp = str(len(self.PEM.encode("utf-8")) - 1)
+        code, lines, err = run(["--archive-depth", "2",
+                                "--max-archive-total-bytes", knapp,
+                                "--content", "BEGIN PRIVATE", self.root])
+        self.assertEqual(code, 1, err)
+        self.assertEqual(lines, [])
+        self.assertIn("Gesamtbudget", err)
+
+    def test_a_dimension_head_read_before_the_recursion_costs_once(self):
+        # Bei einer Maßsuche läuft die Reihenfolge andersherum: Der Eintrag
+        # wird ZUERST als normaler Eintrag geprüft (der Bildkopf), erst
+        # danach als vermeintliches Unterarchiv geöffnet. Auch hier sind es
+        # dieselben Bytes, und der Doppelverbrauch fraß stillschweigend
+        # Budget, das den folgenden Einträgen fehlte.
+        bild = png_bytes(4, 3)
+        with zipfile.ZipFile(os.path.join(self.root, "aussen.zip"), "w",
+                             zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("bild.zip", bild)
+        code, lines, err = run(["--json", "--archive-depth", "2",
+                                "--min-width", "4",
+                                "--max-archive-total-bytes", str(len(bild)),
+                                self.root])
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("Gesamtbudget", err)
+        self.assertEqual([json.loads(line)["path"].split("!/")[-1]
+                          for line in lines], ["bild.zip"])
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "Plattform kennt kein mkfifo")
     def test_a_fifo_with_an_archive_name_never_blocks(self):
         # zipfile und tarfile öffnen den Pfad selbst, also an

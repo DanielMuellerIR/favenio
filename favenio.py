@@ -48,10 +48,10 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.28.2"
+__version__ = "0.28.3"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-09-03"
+__date__ = "2026-09-04"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -441,11 +441,40 @@ EXPECTED_ARCHIVE_ERRORS = (
 )
 
 
-# „Diese Datei ist kein Archiv dieses Formats" — im Unterschied zu einem
-# beschädigten Archiv, das eine Warnung verdient. Nur diese beiden Fehler
-# sind eindeutig: zipfile und tarfile werfen sie, wenn schon die Signatur
-# nicht passt.
+# Die Fehler, die zipfile und tarfile werfen, wenn sich eine Datei nicht als
+# das versprochene Format öffnen lässt. Sie sagen NICHT, warum: Dieselbe
+# BadZipFile kommt bei einem Klartext mit der Endung `.zip` wie bei einem
+# echten, aber abgeschnittenen Zip. Erst die Signatur unten trennt beides.
 FORMAT_MISMATCH_ERRORS = (zipfile.BadZipFile, tarfile.ReadError)
+
+
+# Die Bytes, mit denen ein Archiv sich selbst ankündigt, je Format als
+# (Position, Bytefolge). Die Endung ist nur ein Hinweis — `.key` ist weit
+# häufiger ein TLS-Schlüssel als eine Keynote-Datei —, die Signatur dagegen
+# ist eine Zusage.
+ARCHIVE_SIGNATURES = {
+    # Lokaler Eintrag, leeres Archiv, gespanntes Archiv.
+    "zip": ((0, b"PK\x03\x04"), (0, b"PK\x05\x06"), (0, b"PK\x07\x08")),
+    # tarfile öffnet mit "r:*" und erkennt die Kompression selbst; deshalb
+    # zählen auch die Hüllen gzip, bzip2 und xz. Ein blankes Tar trägt sein
+    # "ustar" erst ab Position 257. Ein sehr altes v7-Tar hat gar keine
+    # Signatur und bleibt deshalb beim stillen Rückfall auf „normale Datei".
+    "tar": ((0, b"\x1f\x8b"), (0, b"BZh"), (0, b"\xfd7zXZ\x00"),
+            (257, b"ustar")),
+}
+
+# So viel Anfang braucht die Prüfung: 257 + 5 für das „ustar" eines Tars.
+ARCHIVE_SIGNATURE_BYTES = 512
+
+
+def announces_archive_format(kind, head):
+    """Sagen die ersten Bytes selbst, dass das ein Archiv dieses Formats ist?
+
+    Nur dann ist ein Öffnungsfehler ein BESCHÄDIGTES Archiv und damit eine
+    Warnung wert. Ohne Signatur war die Endung schlicht mehrdeutig, und die
+    Datei ist eine ganz normale Datei."""
+    return any(head[start:start + len(magic)] == magic
+               for start, magic in ARCHIVE_SIGNATURES.get(kind, ()))
 
 
 # Obergrenze für die Namensliste EINES Archivs, das nur bsdtar lesen kann.
@@ -1928,18 +1957,47 @@ class Search:
             else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
                 self.walk_single(kind, fs_path, fileobj, display, depth,
                                  archive_path, archive_members)
-        except FORMAT_MISMATCH_ERRORS:
-            # Die Endung versprach ein Archiv, der Inhalt ist keines.
-            # Das ist keine Störung, sondern der Normalfall bei einer
-            # Endung, die mehrere Bedeutungen hat: `.key` ist weit
-            # häufiger ein TLS-Schlüssel als eine Keynote-Datei. Der
-            # Aufrufer behandelt sie dann wie bei `--no-archives` — und
-            # genau das verlangt der Vertrag: Alle Gründe, NICHT ins
-            # Archiv zu schauen, müssen dasselbe Ergebnis liefern.
+        except FORMAT_MISMATCH_ERRORS as err:
+            # Die Endung versprach ein Archiv. Ob der Inhalt dasselbe
+            # verspricht, entscheidet erst die Signatur — hinter demselben
+            # Fehler stecken zwei sehr verschiedene Fälle:
+            #
+            #  - Keine Signatur: Die Endung war schlicht mehrdeutig
+            #    (`.key` ist meist ein TLS-Schlüssel). Die Datei ist eine
+            #    ganz normale Datei, und der Aufrufer behandelt sie wie bei
+            #    `--no-archives`. Keine Warnung — das ist der Normalfall,
+            #    und genau das verlangt der Vertrag: Alle Gründe, NICHT ins
+            #    Archiv zu schauen, müssen dasselbe Ergebnis liefern.
+            #  - Signatur vorhanden: Die Datei IST ein Archiv dieses
+            #    Formats und trotzdem nicht zu öffnen, also beschädigt.
+            #    Sie stattdessen als Rohbytes zu durchsuchen liefert
+            #    Unsinn — ein ungepackter Eintrag eines abgeschnittenen
+            #    Zips kam als ganz gewöhnlicher Dateitreffer heraus, und
+            #    dass das Archiv kaputt ist, erfuhr niemand.
+            if announces_archive_format(kind,
+                                        self.archive_head(fs_path, fileobj)):
+                self.warn("%s: beschädigtes Archiv: %s" % (display, err))
+                return True
             return False
         except EXPECTED_ARCHIVE_ERRORS as err:
             self.warn("%s: %s" % (display, err))
         return True
+
+    @staticmethod
+    def archive_head(fs_path, fileobj):
+        """Der Anfang des Archivs für die Signaturprüfung.
+
+        Lässt er sich nicht lesen, gilt die Datei als nicht angekündigt und
+        wird wie bisher als ganz normale Datei behandelt — der stille
+        Rückfall ist der schonendere der beiden Wege."""
+        try:
+            if fileobj is not None:
+                fileobj.seek(0)
+                return fileobj.read(ARCHIVE_SIGNATURE_BYTES)
+            with open_regular_file(fs_path) as handle:
+                return handle.read(ARCHIVE_SIGNATURE_BYTES)
+        except EXPECTED_ARCHIVE_ERRORS:
+            return b""
 
     @staticmethod
     def member_is_hidden(member_path):
@@ -1990,20 +2048,45 @@ class Search:
 
         nested_kind = classify_archive(name)
         nested = nested_kind is not None and depth - 1 >= 1
-        # Wird in diesen Eintrag NICHT hineingeschaut — weil die
-        # --archive-depth aufgebraucht ist oder weil er gar kein Archiv
-        # ist —, dann gilt dieselbe Regel wie eine Ebene höher in
-        # visit_file(): Der Eintrag ist ein ganz normaler Eintrag, und
-        # sein roher Inhalt wird durchsucht. Ohne das entschiede auch
-        # hier der Grund über das Ergebnis — ein .7z ohne bsdtar wurde
-        # durchsucht, ein .zip an der Tiefengrenze dagegen nicht.
-        def as_plain_member():
-            def chunker(handle, free_bytes=0):
-                return self.archive_budget.iter_chunks(
+        # Ein und derselbe Eintrag wird im ungünstigen Fall zweimal gelesen:
+        # einmal für den Blick ins Unterarchiv und einmal als ganz normaler
+        # Eintrag. Es sind beide Male dieselben Bytes, und sie dürfen das
+        # Gesamtbudget des Laufs nur EINMAL belasten. `counted` merkt
+        # deshalb, wie weit dieser Eintrag schon gezählt wurde; alles
+        # darüber hinaus zählt wie immer voll. Ohne diese Marke verschwand
+        # ein 20-Byte-Eintrag `fake.zip` bei --max-archive-total-bytes 20
+        # aus der Trefferliste, sobald --archive-depth 2 den Blick ins
+        # vermeintliche Unterarchiv überhaupt erlaubte — bei Tiefe 1 wurde
+        # er gefunden. Genauso bei einer Maßsuche, die den Bildkopf schon
+        # vor dem Rekursionsversuch gelesen hat.
+        counted = [0]
+
+        def chunker(handle, free_bytes=0):
+            read = 0
+            for chunk in self.archive_budget.iter_chunks(
                     handle, full_display, size, compressed_size,
-                    free_bytes=free_bytes)
+                    free_bytes=max(counted[0], free_bytes)):
+                read += len(chunk)
+                counted[0] = max(counted[0], read)
+                yield chunk
+
+        def as_plain_member(open_stream=None):
+            """Der Eintrag als ganz normaler Eintrag: sein roher Inhalt wird
+            durchsucht.
+
+            Wird in diesen Eintrag NICHT hineingeschaut — weil die
+            --archive-depth aufgebraucht ist oder weil er gar kein Archiv
+            ist —, dann gilt dieselbe Regel wie eine Ebene höher in
+            visit_file(). Ohne das entschiede auch hier der Grund über das
+            Ergebnis: ein .7z ohne bsdtar wurde durchsucht, ein .zip an der
+            Tiefengrenze dagegen nicht.
+
+            open_stream reicht einen schon entpackten Puffer durch, damit
+            ein gescheiterter Blick ins Unterarchiv den Eintrag nicht ein
+            zweites Mal entpacken muss."""
             probe = FileProbe(self, full_display, name,
-                              open_stream=open_member, chunker=chunker,
+                              open_stream=open_stream or open_member,
+                              chunker=chunker,
                               filesystem_path=archive_path, size=size,
                               in_archive=True)
             self.evaluate(probe, full_display, "member",
@@ -2019,8 +2102,7 @@ class Search:
             # weitersuchen (depth sinkt um 1).
             try:
                 with open_member() as handle:
-                    data = self.archive_budget.read_all(
-                        handle, full_display, size, compressed_size)
+                    data = b"".join(chunker(handle))
             except EXPECTED_ARCHIVE_ERRORS as err:
                 self.warn("%s: %s" % (full_display, err))
                 return
@@ -2033,9 +2115,11 @@ class Search:
             # ein ganz normaler Eintrag. Ohne das fiel ein `server.key` in
             # einem Zip ab `--archive-depth 2` ohne jede Meldung aus der
             # Inhaltssuche — bei `--archive-depth 1` wurde er gefunden.
+            # Der Puffer von oben wird dabei weitergereicht: Der Eintrag ist
+            # schon entpackt, ein zweites Entpacken brächte nichts.
             if not opened and self.type_allowed(False) \
                     and self.text_mode == "content":
-                as_plain_member()
+                as_plain_member(lambda: io.BytesIO(data))
 
     def walk_zip(self, archive, display, depth, archive_path,
                  archive_members):

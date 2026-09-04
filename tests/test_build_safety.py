@@ -990,6 +990,50 @@ class InheritedSparkleVariablesTest(InstallFromDmgTest):
         self.assertIn("VERIFY OK", output)
 
 
+class ReleaseRefusesInheritedSparkleVariablesTest(unittest.TestCase):
+    """Dieselbe Wache wie in install.sh, nur für den Release-Weg.
+
+    Bis 2026-09-04 lehnte release.sh nur FAVENIO_SPARKLE_TEST_VERSION früh
+    ab. Ein geerbtes SPARKLE_FEED_URL fiel erst der Feed-Prüfung in
+    Schritt 4 auf — also nach Bauen, Signieren, Notarisieren und Einhängen
+    des DMG. Ein Notary-Vorgang bei Apple war damit schon verbraucht."""
+
+    def run_with(self, **umgebung):
+        environment = dict(os.environ)
+        # Ohne Notary-Profil endet der Lauf spätestens an den Zugangsdaten.
+        # Das ist die Bremse für den Fall, dass die Wache selbst kaputtgeht:
+        # Der Test darf niemals einen echten Build oder gar eine
+        # Notarisierung auslösen.
+        environment["NOTARY_PROFILE"] = ""
+        environment.update(umgebung)
+        result = subprocess.run(
+            [str(REPO / "release.sh")], cwd=REPO, env=environment,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return result.returncode, result.stdout.decode("utf-8", "replace")
+
+    def test_a_foreign_feed_url_is_refused_before_the_build(self):
+        code, output = self.run_with(
+            SPARKLE_FEED_URL="http://127.0.0.1:8000/appcast.xml")
+        self.assertEqual(code, 1, output)
+        self.assertIn("SPARKLE_FEED_URL", output)
+        self.assertNotIn("Schritt 1/5", output)
+        # Auch die Zugangsdatenprüfung darf nicht mehr drangekommen sein:
+        # Die Ablehnung steht davor, nicht dahinter.
+        self.assertNotIn("Kein Notary-Profil bekannt", output)
+
+    def test_a_faked_build_number_is_still_refused(self):
+        code, output = self.run_with(FAVENIO_SPARKLE_TEST_VERSION="0.13.9")
+        self.assertEqual(code, 1, output)
+        self.assertIn("FAVENIO_SPARKLE_TEST_VERSION", output)
+        self.assertNotIn("Schritt 1/5", output)
+
+    def test_the_late_feed_check_stays_as_a_second_line(self):
+        # Die frühe Wache ersetzt die Prüfung im fertigen DMG nicht: Sie
+        # deckt nur den Weg über die Umgebungsvariable ab.
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
+        self.assertIn('favenio_verify_feed_url "$VERIFY_MOUNT/$app"', source)
+
+
 class InstallSignalAndPromiseTest(unittest.TestCase):
     """Zwei Zusagen von install.sh, die sich nur am Skript selbst prüfen
     lassen — ein echter Lauf bräuchte /Applications und eine

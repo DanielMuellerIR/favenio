@@ -184,6 +184,18 @@ unkomprimiert abgelegten Einträgen. Dasselbe gilt eine Ebene tiefer: Ein
 Archiv IM Archiv, das die verbleibende `--archive-depth` nicht mehr öffnet,
 zählt ebenfalls als ganz normaler Eintrag.
 
+Die Endung ist dabei nur ein Hinweis. Lässt sich eine Datei nicht als das
+Format öffnen, das ihre Endung verspricht, entscheiden ihre ersten Bytes:
+
+- Sie tragen **keine** Archiv-Signatur — dann war die Endung mehrdeutig
+  (`.key` ist weit häufiger ein TLS-Schlüssel als eine Keynote-Datei). Die
+  Datei ist eine ganz normale Datei, ohne Meldung.
+- Sie tragen die Signatur — dann ist die Datei ein **beschädigtes Archiv**,
+  etwa ein abgebrochener Download. Sie wird mit einer Warnung auf stderr
+  übersprungen, statt als Rohbytes durchsucht zu werden: Ein unkomprimiert
+  abgelegter Eintrag darin ergab sonst einen ganz gewöhnlichen Dateitreffer,
+  und dass das Archiv kaputt ist, erfuhr niemand.
+
 ## Suchmodi — und wie man z. B. nur `.md`-Dateien findet
 
 Favenio erkennt den Suchmodus **automatisch am Muster** — es gibt keinen

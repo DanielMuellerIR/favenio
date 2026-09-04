@@ -180,6 +180,18 @@ really is in its raw bytes, i.e. for uncompressed (stored) entries. The same
 holds one level down: an archive inside an archive that the remaining
 `--archive-depth` no longer opens counts as an ordinary entry as well.
 
+The extension is only a hint. When a file cannot be opened as the format its
+extension promises, its first bytes decide:
+
+- They carry **no** archive signature — the extension was simply ambiguous
+  (`.key` is far more often a TLS key than a Keynote document). The file is an
+  ordinary file, with no message.
+- They carry the signature — the file is a **damaged archive**, e.g. an
+  interrupted download. It is skipped with a warning on stderr instead of
+  being searched as raw bytes: otherwise a stored (uncompressed) entry inside
+  it produced a perfectly ordinary file hit, and nobody learned that the
+  archive was broken.
+
 ## Search modes — and how to find only `.md` files
 
 Favenio detects the search mode **automatically from the pattern** — there is

@@ -34,10 +34,27 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source ./notarize-lib.sh
 
-if [ -n "${FAVENIO_SPARKLE_TEST_VERSION:-}" ]; then
-    echo "FEHLER: Release mit FAVENIO_SPARKLE_TEST_VERSION ist verboten." >&2
-    exit 1
-fi
+# Zwei Umgebungsvariablen, die build-app.sh für Sparkle-Tests im
+# Projektverzeichnis kennt, dürfen nie in ein Release durchschlagen. Geerbt
+# würden sie einfach mitgegeben:
+#
+#   SPARKLE_FEED_URL          richtete jede ausgelieferte App dauerhaft auf
+#                             einen fremden Update-Feed.
+#   FAVENIO_SPARKLE_TEST_VERSION  setzt eine gefälschte Build-Nummer; die
+#                             ausgelieferte App böte sich danach über
+#                             Sparkle sofort selbst ein „Update" an.
+#
+# Geprüft wird hier VOR dem Bauen, genau wie in install.sh. Die Feed-Prüfung
+# in Schritt 4 greift erst nach dem Signieren und Notarisieren und hätte
+# einen Notary-Vorgang bei Apple verbraucht; sie bleibt als zweite Linie.
+for var in SPARKLE_FEED_URL FAVENIO_SPARKLE_TEST_VERSION; do
+    if [ -n "${(P)var:-}" ]; then
+        echo "FEHLER: $var ist gesetzt — damit wird kein Release gebaut." >&2
+        echo "Diese Variable gehört zum Sparkle-Test im Projektverzeichnis." >&2
+        echo "Für ein Release in einer Shell ohne sie starten." >&2
+        exit 1
+    fi
+done
 
 FINDER_LAYOUT=1
 for arg in "$@"; do

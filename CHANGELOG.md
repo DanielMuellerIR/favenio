@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.28.3 — 2026-09-04
+
+Aus dem nächtlichen Code-Review vom 2026-09-04.
+
+- **Beschädigte Archive werden gemeldet statt als Rohbytes durchsucht.**
+  Ein abgebrochener Download `sicherung.zip` ließ sich nicht öffnen, und
+  Favenio behandelte ihn daraufhin wie jede andere Datei: Ein unkomprimiert
+  darin abgelegter Eintrag ergab einen ganz gewöhnlichen Dateitreffer, und
+  dass das Archiv kaputt ist, stand nirgends. Jetzt entscheiden die ersten
+  Bytes: Trägt die Datei die Signatur ihres Formats, ist sie ein
+  beschädigtes Archiv und wird mit einer Warnung übersprungen. Ohne
+  Signatur war die Endung nur mehrdeutig — ein `server.key` bleibt wie
+  bisher eine ganz normale, durchsuchbare Datei, ohne Meldung.
+- **Ein Archiv-Eintrag kostet das Entpackbudget nur noch einmal.** Wer
+  `--max-archive-total-bytes` eng setzte, verlor Treffer, sobald
+  `--archive-depth 2` erlaubt war: Ein Eintrag, der wie ein Archiv heißt,
+  wurde zweimal gelesen — einmal für den Blick hinein, einmal als normaler
+  Eintrag — und zählte deshalb doppelt. Dieselbe Datei war bei Tiefe 1
+  findbar und ab Tiefe 2 nicht mehr. Bei einer Suche nach Bildmaßen fraß
+  der doppelt gezählte Bildkopf still Budget, das den folgenden Einträgen
+  fehlte.
+- **`release.sh` lehnt einen geerbten Update-Feed sofort ab.** Bisher fiel
+  ein gesetztes `SPARKLE_FEED_URL` erst der Prüfung im fertigen DMG auf —
+  also nach Bauen, Signieren und Notarisieren bei Apple. Jetzt bricht der
+  Lauf vor dem ersten Schritt ab, so wie `install.sh` es schon tat.
+
 ## 0.28.2 — 2026-09-03
 
 Aus der CodeQA-Kampagne, Schnellsuche.
