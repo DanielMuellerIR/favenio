@@ -54,7 +54,12 @@ Verbindliches CLI-Verhalten:
   die Größe erst nach vollständigem Entpacken bekannt; das hebt den
   Early-Exit auf und ist für ein bloßes Anzeigefeld abgelehnt. Das Feld fehlt
   auch, wenn sich die Größe einer normalen Datei nicht ermitteln lässt (zum
-  Beispiel bei einem toten Symlink). `isDirectory`
+  Beispiel bei einem toten Symlink). `modified` und `created` (Unix-Zeit,
+  Gleitkomma) sind ebenso optional: Dateien und Ordner tragen beide aus
+  derselben `stat`-Abfrage (`file_facts()`), Zip- und Tar-Einträge nur
+  `modified` aus dem Katalog (`zip_member_mtime()` deutet die zonenlose
+  Zip-Ortszeit wie der Finder), bsdtar-Einträge und einzeln komprimierte
+  Dateien keines. `isDirectory`
   ist nötig, weil `type` es nicht verrät: Ein Ordner IM Archiv kommt wie eine
   Datei als `member` an. Die Frontends dürfen den Typ nicht aus dem Pfad oder
   aus `type` erraten. `parseHit()` verwirft eine Zeile ohne das Feld
@@ -303,7 +308,19 @@ Favenio" und ⌘↩ bei einer reinen Maßsuche wirkungslos. Die Spalte
 „Fundstelle" (`locationText`) zeigt Zeilennummer oder „Feld: Wert", die Spalte
 „Maße" (`dimensionsText`) die Pixel; nach Maßen wird nach Fläche sortiert —
 über `Hit.pixelArea`, das den Überlauf deckelt, weil eine fangende
-`Int`-Multiplikation die App beendet. Die Spalte „Typ" geht über
+`Int`-Multiplikation die App beendet. Die Spalte „Pfad" zeigt den ORDNER
+des Treffers relativ zum Suchordner (`Hit.folderText(relativeTo:)`, gebaut
+aus `filesystemPath` und `archiveMembers`, nicht aus dem geschnittenen
+`path` — ein Eintragsname darf selbst `!/` enthalten) und kürzt am ANFANG:
+Der Dateiname steht links, der Suchordner im Ordnerknopf, und was die
+Treffer unterscheidet, ist das Ende. Die Datumsspalten „Änderungsdatum" und
+„Erstellungsdatum" wählen ihre Schreibweise nach der eigenen Breite
+(`dateColumnStage`, vier Muster in `dateColumnSamples`, Tabellenziffern),
+wie Doppeldecker; `columnDidResize` formatiert die sichtbaren Zellen um.
+Die Haupt-App hält die Spalten ohne Gesamtlimit (`noColumnAutoresizing`,
+waagerechter Balken, `autosaveName` für Breiten und Reihenfolge) — mit
+`lastColumnOnlyAutoresizingStyle` ließ sich der Pfad nur breiter ziehen,
+wenn man vorher andere Spalten zusammenquetschte. Die Spalte „Typ" geht über
 `TypeDescriptionCache`, EINEN Eintrag je Endung:
 `UTType(filenameExtension:)` samt `localizedDescription` ist eine
 Datenbankabfrage (11,65 µs), und der Vergleicher ruft sie zweimal je

@@ -128,7 +128,11 @@ Favenio is deliberately machine-friendly:
   `isDirectory`, not `type`: a **folder inside an archive** arrives as
   `"type": "member"` just like a file does. Metadata hits add `field` and
   `value`; with a size filter, hits add `width` and `height` (pixels). All
-  four are optional.
+  four are optional. `modified` and `created` are the modification and
+  creation time as Unix seconds (float): plain files and folders carry
+  both (from the same `stat` call as `size`), ZIP and TAR entries only
+  `modified` from the archive catalogue, `bsdtar` entries and single
+  compressed files neither — so treat both as optional.
 - **Exit codes** as with grep: `0` = hits, `1` = no hits,
   `2` = error (invalid regex, missing path, and any unexpected error that
   cut the run short — an aborted run must never look like an empty result)
@@ -266,9 +270,17 @@ EasyFind-style interface: search field, folder picker, options, results list.
 The **Name | Content | Metadata** switch says what the pattern runs against;
 in metadata mode a field menu narrows it to one field. The **Image size** row
 (width and height, each from/to) filters with AND and works on its own without
-a pattern. The **Location** column shows the line number of a content hit or
-`Keywords: Winter` for a metadata hit, the **Dimensions** column the pixel
-size. **Size** is the byte size.
+a pattern. The columns, in order: **Name**, **Size** (bytes), **Path**,
+**Type**, **Modified**, **Created**, **Location**, **Dimensions**. **Path**
+is the folder of the hit relative to the search folder — the file name is
+already in the first column — and is truncated at the start, so the
+distinguishing end stays readable; an entry inside an archive shows
+`archive.zip!/folder`. The two date columns pick their notation from their
+own width: drag a column wider and `04.09.26` becomes `04.09.26, 14:03`,
+`04.09.2026, 14:03` and finally `4. September 2026 um 14:03`. Columns may
+add up to more than the window width (horizontal scroll bar); widths and
+order are remembered. **Location** shows the line number of a content hit or
+`Keywords: Winter` for a metadata hit, **Dimensions** the pixel size.
 
 From the results list:
 
@@ -307,8 +319,8 @@ The save dialog offers four formats:
 | --- | --- |
 | Paths, one line per hit (`.txt`) | What command line tools expect: `xargs`, `while read`, `grep -f` |
 | Paths, NUL-separated (`.txt`) | The same list for `xargs -0`. On macOS a filename may contain any character except `/` and NUL — including a newline. Only this form carries **every** name intact |
-| JSON Lines (`.jsonl`) | The same objects `favenio.py --json` writes (`path`, `type`, `isDirectory`, `filesystemPath`, `archiveMembers`, optional `size`/`line`) — for `jq` and your own scripts |
-| CSV (`.csv`) | For spreadsheets; with a UTF-8 BOM, otherwise Excel on macOS misreads non-ASCII names |
+| JSON Lines (`.jsonl`) | The same objects `favenio.py --json` writes (`path`, `type`, `isDirectory`, `filesystemPath`, `archiveMembers`, optional `size`/`line`/`modified`/`created`) — for `jq` and your own scripts |
+| CSV (`.csv`) | For spreadsheets; with a UTF-8 BOM, otherwise Excel on macOS misreads non-ASCII names. Timestamps as ISO 8601 |
 
 Both path formats carry the same path as “Copy path”: for a plain file its
 POSIX path, for an archive entry the `!/` notation that `favenio.py --extract`

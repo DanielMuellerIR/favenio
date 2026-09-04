@@ -93,7 +93,6 @@ final class QuickController: HitListController, NSApplicationDelegate,
     let openButton = NSButton(title: "Alle in Favenio ↗ ⌘↩",
                               target: nil, action: nil)
     let infoLabel = NSTextField(labelWithString: QuickController.hint)
-    var infoRow: NSStackView!
     let spinner = NSProgressIndicator()
     let scrollView = NSScrollView()
 
@@ -362,7 +361,10 @@ final class QuickController: HitListController, NSApplicationDelegate,
         optionsRow.orientation = .horizontal
         optionsRow.spacing = 10
         optionsRow.alignment = .centerY
-        // Schmale Maßzeile: „px  B [min]–[max]  H [min]–[max]".
+        // Schmale Maßzeile: „px  B [min]–[max]  H [min]–[max]", rechts
+        // daneben Spinner, Trefferzeile und der Knopf „Alle in Favenio".
+        // Eine Zeile statt zwei: Die Trefferzeile hatte eine eigene, und
+        // jede Zeile über der Tabelle kostet Trefferzeilen im Panel.
         func smallLabel(_ text: String) -> NSTextField {
             let label = NSTextField(labelWithString: text)
             label.font = NSFont.systemFont(ofSize: 11)
@@ -373,19 +375,25 @@ final class QuickController: HitListController, NSApplicationDelegate,
             smallLabel("px"), smallLabel("B"), minWidthField,
             smallLabel("–"), maxWidthField, smallLabel("H"), minHeightField,
             smallLabel("–"), maxHeightField,
+            spinner, infoLabel, openButton,
         ])
         sizeRow.orientation = .horizontal
         sizeRow.spacing = 4
         sizeRow.alignment = .centerY
         sizeRow.setCustomSpacing(12, after: sizeRow.views[0])
         sizeRow.setCustomSpacing(12, after: sizeRow.views[4])
-        infoRow = NSStackView(views: [spinner, infoLabel, openButton])
-        infoRow.orientation = .horizontal
-        infoRow.spacing = 6
-        infoRow.alignment = .centerY
+        sizeRow.setCustomSpacing(14, after: sizeRow.views[8])
+        sizeRow.setCustomSpacing(6, after: spinner)
+        sizeRow.setCustomSpacing(6, after: infoLabel)
+        // Die Maßfelder behalten ihre Breite; nur die Trefferzeile gibt
+        // nach und wird gekürzt, wenn es eng wird.
+        for view in sizeRow.views where view !== infoLabel {
+            view.setContentCompressionResistancePriority(.required,
+                                                         for: .horizontal)
+        }
 
         let outer = NSStackView(views: [searchRow, optionsRow, sizeRow,
-                                        infoRow, scrollView])
+                                        scrollView])
         outer.orientation = .vertical
         outer.spacing = 8
         outer.alignment = .leading
@@ -406,7 +414,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
                                           constant: -12),
             searchRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             optionsRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
-            infoRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
+            sizeRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: outer.widthAnchor),
             field.heightAnchor.constraint(equalToConstant: 32),
             // Beide Felder teilen sich die nutzbare Zeile exakt zur Hälfte.
@@ -435,9 +443,9 @@ final class QuickController: HitListController, NSApplicationDelegate,
             NSSortDescriptor(key: "name", ascending: true)
         let pathColumn = NSTableColumn(
             identifier: NSUserInterfaceItemIdentifier("path"))
-        pathColumn.title = "Ort"
-        // Der Ort reicht bewusst über das Fenster hinaus. So zeigt der
-        // horizontale Balken den vollständigen Quellordner statt nur eine
+        pathColumn.title = "Pfad"
+        // Der Pfad reicht bewusst über das Fenster hinaus. So zeigt der
+        // horizontale Balken den vollständigen Ordner statt nur eine
         // anders gekürzte Fassung desselben Texts. Der Wert ist deshalb eine
         // feste Breite und keine Quote der Fensterbreite — eine Quote wäre
         // immer schmaler als das Fenster und liefe dem Zweck zuwider.
@@ -1148,12 +1156,23 @@ final class QuickController: HitListController, NSApplicationDelegate,
             cell = newCell
         }
         let hit = hits[row]
-        cell?.textField?.stringValue =
-            column.identifier.rawValue == "name" ? hit.displayName : hit.path
+        if column.identifier.rawValue == "name" {
+            cell?.textField?.lineBreakMode = .byTruncatingMiddle
+            cell?.textField?.stringValue = hit.displayName
+            cell?.textField?.toolTip = nil
+        } else {
+            // Nur der Ordner, relativ zum Suchordner, am ANFANG gekürzt:
+            // Der Dateiname steht schon links, der Suchordner im Menü —
+            // was unterscheidet, ist das Ende des Pfads.
+            cell?.textField?.lineBreakMode = .byTruncatingHead
+            cell?.textField?.stringValue =
+                hit.folderText(relativeTo: searchRoot)
+            cell?.textField?.toolTip = hit.folderPath
+        }
         return cell
     }
 
-    /// Header-Klick: Trefferliste nach Name oder Ort sortieren.
+    /// Header-Klick: Trefferliste nach Name oder Pfad sortieren.
     func tableView(_ tableView: NSTableView,
                    sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         let selectedPaths = selectedHitPaths()

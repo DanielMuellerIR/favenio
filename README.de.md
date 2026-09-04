@@ -130,7 +130,12 @@ Favenio ist bewusst maschinenfreundlich gebaut:
   `isDirectory` fragen, nicht `type`: Ein **Ordner innerhalb eines Archivs**
   kommt genau wie eine Datei als `"type": "member"` an. Metadatentreffer
   tragen zusätzlich `field` und `value`; mit Maßfilter tragen Treffer `width`
-  und `height` (Pixel). Alle vier sind optional.
+  und `height` (Pixel). Alle vier sind optional. `modified` und `created`
+  sind Änderungs- und Erstellungszeit als Unix-Sekunden (Gleitkomma):
+  normale Dateien und Ordner tragen beide (aus derselben `stat`-Abfrage wie
+  `size`), Zip- und Tar-Einträge nur `modified` aus dem Archivkatalog,
+  `bsdtar`-Einträge und einzeln komprimierte Dateien keines — beide Felder
+  sind also optional.
 - **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,
   `2` = Fehler (ungültiger Regex, Pfad fehlt, und jeder unerwartete Fehler,
   der den Lauf abgebrochen hat — ein abgebrochener Lauf darf nie wie ein
@@ -273,9 +278,18 @@ EasyFind-artige Oberfläche: Suchfeld, Ordnerwahl, Optionen, Trefferliste.
 Der Umschalter **Name | Inhalt | Metadaten** sagt, wogegen das Muster läuft;
 im Metadaten-Modus grenzt ein Feldmenü auf ein Feld ein. Die Zeile
 **Bildmaße** (Breite und Höhe je von/bis) filtert per UND und funktioniert auch
-allein ohne Muster. Die Spalte **Fundstelle** zeigt die Zeilennummer eines
-Inhaltstreffers oder `Keywords: Winter` bei einem Metadatentreffer, die Spalte
-**Maße** die Pixelmaße.
+allein ohne Muster. Die Spalten in ihrer Reihenfolge: **Name**, **Größe**
+(Bytes), **Pfad**, **Typ**, **Änderungsdatum**, **Erstellungsdatum**,
+**Fundstelle**, **Maße**. **Pfad** ist der Ordner des Treffers relativ zum
+Suchordner — der Dateiname steht schon in der ersten Spalte — und wird am
+Anfang gekürzt, damit das unterscheidende Ende lesbar bleibt; ein Eintrag in
+einem Archiv zeigt `archiv.zip!/ordner`. Die beiden Datumsspalten wählen
+ihre Schreibweise nach der eigenen Breite: Zieht man eine Spalte breiter,
+wird aus `04.09.26` erst `04.09.26, 14:03`, dann `04.09.2026, 14:03` und
+schließlich `4. September 2026 um 14:03`. Die Spalten dürfen zusammen breiter
+sein als das Fenster (waagerechter Balken); Breiten und Reihenfolge werden
+gemerkt. **Fundstelle** zeigt die Zeilennummer eines Inhaltstreffers oder
+`Keywords: Winter` bei einem Metadatentreffer, **Maße** die Pixelmaße.
 
 Aus der Trefferliste heraus:
 
@@ -317,8 +331,8 @@ Der Sichern-Dialog bietet vier Formate an:
 | --- | --- |
 | Pfade, eine Zeile pro Treffer (`.txt`) | Das, was Kommandozeilenwerkzeuge erwarten: `xargs`, `while read`, `grep -f` |
 | Pfade, NUL-getrennt (`.txt`) | Dieselbe Liste für `xargs -0`. Ein Dateiname darf unter macOS jedes Zeichen außer `/` und NUL enthalten — auch einen Zeilenumbruch. Nur diese Form überträgt deshalb **jeden** Namen unversehrt |
-| JSON Lines (`.jsonl`) | Dieselben Objekte, die `favenio.py --json` schreibt (`path`, `type`, `isDirectory`, `filesystemPath`, `archiveMembers`, optional `size`/`line`) — für `jq` und eigene Skripte |
-| CSV (`.csv`) | Für Tabellenkalkulation; mit UTF-8-BOM, sonst liest Excel unter macOS Umlaute falsch |
+| JSON Lines (`.jsonl`) | Dieselben Objekte, die `favenio.py --json` schreibt (`path`, `type`, `isDirectory`, `filesystemPath`, `archiveMembers`, optional `size`/`line`/`modified`/`created`) — für `jq` und eigene Skripte |
+| CSV (`.csv`) | Für Tabellenkalkulation; mit UTF-8-BOM, sonst liest Excel unter macOS Umlaute falsch. Zeitstempel als ISO 8601 |
 
 In den beiden Pfadformaten steht derselbe Pfad wie bei „Pfad kopieren": bei
 einer normalen Datei ihr POSIX-Pfad, bei einem Archiv-Eintrag der Pfad in

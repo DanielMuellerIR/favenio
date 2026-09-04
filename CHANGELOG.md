@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.29.0 — 2026-09-04
+
+Trefferliste der Haupt-App nach Daniels Rückmeldung vom 2026-09-04.
+
+- **Spalten „Änderungsdatum" und „Erstellungsdatum".** Der Kern gibt beide
+  Zeiten als `modified`/`created` (Unix-Zeit) im JSONL mit: Dateien und
+  Ordner aus derselben `stat`-Abfrage wie die Größe, Zip- und Tar-Einträge
+  ihre Änderungszeit aus dem Archivkatalog. Wie in Doppeldecker wählt jede
+  Datumsspalte ihre Schreibweise nach der eigenen Breite — von `04.09.26`
+  über `04.09.26, 14:03` und `04.09.2026, 14:03` bis
+  `4. September 2026 um 14:03`; beim Ziehen der Spalte wechselt sie.
+  JSONL- und CSV-Export führen die Zeiten mit (CSV als ISO 8601).
+- **Die Pfadspalte zeigt nur noch den Ordner, relativ zum Suchordner.**
+  Vorher stand dort der absolute Pfad samt Dateinamen, der links schon
+  steht — bei einem tiefen Suchordner passte davon nichts Unterscheidendes
+  ins Fenster. Gekürzt wird jetzt am Anfang, nicht in der Mitte; das Ende
+  ist der Teil, der die Treffer unterscheidet. Auch in der Schnellsuche.
+- **Spalten ohne Gesamtlimit.** Die Summe der Spalten darf breiter sein
+  als das Fenster; der Rest läuft über den waagerechten Balken. Bis 0.28.3
+  ließ sich der Pfad nur breiter ziehen, wenn man vorher andere Spalten
+  zusammenquetschte. Reihenfolge jetzt Name, Größe, Pfad, Typ,
+  Änderungsdatum, Erstellungsdatum, Fundstelle, Maße; Breiten und
+  Reihenfolge überleben den Neustart.
+- **Schnellsuche: die Trefferzeile steht neben den Maßfeldern** statt in
+  einer eigenen Zeile — eine Zeile mehr für Treffer.
+
 ## 0.28.3 — 2026-09-04
 
 Aus dem nächtlichen Code-Review vom 2026-09-04.

@@ -48,7 +48,7 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.28.3"
+__version__ = "0.29.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-04"
@@ -290,6 +290,23 @@ def single_opener(extension):
     if extension == ZSTD_SINGLE_EXTENSION:
         return zstd_open
     return SINGLE_COMPRESSION_OPENERS[extension]
+
+
+def zip_member_mtime(info):
+    """Änderungszeit eines Zip-Eintrags als Unix-Zeit — oder None.
+
+    Zip speichert die Zeit als sechs Felder in ORTSZEIT ohne Zeitzone
+    (`ZipInfo.date_time`); `time.mktime()` deutet sie wie der Finder in der
+    Zeitzone dieses Rechners. Ein Eintrag mit unsinnigem Datum (Jahr 1980
+    ist der Nullwert, alles darunter ungültig) oder einem Wert außerhalb
+    des Bereichs von mktime liefert None statt eines Abbruchs."""
+    date_time = getattr(info, "date_time", None)
+    if not date_time or len(date_time) != 6 or date_time[0] < 1980:
+        return None
+    try:
+        return time.mktime(tuple(date_time) + (0, 0, -1))
+    except (OverflowError, ValueError):
+        return None
 
 
 def single_member_name(container_name, extension):
@@ -1275,7 +1292,8 @@ class FileProbe:
     Antworten bleiben gemerkt, bis der Treffer ausgegeben ist."""
 
     def __init__(self, search, label, name, open_stream, chunker,
-                 filesystem_path, size=None, in_archive=False):
+                 filesystem_path, size=None, in_archive=False,
+                 modified=None):
         self.search = search
         self.label = label                    # Anzeigepfad für Warnungen
         self.name = name                      # Dateiname (nur die letzte
@@ -1286,6 +1304,8 @@ class FileProbe:
                                               # → Byte-Häppchen (Budget!)
         self.filesystem_path = filesystem_path
         self.size = size
+        self.modified = modified              # Änderungszeit eines
+                                              # Archiv-Eintrags (Unix-Zeit)
         self.in_archive = in_archive
         self.metadata_hit = None              # (Feld, Wert) bei Treffer
         self.dimension_bytes = 0              # so viele Bytes hat der
@@ -1514,7 +1534,7 @@ class Search:
 
     def emit(self, path, kind, line=None, size=None, filesystem_path=None,
              archive_members=None, is_dir=None, field=None, value=None,
-             width=None, height=None):
+             width=None, height=None, modified=None, created=None):
         """Gibt EINEN Treffer aus. kind ist "file", "dir" oder "member"
         (member = Eintrag innerhalb eines Archivs). line ist bei
         Inhaltssuche die Zeilennummer des ersten Treffers, size die
@@ -1530,7 +1550,14 @@ class Search:
         `field`/`value` nennen bei einer Metadatensuche das Feld und den
         gefundenen Wert, `width`/`height` die Pixelmaße, wenn ein Maßfilter
         sie ermittelt hat. Alle vier sind optional und ändern den bisherigen
-        Pflichtsatz nicht."""
+        Pflichtsatz nicht.
+
+        `modified`/`created` sind Änderungs- und Erstellungszeit als
+        Sekunden seit 1970 (Unix-Zeit, Gleitkomma). Beide sind optional:
+        Ein Zip- oder Tar-Eintrag kennt nur seine Änderungszeit, ein
+        bsdtar-Eintrag und eine einzeln komprimierte Datei (`.gz`) keine
+        von beiden. Die Oberflächen zeigen daraus die Spalten
+        „Änderungsdatum" und „Erstellungsdatum"."""
         self.found_any = True
         directory = kind == "dir" if is_dir is None else bool(is_dir)
         if self.as_json:
@@ -1549,6 +1576,10 @@ class Search:
             if width is not None and height is not None:
                 record["width"] = width
                 record["height"] = height
+            if modified is not None:
+                record["modified"] = modified
+            if created is not None:
+                record["created"] = created
             text = json.dumps(record, ensure_ascii=False)
         else:
             text = path + (":%d" % line if line is not None else "")
@@ -1627,14 +1658,19 @@ class Search:
         field = value = None
         if probe.metadata_hit is not None:
             field, value = probe.metadata_hit
-        size = probe.size if probe.in_archive \
-            else self.file_size(probe.filesystem_path)
+        if probe.in_archive:
+            # Ein Archiv-Eintrag kennt seine Größe und Änderungszeit aus
+            # dem Archivkatalog; eine Erstellungszeit gibt es dort nicht.
+            size, modified, created = probe.size, probe.modified, None
+        else:
+            size, modified, created = self.file_facts(probe.filesystem_path)
         self.emit(display, kind, line=line, size=size,
                   filesystem_path=filesystem_path,
                   archive_members=archive_members, is_dir=False,
                   field=field, value=value,
                   width=dims[0] if dims else None,
-                  height=dims[1] if dims else None)
+                  height=dims[1] if dims else None,
+                  modified=modified, created=created)
 
     @staticmethod
     def file_chunks(handle, free_bytes=0):
@@ -1842,7 +1878,10 @@ class Search:
                 # Unterordner ebenfalls).
                 for dirname in dirnames:
                     if self.matcher(dirname) and self.type_allowed(True):
-                        self.emit(os.path.join(dirpath, dirname), "dir")
+                        folder = os.path.join(dirpath, dirname)
+                        _, modified, created = self.file_facts(folder)
+                        self.emit(folder, "dir", modified=modified,
+                                  created=created)
             # Was in `dirpath` liegt, hat die Tiefe `depth_of + 1`. Nur wenn
             # dessen Unterordner noch erlaubt wären, weiter absteigen — sonst
             # käme eine Ebene zu viel mit (`--max-depth 1` = nur direkt im
@@ -1871,6 +1910,21 @@ class Search:
             return os.path.getsize(path)
         except OSError:
             return None
+
+    @staticmethod
+    def file_facts(path):
+        """(Größe, Änderungszeit, Erstellungszeit) einer Datei oder eines
+        Ordners aus EINER stat-Abfrage; jeder Wert ist None, wenn er sich
+        nicht ermitteln lässt (toter Symlink: alle drei).
+
+        Die Erstellungszeit (`st_birthtime`) kennt macOS; ein Dateisystem
+        oder System ohne sie liefert None statt eines Fehlers."""
+        try:
+            status = os.stat(path)
+        except OSError:
+            return None, None, None
+        birth = getattr(status, "st_birthtime", None)
+        return status.st_size, status.st_mtime, birth
 
     def visit_file(self, path):
         """Behandelt EINE Datei im Dateisystem: alle Kriterien gegen die
@@ -2013,13 +2067,15 @@ class Search:
 
     def visit_member(self, member_path, is_dir, open_member, display, depth,
                      archive_path, archive_members, size=None,
-                     compressed_size=None):
+                     compressed_size=None, modified=None):
         """Gemeinsame Logik für EINEN Archiv-Eintrag (Zip wie Tar).
 
         member_path: Pfad innerhalb des Archivs.
         read_bytes:  Funktion, die den Inhalt liefert (lazy — wird nur
                      aufgerufen, wenn wir den Inhalt wirklich brauchen).
         size:        entpackte Größe des Eintrags in Bytes (bei Ordnern None).
+        modified:    Änderungszeit des Eintrags als Unix-Zeit, None wenn das
+                     Format sie nicht nennt (bsdtar, einzeln komprimiert).
         """
         # Der Wurzeleintrag eines mit `tar -cf x.tar -C ordner .` gebauten
         # Archivs heißt "./" — das ist das Archiv selbst, kein Eintrag
@@ -2043,7 +2099,8 @@ class Search:
                     and self.type_allowed(True):
                 self.emit(full_display, "member", size=None,
                           filesystem_path=archive_path,
-                          archive_members=member_chain, is_dir=True)
+                          archive_members=member_chain, is_dir=True,
+                          modified=modified)
             return
 
         nested_kind = classify_archive(name)
@@ -2088,7 +2145,7 @@ class Search:
                               open_stream=open_stream or open_member,
                               chunker=chunker,
                               filesystem_path=archive_path, size=size,
-                              in_archive=True)
+                              in_archive=True, modified=modified)
             self.evaluate(probe, full_display, "member",
                           filesystem_path=archive_path,
                           archive_members=member_chain)
@@ -2135,6 +2192,7 @@ class Search:
                 archive_members,
                 size=info.file_size,
                 compressed_size=info.compress_size,
+                modified=zip_member_mtime(info),
             )
 
     def walk_tar(self, archive, display, depth, archive_path,
@@ -2155,7 +2213,7 @@ class Search:
                 return extracted
             self.visit_member(member.name, member.isdir(), open_member,
                               display, depth, archive_path, archive_members,
-                              size=member.size)
+                              size=member.size, modified=member.mtime)
 
     def walk_single(self, extension, fs_path, fileobj, display, depth,
                     archive_path, archive_members):

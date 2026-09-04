@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 import zipfile
 import zlib
@@ -220,6 +221,69 @@ class FavenioTest(TempTreeTest):
         record = json.loads(lines[0])
         self.assertEqual(record["type"], "file")
         self.assertNotIn("size", record)
+
+    def test_json_carries_modified_and_created(self):
+        # Änderungs- und Erstellungszeit als Unix-Zeit: Datei und Ordner im
+        # Dateisystem tragen beide, Zip- und Tar-Einträge nur die
+        # Änderungszeit aus dem Archivkatalog. Die Oberflächen bauen daraus
+        # die Spalten „Änderungsdatum" und „Erstellungsdatum".
+        probe = self.write("zeit-probe.txt", "x")
+        stamp = 1_700_000_000            # 2023-11-14T22:13:20Z
+        os.utime(probe, (stamp, stamp))
+        code, lines, err = run(["--json", "zeit-probe", self.root])
+        self.assertEqual(code, 0, err)
+        record = json.loads(lines[0])
+        self.assertEqual(record["modified"], stamp)
+        status = os.stat(probe)
+        if hasattr(status, "st_birthtime"):
+            self.assertEqual(record["created"], status.st_birthtime)
+        else:
+            self.assertNotIn("created", record)
+
+        code, lines, err = run(["--json", "Rechnungen", self.root])
+        self.assertEqual(code, 0, err)
+        folder = json.loads(lines[0])
+        self.assertTrue(folder["isDirectory"])
+        self.assertAlmostEqual(
+            folder["modified"],
+            os.stat(os.path.join(self.root, "Rechnungen")).st_mtime)
+
+        code, lines, err = run(["--json", "alt.txt", self.root])
+        self.assertEqual(code, 0, err)
+        tar_member = json.loads(lines[0])
+        with tarfile.open(os.path.join(self.root, "backup.tar.gz")) as tf:
+            expected = tf.getmember("sicherung/alt.txt").mtime
+        self.assertEqual(tar_member["modified"], expected)
+        self.assertNotIn("created", tar_member)
+
+        code, lines, err = run(["--json", "anleitung", self.root])
+        self.assertEqual(code, 0, err)
+        zip_member = json.loads(lines[0])
+        with zipfile.ZipFile(os.path.join(self.root, "paket.zip")) as zf:
+            date_time = zf.getinfo("docs/anleitung.md").date_time
+        self.assertEqual(zip_member["modified"],
+                         time.mktime(date_time + (0, 0, -1)))
+        self.assertNotIn("created", zip_member)
+
+    def test_dates_are_absent_when_a_plain_file_cannot_be_stated(self):
+        # Derselbe tote Symlink wie bei der Größe: Ohne stat gibt es weder
+        # Größe noch Daten, und der Treffer bleibt trotzdem brauchbar.
+        broken = os.path.join(self.root, "kaputte-zeit.txt")
+        os.symlink(os.path.join(self.root, "fehlt.txt"), broken)
+        code, lines, err = run(["--json", "kaputte-zeit", self.root])
+        self.assertEqual(code, 0, err)
+        record = json.loads(lines[0])
+        self.assertNotIn("modified", record)
+        self.assertNotIn("created", record)
+
+    def test_zip_member_mtime_rejects_nonsense_dates(self):
+        # Ein Zip-Eintrag ohne brauchbares Datum liefert None, keinen Abbruch.
+        info = zipfile.ZipInfo("x.txt", date_time=(1980, 1, 1, 0, 0, 0))
+        self.assertEqual(favenio.zip_member_mtime(info),
+                         time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, -1)))
+        info.date_time = (1970, 1, 1, 0, 0, 0)
+        self.assertIsNone(favenio.zip_member_mtime(info))
+        self.assertIsNone(favenio.zip_member_mtime(object()))
 
     def test_name_glob(self):
         # Glob muss den GANZEN Namen matchen.

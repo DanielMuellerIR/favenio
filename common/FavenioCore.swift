@@ -137,6 +137,12 @@ struct Hit: Hashable {
     /// Pixelmaße, wenn ein Maßfilter sie ermittelt hat; sonst nil.
     var width: Int? = nil
     var height: Int? = nil
+    /// Änderungs- und Erstellungszeit als Unix-Zeit (Sekunden seit 1970),
+    /// wie der Kern sie aus `stat` bzw. dem Archivkatalog liest. Beide
+    /// optional: Ein Zip- oder Tar-Eintrag kennt nur die Änderungszeit,
+    /// ein bsdtar-Eintrag keine von beiden.
+    var modified: Double? = nil
+    var created: Double? = nil
 
     /// Liegt der Treffer INNERHALB eines Archivs?
     var isMember: Bool { !archiveMembers.isEmpty }
@@ -179,6 +185,44 @@ struct Hit: Hashable {
     var displayName: String {
         let lastSegment = archiveMembers.last ?? filesystemPath
         return (lastSegment as NSString).lastPathComponent
+    }
+
+    /// Der ORDNER, in dem der Treffer liegt — ohne den Dateinamen, den die
+    /// Namensspalte schon zeigt. Bei einem Archiv-Eintrag in `!/`-Notation
+    /// bis zum Ordner im Archiv (`a.zip!/docs`), bei einem Eintrag direkt in
+    /// der Archivwurzel das Archiv selbst (`a.zip`).
+    ///
+    /// Aus den STRUKTURIERTEN Feldern gebaut, nicht aus `path` geschnitten:
+    /// Ein Eintragsname darf selbst `!/` enthalten, und nur die Eintragsliste
+    /// sagt, wo das Archiv aufhört und der Ordner darin anfängt.
+    var folderPath: String {
+        guard let last = archiveMembers.last else {
+            return (filesystemPath as NSString).deletingLastPathComponent
+        }
+        var folder = ([filesystemPath] + archiveMembers.dropLast())
+            .joined(separator: "!/")
+        let inner = (last as NSString).deletingLastPathComponent
+        if !inner.isEmpty { folder += "!/" + inner }
+        return folder
+    }
+
+    /// Die Spalte „Pfad": `folderPath` relativ zum durchsuchten Ordner.
+    /// Ein Treffer direkt im Suchordner hat einen leeren Pfad; ein Treffer
+    /// außerhalb (anderer Startpfad, Übergabe aus der Schnellsuche mit
+    /// anderem Ordner) behält seinen vollen Pfad, statt einen falschen
+    /// relativen zu erfinden.
+    func folderText(relativeTo root: String) -> String {
+        let folder = folderPath
+        var base = root
+        while base.count > 1 && base.hasSuffix("/") { base.removeLast() }
+        if base == "/" {
+            return folder == "/" ? "" : String(folder.dropFirst())
+        }
+        if folder == base { return "" }
+        if folder.hasPrefix(base + "/") {
+            return String(folder.dropFirst(base.count + 1))
+        }
+        return folder
     }
 
     /// Menschlicher Dateityp für die Typ-Spalte: „Ordner" bei Verzeichnissen,
@@ -439,6 +483,17 @@ private func compareOptionalNumbers(_ lhs: Int?, _ rhs: Int?)
     return .orderedSame
 }
 
+/// Dasselbe für Zeitstempel: Ein Treffer ohne Datum (bsdtar-Eintrag) steht
+/// aufsteigend vorn.
+private func compareOptionalSeconds(_ lhs: Double?, _ rhs: Double?)
+    -> ComparisonResult {
+    let left = lhs ?? -Double.infinity
+    let right = rhs ?? -Double.infinity
+    if left < right { return .orderedAscending }
+    if left > right { return .orderedDescending }
+    return .orderedSame
+}
+
 /// Gemeinsame, strikte Sortierordnung für beide Trefferlisten. Der feste
 /// Pfad-Tie-Breaker verhindert, dass zwei verschiedene Treffer einander in
 /// beiden Richtungen als „kleiner“ ansehen.
@@ -458,6 +513,10 @@ func compareHits(_ lhs: Hit, _ rhs: Hit, key: String,
         primary = compareOptionalNumbers(lhs.pixelArea, rhs.pixelArea)
     case "path":
         primary = lhs.path.localizedCaseInsensitiveCompare(rhs.path)
+    case "modified":
+        primary = compareOptionalSeconds(lhs.modified, rhs.modified)
+    case "created":
+        primary = compareOptionalSeconds(lhs.created, rhs.created)
     default:
         primary = lhs.displayName.localizedCaseInsensitiveCompare(
             rhs.displayName)
@@ -541,7 +600,9 @@ func parseSearchLine(_ lineData: Data) -> SearchLine? {
                     field: dict["field"] as? String,
                     value: dict["value"] as? String,
                     width: dict["width"] as? Int,
-                    height: dict["height"] as? Int))
+                    height: dict["height"] as? Int,
+                    modified: dict["modified"] as? Double,
+                    created: dict["created"] as? Double))
 }
 
 /// Übersetzt EINE JSONL-Zeile in einen Hit (oder nil bei Müll und bei
@@ -1082,6 +1143,8 @@ func jsonlData(for hits: [Hit]) -> Data {
             object["width"] = width
             object["height"] = height
         }
+        if let modified = hit.modified { object["modified"] = modified }
+        if let created = hit.created { object["created"] = created }
         if let encoded = try? JSONSerialization.data(withJSONObject: object) {
             data.append(encoded)
             data.append(0x0A)
@@ -1667,6 +1730,95 @@ func humanSize(_ bytes: Int?) -> String {
                                      countStyle: .file)
 }
 
+// MARK: - Datumsspalten
+
+/// Die vier Schreibweisen der Datumsspalten, von der kürzesten zur
+/// ausführlichsten — dieselbe Staffel wie in Doppeldecker. Welche Stufe
+/// eine Spalte zeigt, entscheidet ihre Breite (`dateColumnStage`), nicht
+/// eine feste Wahl: Zieht man die Spalte auf, wird das Datum ausführlicher,
+/// zieht man sie zu, bleibt es lesbar statt abgeschnitten.
+///
+/// Stufe 1 `04.09.26`, Stufe 2 `04.09.26, 14:03`,
+/// Stufe 3 `04.09.2026, 14:03`, Stufe 4 `4. September 2026 um 14:03`.
+let dateColumnStages = 4
+
+/// Breitestes Muster je Stufe: Ziffern laufen in Tabellenziffern
+/// (`monospacedDigitSystemFont`), jede „8" ist also so breit wie jede andere
+/// Ziffer; „September" ist der längste deutsche Monatsname.
+let dateColumnSamples = [
+    "88.88.88",
+    "88.88.88, 88:88",
+    "88.88.8888, 88:88",
+    "88. September 8888 um 88:88",
+]
+
+private let germanMonthNames = [
+    "Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August",
+    "September", "Oktober", "November", "Dezember",
+]
+
+/// Ein Zeitstempel in der gewünschten Stufe (1…4, außerhalb gedeckelt);
+/// ohne Wert leer. Lokale Zeitzone und gregorianischer Kalender — die
+/// Spalte soll dasselbe zeigen wie der Finder daneben.
+func formatDateColumn(_ seconds: Double?, stage: Int,
+                      calendar: Calendar = dateColumnCalendar) -> String {
+    guard let seconds, seconds.isFinite else { return "" }
+    let date = Date(timeIntervalSince1970: seconds)
+    let parts = calendar.dateComponents(
+        [.year, .month, .day, .hour, .minute], from: date)
+    guard let year = parts.year, let month = parts.month, let day = parts.day,
+          let hour = parts.hour, let minute = parts.minute,
+          (1...12).contains(month) else { return "" }
+    let time = String(format: "%02d:%02d", hour, minute)
+    let shortYear = String(format: "%02d", ((year % 100) + 100) % 100)
+    switch max(1, min(dateColumnStages, stage)) {
+    case 1:
+        return String(format: "%02d.%02d.", day, month) + shortYear
+    case 2:
+        return String(format: "%02d.%02d.", day, month) + shortYear
+            + ", " + time
+    case 3:
+        return String(format: "%02d.%02d.%d, ", day, month, year) + time
+    default:
+        return "\(day). \(germanMonthNames[month - 1]) \(year) um \(time)"
+    }
+}
+
+/// Gregorianisch in der Zeitzone des Rechners, unabhängig von einem
+/// exotischen Nutzerkalender: Die Spalte zeigt Kalenderdaten, wie sie auf
+/// der Datei stehen.
+let dateColumnCalendar: Calendar = {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone.current
+    return calendar
+}()
+
+/// Die ausführlichste Stufe, deren breitestes Muster in `width` Punkte
+/// passt. Passt nicht einmal die kürzeste, bleibt es bei Stufe 1 — gekürzt
+/// wird nur im Extremfall, erfunden nie. Die Musterbreiten werden je Schrift
+/// einmal gemessen; die Frage kommt bei jedem Zeichnen einer Zelle.
+func dateColumnStage(forWidth width: CGFloat, font: NSFont) -> Int {
+    var stage = 1
+    for (index, sampleWidth) in dateColumnSampleWidths(font: font).enumerated()
+    where width >= sampleWidth {
+        stage = index + 1
+    }
+    return stage
+}
+
+private var measuredDateSampleWidths: [String: [CGFloat]] = [:]
+
+/// Gemessene Breite der vier Muster in dieser Schrift, einmal je Schrift.
+func dateColumnSampleWidths(font: NSFont) -> [CGFloat] {
+    let key = font.fontName + "@" + String(describing: font.pointSize)
+    if let cached = measuredDateSampleWidths[key] { return cached }
+    let widths = dateColumnSamples.map {
+        ceil(($0 as NSString).size(withAttributes: [.font: font]).width)
+    }
+    measuredDateSampleWidths[key] = widths
+    return widths
+}
+
 /// Die Kennzahlenzeile: Treffer, Datenmenge, Anzahl Ordner — und die Auswahl
 /// erst ab ZWEI markierten Zeilen. Eine einzelne markierte Zeile hat man fast
 /// immer; „1 ausgewählt" wäre nur Rauschen.
@@ -1755,6 +1907,15 @@ enum HitExportFormat: String, CaseIterable {
     }
 }
 
+/// Unix-Zeit als ISO-8601-Zeitstempel in der Zeitzone dieses Rechners,
+/// z. B. `2026-09-04T14:03:00+02:00`.
+func isoTimestamp(_ seconds: Double) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.timeZone = TimeZone.current
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.string(from: Date(timeIntervalSince1970: seconds))
+}
+
 /// Ein CSV-Feld nach RFC 4180: Anführungszeichen nur, wo sie nötig sind, und
 /// ein enthaltenes Anführungszeichen wird verdoppelt.
 func csvField(_ value: String) -> String {
@@ -1795,7 +1956,7 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
         return jsonlData(for: hits)
     case .csv:
         var text = "path,type,isDirectory,size,line,filesystemPath,"
-            + "field,value,width,height\n"
+            + "field,value,width,height,modified,created\n"
         for hit in hits {
             // In Teilschritten: Ein Array-Literal mit zehn gemischten
             // Ausdrücken bringt den Typprüfer an seine Zeitgrenze.
@@ -1808,6 +1969,10 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
             cells.append(csvField(hit.value ?? ""))
             cells.append(hit.width.map { String($0) } ?? "")
             cells.append(hit.height.map { String($0) } ?? "")
+            // Zeitstempel als ISO 8601 mit Zeitzone — das liest jede
+            // Tabellenkalkulation, eine nackte Sekundenzahl nicht.
+            cells.append(hit.modified.map(isoTimestamp) ?? "")
+            cells.append(hit.created.map(isoTimestamp) ?? "")
             text += cells.joined(separator: ",")
             text += "\n"
         }

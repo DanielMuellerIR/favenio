@@ -287,6 +287,72 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Metadatenfelder gehen in JSONL verloren")
         return 1
     }
+    // Zeitstempel überleben die JSONL-Runde, und die Pfadspalte zeigt den
+    // Ordner relativ zum Suchordner — ohne Dateinamen, mit dem Archiv in
+    // `!/`-Notation, und bei einem Eintragsnamen mit `!/` aus der
+    // Eintragsliste statt aus dem geschnittenen Anzeigepfad.
+    let datedHit = Hit(path: "/tmp/a/b/c.txt", kind: "file", line: nil,
+                       size: 1, filesystemPath: "/tmp/a/b/c.txt",
+                       archiveMembers: [], isDirectory: false,
+                       modified: 1_700_000_000.5, created: 1_600_000_000)
+    guard let datedLine = jsonlData(for: [datedHit])
+            .split(separator: 0x0A).first,
+          parseHit(Data(datedLine)) == datedHit else {
+        print("SELFTEST FEHLER: Zeitstempel gehen in JSONL verloren")
+        return 1
+    }
+    let oddMember = Hit(path: "/tmp/a/p.zip!/odd!/name.txt", kind: "member",
+                        line: nil, size: 1, filesystemPath: "/tmp/a/p.zip",
+                        archiveMembers: ["odd!/name.txt"], isDirectory: false)
+    let nested = Hit(path: "/tmp/a/o.zip!/i.zip!/x.txt", kind: "member",
+                     line: nil, size: 1, filesystemPath: "/tmp/a/o.zip",
+                     archiveMembers: ["i.zip", "x.txt"], isDirectory: false)
+    let rootMember = Hit(path: "/tmp/a/p.zip!/top.txt", kind: "member",
+                         line: nil, size: 1, filesystemPath: "/tmp/a/p.zip",
+                         archiveMembers: ["top.txt"], isDirectory: false)
+    guard datedHit.folderText(relativeTo: "/tmp/a") == "b",
+          datedHit.folderText(relativeTo: "/tmp/a/") == "b",
+          datedHit.folderText(relativeTo: "/tmp/a/b") == "",
+          datedHit.folderText(relativeTo: "/") == "tmp/a/b",
+          datedHit.folderText(relativeTo: "/tmp/ab") == "/tmp/a/b",
+          datedHit.folderText(relativeTo: "/other") == "/tmp/a/b",
+          oddMember.folderText(relativeTo: "/tmp/a") == "p.zip!/odd!",
+          nested.folderText(relativeTo: "/tmp/a") == "o.zip!/i.zip",
+          rootMember.folderText(relativeTo: "/tmp/a") == "p.zip" else {
+        print("SELFTEST FEHLER: Pfadspalte zeigt den falschen Ordner")
+        return 1
+    }
+    // Vier Datumsstufen in fester Zeitzone, und die Stufenwahl folgt der
+    // Breite: breiter nie kürzer, und kein Muster passt in 0 pt.
+    var utc = Calendar(identifier: .gregorian)
+    utc.timeZone = TimeZone(identifier: "UTC")!
+    let stamp = 1_757_000_000.0     // 2025-09-04T15:33:20Z
+    guard formatDateColumn(stamp, stage: 1, calendar: utc) == "04.09.25",
+          formatDateColumn(stamp, stage: 2, calendar: utc)
+              == "04.09.25, 15:33",
+          formatDateColumn(stamp, stage: 3, calendar: utc)
+              == "04.09.2025, 15:33",
+          formatDateColumn(stamp, stage: 4, calendar: utc)
+              == "4. September 2025 um 15:33",
+          formatDateColumn(stamp, stage: 9, calendar: utc)
+              == "4. September 2025 um 15:33",
+          formatDateColumn(nil, stage: 3) == "",
+          formatDateColumn(Double.nan, stage: 3) == "" else {
+        print("SELFTEST FEHLER: Datumsstufen formatieren falsch")
+        return 1
+    }
+    let dateFont = NSFont.monospacedDigitSystemFont(ofSize: 13,
+                                                    weight: .regular)
+    let sampleWidths = dateColumnSampleWidths(font: dateFont)
+    guard sampleWidths.count == dateColumnStages,
+          sampleWidths == sampleWidths.sorted(),
+          dateColumnStage(forWidth: 0, font: dateFont) == 1,
+          dateColumnStage(forWidth: sampleWidths[1], font: dateFont) == 2,
+          dateColumnStage(forWidth: sampleWidths[3] + 100, font: dateFont)
+              == dateColumnStages else {
+        print("SELFTEST FEHLER: Datumsstufe folgt nicht der Spaltenbreite")
+        return 1
+    }
     guard let member = hits.first(where: { $0.isMember }),
           let extracted = materializeHit(member),
           materializeHit(member) == extracted,
@@ -535,7 +601,7 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
     }
     guard let csv = String(data: csvData.dropFirst(3), encoding: .utf8),
           csv.hasPrefix("path,type,isDirectory,size,line,filesystemPath,"
-                        + "field,value,width,height\n"),
+                        + "field,value,width,height,modified,created\n"),
           csv.contains("\"/tmp/mit,Komma und \"\"Zitat\"\".txt\"") else {
         return "CSV-Export maskiert Komma und Anführungszeichen nicht"
     }
@@ -1082,6 +1148,13 @@ final class MainController: HitListController, NSApplicationDelegate,
         let scroll = NSScrollView()
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
+        // Die Spalten dürfen zusammen breiter sein als das Fenster: Wer den
+        // Pfad breit zieht, soll dafür nicht erst alle anderen Spalten
+        // zusammenquetschen müssen. Der Rest läuft über den waagerechten
+        // Balken. Bis 0.28.3 deckelte `lastColumnOnlyAutoresizingStyle` ohne
+        // Scroller die Summe auf die Fensterbreite.
+        scroll.hasHorizontalScroller = true
+        scroll.autohidesScrollers = true
         scroll.setContentHuggingPriority(NSLayoutConstraint.Priority(1),
                                          for: .vertical)
 
@@ -1156,23 +1229,36 @@ final class MainController: HitListController, NSApplicationDelegate,
         window.makeFirstResponder(searchField)
     }
 
+    /// Die beiden Datumsspalten. Sie laufen in Tabellenziffern, damit die
+    /// Musterbreiten aus `dateColumnSamples` für jedes echte Datum gelten.
+    static let dateColumns: Set<String> = ["modified", "created"]
+    let dateFont = NSFont.monospacedDigitSystemFont(
+        ofSize: NSFont.systemFontSize, weight: .regular)
+    /// Je Datumsspalte die Breite, für die die Stufe zuletzt bestimmt wurde,
+    /// und diese Stufe — die Messung läuft nur bei geänderter Breite.
+    var dateStages: [String: (width: CGFloat, stage: Int)] = [:]
+
     func buildTable() {
-        // (Identifier, Titel, Breite) — Reihenfolge = Spaltenreihenfolge.
-        // Jede Spalte ist über einen sortDescriptorPrototype sortierbar; der
-        // key zeigt auf die Sortier-Logik in sortDescriptorsDidChange.
+        // (Identifier, Titel, Breite) — Reihenfolge = Spaltenreihenfolge:
+        // die wichtigsten zuerst, damit der Pfad ohne Ziehen im Fenster
+        // steht. Jede Spalte ist über einen sortDescriptorPrototype
+        // sortierbar; der key zeigt auf compareHits() im Kern.
         let columns = [
-            ("name", "Name", CGFloat(220)),
-            ("type", "Typ", CGFloat(140)),
-            ("size", "Größe", CGFloat(90)),
-            ("line", "Fundstelle", CGFloat(130)),
+            ("name", "Name", CGFloat(240)),
+            ("size", "Größe", CGFloat(80)),
+            ("path", "Pfad", CGFloat(300)),
+            ("type", "Typ", CGFloat(130)),
+            ("modified", "Änderungsdatum", CGFloat(130)),
+            ("created", "Erstellungsdatum", CGFloat(130)),
+            ("line", "Fundstelle", CGFloat(110)),
             ("dims", "Maße", CGFloat(84)),
-            ("path", "Ort", CGFloat(460)),
         ]
         for (identifier, title, width) in columns {
             let column = NSTableColumn(
                 identifier: NSUserInterfaceItemIdentifier(identifier))
             column.title = title
             column.width = width
+            column.minWidth = 40
             column.sortDescriptorPrototype =
                 NSSortDescriptor(key: identifier, ascending: true)
             // Größe rechtsbündig (Zahlenspalte).
@@ -1181,7 +1267,19 @@ final class MainController: HitListController, NSApplicationDelegate,
             }
             tableView.addTableColumn(column)
         }
-        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        // Keine automatische Anpassung: Die Summe der Spalten darf das
+        // Fenster überragen (waagerechter Balken), und keine Spalte wird
+        // beim Fensterziehen heimlich schmaler.
+        tableView.columnAutoresizingStyle = .noColumnAutoresizing
+        // Breite und Reihenfolge der Spalten überleben den Neustart — wer
+        // den Pfad einmal breit gezogen hat, soll das nicht wiederholen.
+        tableView.autosaveName = "Favenio.hits.columns"
+        tableView.autosaveTableColumns = true
+        // Beim Ziehen einer Datumsspalte deren Stufe neu bestimmen und die
+        // sichtbaren Zellen neu formatieren.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(columnDidResize(_:)),
+            name: NSTableView.columnDidResizeNotification, object: tableView)
 
         tableView.dataSource = self
         tableView.delegate = self
@@ -1822,6 +1920,37 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     func numberOfRows(in tableView: NSTableView) -> Int { hits.count }
 
+    /// Welche Datumsstufe eine Datumsspalte bei ihrer aktuellen Breite
+    /// zeigt. Die Zelle hat je 2 pt Rand, und ein Muster, das haargenau
+    /// passt, kürzte AppKit trotzdem mit „…" — deshalb 8 pt Luft.
+    func dateStage(for column: NSTableColumn) -> Int {
+        let key = column.identifier.rawValue
+        if let known = dateStages[key], known.width == column.width {
+            return known.stage
+        }
+        let stage = dateColumnStage(forWidth: column.width - 8,
+                                    font: dateFont)
+        dateStages[key] = (column.width, stage)
+        return stage
+    }
+
+    @objc func columnDidResize(_ notification: Notification) {
+        guard let column = notification.userInfo?["NSTableColumn"]
+                as? NSTableColumn,
+              Self.dateColumns.contains(column.identifier.rawValue),
+              let previous = dateStages[column.identifier.rawValue]?.stage
+        else { return }
+        guard dateStage(for: column) != previous else { return }
+        let columnIndex = tableView.column(withIdentifier: column.identifier)
+        guard columnIndex >= 0 else { return }
+        let visible = tableView.rows(in: tableView.visibleRect)
+        guard visible.length > 0 else { return }
+        tableView.reloadData(
+            forRowIndexes: IndexSet(integersIn:
+                visible.location ..< visible.location + visible.length),
+            columnIndexes: IndexSet(integer: columnIndex))
+    }
+
     func tableView(_ tableView: NSTableView,
                    viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
@@ -1856,10 +1985,18 @@ final class MainController: HitListController, NSApplicationDelegate,
         }
         let hit = hits[row]
         // Zellen werden recycelt → Ausrichtung je Spalte neu setzen.
+        let identifier = column.identifier.rawValue
         cell?.textField?.alignment =
-            ["size", "dims"].contains(column.identifier.rawValue)
-            ? .right : .left
-        switch column.identifier.rawValue {
+            ["size", "dims"].contains(identifier) ? .right : .left
+        // Der Pfad wird AM ANFANG gekürzt: Das Ende — der Ordner, in dem
+        // die Datei liegt — ist der Teil, der unterscheidet; der Anfang
+        // ist bei allen Treffern derselbe Suchordner.
+        cell?.textField?.lineBreakMode =
+            identifier == "path" ? .byTruncatingHead : .byTruncatingMiddle
+        cell?.textField?.font = Self.dateColumns.contains(identifier)
+            ? dateFont : NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        cell?.textField?.toolTip = nil
+        switch identifier {
         case "name":
             cell?.textField?.stringValue = hit.displayName
         case "type":
@@ -1871,8 +2008,18 @@ final class MainController: HitListController, NSApplicationDelegate,
             cell?.textField?.stringValue = hit.locationText
         case "dims":
             cell?.textField?.stringValue = hit.dimensionsText
+        case "modified":
+            cell?.textField?.stringValue =
+                formatDateColumn(hit.modified, stage: dateStage(for: column))
+        case "created":
+            cell?.textField?.stringValue =
+                formatDateColumn(hit.created, stage: dateStage(for: column))
         default:
-            cell?.textField?.stringValue = hit.path
+            // Nur der Ordner, relativ zum Suchordner — der Dateiname steht
+            // schon in der ersten Spalte, der Suchordner im Ordnerknopf.
+            cell?.textField?.stringValue =
+                hit.folderText(relativeTo: searchRoot.path)
+            cell?.textField?.toolTip = hit.folderPath
         }
         return cell
     }
