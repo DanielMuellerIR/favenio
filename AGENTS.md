@@ -283,6 +283,16 @@ Verbindliches CLI-Verhalten:
   (Maskierung zurücknehmen, dann dekodieren, `./` normalisieren) — Suche und
   `--extract` müssen denselben Eintragsnamen sehen, sonst findet `pick_member()`
   einen gefundenen Eintrag beim Materialisieren nicht wieder.
+  Der Eintrags-TYP kommt aus einer zweiten Auflistung `bsdtar -tvf`
+  (`bsdtar_listing_entries()`, Spalte 0 der zeilengleichen Zeile, nur `d`
+  ist ein Ordner). Der Name wird NIE aus der `-tvf`-Zeile gelöst: Sie ist
+  wie `ls -l` gebaut, und ein Symlink endet mit ` -> ziel` — genau das darf
+  ein Dateiname selbst enthalten (belegt 2026-09-05). Die Zeilenzahl ist
+  dagegen verlässlich, weil beide Ausgaben Zeilenumbrüche maskieren. ISO
+  listet Ordner ohne Schrägstrich; ein LEERER Ordner war deshalb bis 0.31.3
+  eine Datei. Decken sich die Auflistungen nicht oder reißt allein die
+  längere `-tvf`-Liste `MAX_ARCHIVE_LISTING_BYTES`, gilt mit Warnung die
+  alte Heuristik (Schrägstrich am Ende oder Einträge darunter).
 
 ## Swift-Frontends
 

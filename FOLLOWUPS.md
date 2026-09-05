@@ -35,21 +35,6 @@ Manager beziehen. Mehrere Dateien, langsame Extraktion, Abbruch, Fehler und
 Übernahme durch den Finder prüfen; Temp-Dateien erst nach ihrer Verwendung
 bereinigen. Den sichtbaren Drag-and-drop-Test gesondert freigeben lassen.
 
-## Priorität 1: Leere ISO-Ordner korrekt typisieren
-
-`tools/reproduce-empty-iso.py` erzeugt ohne Mount ein ISO mit leerem Ordner
-und prüft beide `--only`-Varianten. Am 2026-09-05 reproduziert: `bsdtar -tf`
-nennt `empty` ohne Schrägstrich; die Suche meldet ihn als Datei. Der Bericht
-liegt unter `tests/measurements/empty-iso-2026-09-05.json`. Exit 1 des
-Repro-Skripts bestätigt diesen offenen Fehler; Exit 0 bedeutet korrekte Typen.
-
-Eine typtragende Auflistung für das bsdtar-Backend implementieren. Vor einer
-Parserwahl Namen mit Leerzeichen, Steuerzeichen und Maskierungen sowie 7z,
-ISO und tar.zst prüfen. Ein blindes Zerlegen der menschenlesbaren Ausgabe von
-`bsdtar -tvf` reicht nicht. Namenssuche, `--only`, JSONL-`isDirectory` und
-Materialisierung müssen anschließend denselben Typ verwenden. Die bestehende
-Fixture muss ohne Änderung ihrer Erwartung erfolgreich sein.
-
 ## Priorität 2: Zeilen- und Segmentleser herauslösen
 
 `Search.match_content()` in `favenio.py` verbindet UTF-8-Dekodierung,

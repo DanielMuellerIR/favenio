@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.31.4 — 2026-09-05
+
+- Ein leerer Ordner in einem ISO ist wieder ein Ordner: Der Eintragstyp der
+  bsdtar-Formate (7z, ISO, tar.zst) kommt aus einer zweiten, ausführlichen
+  Auflistung (`bsdtar -tvf`) statt aus der Heuristik „Schrägstrich am Ende
+  oder Einträge darunter". `--only dirs` findet ihn, `--only files` nicht
+  mehr; JSONL-`isDirectory` und `--extract` sehen denselben Typ.
+
 ## 0.31.3 — 2026-09-05
 
 - Haupt-App: Auch die Zeile **Bildmaße** liegt hinter dem Aufklapp-Schalter

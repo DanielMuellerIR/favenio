@@ -52,7 +52,7 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.31.3"
+__version__ = "0.31.4"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-05"
@@ -509,8 +509,9 @@ def announces_archive_format(kind, head):
 MAX_ARCHIVE_LISTING_BYTES = 32 * 1024 * 1024
 
 
-def bsdtar_list(bsdtar, path, env, limit=None):
-    """Die Ausgabe von `bsdtar -tf`, aber höchstens `limit` Bytes lang.
+def bsdtar_list(bsdtar, path, env, limit=None, verbose=False):
+    """Die Ausgabe von `bsdtar -tf` (mit `verbose` von `bsdtar -tvf`),
+    aber höchstens `limit` Bytes lang.
 
     `subprocess.run(stdout=PIPE)` liest, was kommt — hier ist genau das
     die Lücke (siehe MAX_ARCHIVE_LISTING_BYTES). Deshalb wird der Strom
@@ -530,7 +531,8 @@ def bsdtar_list(bsdtar, path, env, limit=None):
     total = 0
     too_large = False
     with tempfile.TemporaryFile() as errors:
-        process = subprocess.Popen([bsdtar, "-tf", path],
+        process = subprocess.Popen([bsdtar, "-tvf" if verbose else "-tf",
+                                    path],
                                    stdout=subprocess.PIPE,
                                    stderr=errors, env=env)
         try:
@@ -579,6 +581,53 @@ def bsdtar_listing_names(raw_stdout):
             continue
         names.append(raw)
     return names
+
+
+def bsdtar_listing_entries(raw_stdout, raw_verbose):
+    """Die Eintragsnamen samt Typ aus `bsdtar -tf` UND `bsdtar -tvf`.
+
+    Liefert eine Liste von (name, is_dir); `is_dir` ist None, wenn der Typ
+    nicht bestimmbar war. Die Namen kommen ausschließlich aus `-tf`
+    (siehe bsdtar_listing_names), der Typ aus Spalte 0 der Zeile mit
+    derselben Nummer in `-tvf` — ein `d` ist ein Ordner.
+
+    Warum zwei Auflistungen statt nur der ausführlichen: Aus einer
+    `-tvf`-Zeile lässt sich der Name nicht sicher herauslösen. Die Zeile
+    ist im Stil von `ls -l` gebaut, Nutzer- und Gruppennamen dürfen
+    Leerzeichen enthalten, und ein Symlink endet mit „ -> ziel" — genau
+    das darf aber auch ein normaler Dateiname enthalten
+    (verifiziert am 2026-09-05 mit bsdtar 3.5.3: „a -> b.txt" und ein
+    Symlink darauf sind in der Ausgabe nicht zu unterscheiden). Der
+    Zeilenzähler dagegen ist verlässlich: Beide Ausgaben maskieren
+    Zeilenumbrüche im Namen, jede Zeile ist genau ein Eintrag.
+
+    Warum das nötig ist: ISO listet Ordner OHNE Schrägstrich, 7z und Tar
+    mit. Ein LEERER Ordner in einem ISO war deshalb bis 0.31.3 eine Datei —
+    `--only files` zeigte ihn, `--only dirs` nicht. Stimmen die
+    Zeilenzahlen nicht überein (raw_verbose None oder anders lang), bleibt
+    `is_dir` None; der Aufrufer fällt dann auf die alte Heuristik zurück
+    (Schrägstrich am Ende oder Einträge darunter)."""
+    raw_lines = raw_stdout.split(b"\n")
+    verbose_lines = (None if raw_verbose is None
+                     else raw_verbose.split(b"\n"))
+    aligned = (verbose_lines is not None
+               and len(verbose_lines) == len(raw_lines))
+    entries = []
+    for index, raw_line in enumerate(raw_lines):
+        raw = bsdtar_unescape(raw_line).decode("utf-8", "replace")
+        if raw.startswith("./"):
+            raw = raw[2:]
+        if raw in ("", ".", "./"):
+            continue
+        is_dir = None
+        if aligned:
+            mode = verbose_lines[index][:1]
+            # Jede Zeile beginnt mit der 10-stelligen Rechtemaske;
+            # deren erstes Zeichen ist der Typ (d = Ordner, - = Datei,
+            # l = Symlink, ? = unbekannt). Nur ein Ordner ist ein Ordner.
+            is_dir = mode == b"d" if mode else None
+        entries.append((raw, is_dir))
+    return entries
 
 
 def classify_archive(name):
@@ -2427,12 +2476,12 @@ class Search:
         eine Temp-Datei geschrieben — 7z und ISO brauchen wahlfreien
         Zugriff und lassen sich nicht verlässlich von stdin lesen.
 
-        Ordner-Erkennung: 7z listet Ordner mit Schrägstrich am Ende, ISO
-        ohne. Deshalb gilt ein Eintrag auch dann als Ordner, wenn andere
-        Einträge unter ihm liegen; ein LEERER Ordner in einem ISO wird
-        dadurch als Datei geführt. Sein Inhalt ist leer, aber der Typ stimmt
-        nicht: `--only files` zeigt ihn, `--only dirs` nicht. Bekannt und im
-        BACKLOG notiert — sauber wäre eine typtragende bsdtar-Auflistung.
+        Ordner-Erkennung: Der Typ kommt aus einer zweiten, ausführlichen
+        Auflistung (`bsdtar -tvf`, siehe bsdtar_listing_entries) — 7z
+        listet Ordner mit Schrägstrich am Ende, ISO ohne, und ein LEERER
+        Ordner in einem ISO war deshalb bis 0.31.3 eine Datei. Nur wenn
+        sich die beiden Auflistungen nicht zeilenweise decken, gilt die
+        alte Heuristik: Schrägstrich am Ende oder Einträge darunter.
         Größen liefert die Auflistung nicht (size=None), die Byte-Budgets
         greifen beim Lesen."""
         bsdtar, _, env = external_archive_tools()
@@ -2450,9 +2499,23 @@ class Search:
                 raise ArchiveReadError(
                     errors.decode("utf-8", "replace").strip()
                     or "bsdtar konnte das Archiv nicht lesen")
-            names = bsdtar_listing_names(raw)
+            # Zweite Auflistung nur für den Typ; ihr Status zählt nicht,
+            # denn die Namen kommen aus der ersten. Fehlt sie oder passt
+            # sie nicht zeilenweise, bleibt is_dir None (Heuristik unten).
+            # Reißt allein die längere -tvf-Liste die Grenze, fällt nicht
+            # das Archiv aus, sondern nur die Typbestimmung.
+            try:
+                verbose, _, verbose_status = bsdtar_list(bsdtar, path, env,
+                                                         verbose=True)
+            except ArchiveReadError:
+                verbose, verbose_status = None, 1
+            entries = bsdtar_listing_entries(
+                raw, verbose if verbose_status == 0 else None)
+            if any(is_dir is None for _, is_dir in entries):
+                self.warn("%s: Eintragstypen nicht bestimmbar, Ordner "
+                          "werden geschätzt" % display)
             dir_names = set()
-            for name in names:
+            for name, _ in entries:
                 clean = name.rstrip("/")
                 if name.endswith("/"):
                     dir_names.add(clean)
@@ -2460,11 +2523,13 @@ class Search:
                 for count in range(1, len(parts)):
                     dir_names.add("/".join(parts[:count]))
             seen = set()
-            for name in names:
+            for name, is_dir in entries:
                 clean = name.rstrip("/")
                 if clean in seen:
                     continue
                 seen.add(clean)
+                if is_dir is None:
+                    is_dir = clean in dir_names
 
                 def open_member(member=clean):
                     proc = subprocess.Popen(
@@ -2472,7 +2537,7 @@ class Search:
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                         env=env)
                     return ToolStream(proc, display + "!/" + member)
-                self.visit_member(clean, clean in dir_names, open_member,
+                self.visit_member(clean, is_dir, open_member,
                                   display, depth, archive_path,
                                   archive_members, size=None)
         finally:

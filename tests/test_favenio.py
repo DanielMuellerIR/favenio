@@ -1383,6 +1383,64 @@ class BsdtarFormatsTest(TempTreeTest):
         self.assertTrue(any(json.loads(line)["path"].endswith(
             "scheibe.iso!/unter") for line in lines))
 
+    def test_empty_iso_directory_is_a_directory(self):
+        # ISO listet Ordner ohne Schrägstrich. Ein LEERER Ordner hat keine
+        # Einträge darunter, an denen die alte Heuristik ihn erkannt hätte;
+        # bis 0.31.3 war er eine Datei (`--only files` zeigte ihn, `--only
+        # dirs` nicht). Der Typ kommt jetzt aus `bsdtar -tvf`.
+        bsdtar = favenio.external_archive_tools()[0]
+        archive = os.path.join(self.root, "leer.iso")
+        with tempfile.TemporaryDirectory() as staging:
+            os.mkdir(os.path.join(staging, "leer"))
+            # Ein Dateiname, der wie eine Symlink-Zeile aussieht: In
+            # `-tvf` endet ein Symlink mit „ -> ziel", der Name darf das
+            # ebenfalls enthalten. Der Name muss aus `-tf` kommen.
+            with open(os.path.join(staging, "a -> b.txt"), "w",
+                      encoding="utf-8") as handle:
+                handle.write(self.CONTENT)
+            subprocess.run([bsdtar, "-cf", archive, "--format", "iso9660",
+                            "-C", staging, "."], check=True)
+        code, lines, err = run(["--json", "--only", "dirs", "--exact",
+                                "leer", archive])
+        self.assertEqual(code, 0, err)
+        records = [json.loads(line) for line in lines]
+        self.assertEqual([r["path"].endswith("leer.iso!/leer")
+                          for r in records], [True])
+        self.assertTrue(records[0]["isDirectory"])
+        self.assertNotIn("geschätzt", err)
+        code, lines, _ = run(["--json", "--only", "files", "--exact",
+                              "leer", archive])
+        self.assertEqual((code, lines), (1, []))
+        code, lines, _ = run(["--json", "--content", "NADEL", archive])
+        self.assertEqual(code, 0)
+        record = json.loads(lines[0])
+        self.assertTrue(record["path"].endswith("leer.iso!/a -> b.txt"))
+        self.assertFalse(record["isDirectory"])
+        code, lines, _ = run(["--extract", archive + "!/a -> b.txt"])
+        self.assertEqual(code, 0)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+
+    def test_listing_entries_take_the_type_from_the_verbose_listing(self):
+        names = b"./\n./x -> y.txt\n./leer\n./tab\\tname.txt\n./link\n"
+        verbose = (b"drwxr-xr-x  0 0 0 0 Sep  5 23:29 ./\n"
+                   b"-rw-r--r--  0 0 0 1 Sep  5 23:29 ./x -> y.txt\n"
+                   b"drwxr-xr-x  0 0 0 0 Sep  5 23:29 ./leer\n"
+                   b"-rw-r--r--  0 0 0 1 Sep  5 23:29 ./tab\\tname.txt\n"
+                   b"lrwxr-xr-x  0 0 0 0 Sep  5 23:29 ./link -> x -> y.txt\n")
+        self.assertEqual(
+            favenio.bsdtar_listing_entries(names, verbose),
+            [("x -> y.txt", False), ("leer", True), ("tab\tname.txt", False),
+             ("link", False)])
+        # Ohne oder mit nicht zeilengleicher -tvf-Ausgabe bleibt der Typ
+        # offen (None); die Namen sind dieselben wie in
+        # bsdtar_listing_names.
+        for broken in (None, verbose.split(b"\n", 1)[1]):
+            entries = favenio.bsdtar_listing_entries(names, broken)
+            self.assertEqual([name for name, _ in entries],
+                             favenio.bsdtar_listing_names(names))
+            self.assertTrue(all(is_dir is None for _, is_dir in entries))
+
     def test_extract_7z_member(self):
         archive = self.make_archive("arch.7z", "7zip",
                                     {"docs/brief.txt": self.CONTENT})

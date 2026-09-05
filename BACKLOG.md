@@ -5,17 +5,13 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
 1. Archivtreffer asynchron für Öffnen und Quick Look vorbereiten; Drag-and-drop
    mit eigenem AppKit-Vertrag lösen. Priorität 1, Abnahme in [FOLLOWUPS.md](FOLLOWUPS.md).
-2. Leere ISO-Ordner korrekt typisieren. Die Fixture in
-   `tools/reproduce-empty-iso.py` reproduziert den Fehler ohne Mount;
-   `tests/measurements/empty-iso-2026-09-05.json` hält den Befund fest.
-   Typtragende Auflistung noch offen, Priorität 1.
-3. Zeilen-/Segmentleser als eigenen verhaltensneutralen Refactor herauslösen.
+2. Zeilen-/Segmentleser als eigenen verhaltensneutralen Refactor herauslösen.
    Priorität 2, Abnahme in [FOLLOWUPS.md](FOLLOWUPS.md).
-4. Vollständige benannte Suchvorlagen und Mehrwortsuche als getrennte
+3. Vollständige benannte Suchvorlagen und Mehrwortsuche als getrennte
    Funktionserweiterungen. Priorität 3, Verträge und offene Produktentscheidung
    zur Verknüpfung mehrerer Begriffe in [FOLLOWUPS.md](FOLLOWUPS.md).
-5. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
-6. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
+4. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
+5. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
    heraus auf die aktuelle aktualisieren und den Ablauf am Fenster prüfen.
    Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
    Durchlauf am Bildschirm.
@@ -36,6 +32,11 @@ jetzt auch nach einem Timeout ein; ein mit echtem Prozess erzwungener Timeout
 prüft das. Dies belegt keine Ursache für den ursprünglichen SIGTERM-Fehlschlag.
 Bei erneutem Auftreten Bereitschaftsdatei, Prozessstatus, Ausgabe und Systemlast
 sichern, bevor Timing-Grenzen geändert werden.
+
+Nicht offen — leerer ISO-Ordner als Datei: mit 0.31.4 behoben, der Typ
+kommt aus `bsdtar -tvf`. `tools/reproduce-empty-iso.py` bleibt als Prüfung
+(Exit 0 = korrekt); der Befund von vorher liegt unter
+`tests/measurements/empty-iso-2026-09-05.json`.
 
 Nicht offen: der frühere Finder-Ordner-Fehler; `osascript` als Unterprozess ist
 die verifizierte Lösung und eine Dauerregel.
