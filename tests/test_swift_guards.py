@@ -470,6 +470,12 @@ class SwiftGuardTests(unittest.TestCase):
         ]
         self.assertIn('arguments.firstIndex(of: "--handoff-url")', startup)
         self.assertIn("handleFavenioURL(handoffURL)", startup)
+        # Die alte Übergabe --query/--results-file kannte keine Suchwurzel;
+        # die Pfadspalte zeigte ihre Treffer relativ zum Benutzerordner
+        # (Review-Fund 2026-09-05). Beide Bundles kommen immer mit derselben
+        # Version, ein alter Quick trifft also nie auf diese App.
+        self.assertNotIn('"--results-file"', startup)
+        self.assertNotIn('"--query"', startup)
 
     def test_quick_drops_stale_finder_folders_before_refresh(self):
         # Ein Timeout oder eine verweigerte Abfrage darf nicht den Finder-

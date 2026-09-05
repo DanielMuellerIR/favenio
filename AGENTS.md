@@ -621,6 +621,11 @@ Testdaten, personalisierte Standardwerte und Buildartefakte prüfen.
   DANACH. `runScopeMismatch` hält deshalb nur die beiden Pfade,
   `runScopeNoteText()` formuliert daraus je nach Zustand — vorher stand dort
   „Suche läuft in …", obwohl die Suche fertig war.
+- zsh liest `~/.zshenv` auch für Skripte. Exportiert die Datei
+  `NOTARY_PROFILE`, ist ein leerer Wert aus der Umgebung eines Tests schon
+  vor der ersten Zeile von `release.sh` überschrieben (belegt 2026-09-05).
+  Ein Test, der `release.sh` startet, bremst deshalb nicht über Variablen,
+  sondern über Attrappen für `git`, `security` und `xcrun` vor dem PATH.
 - In zsh läuft ein `trap … EXIT` bei SIGINT (Ctrl-C) und SIGHUP mit, bei
   SIGTERM aber NICHT (gemessen 2026-09-03 mit Signal an die ganze
   Prozessgruppe). `install.sh` ergänzt deshalb `trap 'exit 2' HUP INT TERM`;

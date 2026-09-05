@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.29.1 — 2026-09-05
+
+Drei Funde des Nacht-Reviews vom 2026-09-05.
+
+- **Die Haupt-App nimmt keine Startargumente `--query`/`--results-file`
+  mehr an.** Diese Übergabe aus Quick-Versionen vor 2026-08-15 kannte keine
+  Suchwurzel; die neue Pfadspalte zeigte solche Treffer relativ zum
+  Benutzerordner statt zum durchsuchten Ordner, und Return suchte ab dem
+  Benutzerordner weiter. Nötig war der Weg nie: `install.sh` und das DMG
+  liefern beide Bundles nur mit derselben Version aus. Die Schnellsuche
+  übergibt weiter über das URL-Schema und `--handoff-url`.
+- **Der Test der Release-Wache lief in einer fremden Shell falsch.** Er
+  übernahm die ganze Umgebung; ein dort gesetztes `SPARKLE_FEED_URL` löste
+  den Abbruch aus, den der Test der Build-Nummer zuschrieb. Beide
+  Sparkle-Variablen werden jetzt vorher entfernt.
+- **Derselbe Test konnte einen echten Release-Lauf starten.** Sein leeres
+  `NOTARY_PROFILE` war keine Bremse: `notarize_require_credentials` liest
+  dann das clone-lokale Git-Profil, und zsh liest `~/.zshenv` auch für
+  Skripte — exportiert die Datei die Variable, war der leere Wert vor der
+  ersten Zeile von `release.sh` überschrieben. Der Test stellt jetzt
+  Attrappen für `git`, `security` und `xcrun` vor den PATH; eine
+  Gegenprobe belegt, dass der Lauf ohne Wache an den Zugangsdaten endet.
+
 ## 0.29.0 — 2026-09-04
 
 Trefferliste der Haupt-App nach Daniels Rückmeldung vom 2026-09-04.

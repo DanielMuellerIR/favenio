@@ -998,18 +998,56 @@ class ReleaseRefusesInheritedSparkleVariablesTest(unittest.TestCase):
     Schritt 4 auf — also nach Bauen, Signieren, Notarisieren und Einhängen
     des DMG. Ein Notary-Vorgang bei Apple war damit schon verbraucht."""
 
+    def setUp(self):
+        # Bremse für den Fall, dass die Wache selbst kaputtgeht: Der Test
+        # darf niemals einen echten Build oder gar eine Notarisierung
+        # auslösen. Ein leeres NOTARY_PROFILE reicht dafür NICHT, aus zwei
+        # Gründen (Review-Fund 2026-09-05): notarize_require_credentials
+        # liest dann das clone-lokale Git-Attribut favenio.notaryProfile,
+        # und auf einem Release-Mac steht dort ein echtes Profil. Und zsh
+        # liest ~/.zshenv auch für Skripte — exportiert die Datei
+        # NOTARY_PROFILE, ist der leere Wert schon vor der ersten Zeile von
+        # release.sh überschrieben (auf einem Entwicklungsrechner belegt).
+        # Deshalb bekommen git, security und xcrun Attrappen vor den PATH,
+        # die nichts kennen: Ohne Profil aus git, ohne Signatur-Identität
+        # aus security und ohne notarytool aus xcrun endet der Lauf sicher
+        # an den Zugangsdaten, egal was die Shell mitbringt.
+        self.stubs = Path(tempfile.mkdtemp(prefix="favenio-stubs-"))
+        self.addCleanup(shutil.rmtree, self.stubs, ignore_errors=True)
+        for tool in ("git", "security", "xcrun"):
+            stub = self.stubs / tool
+            stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            stub.chmod(0o755)
+
     def run_with(self, **umgebung):
-        environment = dict(os.environ)
-        # Ohne Notary-Profil endet der Lauf spätestens an den Zugangsdaten.
-        # Das ist die Bremse für den Fall, dass die Wache selbst kaputtgeht:
-        # Der Test darf niemals einen echten Build oder gar eine
-        # Notarisierung auslösen.
+        # Die beiden Sparkle-Testvariablen der aufrufenden Shell zuerst
+        # entfernen: Geerbt löste die eine den Abbruch aus, den der Test
+        # der anderen zuschrieb (Review-Fund 2026-09-05).
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("SPARKLE_FEED_URL",
+                                      "FAVENIO_SPARKLE_TEST_VERSION")}
+        environment["PATH"] = "%s%s%s" % (self.stubs, os.pathsep,
+                                          environment["PATH"])
         environment["NOTARY_PROFILE"] = ""
+        environment["FAVENIO_SIGN_ID"] = ""
+        environment["FAVENIO_TEAM_ID"] = ""
         environment.update(umgebung)
         result = subprocess.run(
             [str(REPO / "release.sh")], cwd=REPO, env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return result.returncode, result.stdout.decode("utf-8", "replace")
+
+    def test_the_brake_holds_without_any_sparkle_variable(self):
+        # Gegenprobe der Bremse selbst: Ohne Wache-Auslöser muss der Lauf
+        # an den Zugangsdaten enden — VOR dem ersten Bauschritt.
+        code, output = self.run_with()
+        self.assertEqual(code, 2, output)
+        # Welche der drei Linien greift, hängt von der Shell ab (siehe
+        # setUp); mindestens eine muss es sein.
+        self.assertTrue("Kein Notary-Profil bekannt" in output
+                        or "keine Developer-ID gefunden" in output
+                        or "nicht\nverwendbar" in output, output)
+        self.assertNotIn("Schritt 1/5", output)
 
     def test_a_foreign_feed_url_is_refused_before_the_build(self):
         code, output = self.run_with(

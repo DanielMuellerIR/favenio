@@ -10,7 +10,7 @@
 //   - Drag & Drop        → Datei in den Finder oder andere Apps ziehen
 //
 // Außerdem versteht die App das URL-Schema favenio://results?file=…&q=…
-// sowie das Startargument --handoff-url (älter: --results-file/--query) —
+// sowie das Startargument --handoff-url —
 // darüber liefert die Schnellsuche (FavenioQuick.app) ihre Treffer an.
 //
 // Mit --selftest läuft statt der GUI ein Headless-Integrationstest.
@@ -846,23 +846,17 @@ final class MainController: HitListController, NSApplicationDelegate,
         // neue App-Instanz und gibt denselben strukturierten URL-Datensatz als
         // Argument mit. Dadurch verarbeitet genau EIN Parser Wurzel, Optionen,
         // Ergebnisdatei und die gewünschte Fortsetzung der Suche.
+        //
+        // Die ältere Übergabe --query/--results-file gibt es nicht mehr: Sie
+        // kannte keine Suchwurzel, und die Pfadspalte zeigte die Treffer
+        // dann relativ zum Benutzerordner statt zum durchsuchten Ordner
+        // (Review-Fund 2026-09-05). Nötig war sie nie — install.sh und das
+        // DMG liefern beide Bundles nur mit derselben Version aus.
         let arguments = CommandLine.arguments
         if let flagIndex = arguments.firstIndex(of: "--handoff-url"),
            flagIndex + 1 < arguments.count,
            let handoffURL = URL(string: arguments[flagIndex + 1]) {
             handleFavenioURL(handoffURL)
-        } else {
-            // Alte Quick-Versionen bleiben kompatibel; dieser Weg konnte
-            // Suchwurzel und Optionen noch nicht übertragen.
-            if let flagIndex = arguments.firstIndex(of: "--query"),
-               flagIndex + 1 < arguments.count {
-                searchField.stringValue = arguments[flagIndex + 1]
-            }
-            if let flagIndex = arguments.firstIndex(of: "--results-file"),
-               flagIndex + 1 < arguments.count {
-                loadResults(from: URL(
-                    fileURLWithPath: arguments[flagIndex + 1]))
-            }
         }
         // Eine URL, die schon vor dem Fensterbau eintraf, jetzt verarbeiten.
         if let url = pendingURL {
