@@ -353,8 +353,9 @@ Zwei Punkte, die man dazu wissen sollte:
 
 ## GUI (Favenio.app)
 
-In der Haupt-App stehen die folgenden Filter hinter dem Aufklapp-Schalter
-**Weitere Filter**; zugeklappt nennt er die Zahl der gesetzten Filter.
+In der Haupt-App stehen die Bildmaße und die folgenden Filter hinter dem
+Aufklapp-Schalter **Weitere Filter**; zugeklappt nennt er die Zahl der
+gesetzten Filter.
 Die Zeilen **Größe**, **Geändert** und **Erstellt** bieten jeweils eine Von-
 und Bis-Grenze. Alle Grenzen sind inklusive. Größe akzeptiert ganze Bytes ab
 0, optional mit B, KiB, MiB, GiB oder TiB; Zeitpunkte brauchen ISO 8601 mit

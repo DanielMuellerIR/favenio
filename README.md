@@ -340,8 +340,8 @@ Two consequences worth knowing:
 
 ## GUI (Favenio.app)
 
-In the main app the following filters sit behind the **More filters**
-disclosure; collapsed, it names how many of them are set.
+In the main app the image dimensions and the following filters sit behind
+the **More filters** disclosure; collapsed, it names how many of them are set.
 The **Size**, **Modified** and **Created** rows each provide lower and upper
 bounds. All bounds are inclusive. Size accepts whole bytes from 0, optionally
 with B, KiB, MiB, GiB or TiB. Timestamps require ISO 8601 with `Z` or an

@@ -327,7 +327,7 @@ zählt Maße oder nichtleere Faktenfilter, niemals Ausschlüsse allein.
 beider Apps — zweispaltig: links die drei Von/Bis-Zeilen mit fester
 Feldbreite, rechts das Ausschlussfeld (Platzhalter aus `PlaceholderTextView`,
 ?-Knopf mit Popover aus `exclusionHelpText`). Die Haupt-App zeigt die ganze
-Ansicht erst nach dem Aufklapp-Schalter „Weitere Filter"
+Ansicht und die Bildmaße-Zeile erst nach dem Aufklapp-Schalter „Weitere Filter"
 (`setFiltersExpanded`, Zustand in `UserDefaults`); zugeklappt nennt der
 Titel die Zahl gesetzter Filter, eine Übergabe mit Filtern klappt auf. Leere
 Zeilen entfallen, Leerraum bleibt Musterbestandteil; die URL trägt wiederholte

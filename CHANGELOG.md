@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.31.3 — 2026-09-05
+
+- Haupt-App: Auch die Zeile **Bildmaße** liegt hinter dem Aufklapp-Schalter
+  „Weitere Filter"; gesetzte Maßfelder zählen im zugeklappten Titel mit.
+
 ## 0.31.2 — 2026-09-05
 
 - Haupt-App: Die Felder für Größe, Änderungs- und Erstellungsdatum sowie die

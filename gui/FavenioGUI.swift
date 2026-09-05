@@ -137,12 +137,12 @@ func runSelfTest() -> Int32 {
     let collapsedController = MainController()
     collapsedController.buildWindow()   // sonst erst in applicationDidFinishLaunching
     collapsedController.window.orderOut(nil)
-    guard !collapsedController.filtersExpanded else {
+    guard !collapsedController.filtersExpanded, collapsedController.sizeRow.isHidden else {
         print("SELFTEST FEHLER: Weitere Filter sind beim Start nicht zugeklappt")
         return 1
     }
     collapsedController.toggleFilters(nil)
-    guard collapsedController.filtersExpanded,
+    guard collapsedController.filtersExpanded, !collapsedController.sizeRow.isHidden,
           collapsedController.filtersDisclosure.state == .on else {
         print("SELFTEST FEHLER: Aufklapp-Schalter zeigt die Filter nicht")
         return 1
@@ -151,8 +151,9 @@ func runSelfTest() -> Int32 {
     UserDefaults.standard.removeObject(forKey: MainController.filtersExpandedKey)
     collapsedController.filterView.exclusions = ["node_modules"]
     collapsedController.filterView.rawFacts = ["min-size": "1 MiB"]
+    collapsedController.minWidthField.stringValue = "100"
     collapsedController.refreshFiltersTitle()
-    guard collapsedController.filtersTitleButton.title.contains("2 aktiv") else {
+    guard collapsedController.filtersTitleButton.title.contains("3 aktiv") else {
         print("SELFTEST FEHLER: Zugeklappter Schalter nennt aktive Filter nicht")
         return 1
     }
@@ -813,6 +814,8 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Diese Filter braucht man selten; zugeklappt kostet die Zeile nur
     /// eine Höhe. Der Zustand überlebt den Neustart (`filtersExpandedKey`).
     let filtersDisclosure = NSButton()
+    /// Die Bildmaße-Zeile; liegt seit 0.31.3 mit hinter dem Schalter.
+    var sizeRow = NSStackView()
     let filtersTitleButton = NSButton()
     static let filtersExpandedKey = "Favenio.filters.expanded"
     var filtersExpanded: Bool { !filterView.isHidden }
@@ -1110,7 +1113,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         filterView.rawFacts = configuration.rawFacts
         // Übergebene Filter sollen sichtbar sein, sonst wundert man sich
         // über eine kürzere Trefferliste ohne erkennbaren Grund.
-        if filterView.activeFilterCount > 0 { setFiltersExpanded(true) }
+        if activeFilterCount > 0 { setFiltersExpanded(true) }
         refreshFiltersTitle()
         archivesCheckbox.state = configuration.archives ? .on : .off
         hiddenCheckbox.state = configuration.includeHidden ? .on : .off
@@ -1263,7 +1266,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             field.action = #selector(startSearch)
             field.delegate = self
         }
-        let sizeRow = NSStackView(views: [
+        sizeRow = NSStackView(views: [
             NSTextField(labelWithString: "Bildmaße:"),
             NSTextField(labelWithString: "Breite"), minWidthField,
             NSTextField(labelWithString: "–"), maxWidthField,
@@ -1298,7 +1301,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         filtersRow.orientation = .horizontal
         filtersRow.alignment = .centerY
         filtersRow.spacing = 2
-        let stack = NSStackView(views: [topRow, optionsRow, sizeRow, filtersRow, filterView,
+        let stack = NSStackView(views: [topRow, optionsRow, filtersRow, sizeRow, filterView,
                                         scroll, statusLabel])
         // Erst NACH dem Einhängen in den Stack verstecken: `NSStackView(views:)`
         // hängt eine schon versteckte Ansicht sichtbar ein.
@@ -1342,15 +1345,22 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// versteckte Ansicht aus dem Layout, die Trefferliste rückt nach.
     func setFiltersExpanded(_ expanded: Bool) {
         filterView.isHidden = !expanded
+        sizeRow.isHidden = !expanded
         filtersDisclosure.state = expanded ? .on : .off
         refreshFiltersTitle()
     }
 
     /// Zugeklappt nennt der Titel, wie viele Filter dort gesetzt sind —
     /// sonst wirkt ein unsichtbarer Filter wie ein Suchfehler.
+    /// Gesetzte Filter hinter dem Schalter: jedes nichtleere Maßfeld plus
+    /// die Zählung der Filteransicht (Von/Bis-Felder und Ausschlussmuster).
+    var activeFilterCount: Int {
+        pixelFields.filter { !$0.stringValue.isEmpty }.count + filterView.activeFilterCount
+    }
+
     func refreshFiltersTitle() {
-        let count = filterView.activeFilterCount
-        var title = "Weitere Filter: Größe, Datum, Ausschlüsse"
+        let count = activeFilterCount
+        var title = "Weitere Filter: Bildmaße, Größe, Datum, Ausschlüsse"
         if count > 0 && !filtersExpanded {
             title += count == 1 ? " (1 aktiv)" : " (\(count) aktiv)"
         }
@@ -1687,6 +1697,7 @@ final class MainController: HitListController, NSApplicationDelegate,
                 searchPhase = .idle
                 refreshStatus()
             }
+            refreshFiltersTitle()
             return
         }
         guard notification.object as? NSSearchField === searchField else { return }
