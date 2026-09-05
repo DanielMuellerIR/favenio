@@ -1040,6 +1040,161 @@ struct SearchConfiguration: Equatable {
     }
 }
 
+// ---------- Benannte Suchvorlagen ----------
+
+/// Eine gespeicherte Suche: Name, Suchmuster, der beim Sichern gewählte
+/// Suchordner und sämtliche Optionen. Die Optionen stehen in derselben Form
+/// wie in der Quick-URL (`SearchConfiguration.queryItems`): So beschreiben
+/// geladene Vorlage, CLI-Argumente und Übergabe dieselbe Suche, und die
+/// Rohtexte der Pixel-, Größen- und Zeitfelder bleiben unverändert — ein
+/// ungültiger Wert wie „10.5" ist nach dem Laden weiter sichtbar und wird
+/// wie bei der Eingabe von Hand erst beim Suchstart bemängelt.
+/// Keine Trefferliste: Eine Vorlage ist eine Frage, keine Antwort.
+struct SearchTemplate: Equatable {
+    var name: String
+    var pattern: String
+    /// Der ausdrücklich gewählte Suchordner; nil, wenn keiner gespeichert
+    /// ist. Fehlt er beim Laden, meldet die App das konkret
+    /// (`missingRootMessage`) und behält ihren aktuellen Ordner.
+    var root: String?
+    var configuration: SearchConfiguration
+
+    /// nil, wenn kein Ordner gespeichert ist oder er existiert.
+    var missingRootMessage: String? {
+        guard let root else { return nil }
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            return nil
+        }
+        return "Suchordner der Vorlage „\(name)“ fehlt: " + root
+    }
+}
+
+struct SearchTemplateError: Error, CustomStringConvertible, Equatable {
+    let description: String
+}
+
+/// Das Dateiformat der Vorlagen, versioniert:
+///
+///     {"version": 1,
+///      "templates": [{"name": "…", "pattern": "…", "root": "/…" | null,
+///                     "options": "mode=name&regex=1&exclude=…"}]}
+///
+/// `options` ist die Query der Quick-URL. Unbekannte Schlüssel werden
+/// überlesen (eine spätere Fassung derselben Hauptversion darf Felder
+/// ergänzen); eine höhere `version` wird abgelehnt und genannt, statt still
+/// falsch gelesen zu werden — ein fehlender oder falscher Wert ebenso.
+enum SearchTemplateFormat {
+    static let version = 1
+
+    static func encodeOptions(_ configuration: SearchConfiguration) -> String {
+        var components = URLComponents()
+        components.queryItems = configuration.queryItems
+        return components.percentEncodedQuery ?? ""
+    }
+
+    static func decodeOptions(_ options: String) -> SearchConfiguration {
+        var components = URLComponents()
+        components.percentEncodedQuery = options
+        return SearchConfiguration.fromQueryItems(components.queryItems ?? [])
+    }
+
+    static func encode(_ templates: [SearchTemplate]) throws -> Data {
+        let entries: [[String: Any]] = templates.map { template in
+            ["name": template.name, "pattern": template.pattern,
+             "root": template.root ?? NSNull(),
+             "options": encodeOptions(template.configuration)]
+        }
+        return try JSONSerialization.data(
+            withJSONObject: ["version": version, "templates": entries],
+            options: [.prettyPrinted, .sortedKeys])
+    }
+
+    static func decode(_ data: Data) throws -> [SearchTemplate] {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let dictionary = object as? [String: Any] else {
+            throw SearchTemplateError(
+                description: "Vorlagendatei ist kein JSON-Objekt")
+        }
+        guard let fileVersion = dictionary["version"] as? Int else {
+            throw SearchTemplateError(
+                description: "Vorlagendatei nennt keine Formatversion")
+        }
+        guard fileVersion == version else {
+            throw SearchTemplateError(
+                description: "Vorlagendatei hat Formatversion \(fileVersion), "
+                    + "diese App liest Version \(version)")
+        }
+        guard let entries = dictionary["templates"] as? [[String: Any]] else {
+            throw SearchTemplateError(
+                description: "Vorlagendatei enthält keine Vorlagenliste")
+        }
+        return try entries.enumerated().map { index, entry in
+            guard let name = entry["name"] as? String, !name.isEmpty else {
+                throw SearchTemplateError(
+                    description: "Vorlage \(index + 1) hat keinen Namen")
+            }
+            return SearchTemplate(
+                name: name,
+                pattern: entry["pattern"] as? String ?? "",
+                root: entry["root"] as? String,
+                configuration: decodeOptions(entry["options"] as? String ?? ""))
+        }
+    }
+}
+
+/// Liest und schreibt die Vorlagendatei — lokal, außerhalb jedes
+/// Repositorys: `~/Library/Application Support/Favenio/search-templates.json`.
+/// Geschrieben wird atomar; der Ordner entsteht beim ersten Sichern.
+final class SearchTemplateStore {
+    static var defaultURL: URL {
+        let support = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support")
+        return support.appendingPathComponent("Favenio", isDirectory: true)
+            .appendingPathComponent("search-templates.json")
+    }
+
+    let fileURL: URL
+
+    init(fileURL: URL = SearchTemplateStore.defaultURL) {
+        self.fileURL = fileURL
+    }
+
+    /// Keine Datei heißt: keine Vorlagen. Alles andere, was nicht lesbar
+    /// ist, kommt als Fehler mit Grund zurück.
+    func load() throws -> [SearchTemplate] {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return []
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            throw SearchTemplateError(
+                description: "Vorlagendatei nicht lesbar: "
+                    + error.localizedDescription)
+        }
+        return try SearchTemplateFormat.decode(data)
+    }
+
+    func save(_ templates: [SearchTemplate]) throws {
+        let data = try SearchTemplateFormat.encode(templates)
+        do {
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            throw SearchTemplateError(
+                description: "Vorlagendatei nicht schreibbar: "
+                    + error.localizedDescription)
+        }
+    }
+}
+
 /// Derselbe Editor in beiden Apps. Return trennt Muster, Leerraum gehört
 /// zum Muster. Nur wirklich leere Zeilen setzen keinen Ausschluss.
 /// Mehrzeiliges Eingabefeld mit Platzhalter. `NSTextView` kennt keinen

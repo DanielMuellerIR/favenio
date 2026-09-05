@@ -176,6 +176,25 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("guard self.previewRequest === request else { return }",
                       preview)
 
+    def test_search_templates_fill_the_window_through_one_place_without_searching(self):
+        """Quick-Uebergabe und Vorlage schreiben die Optionen ueber
+        applyConfiguration() in die Oberflaeche; Laden startet KEINE Suche
+        und behaelt bei fehlendem Ordner den aktuellen."""
+        self.assertIn("struct SearchTemplate: Equatable", COMMON)
+        self.assertIn("static let version = 1", COMMON)
+        self.assertIn('"search-templates.json"', COMMON)
+        handoff = swift_function(GUI, "func handleFavenioURL(")
+        self.assertIn("applyConfiguration(SearchConfiguration.fromQueryItems(items))", handoff)
+        self.assertNotIn("archivesCheckbox.state =", handoff)
+        apply_template = swift_function(GUI, "func applyTemplate(")
+        self.assertIn("applyConfiguration(template.configuration)", apply_template)
+        self.assertIn("template.missingRootMessage", apply_template)
+        for forbidden in ("startSearch()", "launchSearch("):
+            self.assertNotIn(forbidden, apply_template)
+        # Die Regex-Vorlagen bleiben eine getrennte Einfuegehilfe.
+        self.assertIn("let regexTemplates: [RegexTemplate]", GUI)
+        self.assertIn("@objc func insertTemplate(_ sender: NSMenuItem)", GUI)
+
     def test_drag_and_drop_promises_files_instead_of_extracting_on_grab(self):
         """pasteboardWriterForRow verlangt sofort eine Antwort. Was schon als
         Datei vorliegt, geht als URL; ein noch nicht ausgepackter Eintrag als
@@ -492,11 +511,12 @@ class SwiftGuardTests(unittest.TestCase):
             QUICK.index("func locateMainApp()")
         ]
         self.assertIn("searchConfiguration.queryItems", handoff)
-        handler = GUI[
-            GUI.index("func handleFavenioURL"):
-            GUI.index("func loadResults")
-        ]
-        self.assertIn("configuration.only", handler)
+        # Seit 0.33.0 schreibt applyConfiguration() die Optionen in die
+        # Oberflaeche; die Uebergabe ruft sie.
+        handler = swift_function(GUI, "func handleFavenioURL(")
+        self.assertIn("applyConfiguration(", handler)
+        apply = swift_function(GUI, "func applyConfiguration(")
+        self.assertIn("configuration.only", apply)
         continuation = QUICK[
             QUICK.index("func flushPending()"):
             QUICK.index("func finish(")

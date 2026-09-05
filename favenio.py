@@ -53,10 +53,10 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.32.1"
+__version__ = "0.33.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-09-05"
+__date__ = "2026-09-06"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,

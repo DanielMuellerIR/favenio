@@ -8,11 +8,15 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    (mehrere Dateien, langsame Extraktion, Abbruch, Fehler). Headless ist der
    Weg seit 0.32.0 geprüft (`tests/test_materialization.py`); der Test am
    Fenster braucht Daniels Freigabe.
-2. Vollständige benannte Suchvorlagen und Mehrwortsuche als getrennte
-   Funktionserweiterungen. Priorität 3, Verträge und offene Produktentscheidung
-   zur Verknüpfung mehrerer Begriffe in [FOLLOWUPS.md](FOLLOWUPS.md).
-3. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
-4. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
+2. Mehrwortsuche als eigene Funktionserweiterung. Priorität 3, Vertrag und
+   offene Produktentscheidung zur Verknüpfung mehrerer Begriffe in
+   [FOLLOWUPS.md](FOLLOWUPS.md).
+3. Sichtbarer Test des Fensters „Suchvorlagen" (Verwalten: Laden,
+   Umbenennen in der Zeile, Löschen). Headless ist alles geprüft
+   (Selbsttest); das Fenster selbst wurde noch nicht am Bildschirm
+   angesehen — braucht Daniels Freigabe für GUI-Fokus.
+4. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
+5. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
    heraus auf die aktuelle aktualisieren und den Ablauf am Fenster prüfen.
    Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
    Durchlauf am Bildschirm.
@@ -33,6 +37,10 @@ jetzt auch nach einem Timeout ein; ein mit echtem Prozess erzwungener Timeout
 prüft das. Dies belegt keine Ursache für den ursprünglichen SIGTERM-Fehlschlag.
 Bei erneutem Auftreten Bereitschaftsdatei, Prozessstatus, Ausgabe und Systemlast
 sichern, bevor Timing-Grenzen geändert werden.
+
+Nicht offen — benannte Suchvorlagen: mit 0.33.0 gebaut (Menü „Vorlagen",
+Datei unter Application Support, versioniertes Format, Selbsttest deckt
+Sichern, Laden, Umbenennen, Löschen und Migration ab).
 
 Nicht offen — Zeilenleser: mit 0.32.1 als `iter_line_pieces()` aus
 `match_content()` herausgelöst, verhaltensneutral gegen eine Kopie der alten

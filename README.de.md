@@ -415,6 +415,21 @@ Aus der Trefferliste heraus:
   Trefferliste, mit Pfeil hoch/runter wandert die Vorschau also durch die
   Treffer
 
+**Suchvorlagen** (Menü *Vorlagen*): *Suche als Vorlage sichern…* (⌘S)
+speichert Muster, den aktuellen Suchordner und alle Optionen — Modus,
+Metadatenfeld, Bildmaße, Größen-/Datumsgrenzen, Ausschlüsse und alle
+Schalter — unter einem Namen in
+`~/Library/Application Support/Favenio/search-templates.json` (versioniertes
+JSON; die Optionen stehen in derselben Form wie in der URL der Schnellsuche,
+geladene Vorlage, CLI-Argumente und Übergabe beschreiben also dieselbe
+Suche). Ein Klick auf eine Vorlage befüllt das Fenster, ohne die Suche zu
+starten; gibt es ihren Ordner nicht mehr, steht das mit Pfad in der
+Fußzeile, der aktuelle Ordner bleibt. *Vorlagen verwalten…* zeigt die Liste
+zum Laden, Umbenennen und Löschen. Rohtexte bleiben wie eingegeben: Ein
+ungültiger Wert ist nach dem Laden sichtbar und wird beim Suchstart
+bemängelt. Die Regex-Vorlagen neben dem Suchfeld sind davon getrennt eine
+Einfügehilfe.
+
 Die Fußzeile zählt Treffer, Datenmenge und die Anzahl der Ordner, auf die sie
 sich verteilen; ab zwei markierten Zeilen auch die Größe der Auswahl. Steht ein
 `≥` vor der Datenmenge, hat mindestens eine Datei keine vorab bekannte Größe

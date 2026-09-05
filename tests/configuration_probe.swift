@@ -77,6 +77,27 @@ import AppKit
             let result = runSearchStreaming(arguments: restored.arguments(pattern: "", root: fixture.path)!, onProgress: { _ in })
             precondition(result.status == 2 && !(result.errorMessage ?? "").isEmpty)
         }
+        // Vorlagenformat: Roundtrip über die Datei mit allen Optionen und
+        // Rohtexten; eine neuere Formatversion wird mit Nummer abgelehnt.
+        let templateFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("favenio-probe-" + UUID().uuidString + ".json")
+        defer { try? FileManager.default.removeItem(at: templateFile) }
+        var invalidPixels = original
+        invalidPixels.pixelTexts = ["10.5", "", "", ""]
+        let templates = [
+            SearchTemplate(name: "Alles", pattern: "Winter", root: "/fixture", configuration: original),
+            SearchTemplate(name: "Roh", pattern: "", root: nil, configuration: invalidPixels)]
+        let store = SearchTemplateStore(fileURL: templateFile)
+        try store.save(templates)
+        let loaded = try store.load()
+        precondition(loaded == templates, "Vorlagendatei verliert Werte")
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: templateFile)) as! [String: Any]
+        precondition(json["version"] as? Int == SearchTemplateFormat.version)
+        try Data("{\"version\": 99, \"templates\": []}".utf8).write(to: templateFile)
+        do { _ = try store.load(); preconditionFailure("Version 99 wurde gelesen") }
+        catch let error as SearchTemplateError { precondition(error.description.contains("99")) }
+        let missing = try SearchTemplateStore(fileURL: templateFile.appendingPathExtension("fehlt")).load()
+        precondition(missing.isEmpty)
         let view = SearchFilterView()
         view.rawFacts = original.rawFacts
         precondition(view.rawFacts == original.rawFacts)

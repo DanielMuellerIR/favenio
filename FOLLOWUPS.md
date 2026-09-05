@@ -2,25 +2,9 @@
 
 Die Größen-, Datums- und Ausschlussfilter sind umgesetzt, ebenso die
 asynchrone Materialisierung (0.32.0), der ISO-Ordnertyp (0.31.4) und der
-herausgelöste Zeilenleser (0.32.1). Die
+herausgelöste Zeilenleser (0.32.1) und die benannten Suchvorlagen (0.33.0).
+Die
 folgenden Aufträge sind getrennte Änderungen mit eigenen Abnahmen.
-
-## Priorität 3: Vollständige benannte Suchvorlagen
-
-`RegexTemplate` und `insertTemplate()` in `gui/FavenioGUI.swift` setzen heute
-nur einen Regex in das Suchfeld. Sie sind keine gespeicherten Suchaufträge.
-
-Ein versioniertes Vorlagenformat auf `SearchConfiguration` aufbauen und um
-Name, Suchmuster und ausdrücklich gewählten Suchordner ergänzen. Alle
-Optionen einschließlich Ausschlüssen, Maßfeldern, Größen-/Datumsgrenzen und
-Metadatenfeld vollständig speichern. Rohtexte erhalten, damit ungültige Werte
-beim Laden sichtbar bleiben. Lokal außerhalb des Repositorys speichern;
-fehlende Suchordner konkret melden. Laden befüllt zunächst die Oberfläche,
-ohne automatisch eine Suche zu starten. Keine Trefferlisten speichern.
-
-Abnahme: Speichern, Laden, Umbenennen, Löschen und Formatmigration prüfen.
-Geladene Vorlage, CLI-Argumente und Quick-Übergabe müssen dieselbe Suche
-beschreiben. Regex-Vorlagen bleiben als getrennte Einfügehilfe erhalten.
 
 ## Priorität 3: Mehrwortsuche als eigene Funktionserweiterung
 

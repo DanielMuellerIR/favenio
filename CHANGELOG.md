@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.33.0 — 2026-09-06
+
+- Haupt-App: Menü **Vorlagen** mit benannten Suchvorlagen. „Suche als
+  Vorlage sichern…" (⌘S) speichert Muster, den gewählten Suchordner und
+  alle Optionen — Modus, Metadatenfeld, Bildmaße, Größen-/Datumsgrenzen,
+  Ausschlüsse, Regex/Groß-klein/Genau/Archive/Unsichtbare/Typ — unter
+  `~/Library/Application Support/Favenio/search-templates.json`
+  (versioniertes JSON, Optionen in der Form der Quick-URL). Ein Klick auf
+  eine Vorlage befüllt die Oberfläche, ohne die Suche zu starten; fehlt
+  ihr Ordner, steht das mit Pfad in der Fußzeile, der aktuelle Ordner
+  bleibt. „Vorlagen verwalten…" öffnet die Liste zum Laden, Umbenennen und
+  Löschen. Rohtexte bleiben erhalten: Ein ungültiger Wert ist nach dem
+  Laden sichtbar und wird wie bei Handeingabe beim Start bemängelt.
+  Die Regex-Vorlagen bleiben als getrennte Einfügehilfe fürs Suchfeld.
+
 ## 0.32.1 — 2026-09-05
 
 - Kern: Das Lesen der Inhaltssuche — UTF-8-Dekodierung, Zeilentrennung,

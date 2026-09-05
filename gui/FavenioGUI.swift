@@ -176,6 +176,108 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Ausschlussoptionen gehen zwischen Controls und Übergabe verloren")
         return 1
     }
+    // Benannte Suchvorlagen: Datei-Roundtrip, Laden ohne Suchstart,
+    // Rohtexte, fehlender Ordner, Umbenennen, Löschen, Formatmigration.
+    let templateFile = FileManager.default.temporaryDirectory
+        .appendingPathComponent("favenio-selftest-templates-\(ProcessInfo.processInfo.processIdentifier).json")
+    defer { try? FileManager.default.removeItem(at: templateFile) }
+    let saver = MainController()
+    saver.templateStore = SearchTemplateStore(fileURL: templateFile)
+    saver.searchField.stringValue = "Rechnung*"
+    saver.regexCheckbox.state = .on
+    saver.minWidthField.stringValue = "1.000 px"
+    saver.filterView.exclusions = ["node_modules", " keep spaces "]
+    saver.filterView.rawFacts = ["min-size": "1 KiB"]
+    let existingRoot = FileManager.default.temporaryDirectory.path
+    let validTemplate = SearchTemplate(
+        name: "Rechnungen", pattern: "Rechnung*", root: existingRoot,
+        configuration: saver.searchConfiguration)
+    var rawConfiguration = saver.searchConfiguration
+    rawConfiguration.pixelTexts = ["10.5", "", "", ""]      // ungültig, bleibt roh
+    rawConfiguration.mode = .metadata
+    rawConfiguration.metadataField = "Title"
+    let rawTemplate = SearchTemplate(
+        name: "Roh", pattern: "", root: "/nicht/vorhanden/favenio-selftest",
+        configuration: rawConfiguration)
+    guard saver.storeTemplate(validTemplate) == nil,
+          saver.storeTemplate(rawTemplate) == nil,
+          saver.templates.count == 2,
+          (try? SearchTemplateStore(fileURL: templateFile).load()) == saver.templates,
+          saver.templatesMenu.items.contains(where: { $0.title == "Rechnungen" }) else {
+        print("SELFTEST FEHLER: Suchvorlagen überleben die Datei nicht")
+        return 1
+    }
+    let loader = MainController()
+    loader.templateStore = SearchTemplateStore(fileURL: templateFile)
+    loader.reloadTemplates()
+    guard loader.templates == saver.templates else {
+        print("SELFTEST FEHLER: Vorlagendatei liest sich anders als geschrieben")
+        return 1
+    }
+    loader.applyTemplate(validTemplate)
+    guard loader.activeSearchRun == nil,
+          loader.searchField.stringValue == "Rechnung*",
+          loader.searchRoot.path == existingRoot,
+          loader.searchConfiguration == validTemplate.configuration,
+          loader.filtersExpanded,
+          loader.statusLabel.stringValue.contains("„Rechnungen“ geladen") else {
+        print("SELFTEST FEHLER: Vorlage befüllt die Oberfläche nicht oder startet eine Suche")
+        return 1
+    }
+    // Geladene Vorlage, CLI-Argumente und Quick-Übergabe: dieselbe Suche.
+    guard loader.searchConfiguration.arguments(
+              pattern: loader.searchField.stringValue, root: loader.searchRoot.path)
+              == validTemplate.configuration.arguments(
+                  pattern: validTemplate.pattern, root: existingRoot),
+          SearchConfiguration.fromQueryItems(loader.searchConfiguration.queryItems)
+              == validTemplate.configuration,
+          SearchTemplateFormat.decodeOptions(
+              SearchTemplateFormat.encodeOptions(validTemplate.configuration))
+              == validTemplate.configuration else {
+        print("SELFTEST FEHLER: Vorlage, CLI-Argumente und URL beschreiben verschiedene Suchen")
+        return 1
+    }
+    loader.applyTemplate(rawTemplate)
+    guard loader.minWidthField.stringValue == "10.5",
+          loader.selectedMode == .metadata,
+          loader.selectedMetadataField == nil || loader.selectedMetadataField == "Title",
+          loader.searchRoot.path == existingRoot,
+          loader.statusLabel.stringValue.contains("fehlt: /nicht/vorhanden/favenio-selftest") else {
+        print("SELFTEST FEHLER: Rohtext oder fehlender Vorlagenordner werden nicht sichtbar")
+        return 1
+    }
+    guard loader.renameTemplate("Rechnungen", to: "Roh") != nil,
+          loader.renameTemplate("Rechnungen", to: "  ") != nil,
+          loader.renameTemplate("Rechnungen", to: "Rechnungen 2026") == nil,
+          loader.deleteTemplate("Roh") == nil,
+          loader.templates.map({ $0.name }) == ["Rechnungen 2026"],
+          (try? SearchTemplateStore(fileURL: templateFile).load())?.map({ $0.name })
+              == ["Rechnungen 2026"] else {
+        print("SELFTEST FEHLER: Umbenennen oder Löschen einer Vorlage")
+        return 1
+    }
+    try? Data("{\"version\": 2, \"templates\": []}".utf8).write(to: templateFile)
+    var migrationError = ""
+    do { _ = try SearchTemplateStore(fileURL: templateFile).load() } catch { migrationError = "\(error)" }
+    guard migrationError.contains("Formatversion 2") else {
+        print("SELFTEST FEHLER: Neuere Vorlagendatei wird nicht abgelehnt: \(migrationError)")
+        return 1
+    }
+    try? Data("{\"version\": 1, \"später\": true, \"templates\": [{\"name\": \"Alt\", \"extra\": 1}]}".utf8)
+        .write(to: templateFile)
+    guard (try? SearchTemplateStore(fileURL: templateFile).load())
+              == [SearchTemplate(name: "Alt", pattern: "", root: nil,
+                                 configuration: SearchConfiguration())] else {
+        print("SELFTEST FEHLER: Unbekannte Felder derselben Formatversion werden nicht überlesen")
+        return 1
+    }
+    loader.reloadTemplates()
+    guard loader.templates.count == 1, case .idle = loader.searchPhase,
+          !regexTemplates.isEmpty else {
+        print("SELFTEST FEHLER: Vorlagen neu laden oder Regex-Einfügehilfe")
+        return 1
+    }
+
     pixelController.searchField.stringValue = "Treffer"
     pixelController.minWidthField.stringValue = "10.5"
     pixelController.startSearch()
@@ -920,6 +1022,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         installAboutItem()
         installViewMenu()
         installFileMenu()
+        installTemplatesMenu()
         // Finder-Fenster für das Ordner-Popup vorab im Hintergrund laden
         // (der AppleScript-Aufruf darf den Start nicht blockieren).
         refreshFinderFoldersAsync()
@@ -1105,22 +1208,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         // Treffer nicht zur fortgesetzten Suche. Neue Quick-Versionen
         // schicken regex=0 und case=0 ausdrücklich mit.
         // Alte Quick-Versionen schicken nur content=0/1, neue den Modus.
-        let configuration = SearchConfiguration.fromQueryItems(items)
-        selectMode(configuration.mode)
-        selectMetadataField(configuration.metadataField)
-        for (field, text) in zip(pixelFields, configuration.pixelTexts) { field.stringValue = text }
-        filterView.exclusions = configuration.exclusions
-        filterView.rawFacts = configuration.rawFacts
-        // Übergebene Filter sollen sichtbar sein, sonst wundert man sich
-        // über eine kürzere Trefferliste ohne erkennbaren Grund.
-        if activeFilterCount > 0 { setFiltersExpanded(true) }
-        refreshFiltersTitle()
-        archivesCheckbox.state = configuration.archives ? .on : .off
-        hiddenCheckbox.state = configuration.includeHidden ? .on : .off
-        regexCheckbox.state = configuration.regex ? .on : .off
-        caseCheckbox.state = configuration.caseSensitive ? .on : .off
-        exactCheckbox.state = configuration.exact ? .on : .off
-        typeControl.selectedSegment = ["both": 0, "files": 1, "dirs": 2][configuration.only] ?? 0
+        applyConfiguration(SearchConfiguration.fromQueryItems(items))
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -1454,7 +1542,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         if hits.isEmpty {
             switch searchPhase {
             case .idle:
-                return "Bereit."
+                return templateNote ?? "Bereit."
             case .running:
                 return progressPath.map { "Durchsuche " + abbreviateHome($0) }
                     ?? "Suche läuft…"
@@ -1478,6 +1566,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             break
         }
         if isMaterializing { text += " — " + Self.materializingNote }
+        if let templateNote { text += " — " + templateNote }
         return text + skippedNote(skippedCount)
     }
 
@@ -1645,6 +1734,193 @@ final class MainController: HitListController, NSApplicationDelegate,
         }
     }
 
+    // ---------- Benannte Suchvorlagen ----------
+    //
+    // Eine Vorlage ist ein vollständiger Suchauftrag: Name, Muster, der beim
+    // Sichern gewählte Ordner und alle Optionen (SearchTemplate im Kern).
+    // Die Regex-Vorlagen darunter sind etwas anderes — eine Einfügehilfe
+    // fürs Suchfeld — und bleiben getrennt.
+
+    var templateStore = SearchTemplateStore()
+    var templates: [SearchTemplate] = []
+    let templatesMenu = NSMenu(title: "Vorlagen")
+    var templateManager: SearchTemplateManager?
+
+    func installTemplatesMenu() {
+        guard let mainMenu = NSApp.mainMenu else { return }
+        let item = NSMenuItem()
+        item.submenu = templatesMenu
+        // Hinter „Ablage" — vor „Bearbeiten", falls es das gibt.
+        let fileIndex = mainMenu.items.firstIndex { $0.submenu?.title == "Ablage" }
+        mainMenu.insertItem(item, at: min(mainMenu.numberOfItems,
+                                          (fileIndex ?? 1) + 1))
+        reloadTemplates()
+    }
+
+    /// Liest die Vorlagendatei neu; ein Lesefehler steht in der Fußzeile,
+    /// die Liste bleibt dann leer — nicht still eine alte.
+    func reloadTemplates() {
+        do {
+            templates = try templateStore.load()
+        } catch {
+            templates = []
+            searchPhase = .failed("Vorlagen nicht geladen: \(error)")
+            refreshStatus()
+        }
+        rebuildTemplatesMenu()
+    }
+
+    func rebuildTemplatesMenu() {
+        templatesMenu.removeAllItems()
+        let save = templatesMenu.addItem(
+            withTitle: "Suche als Vorlage sichern…",
+            action: #selector(saveCurrentAsTemplate(_:)), keyEquivalent: "s")
+        save.target = self
+        let manage = templatesMenu.addItem(
+            withTitle: "Vorlagen verwalten…",
+            action: #selector(manageTemplates(_:)), keyEquivalent: "")
+        manage.target = self
+        guard !templates.isEmpty else { return }
+        templatesMenu.addItem(.separator())
+        for template in templates {
+            let item = templatesMenu.addItem(
+                withTitle: template.name,
+                action: #selector(loadTemplate(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = template.name
+            item.toolTip = templateSummary(template)
+        }
+    }
+
+    /// Kurzbeschreibung für Tooltip und Verwaltung: Muster, Modus, Ordner.
+    func templateSummary(_ template: SearchTemplate) -> String {
+        var parts: [String] = []
+        parts.append(template.pattern.isEmpty
+            ? "ohne Muster" : "„\(template.pattern)“")
+        parts.append(template.configuration.mode.rawValue)
+        if let root = template.root { parts.append(abbreviateHome(root)) }
+        let filters = template.configuration.filterSummary
+        if !filters.isEmpty { parts.append(filters) }
+        if !template.configuration.exclusions.isEmpty {
+            parts.append("ohne " + template.configuration.exclusions.joined(separator: ", "))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Die sichtbare Suche als Vorlage — Name im Dialog, Ordner ist der
+    /// aktuell gewählte Suchordner. Ein vorhandener Name wird ersetzt.
+    @objc func saveCurrentAsTemplate(_ sender: Any?) {
+        let pattern = searchField.stringValue.trimmingCharacters(in: .whitespaces)
+        let alert = NSAlert()
+        alert.messageText = "Suche als Vorlage sichern"
+        alert.informativeText = "Gespeichert werden Muster, Ordner „\(abbreviateHome(searchRoot.path))“ "
+            + "und alle Optionen. Ein vorhandener Name wird ersetzt."
+        let nameField = NSTextField(string: pattern)
+        nameField.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+        nameField.placeholderString = "Name der Vorlage"
+        alert.accessoryView = nameField
+        alert.addButton(withTitle: "Sichern")
+        alert.addButton(withTitle: "Abbrechen")
+        alert.window.initialFirstResponder = nameField
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else {
+            searchPhase = .failed("Vorlage nicht gesichert: kein Name.")
+            refreshStatus()
+            return
+        }
+        storeTemplate(SearchTemplate(name: name, pattern: pattern,
+                                     root: searchRoot.path,
+                                     configuration: searchConfiguration))
+    }
+
+    /// Legt eine Vorlage an oder ersetzt die mit demselben Namen, schreibt
+    /// die Datei und baut das Menü neu. Liefert die Fehlermeldung, falls
+    /// die Datei nicht schreibbar war (dann bleibt die Liste unverändert).
+    @discardableResult
+    func storeTemplate(_ template: SearchTemplate) -> String? {
+        var updated = templates
+        if let index = updated.firstIndex(where: { $0.name == template.name }) {
+            updated[index] = template
+        } else {
+            updated.append(template)
+        }
+        return commitTemplates(updated, note: "Vorlage „\(template.name)“ gesichert.")
+    }
+
+    func renameTemplate(_ name: String, to newName: String) -> String? {
+        let newName = newName.trimmingCharacters(in: .whitespaces)
+        guard !newName.isEmpty else { return "Vorlage nicht umbenannt: kein Name." }
+        guard let index = templates.firstIndex(where: { $0.name == name }) else {
+            return "Vorlage „\(name)“ gibt es nicht mehr."
+        }
+        guard newName == name || !templates.contains(where: { $0.name == newName }) else {
+            return "Es gibt schon eine Vorlage „\(newName)“."
+        }
+        var updated = templates
+        updated[index].name = newName
+        return commitTemplates(updated, note: "Vorlage „\(newName)“ umbenannt.")
+    }
+
+    func deleteTemplate(_ name: String) -> String? {
+        commitTemplates(templates.filter { $0.name != name },
+                        note: "Vorlage „\(name)“ gelöscht.")
+    }
+
+    private func commitTemplates(_ updated: [SearchTemplate], note: String) -> String? {
+        do {
+            try templateStore.save(updated)
+        } catch {
+            let message = "\(error)"
+            searchPhase = .failed(message)
+            refreshStatus()
+            return message
+        }
+        templates = updated
+        rebuildTemplatesMenu()
+        templateManager?.reload()
+        if case .failed = searchPhase { searchPhase = .idle }
+        templateNote = note
+        refreshStatus()
+        return nil
+    }
+
+    /// Letzte Vorlagen-Meldung für die Fußzeile; die nächste Suche löscht sie.
+    var templateNote: String?
+
+    @objc func loadTemplate(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String,
+              let template = templates.first(where: { $0.name == name }) else { return }
+        applyTemplate(template)
+    }
+
+    /// Befüllt die Oberfläche aus der Vorlage — und startet KEINE Suche.
+    /// Ein gespeicherter Ordner, den es nicht mehr gibt, wird konkret
+    /// genannt; der aktuelle Ordner bleibt dann stehen.
+    func applyTemplate(_ template: SearchTemplate) {
+        stopSearch()
+        applyConfiguration(template.configuration)
+        searchField.stringValue = template.pattern
+        var note = "Vorlage „\(template.name)“ geladen — ↩ startet die Suche."
+        if let missing = template.missingRootMessage {
+            note += " " + missing
+        } else if let root = template.root {
+            setSearchRoot(URL(fileURLWithPath: root))
+        }
+        searchPhase = .idle
+        progressPath = nil
+        templateNote = note
+        refreshStatus()
+        window?.makeFirstResponder(searchField)
+    }
+
+    @objc func manageTemplates(_ sender: Any?) {
+        if templateManager == nil {
+            templateManager = SearchTemplateManager(owner: self)
+        }
+        templateManager?.show()
+    }
+
     // ---------- RegEx: Vorlagen + Syntaxfärbung ----------
 
     /// Klick auf „Regex-Vorlagen": aufklappende Liste nach Kategorien.
@@ -1771,6 +2047,28 @@ final class MainController: HitListController, NSApplicationDelegate,
         launchSearch(pattern: pattern)
     }
 
+    /// Setzt alle Suchoptionen der Oberfläche aus einer Konfiguration — die
+    /// Gegenrichtung zu `searchConfiguration`. Genau EINE Stelle dafür; die
+    /// Quick-Übergabe und das Laden einer Vorlage gehen beide hier durch.
+    func applyConfiguration(_ configuration: SearchConfiguration) {
+        selectMode(configuration.mode)
+        selectMetadataField(configuration.metadataField)
+        for (field, text) in zip(pixelFields, configuration.pixelTexts) { field.stringValue = text }
+        filterView.exclusions = configuration.exclusions
+        filterView.rawFacts = configuration.rawFacts
+        // Übergebene Filter sollen sichtbar sein, sonst wundert man sich
+        // über eine kürzere Trefferliste ohne erkennbaren Grund.
+        if activeFilterCount > 0 { setFiltersExpanded(true) }
+        refreshFiltersTitle()
+        archivesCheckbox.state = configuration.archives ? .on : .off
+        hiddenCheckbox.state = configuration.includeHidden ? .on : .off
+        regexCheckbox.state = configuration.regex ? .on : .off
+        caseCheckbox.state = configuration.caseSensitive ? .on : .off
+        exactCheckbox.state = configuration.exact ? .on : .off
+        typeControl.selectedSegment = ["both", "files", "dirs"].firstIndex(of: configuration.only) ?? 0
+        recolorRegexField()
+    }
+
     var searchConfiguration: SearchConfiguration {
         var configuration = SearchConfiguration()
         configuration.mode = selectedMode
@@ -1873,6 +2171,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// zurück — das machen die Aufrufer je nach Fall.
     func launchSearch(pattern: String) {
         guard validatePixelInputs() else { return }
+        templateNote = nil
         guard let arguments = searchConfiguration.arguments(
             pattern: pattern, root: searchRoot.path, progress: true)
         else {
@@ -2699,6 +2998,148 @@ enum RegexHighlighter {
             }
         }
         return out
+    }
+}
+
+// MARK: - Verwaltung der Suchvorlagen
+
+/// Kleines Fenster mit der Vorlagenliste: Laden, Umbenennen (Name in der
+/// Zeile bearbeiten), Löschen. Eigene Klasse, weil MainController schon
+/// Datenquelle der Trefferliste ist — zwei Tabellen an einem Delegate
+/// müssten sich bei jedem Aufruf gegenseitig auseinanderhalten.
+final class SearchTemplateManager: NSObject, NSTableViewDataSource,
+                                   NSTableViewDelegate, NSTextFieldDelegate {
+    unowned let owner: MainController
+    let window: NSWindow
+    let templateTable = NSTableView()
+    let summaryLabel = NSTextField(labelWithString: "")
+    let loadButton = NSButton(title: "Laden", target: nil, action: nil)
+    let renameButton = NSButton(title: "Umbenennen", target: nil, action: nil)
+    let deleteButton = NSButton(title: "Löschen", target: nil, action: nil)
+
+    init(owner: MainController) {
+        self.owner = owner
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+                          styleMask: [.titled, .closable, .resizable],
+                          backing: .buffered, defer: false)
+        super.init()
+        window.title = "Suchvorlagen"
+        window.isReleasedWhenClosed = false
+        window.center()
+        let column = NSTableColumn(identifier: .init("name"))
+        column.title = "Vorlage"
+        column.isEditable = true
+        templateTable.addTableColumn(column)
+        templateTable.headerView = nil
+        templateTable.dataSource = self
+        templateTable.delegate = self
+        templateTable.doubleAction = #selector(loadSelected)
+        templateTable.target = self
+        let scroll = NSScrollView()
+        scroll.documentView = templateTable
+        scroll.hasVerticalScroller = true
+        loadButton.target = self
+        loadButton.action = #selector(loadSelected)
+        renameButton.target = self
+        renameButton.action = #selector(renameSelected)
+        deleteButton.target = self
+        deleteButton.action = #selector(deleteSelected)
+        summaryLabel.lineBreakMode = .byTruncatingMiddle
+        summaryLabel.textColor = .secondaryLabelColor
+        let buttons = NSStackView(views: [loadButton, renameButton, deleteButton])
+        buttons.orientation = .horizontal
+        let stack = NSStackView(views: [scroll, summaryLabel, buttons])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView = stack
+        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        summaryLabel.widthAnchor.constraint(equalTo: scroll.widthAnchor).isActive = true
+        reload()
+    }
+
+    func show() {
+        reload()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func reload() {
+        templateTable.reloadData()
+        selectionChanged()
+    }
+
+    var selectedTemplate: SearchTemplate? {
+        let row = templateTable.selectedRow
+        return owner.templates.indices.contains(row) ? owner.templates[row] : nil
+    }
+
+    func selectionChanged() {
+        let selected = selectedTemplate
+        loadButton.isEnabled = selected != nil
+        renameButton.isEnabled = selected != nil
+        deleteButton.isEnabled = selected != nil
+        summaryLabel.stringValue = selected.map(owner.templateSummary)
+            ?? (owner.templates.isEmpty ? "Noch keine Vorlagen — „Suche als Vorlage sichern…“ im Menü Vorlagen." : "")
+    }
+
+    func numberOfRows(in templateTable: NSTableView) -> Int { owner.templates.count }
+
+    func templateTable(_ templateTable: NSTableView, viewFor tableColumn: NSTableColumn?,
+                   row: Int) -> NSView? {
+        guard owner.templates.indices.contains(row) else { return nil }
+        let field: NSTextField
+        if let reused = templateTable.makeView(withIdentifier: .init("templateName"), owner: self) as? NSTextField {
+            field = reused
+        } else {
+            field = NSTextField(string: "")
+            field.identifier = .init("templateName")
+            field.isBordered = false
+            field.drawsBackground = false
+            field.delegate = self
+        }
+        field.stringValue = owner.templates[row].name
+        field.isEditable = true
+        return field
+    }
+
+    func templateTableSelectionDidChange(_ notification: Notification) { selectionChanged() }
+
+    /// Der Name wurde in der Zeile bearbeitet: umbenennen, Fehler nennen.
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField else { return }
+        let row = templateTable.row(for: field)
+        guard owner.templates.indices.contains(row) else { return }
+        let previous = owner.templates[row].name
+        if let error = owner.renameTemplate(previous, to: field.stringValue) {
+            field.stringValue = previous
+            summaryLabel.stringValue = error
+        }
+    }
+
+    @objc func loadSelected() {
+        guard let template = selectedTemplate else { return }
+        owner.applyTemplate(template)
+        owner.window?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc func renameSelected() {
+        let row = templateTable.selectedRow
+        guard row >= 0 else { return }
+        templateTable.editColumn(0, row: row, with: nil, select: true)
+    }
+
+    @objc func deleteSelected() {
+        guard let template = selectedTemplate else { return }
+        let alert = NSAlert()
+        alert.messageText = "Vorlage „\(template.name)“ löschen?"
+        alert.informativeText = "Gelöscht wird nur die Vorlage — keine Datei und kein Treffer."
+        alert.addButton(withTitle: "Löschen")
+        alert.addButton(withTitle: "Abbrechen")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if let error = owner.deleteTemplate(template.name) {
+            summaryLabel.stringValue = error
+        }
     }
 }
 

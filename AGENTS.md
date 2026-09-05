@@ -341,7 +341,19 @@ je durch eine Wache festgehalten:
   hält — genau der Fall, wenn `process.run()` gescheitert ist.
 
 `SearchConfiguration` ist die gemeinsame Quelle für Suchargumente, Quick-URL-
-Encoder und -Decoder. Pixeltexte bleiben bis zur Validierung unverändert:
+Encoder und -Decoder. Darauf bauen die benannten **Suchvorlagen** auf
+(`SearchTemplate`, `SearchTemplateFormat`, `SearchTemplateStore` im Kern,
+seit 0.33.0): Name, Muster, gespeicherter Suchordner und die Optionen als
+Query der Quick-URL — dieselbe Kodierung, damit Vorlage, CLI-Argumente und
+Übergabe dieselbe Suche beschreiben und Rohtexte unverändert bleiben. Die
+Datei `~/Library/Application Support/Favenio/search-templates.json` trägt
+eine `version`; eine höhere wird mit Nummer abgelehnt, unbekannte Felder
+derselben Version werden überlesen. In der Haupt-App gibt es genau EINE
+Stelle, die eine Konfiguration in die Oberfläche schreibt
+(`applyConfiguration`); Quick-Übergabe und `applyTemplate` gehen beide
+hindurch. Laden startet keine Suche und behält bei fehlendem Ordner den
+aktuellen (`missingRootMessage` in der Fußzeile). `RegexTemplate` bleibt
+davon getrennt eine Einfügehilfe fürs Suchfeld. Pixeltexte bleiben bis zur Validierung unverändert:
 Ein URL-Wert `10.5` darf niemals still zu einer leeren Grenze werden.
 `FactFilterOption.all` beschreibt die sechs Größen-/Datumseingaben EINMAL
 für UI, CLI-Argumente, URL und Zusammenfassung. Werte bleiben rohe Texte;

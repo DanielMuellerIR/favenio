@@ -398,6 +398,19 @@ From the results list:
 - **Space**: QuickLook preview. Keyboard focus stays in the result list, so
   Up/Down walks the preview through the hits
 
+**Search templates** (menu *Vorlagen*): *Suche als Vorlage sichern…* (⌘S)
+stores the pattern, the current search folder and every option — mode,
+metadata field, image size, size/date bounds, exclusions and all checkboxes —
+under a name in `~/Library/Application Support/Favenio/search-templates.json`
+(versioned JSON; the options use the same encoding as the quick-search URL,
+so a loaded template, the CLI arguments and the handoff describe the same
+search). Picking a template fills in the window without starting a search;
+if its folder no longer exists, the footer says so with the path and the
+current folder stays. *Vorlagen verwalten…* lists the templates for loading,
+renaming and deleting. Raw texts are kept as typed: an invalid value is
+visible after loading and is reported when you start the search. The regex
+templates next to the search field are a separate insertion helper.
+
 The footer counts hits, their total size and how many folders they are spread
 across; from two selected rows on, also the size of the selection. A `≥` in
 front of the total size means at least one file has no size known up front
