@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.31.0 — 2026-09-05
+
+- Beide Apps bieten Von/Bis-Felder für Dateigröße, Änderung und Erstellung.
+  Ein gemeinsamer Feldkatalog steuert UI, CLI, URL-Übergabe und Status; nur
+  der Python-Kern validiert Einheiten und Zeitpunkte. Auch reine Faktenfilter
+  starten die Suche und lassen sich von Quick an die Haupt-App übergeben.
+
+- Dateigrößen- und Datumsfilter ergänzen die Kriterienliste vor Bildkopf-,
+  Metadaten- und Inhaltslesen. Alle Grenzen sind inklusive; Bytes unterstützen
+  B/KiB/MiB/GiB/TiB, ISO-Zeitpunkte verlangen eine ausdrückliche Zone.
+  Dateifakten werden für Filter und Trefferausgabe einmal gelesen.
+- Datumsfilter berücksichtigen auch Ordner. Unbekannte Archivfakten werden
+  nicht als null behandelt und nicht durch vollständiges Entpacken ergänzt.
+  Die Fakten des Containers beschneiden den Archivabstieg nicht.
+- CLI-Validierungsfehler tragen das gemeinsame Fehlerpräfix, damit beide Apps
+  den konkreten Grund statt nur Status 2 anzeigen können.
+
 ## 0.30.0 — 2026-09-05
 
 - Beide Apps bieten ein mehrzeiliges Ausschlussfeld. CLI-Optionen und Quick-

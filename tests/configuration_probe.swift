@@ -14,6 +14,11 @@ import AppKit
         original.only = "files"
         original.metadataField = "Title"
         original.pixelTexts = ["1.000 px", "2000", "", ""]
+        original.rawFacts = ["min-size": "1 B", "max-size": "1 KiB",
+                             "modified-from": "2000-01-01T00:00:00Z",
+                             "modified-to": "2099-01-01T00:00:00+02:00",
+                             "created-from": "2000-01-01T00:00:00Z",
+                             "created-to": "2099-01-01T00:00:00Z"]
         original.exclusions = ["node_modules", "Cache/*.zip", " whitespace ", "100%+#Ü.txt", "-cache", "--hidden"]
         var url = URLComponents()
         url.scheme = "favenio"
@@ -49,7 +54,32 @@ import AppKit
         let outcome = runSearchStreaming(arguments: dashPattern.arguments(pattern: "needle", root: fixture.path)!,
                                          onHit: { found.append($0) }, onProgress: { _ in })
         precondition(outcome.status == 0 && found.count == 1 && found[0].filesystemPath == fixture.appendingPathComponent("needle.txt").path)
+        var factsOnly = SearchConfiguration()
+        factsOnly.mode = .metadata
+        factsOnly.rawFacts = original.rawFacts
+        factsOnly.exclusions = ["-cache"]
+        precondition(factsOnly.hasPositiveFilter)
+        precondition(FactFilterOption.all.allSatisfy { factsOnly.filterSummary.contains($0.title) })
+        let factsArguments = factsOnly.arguments(pattern: "", root: fixture.path)!
+        precondition(!factsArguments.contains("--metadata") && !factsArguments.contains("--content"))
+        found = []
+        let factsExit = runSearchStreaming(arguments: factsArguments,
+                                           onHit: { found.append($0) }, onProgress: { _ in })
+        precondition(factsExit.status == 0 && found.count == 1)
+        var excludedOnly = SearchConfiguration()
+        excludedOnly.exclusions = ["x"]
+        precondition(!excludedOnly.hasPositiveFilter && excludedOnly.arguments(pattern: "", root: fixture.path) == nil)
+        for invalid in [["min-size": "-1"], ["min-size": "10", "max-size": "1"],
+                        ["modified-from": "2026-09-05"], ["created-to": "2026-09-05T12:00:00"]] {
+            factsOnly.rawFacts = invalid
+            let restored = SearchConfiguration.fromQueryItems(factsOnly.queryItems)
+            precondition(restored.rawFacts == invalid && restored.hasPositiveFilter)
+            let result = runSearchStreaming(arguments: restored.arguments(pattern: "", root: fixture.path)!, onProgress: { _ in })
+            precondition(result.status == 2 && !(result.errorMessage ?? "").isEmpty)
+        }
         let view = SearchFilterView()
+        view.rawFacts = original.rawFacts
+        precondition(view.rawFacts == original.rawFacts)
         view.exclusions = original.exclusions
         precondition(view.exclusions == original.exclusions)
         view.exclusionsEditor.string = "a\n\n space \nb"
@@ -59,7 +89,7 @@ import AppKit
         view.textDidChange(Notification(name: NSText.didChangeNotification))
         precondition(changes == 1)
         if CommandLine.arguments.count > 1 {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 120),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 240),
                                   styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: .aqua)
@@ -72,6 +102,9 @@ import AppKit
                 view.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -12),
                 view.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 12)])
             view.exclusions = ["node_modules", "Cache/*.zip"]
+            view.rawFacts = ["min-size": "1 MiB", "max-size": "10 MiB",
+                             "modified-from": "2026-09-05T00:00:00Z",
+                             "modified-to": "2026-09-05T23:59:59+02:00"]
             window.contentView!.layoutSubtreeIfNeeded()
             precondition(!window.isVisible && !window.isKeyWindow)
             guard let bitmap = window.contentView!.bitmapImageRepForCachingDisplay(in: window.contentView!.bounds)

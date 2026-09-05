@@ -722,25 +722,25 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("if hasPattern", arguments)
         self.assertIn("if mode == .content", arguments)
         self.assertIn("if mode == .metadata", arguments)
-        self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty", GUI)
-        self.assertIn("guard !query.isEmpty || !limits.isEmpty", QUICK)
+        self.assertIn("guard !pattern.isEmpty || searchConfiguration.hasPositiveFilter", GUI)
+        self.assertIn("guard !query.isEmpty || searchConfiguration.hasPositiveFilter", QUICK)
     def test_a_size_only_search_can_be_handed_over_and_continued(self):
         """Der Knopf „Alle in Favenio" und ⌘↩ brachen bei leerem Suchfeld ab,
         obwohl die Schnellsuche mit gesetztem Maßfilter laeuft; die
         Fortsetzung in der Haupt-App ebenso. Beide Uebergabewege haengen
         jetzt an derselben Bedingung wie der Suchstart."""
         handover = swift_function(QUICK, "@objc func openInMainApp() {")
-        self.assertIn("guard !query.isEmpty || !pixelLimits.isEmpty",
+        self.assertIn("guard !query.isEmpty || searchConfiguration.hasPositiveFilter",
                       handover)
         # ⌘↩ geht nicht ueber den Knopf, sondern ueber den Tastaturmonitor —
         # der muss dieselbe Bedingung tragen, sonst faellt die Taste bei
         # leerem Suchfeld kommentarlos ins Feld durch.
         launched = swift_function(
             QUICK, "func applicationDidFinishLaunching(")
-        self.assertIn("|| !self.pixelLimits.isEmpty", launched)
+        self.assertIn("|| self.searchConfiguration.hasPositiveFilter", launched)
         continue_search = swift_function(
             GUI, "func continueSearch(from file: URL) {")
-        self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty",
+        self.assertIn("guard !pattern.isEmpty || searchConfiguration.hasPositiveFilter",
                       continue_search)
     def test_a_size_only_result_line_names_the_size_filter(self):
         """Ohne Suchbegriff schrieb die Endmeldung „für „"" mit leeren
@@ -748,7 +748,7 @@ class SwiftGuardTests(unittest.TestCase):
         den Filter, nach dem wirklich gesucht wurde."""
         finish = swift_function(
             QUICK, "func finish(query: String, errorText: String?) {")
-        self.assertIn("pixelLimits.summary", finish)
+        self.assertIn("searchConfiguration.filterSummary", finish)
         self.assertIn("query.isEmpty", finish)
     def test_area_sort_cannot_overflow(self):
         """Die Maß-Spalte sortiert nach Flaeche. Ein praeparierter Bildkopf

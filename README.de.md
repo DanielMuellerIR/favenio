@@ -158,6 +158,9 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `-m`, `--metadata` | in den kuratierten Metadaten-Textfeldern suchen (Stichwörter, Titel, Beschreibung …) statt in Namen; braucht `exiftool` |
 | `--metadata-field TAG` | `--metadata` auf ein Feld der kuratierten Liste eingrenzen (wiederholbar; schaltet `--metadata` ein) |
 | `--list-metadata-fields` | die kuratierte Feldliste ausgeben, eine je Zeile, und beenden |
+| `--min-size BYTES`, `--max-size BYTES` | inklusive Dateigrößengrenzen; ganze nichtnegative Bytezahl, optional B/KiB/MiB/GiB/TiB |
+| `--modified-from ISO`, `--modified-to ISO` | inklusive Grenzen der Änderungszeit; ISO-Zeitpunkt mit `Z` oder ausdrücklichem Offset |
+| `--created-from ISO`, `--created-to ISO` | inklusive Grenzen der Erstellungszeit; ISO-Zeitpunkt mit `Z` oder ausdrücklichem Offset |
 | `--min-width PX`, `--max-width PX` | nur Bilder ab / bis zu dieser Breite (Pixel) |
 | `--min-height PX`, `--max-height PX` | nur Bilder ab / bis zu dieser Höhe (Pixel); alle vier Maßfilter gelten per UND zusätzlich zum Muster, das dann auch fehlen darf |
 | `-r`, `--regex` | Muster als regulären Ausdruck interpretieren |
@@ -248,7 +251,52 @@ suchen.** Das `*` schaltet auf Glob-Matching um, das den **ganzen** Namen
 prüft. (Endet ein *Ordner* auf `.md`, zusätzlich `--only files` bzw. in der
 GUI „Nur Dateien" wählen.) Exakt gleichwertig wäre der Regex `\.md$`.
 
-Bei der Namenssuche zählen auch Ordnernamen als Treffer.
+Ordner können eine Namenssuche und bekannte Datumsfakten erfüllen;
+Dateigrößen-, Maß-, Metadaten- und Inhaltsfilter erfüllen sie nicht.
+
+## Dateigrößen- und Datumsfilter
+
+`--min-size` und `--max-size` vergleichen Dateigrößen in Bytes. Die Grenzen
+sind inklusive; `--min-size 0 --max-size 0` findet leere Dateien mit bekannter
+Größe. Werte sind ganze nichtnegative Zahlen, optional mit `B`, `KiB`, `MiB`,
+`GiB` oder `TiB`: `'2 MiB'` bedeutet 2 × 1024² Bytes. Die Schreibweise der
+Einheiten gilt genau; Dezimalwerte und mehrdeutige `KB`/`MB` werden abgelehnt.
+Ordner haben für diese Filter keine Dateigröße; `--only dirs` zusammen mit
+einer Größengrenze liefert deshalb keine Treffer.
+
+`--modified-from`/`--modified-to` filtern die Änderungszeit,
+`--created-from`/`--created-to` die Erstellungszeit. Alle Grenzen sind inklusive
+Zeitpunkte, keine ganzen Kalendertage. Format:
+`YYYY-MM-DDTHH:MM[:SS[.ffffff]]` mit `Z` oder ausdrücklichem `±HH:MM`-Offset,
+zum Beispiel `2024-01-01T00:00:00Z` oder `2024-01-01T01:00+01:00`; beide
+Werte bezeichnen denselben Zeitpunkt. Ein Datum ohne Uhrzeit und eine Uhrzeit
+ohne Zone werden abgelehnt. Bis zu sechs Nachkommastellen der Sekunde sind
+erlaubt. Eine Untergrenze über der Obergrenze ist ein Fehler.
+
+Angefragte Fakten müssen bekannt und gültig sein. ZIP- und TAR-Einträge
+liefern Größe und Änderungszeit aus ihrem Katalog, aber keine Erstellungszeit.
+Einzeln komprimierte Einträge und über bsdtar gelesene Einträge nennen im
+bisherigen Katalog weder Größe noch Zeitpunkte. Sie erfüllen einen solchen
+Filter nicht; Favenio entpackt sie nicht allein zum Ermitteln einer Größe.
+Lokale Erstellungszeiten hängen davon ab, ob das Dateisystem sie nennt.
+Datumsfilter gelten auch für Ordner mit bekannten Zeitpunkten. Größe oder
+Datum eines Containers entscheiden nie über seine Archiv-Einträge: Favenio
+steigt weiter in ein erlaubtes Archiv ab und prüft die eigenen Fakten jedes
+Eintrags.
+
+Alle gesetzten Filter gelten per UND zusätzlich zum Suchmuster und
+zueinander. Sobald ein Größen-, Datums- oder Pixelmaßfilter gesetzt ist, darf
+das Muster fehlen; mehrere Startpfade bleiben möglich. `--content` und
+`--metadata` brauchen weiterhin ein Muster. Zum Beispiel:
+
+```sh
+./favenio.py --min-size '2 MiB' --max-size '10 MiB' ~/Documents
+./favenio.py --modified-from 2024-01-01T00:00:00Z '*.pdf' ~/Documents ~/Downloads
+```
+
+Dateifakten werden je Objekt einmal für Filter und Trefferausgabe gelesen.
+So ausgeschlossene Dateien erreichen weder Bildkopf-, Metadaten- noch
+Inhaltsleser; der Archivabstieg bleibt wie beschrieben unabhängig davon.
 
 ## Metadaten- und Bildmaßsuche
 
@@ -277,7 +325,8 @@ Muster fehlen (`favenio.py --min-width 3000 ~/Pictures`, auch mit mehreren
 Startpfaden); die Suche läuft dann ganz ohne Textkriterium, weshalb
 `--content` und `--metadata` — die sagen, wogegen das Muster läuft — eines
 brauchen. JSON-Treffer tragen `width` und `height`. Billige Prüfungen laufen
-zuerst: Name, dann Maße, dann Metadaten, dann Inhalt. Für die Formate, die der
+zuerst: Name, dann Dateigröße und Zeitpunkte, dann Maße, Metadaten und Inhalt.
+Für die Formate, die der
 eingebaute Leser kennt, sieht exiftool deshalb nur Dateien, die den Maßfilter
 schon bestanden haben. Bei HEIC, AVIF, RAW und Video wird es früher gefragt —
 dort kommen die Maße selbst von exiftool, billiger sind sie nicht zu haben.
@@ -303,6 +352,14 @@ Zwei Punkte, die man dazu wissen sollte:
   Dafür ist ein Archivwerkzeug zuständig.
 
 ## GUI (Favenio.app)
+
+Die Zeilen **Größe**, **Geändert** und **Erstellt** bieten jeweils eine Von-
+und Bis-Grenze. Alle Grenzen sind inklusive. Größe akzeptiert ganze Bytes ab
+0, optional mit B, KiB, MiB, GiB oder TiB; Zeitpunkte brauchen ISO 8601 mit
+`Z` oder Offset, zum Beispiel `2026-09-05T12:00:00+02:00`. Ein Datum ohne
+Uhrzeit/Zone ist ungültig. Leer bedeutet keine Grenze. Diese Filter
+funktionieren auch ohne Suchtext und werden von Quick vollständig übergeben.
+Der Python-Kern meldet ungültige Eingaben konkret in der Statuszeile.
 
 Im Feld **Ausschließen** steht ein Muster je Zeile, zum Beispiel
 `node_modules` oder `Cache/*.zip`. Return beginnt eine neue Zeile. Leere Zeilen

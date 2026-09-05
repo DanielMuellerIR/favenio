@@ -131,6 +131,12 @@ func runSelfTest() -> Int32 {
     }
 
     pixelController.filterView.exclusions = ["node_modules", " keep spaces "]
+    pixelController.filterView.rawFacts = ["min-size": "0"]
+    guard pixelController.searchConfiguration.hasPositiveFilter,
+          pixelController.searchConfiguration.arguments(pattern: "", root: "/fixture") != nil else {
+        print("SELFTEST FEHLER: Reine Faktenfilter starten keine Suche")
+        return 1
+    }
     guard pixelController.searchConfiguration.exclusions == ["node_modules", " keep spaces "],
           SearchConfiguration.fromQueryItems(pixelController.searchConfiguration.queryItems)
             == pixelController.searchConfiguration else {
@@ -1042,6 +1048,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         selectMetadataField(configuration.metadataField)
         for (field, text) in zip(pixelFields, configuration.pixelTexts) { field.stringValue = text }
         filterView.exclusions = configuration.exclusions
+        filterView.rawFacts = configuration.rawFacts
         archivesCheckbox.state = configuration.archives ? .on : .off
         hiddenCheckbox.state = configuration.includeHidden ? .on : .off
         regexCheckbox.state = configuration.regex ? .on : .off
@@ -1629,9 +1636,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         skippedCount = 0
         searchPhase = .idle
         progressPath = nil
-        // Ohne Muster nur dann suchen, wenn ein Maßfilter gesetzt ist —
+        // Ohne Muster nur dann suchen, wenn ein Maß- oder Faktenfilter gesetzt ist —
         // „alle Bilder über 1000 px" ist eine vollständige Frage.
-        guard !pattern.isEmpty || !pixelLimits.isEmpty else {
+        guard !pattern.isEmpty || searchConfiguration.hasPositiveFilter else {
             refreshStatus()
             return
         }
@@ -1646,6 +1653,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         configuration.exact = exactCheckbox.state == .on
         configuration.pixelTexts = pixelFields.map { $0.stringValue }
         configuration.exclusions = filterView.exclusions
+        configuration.rawFacts = filterView.rawFacts
         configuration.regex = regexCheckbox.state == .on
         configuration.caseSensitive = caseCheckbox.state == .on
         configuration.metadataField = selectedMetadataField
@@ -1725,9 +1733,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
         // Wie startSearch(): ohne Muster nur weitersuchen, wenn ein
-        // Maßfilter gesetzt ist. Die Schnellsuche übergibt genau so eine
+        // Maß- oder Faktenfilter gesetzt ist. Die Schnellsuche übergibt genau so eine
         // reine Maßsuche, und die Fortsetzung darf sie nicht abbrechen.
-        guard !pattern.isEmpty || !pixelLimits.isEmpty else {
+        guard !pattern.isEmpty || searchConfiguration.hasPositiveFilter else {
             refreshStatus()
             return
         }

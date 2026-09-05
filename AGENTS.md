@@ -69,6 +69,10 @@ Verbindliches CLI-Verhalten:
   im selben stdout-Strom und sind über `type: progress` erkennbar. Ohne JSON
   gehen Fortschritte nach stderr.
 - Warnungen und Diagnose gehören nach stderr; stdout bleibt parsebar.
+- `FavenioArgumentParser.error()` gibt auch Validierungsfehler mit
+  `favenio: fehler: ` und Exit 2 aus. Das Präfix gehört zum Vertrag mit
+  `SearchDiagnostics`; normales argparse-`error:` verliert den konkreten
+  Grund in beiden Apps.
 - Exit-Codes folgen grep: 0 = Treffer, 1 = keine Treffer, 2 = Fehler.
   Zu den Fehlern gehört ausdrücklich JEDER unerwartete Abbruch: `main()`
   fängt ihn ab, nennt ihn auf stderr und endet mit 2. Ohne das beendete
@@ -175,11 +179,12 @@ Verbindliches CLI-Verhalten:
   (`Search.criteria`, ausgewertet in `evaluate()`): höchstens ein
   Textkriterium — `NameCriterion`, `ContentCriterion` oder
   `MetadataCriterion`, je nach `--content`/`--metadata` — plus
-  `DimensionCriterion`, sobald einer der vier Maßfilter gesetzt ist. Ohne
+  `DimensionCriterion`, sobald einer der vier Maßfilter gesetzt ist, sowie
+  `FileFactsCriterion` für Größen-/Datumsgrenzen. Ohne
   Muster (`matcher is None`, `text_mode is None`) entfällt das Textkriterium
   ganz; ein synthetisches `*` gab es bis 0.26.0 und war unter `--regex` ein
-  ungültiger Ausdruck. Sortiert nach `cost` (Name 0, Maße 1, Metadaten 2,
-  Inhalt 3), Abbruch beim ersten Nein. Diese Reihenfolge ist ein
+  ungültiger Ausdruck. Sortiert nach `cost` (Name 0, Dateifakten 0.5,
+  Maße 1, Metadaten 2, Inhalt 3), Abbruch beim ersten Nein. Diese Reihenfolge ist ein
   Leistungsversprechen — aber nur für die Formate, deren Maße der eingebaute
   Kopf-Leser liefert: Dort sieht exiftool ausschließlich Dateien, die den
   Maßfilter schon bestanden haben. Für die Endungen aus
@@ -191,8 +196,20 @@ Verbindliches CLI-Verhalten:
   weiteres Textkriterium (mehrere UND-verknüpfte Begriffe) wäre eine weitere
   Klasse in dieser Liste — der Kern ist dafür geschnitten, die Oberflächen
   bieten heute einen Begriff.
-- Ordner und Archiv-Einträge können nur eine reine Namenssuche erfüllen:
-  Ein Ordner hat keine Maße, ein Archiv-Eintrag keine Datei, die exiftool
+- `--min-size`/`--max-size` sind inklusive Grenzen in ganzen nichtnegativen
+  Bytes, optional B/KiB/MiB/GiB/TiB. `--modified-from`/`--modified-to` und
+  `--created-from`/`--created-to` sind inklusive ISO-Zeitpunkte mit
+  ausdrücklichem Z/Offset, nie implizite lokale Kalendertage. Unbekannte
+  oder ungültige angefragte Fakten erfüllen den Filter nicht; dazu gehören
+  NaN/inf aus PAX-Zeitfeldern. `FileProbe.facts()` hält Größe und beide
+  Zeitpunkte für Kriterien UND Ausgabe aus derselben Abfrage fest. Ordner
+  haben keine Dateigröße, Archiv-Einträge keine Erstellungszeit. Archive
+  werden nicht allein zur Größenbestimmung entpackt. Ein abgelehnter
+  Container-Treffer darf seinen Archivabstieg nicht unterbinden: Einträge
+  haben eigene Fakten.
+- Ordner können Namen und bekannte Zeitpunkte erfüllen, aber weder Größen-
+  noch Maß-/Inhalts-/Metadatenfilter. Dateieinträge in Archiven können Namen, Inhalte,
+  Maße und bekannte Fakten erfüllen. Sie haben keine Datei, die exiftool
   lesen könnte. Bei `--metadata` wird deshalb gar nicht erst in Archive
   geschaut; Maßfilter gelten dagegen auch für Archiv-Einträge, weil der
   Maß-Leser (`image_dimensions()`) nur einen vorwärts lesbaren Strom
@@ -233,8 +250,8 @@ Verbindliches CLI-Verhalten:
   exiftool endet `--metadata` mit Exit 2 und einem Satz, der sagt, was
   fehlt; die Maßfilter laufen ohne. Dieselbe Bauart wie `bsdtar` und `zstd`:
   optional, sauber erkannt, kein Pflichtpaket.
-- Fehlt das Muster, ist das nur mit Maßfilter erlaubt; die Suche läuft dann
-  ohne Textkriterium. `--content` und `--metadata` sagen, WOGEGEN das Muster
+- Fehlt das Muster, ist das nur mit Maß-, Größen- oder Datumsfilter erlaubt;
+  die Suche läuft dann ohne Textkriterium. `--content` und `--metadata` sagen, WOGEGEN das Muster
   läuft, und enden ohne Muster mit Exit 2 statt still falsch zu antworten.
   Positionsargumente gelten als Startpfade, sobald sie ALLE als Pfad
   existieren — auch mehrere. Bis 0.26.1 galt das nur für genau eines, und
@@ -302,7 +319,12 @@ je durch eine Wache festgehalten:
 `SearchConfiguration` ist die gemeinsame Quelle für Suchargumente, Quick-URL-
 Encoder und -Decoder. Pixeltexte bleiben bis zur Validierung unverändert:
 Ein URL-Wert `10.5` darf niemals still zu einer leeren Grenze werden.
-`SearchFilterView` enthält das mehrzeilige Ausschlussfeld beider Apps. Leere
+`FactFilterOption.all` beschreibt die sechs Größen-/Datumseingaben EINMAL
+für UI, CLI-Argumente, URL und Zusammenfassung. Werte bleiben rohe Texte;
+ausschließlich Python validiert Bytes und Zeitpunkte. `hasPositiveFilter`
+zählt Maße oder nichtleere Faktenfilter, niemals Ausschlüsse allein.
+`SearchFilterView` enthält die sechs Felder und das mehrzeilige Ausschlussfeld
+beider Apps. Leere
 Zeilen entfallen, Leerraum bleibt Musterbestandteil; die URL trägt wiederholte
 `exclude`-Parameter. Der direkte Start-Fallback übergibt dieselbe URL.
 
@@ -332,7 +354,7 @@ Beide Apps verhindern damit Suchstart und Übergabe, bis die Eingabe stimmt.
 Ein Streichen aller Nicht-Ziffern machte
 aus „-1" eine 1 und aus „10.5" eine 105). Die Haupt-App zeigt im Metadaten-Modus zusätzlich ein
 Feldmenü, dessen Einträge `metadataFieldList()` vom Kern holt. Ohne Muster
-startet eine Suche nur mit gesetztem Maßfilter; `searchArguments` lässt das
+startet eine Suche mit Maß-, Größen- oder Datumsfilter; `SearchConfiguration` lässt das
 Muster dann ganz weg und schickt auch `--content`/`--metadata` nicht mit. An
 derselben Bedingung hängen die Übergabe der Schnellsuche (`openInMainApp`) und
 die Fortsetzung in der Haupt-App (`continueSearch`) — sonst sind „Alle in

@@ -822,6 +822,24 @@ func metadataFieldList() -> [String] {
     return fields
 }
 
+/// Ein Katalog für Eingabefelder, CLI, Übergabe und Zusammenfassung.
+/// Werte bleiben Text; Einheiten und Zeitpunkte validiert ausschließlich Python.
+struct FactFilterOption {
+    let key: String
+    let group: String
+    let title: String
+    let placeholder: String
+
+    static let all: [FactFilterOption] = [
+        .init(key: "min-size", group: "Größe", title: "Größe ab", placeholder: "z. B. 1 MiB"),
+        .init(key: "max-size", group: "Größe", title: "Größe bis", placeholder: "z. B. 10 MiB"),
+        .init(key: "modified-from", group: "Geändert", title: "Geändert ab", placeholder: "2026-09-05T00:00:00Z"),
+        .init(key: "modified-to", group: "Geändert", title: "Geändert bis", placeholder: "2026-09-05T23:59:59Z"),
+        .init(key: "created-from", group: "Erstellt", title: "Erstellt ab", placeholder: "2026-09-05T00:00:00Z"),
+        .init(key: "created-to", group: "Erstellt", title: "Erstellt bis", placeholder: "2026-09-05T23:59:59Z")
+    ]
+}
+
 /// Eine Quelle für CLI-Optionen und Quick-Übergaben. Maßtexte bleiben roh:
 /// Eine ungültige URL-Eingabe darf nicht zu einer leeren Grenze werden.
 struct SearchConfiguration: Equatable {
@@ -835,6 +853,24 @@ struct SearchConfiguration: Equatable {
     var metadataField: String? = nil
     var pixelTexts = ["", "", "", ""]
     var exclusions: [String] = []
+    var rawFacts: [String: String] = [:]
+
+    /// Auch fehlerhafter nichtleerer Faktentext muss Python erreichen, damit
+    /// der Nutzer dessen konkrete Diagnose sieht. Ausschlüsse zählen nicht.
+    var hasPositiveFilter: Bool {
+        !validatePixelTexts(pixelTexts).limits.isEmpty || FactFilterOption.all.contains {
+            !(rawFacts[$0.key] ?? "").isEmpty
+        }
+    }
+
+    var filterSummary: String {
+        let pixels = validatePixelTexts(pixelTexts).limits.summary
+        let facts = FactFilterOption.all.compactMap { option -> String? in
+            guard let text = rawFacts[option.key], !text.isEmpty else { return nil }
+            return option.title + " " + text
+        }
+        return ([pixels].filter { !$0.isEmpty } + facts).joined(separator: ", ")
+    }
 
     static let pixelKeys = ["minw", "maxw", "minh", "maxh"]
 
@@ -852,6 +888,9 @@ struct SearchConfiguration: Equatable {
             ? value("only")! : "both"
         result.metadataField = value("field")
         result.pixelTexts = pixelKeys.map { value($0) ?? "" }
+        for option in FactFilterOption.all {
+            if let text = value(option.key), !text.isEmpty { result.rawFacts[option.key] = text }
+        }
         result.exclusions = items.filter { $0.name == "exclude" }.compactMap { $0.value }
         return result
     }
@@ -869,6 +908,11 @@ struct SearchConfiguration: Equatable {
         for (key, text) in zip(Self.pixelKeys, pixelTexts) {
             items.append(URLQueryItem(name: key, value: text))
         }
+        for option in FactFilterOption.all {
+            if let text = rawFacts[option.key], !text.isEmpty {
+                items.append(URLQueryItem(name: option.key, value: text))
+            }
+        }
         items += exclusions.map { URLQueryItem(name: "exclude", value: $0) }
         return items
     }
@@ -877,7 +921,7 @@ struct SearchConfiguration: Equatable {
         let validation = validatePixelTexts(pixelTexts)
         guard validation.errors.allSatisfy({ $0 == nil }), let cli = findCLI() else { return nil }
         let hasPattern = !pattern.isEmpty
-        guard hasPattern || !validation.limits.isEmpty else { return nil }
+        guard hasPattern || hasPositiveFilter else { return nil }
         var args = ["-u", cli, "--json"]
         if hasPattern {
             if mode == .content { args.append("--content") }
@@ -895,6 +939,11 @@ struct SearchConfiguration: Equatable {
         // Ein Muster darf mit '-' beginnen; '=' bindet es eindeutig an
         // die Option, statt es argparse als neue Option lesen zu lassen.
         for exclusion in exclusions { args.append("--exclude=" + exclusion) }
+        for option in FactFilterOption.all {
+            if let text = rawFacts[option.key], !text.isEmpty {
+                args.append("--" + option.key + "=" + text)
+            }
+        }
         args.append("--")
         if hasPattern { args.append(pattern) }
         args.append(root)
@@ -904,8 +953,15 @@ struct SearchConfiguration: Equatable {
 
 /// Derselbe Editor in beiden Apps. Return trennt Muster, Leerraum gehört
 /// zum Muster. Nur wirklich leere Zeilen setzen keinen Ausschluss.
-final class SearchFilterView: NSStackView, NSTextViewDelegate {
+final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelegate {
     let exclusionsEditor = NSTextView()
+    private(set) var factFields: [String: NSTextField] = [:]
+    var rawFacts: [String: String] {
+        get { factFields.mapValues { $0.stringValue }.filter { !$0.value.isEmpty } }
+        set {
+            for (key, field) in factFields { field.stringValue = newValue[key] ?? "" }
+        }
+    }
     var onChange: (() -> Void)?
 
     var exclusions: [String] {
@@ -941,10 +997,45 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate {
         addArrangedSubview(scroll)
         scroll.heightAnchor.constraint(equalToConstant: 48).isActive = true
         scroll.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+        for index in stride(from: 0, to: FactFilterOption.all.count, by: 2) {
+            let options = Array(FactFilterOption.all[index...index + 1])
+            let label = NSTextField(labelWithString: options[0].group)
+            label.font = .systemFont(ofSize: 11)
+            label.widthAnchor.constraint(equalToConstant: 58).isActive = true
+            var fields: [NSTextField] = []
+            for option in options {
+                let field = NSTextField(string: "")
+                field.font = .systemFont(ofSize: 11)
+                field.placeholderString = option.placeholder
+                field.delegate = self
+                field.toolTip = option.key.contains("size")
+                    ? "Inklusive Grenze. Ganze Bytes ab 0, optional B, KiB, MiB, GiB oder TiB. Leer = keine Grenze."
+                    : "Inklusive Grenze. ISO-8601-Zeitpunkt mit Z (UTC) oder Offset, z. B. 2026-09-05T12:00:00+02:00. Leer = keine Grenze."
+                field.setAccessibilityLabel(option.title)
+                factFields[option.key] = field
+                fields.append(field)
+            }
+            let from = NSTextField(labelWithString: "von")
+            let to = NSTextField(labelWithString: "bis")
+            from.font = .systemFont(ofSize: 11)
+            to.font = .systemFont(ofSize: 11)
+            let row = NSStackView(views: [label, from, fields[0], to, fields[1]])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 6
+            addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+            fields[0].widthAnchor.constraint(equalTo: fields[1].widthAnchor).isActive = true
+        }
+        let hint = NSTextField(labelWithString: "Grenzen inklusive · Zeitpunkte mit Z oder Offset · leer = keine Grenze")
+        hint.font = .systemFont(ofSize: 10)
+        hint.textColor = .secondaryLabelColor
+        addArrangedSubview(hint)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) wird nicht verwendet") }
     func textDidChange(_ notification: Notification) { onChange?() }
+    func controlTextDidChange(_ notification: Notification) { onChange?() }
 }
 
 func searchArguments(pattern: String, root: String, content: Bool,

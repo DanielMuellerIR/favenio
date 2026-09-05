@@ -3,7 +3,7 @@
 Vor jedem Punkt gegen Code und Git verifizieren. Erledigte Punkte in Changelog
 oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
-1. Größen-/Datumsfilter und Mehrwortmodus als getrennte Produktentscheidungen.
+1. Mehrwortmodus als eigene Produktentscheidung spezifizieren.
 2. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
 3. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
    heraus auf die aktuelle aktualisieren und den Ablauf am Fenster prüfen.

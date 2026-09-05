@@ -154,8 +154,11 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `-m`, `--metadata` | search the curated metadata text fields (keywords, title, description …) instead of names; needs `exiftool` |
 | `--metadata-field TAG` | restrict `--metadata` to one field from the curated list (repeatable; implies `--metadata`) |
 | `--list-metadata-fields` | print the curated field list, one per line, and exit |
+| `--min-size BYTES`, `--max-size BYTES` | inclusive file-size bounds; whole nonnegative bytes, optionally B/KiB/MiB/GiB/TiB |
+| `--modified-from ISO`, `--modified-to ISO` | inclusive modification-time bounds; ISO datetime with `Z` or explicit offset |
+| `--created-from ISO`, `--created-to ISO` | inclusive creation-time bounds; ISO datetime with `Z` or explicit offset |
 | `--min-width PX`, `--max-width PX` | only images at least / at most this wide (pixels) |
-| `--min-height PX`, `--max-height PX` | only images at least / at most this tall (pixels); all four size filters are ANDed with the pattern, which may then be omitted |
+| `--min-height PX`, `--max-height PX` | only images at least / at most this tall (pixels); all four dimension filters are ANDed with the pattern, which may then be omitted |
 | `-r`, `--regex` | interpret the pattern as a regular expression |
 | `-s`, `--case-sensitive` | match case-sensitively |
 | `-e`, `--exact` | pattern must match the WHOLE name (with `-r`: fullmatch; with `-c` per line) |
@@ -240,7 +243,49 @@ for `*.md`.** The `*` switches to glob matching, which checks the **whole**
 name. (If a *directory* ends in `.md`, additionally use `--only files` or
 "Files only" in the GUI.) The regex `\.md$` is exactly equivalent.
 
-In name search, directory names count as hits too.
+Directories can match a name search and known date facts; file-size,
+dimension, metadata and content filters cannot match directories.
+
+## File size and date filters
+
+`--min-size` and `--max-size` compare file sizes in bytes. Bounds are inclusive;
+`--min-size 0 --max-size 0` finds empty files with a known size. Values are whole
+nonnegative numbers, optionally followed by `B`, `KiB`, `MiB`, `GiB` or `TiB`:
+`'2 MiB'` means 2 × 1024² bytes. Units are case-sensitive; decimal values and
+ambiguous `KB`/`MB` are rejected. Directories have no file size for these
+filters; `--only dirs` together with a size bound therefore yields no hits.
+
+`--modified-from`/`--modified-to` filter modification times, and
+`--created-from`/`--created-to` filter creation times. All bounds are inclusive
+instants, not whole calendar days. Use `YYYY-MM-DDTHH:MM[:SS[.ffffff]]` with
+`Z` or an explicit `±HH:MM` offset, for example `2024-01-01T00:00:00Z` or
+`2024-01-01T01:00+01:00`; these two values denote the same instant. Date-only
+values and times without a zone are rejected. Up to six fractional-second
+digits are supported. A lower bound above its upper bound is an error.
+
+Requested facts must be known and valid. ZIP and TAR entries provide sizes
+and modification times from their catalogs; they have no creation time.
+Single-compressed entries and entries read through bsdtar have no size or
+timestamps in the current catalog. They fail a requested fact filter, and
+Favenio does not inflate them just to discover a size. Local creation time
+depends on the filesystem exposing it. Date filters also apply to directories
+with known timestamps. A container's size or timestamp never decides whether
+its archive entries qualify: Favenio still descends into an allowed archive,
+and checks each entry's own facts.
+
+All enabled filters are ANDed with the search pattern and each other. The
+pattern may be omitted when any size, date or pixel-dimension filter is set;
+multiple start paths remain supported. `--content` and `--metadata` still
+require a pattern. For example:
+
+```sh
+./favenio.py --min-size '2 MiB' --max-size '10 MiB' ~/Documents
+./favenio.py --modified-from 2024-01-01T00:00:00Z '*.pdf' ~/Documents ~/Downloads
+```
+
+File facts are read once per object for filtering and result output. Files
+rejected by these cheap checks never reach image-header, metadata or content
+readers; archive traversal remains independent as described above.
 
 ## Metadata and image size search
 
@@ -257,19 +302,21 @@ metadata hit reports the field and value: in text output as
 `path:Keywords: Winter`, in JSON as `field` and `value`. Entries inside
 archives and directories cannot satisfy a metadata search.
 
-The four size filters `--min-width`, `--max-width`, `--min-height` and
+The four dimension filters `--min-width`, `--max-width`, `--min-height` and
 `--max-height` always apply **in addition** (AND) to the pattern, whichever mode
 it runs in — `--metadata Winter --min-width 1000` finds pictures tagged
 "Winter" that are at least 1000 px wide. Width and height are read from the
 file header (JPEG, PNG, GIF, BMP, WebP, TIFF; inside archives too) without any
 dependency; only HEIC, AVIF, RAW and video fall back to `exiftool`. Files
-without readable dimensions never match a size filter. With a size filter the
+without readable dimensions never match a dimension filter. With a dimension
+filter the
 pattern may be omitted (`favenio.py --min-width 3000 ~/Pictures`, and several
 start paths work too); the search then runs without a text criterion, so
 `--content` and `--metadata` — which say what the pattern runs against — need
 one. JSON hits carry `width` and `height`. Cheap checks run first: name, then
-size, then metadata, then content. For the formats the built-in reader knows,
-`exiftool` therefore only sees files that already passed the size filter. For
+file size and timestamps, then dimensions, metadata and content. For the
+formats the built-in reader knows,
+`exiftool` therefore only sees files that already passed the dimension filter. For
 HEIC, AVIF, RAW and video it is asked earlier, because there the dimensions
 themselves come from `exiftool` — there is no cheaper way to learn them.
 
@@ -292,6 +339,14 @@ Two consequences worth knowing:
   need that.
 
 ## GUI (Favenio.app)
+
+The **Size**, **Modified** and **Created** rows each provide lower and upper
+bounds. All bounds are inclusive. Size accepts whole bytes from 0, optionally
+with B, KiB, MiB, GiB or TiB. Timestamps require ISO 8601 with `Z` or an
+offset, such as `2026-09-05T12:00:00+02:00`; a date without a time/zone is
+invalid. Empty fields mean no bound. These filters also work without search
+text and are passed on by Quick Search. Invalid inputs receive a specific
+error from the Python engine in the status line.
 
 The **Exclude** field accepts one pattern per line, such as `node_modules`
 or `Cache/*.zip`. Return starts a new line. Empty lines are ignored; spaces

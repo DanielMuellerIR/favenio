@@ -31,12 +31,24 @@ struct FavenioQuickApp {
                 exit(1)
             }
             controller.filterView.exclusions = ["node_modules", " keep spaces "]
+            controller.filterView.rawFacts = ["min-size": "0"]
+            guard controller.searchConfiguration.hasPositiveFilter,
+                  controller.searchConfiguration.arguments(pattern: "", root: "/fixture") != nil else {
+                print("SELFTEST FEHLER: Reine Faktenfilter starten keine Suche")
+                exit(1)
+            }
             guard controller.searchConfiguration.exclusions == ["node_modules", " keep spaces "],
                   SearchConfiguration.fromQueryItems(controller.searchConfiguration.queryItems)
                     == controller.searchConfiguration else {
                 print("SELFTEST FEHLER: Ausschlussoptionen gehen zwischen Controls und Übergabe verloren")
                 exit(1)
             }
+            controller.startSearch()
+            guard controller.queuedQuery else {
+                print("SELFTEST FEHLER: Reine Faktenfilter erreichen Quick-Start nicht")
+                exit(1)
+            }
+            controller.cancelSearch()
             controller.field.stringValue = "Treffer"
             controller.minWidthField.stringValue = "10.5"
             controller.startSearch()
@@ -90,7 +102,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     static let debounceInterval: TimeInterval = 0.6
     static let maxQuickHits = 20        // ab hier übernimmt die große GUI
     static let windowWidth: CGFloat = 560
-    static let windowHeight: CGFloat = 420   // Default; Fenster ist resizable
+    static let windowHeight: CGFloat = 520   // Default; Fenster ist resizable
 
     let field = NSSearchField()
     let scopePopup = NSPopUpButton()    // Suchbereich (Finder-Fenster / Ordner)
@@ -221,7 +233,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
                // ist eine vollständige Frage. Auf das Suchfeld allein zu
                // prüfen ließ ⌘↩ dort kommentarlos ins Feld durchfallen.
                !self.field.stringValue.trimmingCharacters(
-                    in: .whitespaces).isEmpty || !self.pixelLimits.isEmpty {
+                    in: .whitespaces).isEmpty || self.searchConfiguration.hasPositiveFilter {
                 // Auch vor dem ersten Treffer sinnvoll: Die Haupt-App setzt
                 // die Suche mit `continue=1` selbst fort. So fällt ⌘↩ während
                 // des Debounce-Fensters nicht kommentarlos ins Suchfeld durch.
@@ -759,7 +771,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         clearHits()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard validatePixelInputs() else { return }
-        guard !query.isEmpty || !pixelLimits.isEmpty else { return }
+        guard !query.isEmpty || searchConfiguration.hasPositiveFilter else { return }
         debounceTimer = Timer.scheduledTimer(
             withTimeInterval: Self.debounceInterval, repeats: false) {
             [weak self] _ in self?.startSearch()
@@ -783,6 +795,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         configuration.exact = exactCheckbox.state == .on
         configuration.pixelTexts = pixelFields.map { $0.stringValue }
         configuration.exclusions = filterView.exclusions
+        configuration.rawFacts = filterView.rawFacts
         configuration.only = selectedOnly
         return configuration
     }
@@ -853,10 +866,9 @@ final class QuickController: HitListController, NSApplicationDelegate,
         cancelSearch()   // sauberer Ausgangszustand; zählt Generation hoch
         clearHits()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        // Ohne Suchbegriff nur mit Maßfilter — „alle Bilder über 1000 px".
+        // Ohne Suchbegriff nur mit Maß- oder Faktenfilter — „alle Bilder über 1000 px".
         guard validatePixelInputs() else { return }
-        let limits = pixelLimits
-        guard !query.isEmpty || !limits.isEmpty else { return }
+        guard !query.isEmpty || searchConfiguration.hasPositiveFilter else { return }
 
         // Der ausgewählte Eintrag trägt keinen Pfad → der Finder-Ordner steht
         // noch aus. Dann NICHT ersatzweise im Benutzerordner suchen, sondern
@@ -1003,11 +1015,11 @@ final class QuickController: HitListController, NSApplicationDelegate,
             showInfo(errorText)
             return
         }
-        // Bei einer reinen Maßsuche gibt es keinen Suchbegriff; „für „"" mit
+        // Bei reinen Maß-/Faktenfiltern gibt es keinen Suchbegriff; „für „"" mit
         // leeren Anführungszeichen sagt dann nichts. Stattdessen nennt der
-        // Satz den Maßfilter, nach dem tatsächlich gesucht wurde.
+        // Satz die Filter, nach denen tatsächlich gesucht wurde.
         let criterion = query.isEmpty
-            ? (pixelLimits.summary.isEmpty ? "" : " (\(pixelLimits.summary))")
+            ? (searchConfiguration.filterSummary.isEmpty ? "" : " (\(searchConfiguration.filterSummary))")
             : " für „\(query)“"
         let summary = (hits.isEmpty
             ? "Keine Treffer\(criterion) in \(abbreviateHome(searchRoot))."
@@ -1018,7 +1030,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         if let problem = scopeProblem ?? runScopeNoteText() {
             showScopeProblem(summary + " " + problem)
         } else {
-            showInfo(summary, detail: searchRoot)
+            showInfo(summary, detail: summary + "\n" + searchRoot)
         }
     }
 
@@ -1033,7 +1045,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         // Dieselbe Bedingung wie startSearch(): eine reine Maßsuche ist eine
         // vollständige Frage und muss sich übergeben lassen. Sonst sind der
         // aktive Knopf „Alle in Favenio" und ⌘↩ dort wirkungslos.
-        guard !query.isEmpty || !pixelLimits.isEmpty else { return }
+        guard !query.isEmpty || searchConfiguration.hasPositiveFilter else { return }
         let root: String
         if !hits.isEmpty || searching {
             // Vorhandene Treffer gehören genau zu diesem laufenden/letzten

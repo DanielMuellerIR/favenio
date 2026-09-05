@@ -14,6 +14,8 @@ Grundprinzipien:
   das optionale exiftool).
 - --min-width/--max-width/--min-height/--max-height filtern Bilder nach
   Pixelmaßen; sie gelten immer zusätzlich (UND) zum Suchmuster.
+- --min-size/--max-size filtern Dateigrößen, --modified-from/--modified-to
+  und --created-from/--created-to Zeitpunkte; alle Grenzen sind inklusive.
 - Ohne Platzhalter (* ? [) gilt „Name enthält den Suchtext";
   mit Platzhaltern gilt Glob-Matching auf den ganzen Namen. --exact verlangt
   in jedem Fall den ganzen Namen.
@@ -28,11 +30,13 @@ Nur Python-Standardbibliothek, keine Abhängigkeiten.
 import argparse
 import bz2
 import codecs
+import datetime
 import fnmatch
 import gzip
 import io
 import json
 import lzma
+import math
 import os
 import re
 import shutil
@@ -48,7 +52,7 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.30.0"
+__version__ = "0.31.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-05"
@@ -745,6 +749,52 @@ def build_matcher(pattern, use_regex, case_sensitive, exact=False):
     return matcher
 
 
+class FavenioArgumentParser(argparse.ArgumentParser):
+    """Auch argparse-Fehler tragen das gemeinsame stderr-Präfix der Apps.
+
+    Die normale Usage bleibt für die CLI erhalten. Den konkreten Grund
+    lesen beide Frontends über SearchDiagnostics aus der folgenden Zeile."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, "favenio: fehler: %s\n" % message)
+
+
+def byte_size(value):
+    """Ganze nichtnegative Bytezahl; Binäreinheiten sind ausdrücklich benannt."""
+    match = re.fullmatch(r"([0-9]+)\s*(B|KiB|MiB|GiB|TiB)?", value.strip())
+    if match is None:
+        raise argparse.ArgumentTypeError(
+            "erwartet eine ganze Zahl ab 0 in Bytes, optional B/KiB/MiB/GiB/TiB "
+            "(z. B. 2048 oder '2 KiB')")
+    multipliers = {None: 1, "B": 1, "KiB": 1024, "MiB": 1024 ** 2,
+                   "GiB": 1024 ** 3, "TiB": 1024 ** 4}
+    try:
+        return int(match.group(1)) * multipliers[match.group(2)]
+    except ValueError:
+        # Neuere Python-Versionen begrenzen die Länge gelesener Ganzzahlen.
+        raise argparse.ArgumentTypeError("Bytezahl ist zu lang") from None
+
+
+def file_timestamp(value):
+    """ISO-Zeitpunkt mit ausdrücklicher Zone; keine implizite lokale Uhrzeit."""
+    text = value.strip()
+    syntax = (r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}"
+              r"(?::[0-9]{2}(?:\.[0-9]{1,6})?)?"
+              r"(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])")
+    try:
+        if re.fullmatch(syntax, text) is None:
+            raise ValueError("Zeitformat")
+        # Python 3.9 versteht +00:00, aber noch kein abschließendes Z.
+        parsed = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.timestamp()
+    except (ValueError, OverflowError):
+        raise argparse.ArgumentTypeError(
+            "erwartet einen gültigen ISO-Zeitpunkt mit Z oder Offset "
+            "(z. B. 2024-01-01T00:00:00Z oder 2024-01-01T01:00+01:00); "
+            "ein Datum ohne Uhrzeit/Zone reicht nicht") from None
+
+
 def positive_int(value):
     parsed = int(value)
     if parsed <= 0:
@@ -1293,7 +1343,7 @@ class FileProbe:
 
     def __init__(self, search, label, name, open_stream, chunker,
                  filesystem_path, size=None, in_archive=False,
-                 modified=None):
+                 modified=None, is_dir=False):
         self.search = search
         self.label = label                    # Anzeigepfad für Warnungen
         self.name = name                      # Dateiname (nur die letzte
@@ -1303,10 +1353,13 @@ class FileProbe:
         self.chunker = chunker                # chunker(handle, free_bytes)
                                               # → Byte-Häppchen (Budget!)
         self.filesystem_path = filesystem_path
-        self.size = size
-        self.modified = modified              # Änderungszeit eines
-                                              # Archiv-Eintrags (Unix-Zeit)
         self.in_archive = in_archive
+        self.is_dir = is_dir
+        # Archivfakten stehen schon im Katalog, lokale Fakten werden erst
+        # bei Bedarf gelesen. Ein Ordner hat keine Dateigröße in diesem
+        # Suchvertrag; st_size des Verzeichnisses ist nicht seine Datenmenge.
+        self._facts = ((None if is_dir else size, modified, None)
+                       if in_archive else MISSING)
         self.metadata_hit = None              # (Feld, Wert) bei Treffer
         self.dimension_bytes = 0              # so viele Bytes hat der
                                               # Maß-Leser schon gegen das
@@ -1318,6 +1371,13 @@ class FileProbe:
     @property
     def extension(self):
         return os.path.splitext(self.name)[1].lower()
+
+    def facts(self):
+        """(Größe, Änderungszeit, Erstellungszeit), einmal für Filter UND Ausgabe."""
+        if self._facts is MISSING:
+            size, modified, created = self.search.file_facts(self.filesystem_path)
+            self._facts = (None if self.is_dir else size, modified, created)
+        return self._facts
 
     def dimensions(self):
         """(Breite, Höhe) oder None. Erst der eingebaute Leser, dann — nur
@@ -1362,7 +1422,8 @@ class FileProbe:
 
 # Die Kriterien einer Suche. Alle müssen zutreffen; `Search` sortiert sie
 # nach `cost` und bricht beim ersten Nein ab. Reihenfolge: Name (gratis) →
-# Maße (0,2 ms) → Metadaten (0,75 ms) → Inhalt (teuer). Genau das macht
+# Dateifakten (stat/Katalog) → Maße (0,2 ms) → Metadaten (0,75 ms) → Inhalt.
+# Genau das macht
 # „Winter UND ≥ 1000 px" schnell: exiftool sieht nur die Dateien, die die
 # Maßprüfung überlebt haben. Ein weiteres Textkriterium wäre eine weitere
 # Klasse in dieser Liste — der Kern ist dafür geschnitten.
@@ -1375,6 +1436,33 @@ class NameCriterion:
 
     def test(self, probe):
         return self.matcher(probe.name)
+
+
+class FileFactsCriterion:
+    """Drei inklusive Bereiche aus derselben Faktenabfrage, vor allen Lesern."""
+
+    cost = 0.5
+
+    def __init__(self, min_size=None, max_size=None, modified_from=None,
+                 modified_to=None, created_from=None, created_to=None):
+        self.bounds = ((min_size, max_size), (modified_from, modified_to),
+                       (created_from, created_to))
+
+    def test(self, probe):
+        for index, (value, (lower, upper)) in enumerate(zip(probe.facts(), self.bounds)):
+            if lower is None and upper is None:
+                continue
+            # PAX kann eine Änderungszeit als NaN/inf nennen. Solche Werte
+            # sind kein Zeitpunkt; NaN würde beide Grenzvergleiche umgehen.
+            if value is None or (isinstance(value, float) and not math.isfinite(value)):
+                return False
+            if index == 0 and value < 0:
+                return False           # eine negative Größe ist keine Dateigröße
+            if lower is not None and value < lower:
+                return False
+            if upper is not None and value > upper:
+                return False
+        return True
 
 
 class DimensionCriterion:
@@ -1494,7 +1582,9 @@ class Search:
                  content_probe=None, metadata_mode=False,
                  metadata_fields=None, min_width=None, max_width=None,
                  min_height=None, max_height=None, exiftool_path=None,
-                 exclusions=()):
+                 exclusions=(), min_size=None, max_size=None,
+                 modified_from=None, modified_to=None,
+                 created_from=None, created_to=None):
         self.matcher = matcher                # Funktion text -> bool
         self.exclusions = Exclusions(exclusions)
         self.content_probe = content_probe    # ContentProbe oder None:
@@ -1502,7 +1592,7 @@ class Search:
                                               # zeilenweisen Inhaltssuche
         # Wogegen das Muster läuft: "name", "content" oder "metadata" —
         # oder None, wenn es gar kein Muster gibt. Dann filtern allein die
-        # Maßgrenzen, und die Suche hat kein Textkriterium.
+        # Maß-/Faktengrenzen, und die Suche hat kein Textkriterium.
         if matcher is None:
             self.text_mode = None
         elif content_mode:
@@ -1520,6 +1610,11 @@ class Search:
             criteria.append(ContentCriterion())
         elif self.text_mode == "metadata":
             criteria.append(MetadataCriterion(matcher, self.metadata_fields))
+        self.wants_size = min_size is not None or max_size is not None
+        if any(limit is not None for limit in (
+                min_size, max_size, modified_from, modified_to, created_from, created_to)):
+            criteria.append(FileFactsCriterion(min_size, max_size, modified_from,
+                                               modified_to, created_from, created_to))
         self.wants_dimensions = any(
             limit is not None
             for limit in (min_width, max_width, min_height, max_height))
@@ -1527,10 +1622,11 @@ class Search:
             criteria.append(DimensionCriterion(min_width, max_width,
                                                min_height, max_height))
         self.criteria = sorted(criteria, key=lambda item: item.cost)
-        # Ordner haben weder Inhalt noch Maße noch Metadaten: Sie können nur
-        # eine reine Namenssuche erfüllen.
-        self.directories_can_match = (self.text_mode == "name"
-                                      and not self.wants_dimensions)
+        # Ordner können Namen und Zeitpunkte erfüllen, aber weder Datei-
+        # größe noch Inhalt, Pixelmaße oder exiftool-Metadaten.
+        self.directories_can_match = (self.text_mode in ("name", None)
+                                      and not self.wants_dimensions
+                                      and not self.wants_size)
         # exiftool: Pfad (oder None) und der erst bei Bedarf gestartete
         # Prozess. Angefordert werden nur die Felder, die dieser Lauf braucht.
         self.exiftool_path = exiftool_path
@@ -1706,15 +1802,10 @@ class Search:
         field = value = None
         if probe.metadata_hit is not None:
             field, value = probe.metadata_hit
-        if probe.in_archive:
-            # Ein Archiv-Eintrag kennt seine Größe und Änderungszeit aus
-            # dem Archivkatalog; eine Erstellungszeit gibt es dort nicht.
-            size, modified, created = probe.size, probe.modified, None
-        else:
-            size, modified, created = self.file_facts(probe.filesystem_path)
+        size, modified, created = probe.facts()
         self.emit(display, kind, line=line, size=size,
                   filesystem_path=filesystem_path,
-                  archive_members=archive_members, is_dir=False,
+                  archive_members=archive_members, is_dir=probe.is_dir,
                   field=field, value=value,
                   width=dims[0] if dims else None,
                   height=dims[1] if dims else None,
@@ -1926,17 +2017,18 @@ class Search:
                                if not self.path_is_excluded(
                                    os.path.join(dirpath, d), root)]
             if self.directories_can_match:
-                # Bei Namenssuche zählen auch Ordnernamen als Treffer. Das
+                # Bei Namens-/Datumssuche zählen auch Ordner als Treffer. Das
                 # passiert VOR dem Abschneiden unten: Ein Ordner GENAU auf der
                 # Grenztiefe ist selbst noch ein erlaubter Treffer, nur sein
                 # Inhalt nicht mehr (`find -maxdepth 1` listet die direkten
                 # Unterordner ebenfalls).
                 for dirname in dirnames:
-                    if self.matcher(dirname) and self.type_allowed(True):
+                    if self.type_allowed(True):
                         folder = os.path.join(dirpath, dirname)
-                        _, modified, created = self.file_facts(folder)
-                        self.emit(folder, "dir", modified=modified,
-                                  created=created)
+                        # Die zulässigen Ordnerkriterien öffnen keinen Strom.
+                        probe = FileProbe(self, folder, dirname, None, None,
+                                          folder, is_dir=True)
+                        self.evaluate(probe, folder, "dir")
             # Was in `dirpath` liegt, hat die Tiefe `depth_of + 1`. Nur wenn
             # dessen Unterordner noch erlaubt wären, weiter absteigen — sonst
             # käme eine Ebene zu viel mit (`--max-depth 1` = nur direkt im
@@ -2167,13 +2259,14 @@ class Search:
             return
 
         if is_dir:
-            # Ein Ordner im Archiv kann nur eine reine Namenssuche erfüllen.
-            if self.directories_can_match and self.matcher(name) \
-                    and self.type_allowed(True):
-                self.emit(full_display, "member", size=None,
-                          filesystem_path=archive_path,
-                          archive_members=member_chain, is_dir=True,
-                          modified=modified)
+            # Archivordner nennen teils ihre Änderungszeit, nie ihre Größe.
+            if self.directories_can_match and self.type_allowed(True):
+                probe = FileProbe(self, full_display, name, None, None,
+                                  archive_path, in_archive=True,
+                                  modified=modified, is_dir=True)
+                self.evaluate(probe, full_display, "member",
+                              filesystem_path=archive_path,
+                              archive_members=member_chain)
             return
 
         nested_kind = classify_archive(name)
@@ -2592,7 +2685,7 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
+    parser = FavenioArgumentParser(
         prog="favenio",
         description="Favenio — facile invenio. Dateisuche ohne Index, "
                     "auch in Archiven (zip/jar/docx/…, tar/tar.gz/…, "
@@ -2619,6 +2712,21 @@ def main(argv=None):
     parser.add_argument("--list-metadata-fields", action="store_true",
                         help="die durchsuchten Metadatenfelder ausgeben, "
                              "eines je Zeile, und beenden")
+    parser.add_argument("--min-size", type=byte_size, metavar="BYTES",
+                        help="Dateigröße ab dieser Bytezahl (inklusive; "
+                             "optional B/KiB/MiB/GiB/TiB)")
+    parser.add_argument("--max-size", type=byte_size, metavar="BYTES",
+                        help="Dateigröße bis zu dieser Bytezahl (inklusive); "
+                             "unbekannte Größe und Ordner erfüllen den Filter nicht")
+    parser.add_argument("--modified-from", type=file_timestamp, metavar="ISO",
+                        help="Änderungszeit ab diesem ISO-Zeitpunkt mit Zone (inklusive)")
+    parser.add_argument("--modified-to", type=file_timestamp, metavar="ISO",
+                        help="Änderungszeit bis zu diesem ISO-Zeitpunkt mit Zone (inklusive)")
+    parser.add_argument("--created-from", type=file_timestamp, metavar="ISO",
+                        help="Erstellungszeit ab diesem ISO-Zeitpunkt mit Zone (inklusive)")
+    parser.add_argument("--created-to", type=file_timestamp, metavar="ISO",
+                        help="Erstellungszeit bis zu diesem ISO-Zeitpunkt mit Zone (inklusive); "
+                             "ohne bekannten Zeitpunkt kein Treffer")
     parser.add_argument("--min-width", type=positive_int, metavar="PX",
                         help="nur Bilder ab dieser Breite (Pixel)")
     parser.add_argument("--max-width", type=positive_int, metavar="PX",
@@ -2756,13 +2864,27 @@ def main(argv=None):
     }
     wants_dimensions = any(value is not None
                            for value in dimension_limits.values())
+    fact_limits = {
+        "min_size": args.min_size, "max_size": args.max_size,
+        "modified_from": args.modified_from, "modified_to": args.modified_to,
+        "created_from": args.created_from, "created_to": args.created_to,
+    }
+    wants_filters = wants_dimensions or any(value is not None
+                                            for value in fact_limits.values())
+    for lower, upper in (("min_size", "max_size"),
+                         ("modified_from", "modified_to"),
+                         ("created_from", "created_to")):
+        if fact_limits[lower] is not None and fact_limits[upper] is not None \
+                and fact_limits[lower] > fact_limits[upper]:
+            parser.error("--%s ist größer als --%s"
+                         % (lower.replace("_", "-"), upper.replace("_", "-")))
     if args.min_width is not None and args.max_width is not None \
             and args.min_width > args.max_width:
         parser.error("--min-width ist größer als --max-width")
     if args.min_height is not None and args.max_height is not None \
             and args.min_height > args.max_height:
         parser.error("--min-height ist größer als --max-height")
-    if wants_dimensions and args.pattern and os.path.exists(args.pattern) \
+    if wants_filters and args.pattern and os.path.exists(args.pattern) \
             and all(os.path.exists(path) for path in args.paths):
         # `favenio.py --min-width 1000 ~/Bilder`: Das erste Positions-
         # argument ist ein Pfad, kein Muster. Das gilt auch für MEHRERE
@@ -2775,7 +2897,7 @@ def main(argv=None):
         # ist.
         args.paths = [args.pattern] + list(args.paths)
         args.pattern = None
-    if not args.pattern and not wants_dimensions:
+    if not args.pattern and not wants_filters:
         # parser.error() gibt die Usage aus und beendet mit Exit-Code 2.
         parser.error("PATTERN fehlt (oder --extract verwenden)")
 
@@ -2784,7 +2906,7 @@ def main(argv=None):
         parser.error("--content und --metadata schließen sich aus")
     if not args.pattern and (args.content or metadata_mode):
         # Ohne Muster läuft die Suche ganz ohne Textkriterium (nur die
-        # Maßgrenzen zählen). --content und --metadata sagen, WOGEGEN das
+        # Maß-/Faktengrenzen zählen). --content und --metadata sagen, WOGEGEN das
         # Muster läuft, und sind dann eine widersprüchliche Angabe. Früher
         # sprang hier ein künstliches "*" ein: Mit --regex war das ein
         # ungültiger Ausdruck (Exit 2), mit --metadata ein stiller Filter
@@ -2830,7 +2952,7 @@ def main(argv=None):
                     content_probe=content_probe,
                     metadata_mode=metadata_mode,
                     metadata_fields=args.metadata_field or None,
-                    exiftool_path=exiftool_path, **dimension_limits)
+                    exiftool_path=exiftool_path, **dimension_limits, **fact_limits)
 
     # Erst alle Startpfade prüfen, dann suchen: sonst stünden bei mehreren
     # Pfaden schon Treffer auf stdout, bevor ein späterer Pfad den Fehler
