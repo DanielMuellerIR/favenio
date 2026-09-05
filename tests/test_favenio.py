@@ -2149,18 +2149,19 @@ class MetadataSearchTest(TempTreeTest):
         # Ohne Muster, damit wirklich nur das Maßkriterium läuft: Ein
         # Namenskriterium hätte die Datei schon vorher aussortiert.
         search = favenio.Search(None, False, 1, True, min_width=1000,
-                                exiftool_path=favenio.find_exiftool())
+                                exiftool_path=None)
         gefragt = []
-        real = search.exiftool_stream()
+        # Geprüft wird die Anfrage, nicht exiftool selbst. Die zählende
+        # Attrappe hält diesen Vertrag auch ohne installiertes Werkzeug prüfbar.
         self.addCleanup(search.close)
 
         class Counting:
             def read(self, path):
                 gefragt.append(os.path.basename(path))
-                return real.read(path)
+                return {}
 
             def close(self):
-                real.close()
+                pass
         search._exiftool = Counting()
         with redirect_stdout(io.StringIO()):
             search.search_path(self.root)
