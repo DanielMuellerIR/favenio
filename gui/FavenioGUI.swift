@@ -130,6 +130,38 @@ func runSelfTest() -> Int32 {
         return 1
     }
 
+    // Aufklappen: Ohne gespeicherten Zustand sind die Filter zugeklappt, der
+    // Schalter öffnet sie, und eine übergebene Konfiguration mit Filtern
+    // klappt sie von selbst auf.
+    UserDefaults.standard.removeObject(forKey: MainController.filtersExpandedKey)
+    let collapsedController = MainController()
+    collapsedController.buildWindow()   // sonst erst in applicationDidFinishLaunching
+    collapsedController.window.orderOut(nil)
+    guard !collapsedController.filtersExpanded else {
+        print("SELFTEST FEHLER: Weitere Filter sind beim Start nicht zugeklappt")
+        return 1
+    }
+    collapsedController.toggleFilters(nil)
+    guard collapsedController.filtersExpanded,
+          collapsedController.filtersDisclosure.state == .on else {
+        print("SELFTEST FEHLER: Aufklapp-Schalter zeigt die Filter nicht")
+        return 1
+    }
+    collapsedController.toggleFilters(nil)
+    UserDefaults.standard.removeObject(forKey: MainController.filtersExpandedKey)
+    collapsedController.filterView.exclusions = ["node_modules"]
+    collapsedController.filterView.rawFacts = ["min-size": "1 MiB"]
+    collapsedController.refreshFiltersTitle()
+    guard collapsedController.filtersTitleButton.title.contains("2 aktiv") else {
+        print("SELFTEST FEHLER: Zugeklappter Schalter nennt aktive Filter nicht")
+        return 1
+    }
+    guard collapsedController.filterView.exclusionsEditor.placeholder.contains("node_modules") else {
+        print("SELFTEST FEHLER: Ausschlussfeld hat keinen Beispiel-Platzhalter")
+        return 1
+    }
+    collapsedController.window.close()
+
     pixelController.filterView.exclusions = ["node_modules", " keep spaces "]
     pixelController.filterView.rawFacts = ["min-size": "0"]
     guard pixelController.searchConfiguration.hasPositiveFilter,
@@ -777,6 +809,13 @@ final class MainController: HitListController, NSApplicationDelegate,
     // Bildmaße: Breite und Höhe je von/bis, leer = egal. Gelten immer
     // zusätzlich (UND) zum Muster; das Muster darf dann auch fehlen.
     let filterView = SearchFilterView()
+    /// Aufklapp-Schalter über den Größen-/Datums- und Ausschlussfeldern.
+    /// Diese Filter braucht man selten; zugeklappt kostet die Zeile nur
+    /// eine Höhe. Der Zustand überlebt den Neustart (`filtersExpandedKey`).
+    let filtersDisclosure = NSButton()
+    let filtersTitleButton = NSButton()
+    static let filtersExpandedKey = "Favenio.filters.expanded"
+    var filtersExpanded: Bool { !filterView.isHidden }
     let minWidthField = NSTextField(string: "")
     let maxWidthField = NSTextField(string: "")
     let minHeightField = NSTextField(string: "")
@@ -1069,6 +1108,10 @@ final class MainController: HitListController, NSApplicationDelegate,
         for (field, text) in zip(pixelFields, configuration.pixelTexts) { field.stringValue = text }
         filterView.exclusions = configuration.exclusions
         filterView.rawFacts = configuration.rawFacts
+        // Übergebene Filter sollen sichtbar sein, sonst wundert man sich
+        // über eine kürzere Trefferliste ohne erkennbaren Grund.
+        if filterView.activeFilterCount > 0 { setFiltersExpanded(true) }
+        refreshFiltersTitle()
         archivesCheckbox.state = configuration.archives ? .on : .off
         hiddenCheckbox.state = configuration.includeHidden ? .on : .off
         regexCheckbox.state = configuration.regex ? .on : .off
@@ -1237,9 +1280,29 @@ final class MainController: HitListController, NSApplicationDelegate,
             self?.searchPhase = .idle
             self?.progressPath = nil
             self?.refreshStatus()
+            self?.refreshFiltersTitle()
         }
-        let stack = NSStackView(views: [topRow, optionsRow, sizeRow, filterView, scroll,
-                                        statusLabel])
+        // Aufklapp-Zeile: Dreieck plus klickbarer Titel, beide schalten um.
+        filtersDisclosure.setButtonType(.pushOnPushOff)
+        filtersDisclosure.bezelStyle = .disclosure
+        filtersDisclosure.title = ""
+        filtersDisclosure.target = self
+        filtersDisclosure.action = #selector(toggleFilters(_:))
+        filtersDisclosure.setAccessibilityLabel("Weitere Filter ein- oder ausblenden")
+        filtersTitleButton.isBordered = false
+        filtersTitleButton.font = .systemFont(ofSize: 11)
+        filtersTitleButton.alignment = .left
+        filtersTitleButton.target = self
+        filtersTitleButton.action = #selector(toggleFilters(_:))
+        let filtersRow = NSStackView(views: [filtersDisclosure, filtersTitleButton])
+        filtersRow.orientation = .horizontal
+        filtersRow.alignment = .centerY
+        filtersRow.spacing = 2
+        let stack = NSStackView(views: [topRow, optionsRow, sizeRow, filtersRow, filterView,
+                                        scroll, statusLabel])
+        // Erst NACH dem Einhängen in den Stack verstecken: `NSStackView(views:)`
+        // hängt eine schon versteckte Ansicht sichtbar ein.
+        setFiltersExpanded(UserDefaults.standard.bool(forKey: Self.filtersExpandedKey))
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -1268,6 +1331,30 @@ final class MainController: HitListController, NSApplicationDelegate,
         window.center()
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(searchField)
+    }
+
+    @objc func toggleFilters(_ sender: Any?) {
+        setFiltersExpanded(!filtersExpanded)
+        UserDefaults.standard.set(filtersExpanded, forKey: Self.filtersExpandedKey)
+    }
+
+    /// Blendet die Filteransicht ein oder aus. Der Stack entfernt eine
+    /// versteckte Ansicht aus dem Layout, die Trefferliste rückt nach.
+    func setFiltersExpanded(_ expanded: Bool) {
+        filterView.isHidden = !expanded
+        filtersDisclosure.state = expanded ? .on : .off
+        refreshFiltersTitle()
+    }
+
+    /// Zugeklappt nennt der Titel, wie viele Filter dort gesetzt sind —
+    /// sonst wirkt ein unsichtbarer Filter wie ein Suchfehler.
+    func refreshFiltersTitle() {
+        let count = filterView.activeFilterCount
+        var title = "Weitere Filter: Größe, Datum, Ausschlüsse"
+        if count > 0 && !filtersExpanded {
+            title += count == 1 ? " (1 aktiv)" : " (\(count) aktiv)"
+        }
+        filtersTitleButton.title = title
     }
 
     /// Die beiden Datumsspalten. Sie laufen in Tabellenziffern, damit die

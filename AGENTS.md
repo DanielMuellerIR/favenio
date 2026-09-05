@@ -324,7 +324,12 @@ für UI, CLI-Argumente, URL und Zusammenfassung. Werte bleiben rohe Texte;
 ausschließlich Python validiert Bytes und Zeitpunkte. `hasPositiveFilter`
 zählt Maße oder nichtleere Faktenfilter, niemals Ausschlüsse allein.
 `SearchFilterView` enthält die sechs Felder und das mehrzeilige Ausschlussfeld
-beider Apps. Leere
+beider Apps — zweispaltig: links die drei Von/Bis-Zeilen mit fester
+Feldbreite, rechts das Ausschlussfeld (Platzhalter aus `PlaceholderTextView`,
+?-Knopf mit Popover aus `exclusionHelpText`). Die Haupt-App zeigt die ganze
+Ansicht erst nach dem Aufklapp-Schalter „Weitere Filter"
+(`setFiltersExpanded`, Zustand in `UserDefaults`); zugeklappt nennt der
+Titel die Zahl gesetzter Filter, eine Übergabe mit Filtern klappt auf. Leere
 Zeilen entfallen, Leerraum bleibt Musterbestandteil; die URL trägt wiederholte
 `exclude`-Parameter. Der direkte Start-Fallback übergibt dieselbe URL.
 

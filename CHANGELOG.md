@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.31.2 — 2026-09-05
+
+- Haupt-App: Die Felder für Größe, Änderungs- und Erstellungsdatum sowie die
+  Ausschlussmuster sind hinter dem Aufklapp-Schalter „Weitere Filter"
+  verborgen. Der Zustand bleibt über Neustarts erhalten; zugeklappt nennt
+  der Schalter die Zahl der gesetzten Filter, und eine Übergabe aus der
+  Schnellsuche mit solchen Filtern klappt ihn von selbst auf.
+- Beide Apps: Größe/Geändert/Erstellt stehen in einer linken Spalte mit
+  fester Feldbreite, das Ausschlussfeld daneben in einer rechten Spalte mit
+  vier Zeilen. Das Ausschlussfeld zeigt leer ein Beispiel als Platzhalter;
+  ein ?-Knopf öffnet die Erklärung der Musterregeln.
+
 ## 0.31.1 — 2026-09-05
 
 - Trefferexporte serialisieren und schreiben im Hintergrund. Ein einzelner

@@ -953,50 +953,91 @@ struct SearchConfiguration: Equatable {
 
 /// Derselbe Editor in beiden Apps. Return trennt Muster, Leerraum gehört
 /// zum Muster. Nur wirklich leere Zeilen setzen keinen Ausschluss.
+/// Mehrzeiliges Eingabefeld mit Platzhalter. `NSTextView` kennt keinen
+/// `placeholderString`; der graue Beispieltext wird gezeichnet, solange das
+/// Feld leer ist, und verschwindet mit dem ersten Zeichen.
+final class PlaceholderTextView: NSTextView {
+    var placeholder = "" { didSet { needsDisplay = true } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, !placeholder.isEmpty else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.placeholderTextColor
+        ]
+        let origin = NSPoint(x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0),
+                             y: textContainerInset.height)
+        placeholder.draw(at: origin, withAttributes: attributes)
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        needsDisplay = true
+    }
+}
+
+/// Erklärung der Ausschlussmuster, gezeigt vom ?-Knopf neben dem Feld.
+/// Die Regeln entsprechen `--exclude` im Kern; hier stehen sie nur als Text.
+let exclusionHelpText = """
+Ein Muster je Zeile. Groß-/Kleinschreibung gilt immer, unabhängig vom Suchtext.
+
+node_modules
+    Ohne Schrägstrich gilt das Muster für jede einzelne Pfadkomponente: \
+jeder Ordner oder jede Datei mit diesem Namen wird übersprungen.
+*.log
+    Platzhalter: * beliebig viele Zeichen, ? genau eines, [ab] eines aus der Menge.
+Cache/*.zip
+    Mit Schrägstrich gilt das Muster für den relativen Pfad ab Such- oder \
+Archivwurzel; * darf dabei auch über Schrägstriche hinweg passen.
+
+Leere Zeilen werden ignoriert, Leerzeichen gehören zum Muster. Return beginnt \
+eine neue Zeile.
+"""
+
+/// Die sechs Größen-/Datumsfelder und das Ausschlussfeld beider Apps.
+/// Zwei Spalten nebeneinander: links die drei Von/Bis-Zeilen, rechts das
+/// mehrzeilige Ausschlussfeld. Untereinander waren beide zu breit für ihren
+/// Inhalt — die Von/Bis-Felder dehnten sich über die ganze Fensterbreite,
+/// das Ausschlussfeld auch, obwohl ein Muster selten länger als 30 Zeichen ist.
 final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelegate {
-    let exclusionsEditor = NSTextView()
+    let exclusionsEditor = PlaceholderTextView()
+    let helpButton = NSButton()
     private(set) var factFields: [String: NSTextField] = [:]
+    private var helpPopover: NSPopover?
     var rawFacts: [String: String] {
         get { factFields.mapValues { $0.stringValue }.filter { !$0.value.isEmpty } }
         set {
             for (key, field) in factFields { field.stringValue = newValue[key] ?? "" }
+            exclusionsEditor.needsDisplay = true
         }
     }
     var onChange: (() -> Void)?
 
     var exclusions: [String] {
         get { exclusionsEditor.string.components(separatedBy: .newlines).filter { !$0.isEmpty } }
-        set { exclusionsEditor.string = newValue.joined(separator: "\n") }
+        set {
+            exclusionsEditor.string = newValue.joined(separator: "\n")
+            exclusionsEditor.needsDisplay = true
+        }
     }
+
+    /// Wie viele Filter dieser Ansicht gerade gesetzt sind: jedes nichtleere
+    /// Von/Bis-Feld und jedes Ausschlussmuster zählt eins. Die Haupt-App
+    /// zeigt die Zahl am zugeklappten Aufklapp-Schalter.
+    var activeFilterCount: Int { rawFacts.count + exclusions.count }
 
     init() {
         super.init(frame: .zero)
-        orientation = .vertical
-        alignment = .leading
-        spacing = 4
-        let label = NSTextField(labelWithString: "Ausschließen · ein Muster je Zeile")
-        label.font = .systemFont(ofSize: 11)
-        label.textColor = .secondaryLabelColor
-        addArrangedSubview(label)
-        exclusionsEditor.isRichText = false
-        exclusionsEditor.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        exclusionsEditor.isAutomaticQuoteSubstitutionEnabled = false
-        exclusionsEditor.isAutomaticDashSubstitutionEnabled = false
-        exclusionsEditor.isAutomaticTextReplacementEnabled = false
-        exclusionsEditor.isVerticallyResizable = true
-        exclusionsEditor.isHorizontallyResizable = false
-        exclusionsEditor.autoresizingMask = [.width]
-        exclusionsEditor.textContainer?.widthTracksTextView = true
-        exclusionsEditor.delegate = self
-        exclusionsEditor.toolTip = "Zum Beispiel node_modules oder Cache/*.zip. Groß-/Kleinschreibung gilt immer. Ohne / gilt das Muster für jede Pfadkomponente; mit / für den relativen Pfad ab Such- oder Archivwurzel."
-        exclusionsEditor.setAccessibilityLabel("Ausschlussmuster, ein Muster je Zeile")
-        let scroll = NSScrollView()
-        scroll.borderType = .bezelBorder
-        scroll.hasVerticalScroller = true
-        scroll.documentView = exclusionsEditor
-        addArrangedSubview(scroll)
-        scroll.heightAnchor.constraint(equalToConstant: 48).isActive = true
-        scroll.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+        orientation = .horizontal
+        alignment = .top
+        spacing = 16
+
+        // Linke Spalte: Größe, Geändert, Erstellt — je „von … bis …".
+        let factColumn = NSStackView()
+        factColumn.orientation = .vertical
+        factColumn.alignment = .leading
+        factColumn.spacing = 4
         for index in stride(from: 0, to: FactFilterOption.all.count, by: 2) {
             let options = Array(FactFilterOption.all[index...index + 1])
             let label = NSTextField(labelWithString: options[0].group)
@@ -1012,6 +1053,10 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
                     ? "Inklusive Grenze. Ganze Bytes ab 0, optional B, KiB, MiB, GiB oder TiB. Leer = keine Grenze."
                     : "Inklusive Grenze. ISO-8601-Zeitpunkt mit Z (UTC) oder Offset, z. B. 2026-09-05T12:00:00+02:00. Leer = keine Grenze."
                 field.setAccessibilityLabel(option.title)
+                // Breit genug für den längsten Platzhalter (ISO-Zeitpunkt mit
+                // Zone), aber fest: Die Felder sollen nicht mehr die ganze
+                // Fensterbreite einnehmen.
+                field.widthAnchor.constraint(equalToConstant: 150).isActive = true
                 factFields[option.key] = field
                 fields.append(field)
             }
@@ -1023,19 +1068,98 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
             row.orientation = .horizontal
             row.alignment = .centerY
             row.spacing = 6
-            addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
-            fields[0].widthAnchor.constraint(equalTo: fields[1].widthAnchor).isActive = true
+            factColumn.addArrangedSubview(row)
         }
         let hint = NSTextField(labelWithString: "Grenzen inklusive · Zeitpunkte mit Z oder Offset · leer = keine Grenze")
         hint.font = .systemFont(ofSize: 10)
         hint.textColor = .secondaryLabelColor
-        addArrangedSubview(hint)
+        factColumn.addArrangedSubview(hint)
+        factColumn.setContentHuggingPriority(.required, for: .horizontal)
+        addArrangedSubview(factColumn)
+
+        // Rechte Spalte: Überschrift mit ?-Knopf, darunter das Ausschlussfeld.
+        let exclusionColumn = NSStackView()
+        exclusionColumn.orientation = .vertical
+        exclusionColumn.alignment = .leading
+        exclusionColumn.spacing = 4
+        let label = NSTextField(labelWithString: "Ausschließen · ein Muster je Zeile")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        helpButton.bezelStyle = .helpButton
+        helpButton.title = ""
+        helpButton.controlSize = .small
+        helpButton.target = self
+        helpButton.action = #selector(showHelp(_:))
+        helpButton.toolTip = "Erklärt die Ausschlussmuster"
+        helpButton.setAccessibilityLabel("Hilfe zu Ausschlussmustern")
+        let header = NSStackView(views: [label, helpButton])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 6
+        exclusionColumn.addArrangedSubview(header)
+        exclusionsEditor.isRichText = false
+        exclusionsEditor.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        exclusionsEditor.isAutomaticQuoteSubstitutionEnabled = false
+        exclusionsEditor.isAutomaticDashSubstitutionEnabled = false
+        exclusionsEditor.isAutomaticTextReplacementEnabled = false
+        exclusionsEditor.isVerticallyResizable = true
+        exclusionsEditor.isHorizontallyResizable = false
+        exclusionsEditor.autoresizingMask = [.width]
+        exclusionsEditor.textContainer?.widthTracksTextView = true
+        exclusionsEditor.delegate = self
+        exclusionsEditor.placeholder = "z. B. node_modules\n*.log\nCache/*.zip"
+        exclusionsEditor.toolTip = "Zum Beispiel node_modules oder Cache/*.zip. Groß-/Kleinschreibung gilt immer. Ohne / gilt das Muster für jede Pfadkomponente; mit / für den relativen Pfad ab Such- oder Archivwurzel."
+        exclusionsEditor.setAccessibilityLabel("Ausschlussmuster, ein Muster je Zeile")
+        let scroll = NSScrollView()
+        scroll.borderType = .bezelBorder
+        scroll.hasVerticalScroller = true
+        scroll.documentView = exclusionsEditor
+        exclusionColumn.addArrangedSubview(scroll)
+        // Vier Zeilen hoch — so hoch wie die drei Von/Bis-Zeilen samt
+        // Hinweis links — und so breit wie der Platz rechts davon.
+        scroll.heightAnchor.constraint(equalToConstant: 72).isActive = true
+        scroll.widthAnchor.constraint(equalTo: exclusionColumn.widthAnchor).isActive = true
+        // Mindestens 160 pt (Schnellsuche), höchstens 460 pt: Ein Muster ist
+        // selten länger als 30 Zeichen, mehr Breite wäre nur leerer Rahmen.
+        exclusionColumn.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+        exclusionColumn.widthAnchor.constraint(lessThanOrEqualToConstant: 460).isActive = true
+        addArrangedSubview(exclusionColumn)
+        // Die rechte Spalte wächst bis zur Deckelung, der Stack (Distribution
+        // `gravityAreas`) lässt den Rest rechts frei — die Spalte bleibt so
+        // direkt neben den Von/Bis-Feldern statt am rechten Fensterrand.
+        let fill = exclusionColumn.widthAnchor.constraint(equalToConstant: 460)
+        fill.priority = .defaultLow
+        fill.isActive = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) wird nicht verwendet") }
     func textDidChange(_ notification: Notification) { onChange?() }
     func controlTextDidChange(_ notification: Notification) { onChange?() }
+
+    /// Zeigt die Erklärung als Popover am ?-Knopf; ein zweiter Klick schließt.
+    @objc func showHelp(_ sender: Any?) {
+        if let open = helpPopover, open.isShown {
+            open.close()
+            return
+        }
+        // Feste Breite, Höhe aus dem Umbruch: Ein umbrechendes Label hat
+        // keine eigene Breite, ohne die Vorgabe wurde das Popover ein
+        // schmaler Balken ohne lesbaren Text.
+        let width: CGFloat = 360
+        let text = NSTextField(wrappingLabelWithString: exclusionHelpText)
+        text.font = .systemFont(ofSize: 12)
+        text.preferredMaxLayoutWidth = width
+        let height = text.sizeThatFits(NSSize(width: width, height: .greatestFiniteMagnitude)).height
+        text.frame = NSRect(x: 14, y: 12, width: width, height: height)
+        let controller = NSViewController()
+        controller.view = NSView(frame: NSRect(x: 0, y: 0, width: width + 28, height: height + 24))
+        controller.view.addSubview(text)
+        let popover = NSPopover()
+        popover.contentViewController = controller
+        popover.behavior = .transient
+        popover.show(relativeTo: helpButton.bounds, of: helpButton, preferredEdge: .maxY)
+        helpPopover = popover
+    }
 }
 
 func searchArguments(pattern: String, root: String, content: Bool,

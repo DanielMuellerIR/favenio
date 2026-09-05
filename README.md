@@ -340,6 +340,8 @@ Two consequences worth knowing:
 
 ## GUI (Favenio.app)
 
+In the main app the following filters sit behind the **More filters**
+disclosure; collapsed, it names how many of them are set.
 The **Size**, **Modified** and **Created** rows each provide lower and upper
 bounds. All bounds are inclusive. Size accepts whole bytes from 0, optionally
 with B, KiB, MiB, GiB or TiB. Timestamps require ISO 8601 with `Z` or an
@@ -349,7 +351,8 @@ text and are passed on by Quick Search. Invalid inputs receive a specific
 error from the Python engine in the status line.
 
 The **Exclude** field accepts one pattern per line, such as `node_modules`
-or `Cache/*.zip`. Return starts a new line. Empty lines are ignored; spaces
+or `Cache/*.zip`; while empty it shows such examples as a placeholder, and
+the ? button next to it explains the rules. Return starts a new line. Empty lines are ignored; spaces
 remain part of the pattern. Quick Search passes all patterns to the main app.
 Matching is case-sensitive independently of the search text; see the
 `--exclude` rules above.
