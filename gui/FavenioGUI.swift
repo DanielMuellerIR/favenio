@@ -278,6 +278,39 @@ func runSelfTest() -> Int32 {
         return 1
     }
 
+    // Mehrwortsuche: Begriffe aus der Filteransicht erreichen Argumente,
+    // URL und Vorlage; ohne Muster tragen sie die Suche; Belege im Treffer.
+    let termsController = MainController()
+    termsController.filterView.terms = ["beta", " mit Leerraum "]
+    guard termsController.searchConfiguration.terms == ["beta", " mit Leerraum "],
+          termsController.searchConfiguration.hasPositiveFilter,
+          let termArguments = termsController.searchConfiguration.arguments(
+              pattern: "alpha", root: "/fixture"),
+          termArguments.contains("--term=beta"),
+          termArguments.contains("--term= mit Leerraum "),
+          termsController.searchConfiguration.arguments(pattern: "", root: "/fixture")?
+              .contains("--term=beta") == true,
+          SearchConfiguration.fromQueryItems(termsController.searchConfiguration.queryItems)
+              == termsController.searchConfiguration else {
+        print("SELFTEST FEHLER: Weitere Suchbegriffe erreichen Argumente oder URL nicht")
+        return 1
+    }
+    termsController.applyConfiguration(SearchConfiguration.fromQueryItems(
+        [URLQueryItem(name: "term", value: "gamma")]))
+    guard termsController.filterView.terms == ["gamma"],
+          termsController.filtersExpanded else {
+        print("SELFTEST FEHLER: Übergebene Suchbegriffe füllen die Filteransicht nicht")
+        return 1
+    }
+    let termHitLine = Data(#"{"path":"/x/a.txt","type":"file","isDirectory":false,"filesystemPath":"/x/a.txt","archiveMembers":[],"line":1,"terms":[{"term":"alpha","line":1},{"term":"beta","line":3}]}"#.utf8)
+    guard let termHit = parseHit(termHitLine),
+          termHit.terms.map({ $0.line }) == [1, 3],
+          termHit.locationText == "1, 3",
+          parseHit(jsonlData(for: [termHit]).prefix(while: { $0 != 0x0A })) == termHit else {
+        print("SELFTEST FEHLER: Belege der Mehrwortsuche gehen beim Lesen oder Schreiben verloren")
+        return 1
+    }
+
     pixelController.searchField.stringValue = "Treffer"
     pixelController.minWidthField.stringValue = "10.5"
     pixelController.startSearch()
@@ -2056,6 +2089,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         for (field, text) in zip(pixelFields, configuration.pixelTexts) { field.stringValue = text }
         filterView.exclusions = configuration.exclusions
         filterView.rawFacts = configuration.rawFacts
+        filterView.terms = configuration.terms
         // Übergebene Filter sollen sichtbar sein, sonst wundert man sich
         // über eine kürzere Trefferliste ohne erkennbaren Grund.
         if activeFilterCount > 0 { setFiltersExpanded(true) }
@@ -2078,6 +2112,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         configuration.pixelTexts = pixelFields.map { $0.stringValue }
         configuration.exclusions = filterView.exclusions
         configuration.rawFacts = filterView.rawFacts
+        configuration.terms = filterView.terms
         configuration.regex = regexCheckbox.state == .on
         configuration.caseSensitive = caseCheckbox.state == .on
         configuration.metadataField = selectedMetadataField

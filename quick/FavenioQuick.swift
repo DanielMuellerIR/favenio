@@ -43,6 +43,17 @@ struct FavenioQuickApp {
                 print("SELFTEST FEHLER: Ausschlussoptionen gehen zwischen Controls und Übergabe verloren")
                 exit(1)
             }
+            // Weitere Suchbegriffe: erreichen Argumente und die Übergabe-URL.
+            controller.filterView.terms = ["beta"]
+            guard controller.searchConfiguration.terms == ["beta"],
+                  controller.searchConfiguration.arguments(pattern: "alpha", root: "/fixture")?
+                      .contains("--term=beta") == true,
+                  controller.searchConfiguration.queryItems.contains(
+                      URLQueryItem(name: "term", value: "beta")) else {
+                print("SELFTEST FEHLER: Weitere Suchbegriffe erreichen Argumente oder Übergabe nicht")
+                exit(1)
+            }
+            controller.filterView.terms = []
             controller.startSearch()
             guard controller.queuedQuery else {
                 print("SELFTEST FEHLER: Reine Faktenfilter erreichen Quick-Start nicht")
@@ -799,6 +810,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         configuration.pixelTexts = pixelFields.map { $0.stringValue }
         configuration.exclusions = filterView.exclusions
         configuration.rawFacts = filterView.rawFacts
+        configuration.terms = filterView.terms
         configuration.only = selectedOnly
         return configuration
     }

@@ -176,6 +176,20 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("guard self.previewRequest === request else { return }",
                       preview)
 
+    def test_both_apps_pass_additional_terms_from_the_filter_view(self):
+        """Mehrwortsuche: Die Begriffe stehen in der gemeinsamen Filteransicht
+        und erreichen ueber SearchConfiguration Argumente, URL und Vorlage —
+        die Semantik (UND ueber das ganze Objekt) lebt allein im Kern."""
+        self.assertIn("let termsEditor = PlaceholderTextView()", COMMON)
+        self.assertIn('args.append("--term=" + term)', COMMON)
+        self.assertIn('URLQueryItem(name: "term", value: $0)', COMMON)
+        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
+            with self.subTest(app=name):
+                getter = swift_function(source, "var searchConfiguration: SearchConfiguration {")
+                self.assertIn("configuration.terms = filterView.terms", getter)
+        apply = swift_function(GUI, "func applyConfiguration(")
+        self.assertIn("filterView.terms = configuration.terms", apply)
+
     def test_search_templates_fill_the_window_through_one_place_without_searching(self):
         """Quick-Uebergabe und Vorlage schreiben die Optionen ueber
         applyConfiguration() in die Oberflaeche; Laden startet KEINE Suche
@@ -814,7 +828,7 @@ class SwiftGuardTests(unittest.TestCase):
         arguments = swift_function(COMMON, "func arguments(pattern:")
         self.assertIn("args += validation.limits.arguments", arguments)
         self.assertNotIn('"*"', arguments)
-        self.assertIn("if hasPattern { args.append(pattern) }", arguments)
+        self.assertIn("if !pattern.isEmpty { args.append(pattern) }", arguments)
         # --content/--metadata sagen, WOGEGEN das Muster laeuft, und lehnt
         # der Kern ohne Muster ab.
         self.assertIn("if hasPattern", arguments)

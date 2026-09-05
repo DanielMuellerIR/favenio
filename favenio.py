@@ -53,7 +53,7 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.33.0"
+__version__ = "0.34.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-06"
@@ -827,9 +827,14 @@ class ContentProbe:
     """
 
     def __init__(self, needle, case_sensitive):
+        # `needle` ist EIN Suchtext oder eine Liste (Mehrwortsuche, --term):
+        # Dann müssen ALLE vorkommen, geprüft in demselben Durchlauf — der
+        # Inhalt wird nicht je Begriff neu gelesen.
+        needles = [needle] if isinstance(needle, str) else list(needle)
         # Bei egaler Groß-/Kleinschreibung vergleichen wir kleingeschrieben —
         # genau wie der Matcher aus build_matcher() es pro Zeile tut.
-        needle = needle if case_sensitive else needle.lower()
+        needles = [text if case_sensitive else text.lower()
+                   for text in needles]
         # str.lower() hängt an genau EINER Stelle vom Zusammenhang ab: Ein
         # großes Sigma wird am Wortende zu „ς", sonst zu „σ". Der Vortest sieht
         # Häppchen, der genaue Lauf ganze Zeilen — dieselbe Stelle kann deshalb
@@ -841,10 +846,12 @@ class ContentProbe:
         # Suchtext kann es den Unterschied nicht geben — dann bleibt der heiße
         # Pfad unverändert.
         self.fold_sigma = not case_sensitive and any(
-            char in needle for char in GREEK_SIGMAS)
+            char in text for text in needles for char in GREEK_SIGMAS)
         if self.fold_sigma:
-            needle = needle.replace(GREEK_FINAL_SIGMA, GREEK_SMALL_SIGMA)
-        self.needle = needle
+            needles = [text.replace(GREEK_FINAL_SIGMA, GREEK_SMALL_SIGMA)
+                       for text in needles]
+        self.needles = needles
+        self.needle = needles[0]
         self.case_sensitive = case_sensitive
 
     def hits(self, chunks):
@@ -857,7 +864,8 @@ class ContentProbe:
         # Zeichen) vorne an das nächste Häppchen. Wichtig: Das Fenster wird
         # aus carry UND Häppchen gebildet, nicht nur aus dem Häppchen —
         # sonst reicht es bei sehr kleinen Häppchen nicht über den Suchtext.
-        overlap = max(0, len(self.needle) - 1)
+        overlap = max(0, max(len(text) for text in self.needles) - 1)
+        remaining = list(self.needles)
         carry = ""
         for text in codecs.iterdecode(chunks, "utf-8", errors="replace"):
             if not text:
@@ -867,7 +875,12 @@ class ContentProbe:
                 if self.fold_sigma:
                     text = text.replace(GREEK_FINAL_SIGMA, GREEK_SMALL_SIGMA)
             window = carry + text
-            if self.needle in window:
+            # Gefundene Begriffe fallen aus der Liste; die Liste wird
+            # kopiert, denn sie schrumpft während des Durchlaufs.
+            for needle in remaining[:]:
+                if needle in window:
+                    remaining.remove(needle)
+            if not remaining:
                 return True
             carry = window[-overlap:] if overlap else ""
         return False
@@ -881,10 +894,17 @@ def build_content_probe(pattern, use_regex, case_sensitive):
     bei Glob-Mustern (* ? [) steckt kein solcher Text im Muster, den ein
     Treffer garantiert enthalten müsste; dort bleibt es beim genauen Lauf.
     `--exact` ist dagegen unkritisch: Dort muss die ganze Zeile dem Muster
-    entsprechen, der Suchtext kommt also erst recht vor."""
-    if use_regex or any(char in pattern for char in "*?["):
+    entsprechen, der Suchtext kommt also erst recht vor.
+
+    `pattern` darf eine Liste sein (Mehrwortsuche): Geprobt werden dann alle
+    Begriffe OHNE Platzhalter; schon einer, der fehlt, ist ein sicheres
+    Nein. Begriffe mit Platzhaltern bleiben dem genauen Lauf überlassen."""
+    patterns = [pattern] if isinstance(pattern, str) else list(pattern)
+    fixed = [text for text in patterns
+             if not any(char in text for char in "*?[")]
+    if use_regex or not fixed:
         return None
-    return ContentProbe(pattern, case_sensitive)
+    return ContentProbe(fixed, case_sensitive)
 
 
 def build_matcher(pattern, use_regex, case_sensitive, exact=False):
@@ -1548,12 +1568,13 @@ class FileProbe:
         self._facts = ((None if is_dir else size, modified, None)
                        if in_archive else MISSING)
         self.metadata_hit = None              # (Feld, Wert) bei Treffer
+        self.metadata_hits = []               # je Begriff (Feld, Wert)
         self.dimension_bytes = 0              # so viele Bytes hat der
                                               # Maß-Leser schon gegen das
                                               # Archivbudget gezählt
         self._dimensions = MISSING
         self._metadata = MISSING
-        self._content_line = MISSING
+        self._content_lines = MISSING
 
     @property
     def extension(self):
@@ -1600,11 +1621,18 @@ class FileProbe:
                     self._metadata = stream.read(self.filesystem_path)
         return self._metadata
 
+    def content_lines(self):
+        """Je Suchbegriff die Zeilennummer seines ersten Vorkommens — oder
+        None, wenn auch nur ein Begriff fehlt. Bei EINEM Begriff eine Liste
+        mit einem Eintrag."""
+        if self._content_lines is MISSING:
+            self._content_lines = self.search.find_content_lines(self)
+        return self._content_lines
+
     def content_line(self):
-        """Zeilennummer des ersten Inhaltstreffers oder None."""
-        if self._content_line is MISSING:
-            self._content_line = self.search.find_content_line(self)
-        return self._content_line
+        """Zeilennummer des ersten Inhaltstreffers (erster Begriff) oder None."""
+        lines = self.content_lines()
+        return None if lines is None else lines[0]
 
 
 # Die Kriterien einer Suche. Alle müssen zutreffen; `Search` sortiert sie
@@ -1618,11 +1646,12 @@ class FileProbe:
 class NameCriterion:
     cost = 0
 
-    def __init__(self, matcher):
-        self.matcher = matcher
+    def __init__(self, matchers):
+        # Alle Begriffe müssen im Namen stehen (Mehrwortsuche: UND).
+        self.matchers = list(matchers)
 
     def test(self, probe):
-        return self.matcher(probe.name)
+        return all(matcher(probe.name) for matcher in self.matchers)
 
 
 class FileFactsCriterion:
@@ -1681,30 +1710,43 @@ class DimensionCriterion:
 class MetadataCriterion:
     cost = 2
 
-    def __init__(self, matcher, fields):
-        self.matcher = matcher
+    def __init__(self, matchers, fields):
+        self.matchers = list(matchers)
         self.fields = list(fields)
 
     def test(self, probe):
+        """Jeder Begriff muss in irgendeinem Wert der Felder stehen — nicht
+        alle im selben Wert (Mehrwortsuche: UND über die ganze Datei). Je
+        Begriff wird das erste passende (Feld, Wert) als Beleg gemerkt."""
         record = probe.metadata()
         if not record:
             return False
-        for field in self.fields:
-            value = record.get(field)
-            if value is None:
-                continue
-            for text in metadata_values(value):
-                if self.matcher(text):
-                    probe.metadata_hit = (field, text)
-                    return True
-        return False
+        hits = []
+        for matcher in self.matchers:
+            found = None
+            for field in self.fields:
+                value = record.get(field)
+                if value is None:
+                    continue
+                for text in metadata_values(value):
+                    if matcher(text):
+                        found = (field, text)
+                        break
+                if found is not None:
+                    break
+            if found is None:
+                return False
+            hits.append(found)
+        probe.metadata_hits = hits
+        probe.metadata_hit = hits[0]
+        return True
 
 
 class ContentCriterion:
     cost = 3
 
     def test(self, probe):
-        return probe.content_line() is not None
+        return probe.content_lines() is not None
 
 
 class Exclusions:
@@ -1771,8 +1813,16 @@ class Search:
                  min_height=None, max_height=None, exiftool_path=None,
                  exclusions=(), min_size=None, max_size=None,
                  modified_from=None, modified_to=None,
-                 created_from=None, created_to=None):
+                 created_from=None, created_to=None, extra_matchers=()):
         self.matcher = matcher                # Funktion text -> bool
+        # Mehrwortsuche (--term): weitere Testfunktionen, die ZUSÄTZLICH
+        # zutreffen müssen — im selben Ziel (Name, Inhalt oder Metadaten),
+        # aber nicht in derselben Zeile bzw. demselben Wert.
+        self.matchers = ([] if matcher is None
+                         else [matcher] + list(extra_matchers))
+        # Die Begriffe im Klartext, für die Belege in der Ausgabe; main()
+        # setzt sie, Tests dürfen sie weglassen.
+        self.terms = [getattr(m, "term", "") for m in self.matchers]
         self.exclusions = Exclusions(exclusions)
         self.content_probe = content_probe    # ContentProbe oder None:
                                               # billiger Vortest vor der
@@ -1792,11 +1842,12 @@ class Search:
         # Die Kriterienliste — siehe Kommentar über NameCriterion.
         criteria = []
         if self.text_mode == "name":
-            criteria.append(NameCriterion(matcher))
+            criteria.append(NameCriterion(self.matchers))
         elif self.text_mode == "content":
             criteria.append(ContentCriterion())
         elif self.text_mode == "metadata":
-            criteria.append(MetadataCriterion(matcher, self.metadata_fields))
+            criteria.append(MetadataCriterion(self.matchers,
+                                              self.metadata_fields))
         self.wants_size = min_size is not None or max_size is not None
         if any(limit is not None for limit in (
                 min_size, max_size, modified_from, modified_to, created_from, created_to)):
@@ -1865,7 +1916,8 @@ class Search:
 
     def emit(self, path, kind, line=None, size=None, filesystem_path=None,
              archive_members=None, is_dir=None, field=None, value=None,
-             width=None, height=None, modified=None, created=None):
+             width=None, height=None, modified=None, created=None,
+             terms=None):
         """Gibt EINEN Treffer aus. kind ist "file", "dir" oder "member"
         (member = Eintrag innerhalb eines Archivs). line ist bei
         Inhaltssuche die Zeilennummer des ersten Treffers, size die
@@ -1888,7 +1940,12 @@ class Search:
         Ein Zip- oder Tar-Eintrag kennt nur seine Änderungszeit, ein
         bsdtar-Eintrag und eine einzeln komprimierte Datei (`.gz`) keine
         von beiden. Die Oberflächen zeigen daraus die Spalten
-        „Änderungsdatum" und „Erstellungsdatum"."""
+        „Änderungsdatum" und „Erstellungsdatum".
+
+        `terms` gibt es nur bei der Mehrwortsuche (ab zwei Begriffen): je
+        Begriff ein dict mit `term` und — bei Inhalt — `line` bzw. — bei
+        Metadaten — `field` und `value`. `line`/`field`/`value` nennen
+        weiter den ERSTEN Begriff, damit ältere Leser nichts verlieren."""
         self.found_any = True
         directory = kind == "dir" if is_dir is None else bool(is_dir)
         if self.as_json:
@@ -1911,7 +1968,16 @@ class Search:
                 record["modified"] = modified
             if created is not None:
                 record["created"] = created
+            if terms:
+                record["terms"] = terms
             text = json.dumps(record, ensure_ascii=False)
+        elif terms and terms[0].get("line") is not None:
+            # Mehrere Begriffe: die Zeilen aller Begriffe in ihrer
+            # Reihenfolge, mit Komma — „pfad:3,17".
+            text = path + ":" + ",".join(str(item["line"]) for item in terms)
+        elif terms and terms[0].get("field") is not None:
+            text = path + ":" + " | ".join(
+                "%s: %s" % (item["field"], item["value"]) for item in terms)
         else:
             text = path + (":%d" % line if line is not None else "")
             if field is not None:
@@ -1980,15 +2046,28 @@ class Search:
             for criterion in self.criteria:
                 if not criterion.test(probe):
                     return
-            line = (probe.content_line() if self.text_mode == "content"
-                    else None)
+            lines = (probe.content_lines() if self.text_mode == "content"
+                     else None)
             dims = probe.dimensions() if self.wants_dimensions else None
         except EXPECTED_ARCHIVE_ERRORS as err:
             self.warn("%s: %s" % (probe.label, err))
             return
+        line = lines[0] if lines else None
         field = value = None
         if probe.metadata_hit is not None:
             field, value = probe.metadata_hit
+        # Belege je Begriff — nur bei der Mehrwortsuche, sonst genügen
+        # line bzw. field/value.
+        terms = None
+        if len(self.terms) > 1:
+            if lines is not None:
+                terms = [{"term": term, "line": number}
+                         for term, number in zip(self.terms, lines)]
+            elif probe.metadata_hits:
+                terms = [{"term": term, "field": hit[0], "value": hit[1]}
+                         for term, hit in zip(self.terms, probe.metadata_hits)]
+            else:
+                terms = [{"term": term} for term in self.terms]
         size, modified, created = probe.facts()
         self.emit(display, kind, line=line, size=size,
                   filesystem_path=filesystem_path,
@@ -1996,7 +2075,7 @@ class Search:
                   field=field, value=value,
                   width=dims[0] if dims else None,
                   height=dims[1] if dims else None,
-                  modified=modified, created=created)
+                  modified=modified, created=created, terms=terms)
 
     @staticmethod
     def file_chunks(handle, free_bytes=0):
@@ -2006,9 +2085,9 @@ class Search:
         # bis es b"" liefert — das Dateiende.
         return iter(lambda: handle.read(CHUNK_SIZE), b"")
 
-    def find_content_line(self, probe):
-        """Zeilennummer des ersten Inhaltstreffers oder None — für Dateien
-        wie für Archiv-Einträge derselbe Weg.
+    def find_content_lines(self, probe):
+        """Je Suchbegriff die Zeile seines ersten Vorkommens, oder None —
+        für Dateien wie für Archiv-Einträge derselbe Weg.
 
         Ohne Vortest ist das ein Durchlauf. Mit Vortest sind es zwei: erst
         das billige Ja/Nein, und nur bei Ja das genaue Zählen. Auch im
@@ -2023,9 +2102,9 @@ class Search:
         head_bytes = probe.dimension_bytes
         if self.content_probe is None:
             with probe.open_stream() as handle:
-                return self.match_content(
+                return self.match_content_all(
                     probe.chunker(handle, free_bytes=head_bytes),
-                    label=probe.label)
+                    self.matchers, label=probe.label)
         probed_bytes = 0
 
         def tally(chunks):
@@ -2045,12 +2124,47 @@ class Search:
             # free_bytes: genau den Anfang, den der Vortest schon gelesen und
             # dem Gesamtbudget belastet hat, nicht zweimal zählen. Liest der
             # genaue Lauf weiter, zählt der Rest wieder mit.
-            return self.match_content(
+            return self.match_content_all(
                 probe.chunker(handle,
                               free_bytes=max(probed_bytes, head_bytes)),
-                label=probe.label)
+                self.matchers, label=probe.label)
 
     # ---------- Inhalts-Matching ----------
+
+    def match_content_all(self, chunks, matchers, label=None):
+        """Sucht ALLE Begriffe im Inhalt — in EINEM Durchlauf. Liefert je
+        Begriff die Zeilennummer seines ersten Vorkommens, oder None, sobald
+        das Ende erreicht ist und ein Begriff fehlt. Der Durchlauf endet,
+        sobald der letzte Begriff gefunden ist.
+
+        Bei genau einem Begriff läuft `match_content()`, der schlanke Weg
+        ohne Schleife über die Begriffe je Zeile (Messung in
+        `tests/LINE_READER_MEASUREMENTS.md`, warum jeder Schritt je Zeile
+        zählt). Dieselben Regeln für Bruchstücke wie dort: Nur der reine
+        „enthält"-Test darf ein Bruchstück einer zu langen Zeile prüfen;
+        für verankerte Begriffe bleibt die Zeile ungeprüft und wird EINMAL
+        gemeldet."""
+        if len(matchers) == 1:
+            line = self.match_content(chunks, label=label)
+            return None if line is None else [line]
+        remaining = list(enumerate(matchers))
+        lines = [None] * len(matchers)
+        warned = None
+        for number, text, complete, _ in iter_line_pieces(chunks):
+            for index, matcher in remaining[:]:
+                if complete or getattr(matcher, "substring_only", False):
+                    if matcher(text):
+                        lines[index] = number
+                        remaining.remove((index, matcher))
+                elif warned != number:
+                    self.warn("%s: Zeile %d ist länger als %d Zeichen und "
+                              "wird mit diesem Muster nicht geprüft"
+                              % (label or "<Eingabe>", number,
+                                 MAX_LINE_CHARS))
+                    warned = number
+            if not remaining:
+                return lines
+        return None
 
     def match_content(self, chunks, label=None):
         """Sucht das Muster im Datei-Inhalt. Liefert die Zeilennummer des
@@ -2816,6 +2930,12 @@ def main(argv=None):
                              "oder mit --regex ein regulärer Ausdruck")
     parser.add_argument("paths", nargs="*", default=[],
                         help="Startpfade (Default: aktueller Ordner)")
+    parser.add_argument("--term", action="append", metavar="TEXT",
+                        default=[],
+                        help="weiterer Suchbegriff, der ZUSÄTZLICH zutreffen "
+                             "muss (wiederholbar; gleiche Regeln wie PATTERN, "
+                             "gleiches Ziel: Name, --content oder --metadata; "
+                             "UND über das ganze Objekt, nicht dieselbe Zeile)")
     parser.add_argument("-c", "--content", action="store_true",
                         help="im Dateiinhalt suchen statt in Dateinamen")
     parser.add_argument("-m", "--metadata", action="store_true",
@@ -3001,7 +3121,11 @@ def main(argv=None):
     if args.min_height is not None and args.max_height is not None \
             and args.min_height > args.max_height:
         parser.error("--min-height ist größer als --max-height")
-    if wants_filters and args.pattern and os.path.exists(args.pattern) \
+    # Dieselbe Beförderung gilt mit --term: `--content --term x ~/Docs`
+    # nennt seinen Begriff über die Option, das Positionsargument ist der
+    # Startpfad.
+    if (wants_filters or args.term) and args.pattern \
+            and os.path.exists(args.pattern) \
             and all(os.path.exists(path) for path in args.paths):
         # `favenio.py --min-width 1000 ~/Bilder`: Das erste Positions-
         # argument ist ein Pfad, kein Muster. Das gilt auch für MEHRERE
@@ -3014,13 +3138,25 @@ def main(argv=None):
         # ist.
         args.paths = [args.pattern] + list(args.paths)
         args.pattern = None
-    if not args.pattern and not wants_filters:
+    if not args.pattern and not wants_filters and not args.term:
         # parser.error() gibt die Usage aus und beendet mit Exit-Code 2.
         parser.error("PATTERN fehlt (oder --extract verwenden)")
 
     metadata_mode = args.metadata or bool(args.metadata_field)
     if args.content and metadata_mode:
         parser.error("--content und --metadata schließen sich aus")
+    # Mehrwortsuche: PATTERN und jedes --term sind Begriffe, die ALLE
+    # zutreffen müssen. Ohne PATTERN wird der erste --term zum Muster; ein
+    # leerer Begriff ist ein Fehler (er träfe alles und sagte nichts), ein
+    # doppelter zählt einmal — die Reihenfolge bleibt.
+    if any(term == "" for term in args.term):
+        parser.error("--term darf nicht leer sein")
+    terms = []
+    for term in ([args.pattern] if args.pattern else []) + args.term:
+        if term not in terms:
+            terms.append(term)
+    if terms and not args.pattern:
+        args.pattern = terms[0]
     if not args.pattern and (args.content or metadata_mode):
         # Ohne Muster läuft die Suche ganz ohne Textkriterium (nur die
         # Maß-/Faktengrenzen zählen). --content und --metadata sagen, WOGEGEN das
@@ -3043,9 +3179,15 @@ def main(argv=None):
     try:
         # Ohne Muster gibt es kein Textkriterium; Search kommt mit None aus.
         matcher = None
+        extra_matchers = []
         if args.pattern:
-            matcher = build_matcher(args.pattern, args.regex,
-                                    args.case_sensitive, exact=args.exact)
+            matchers = []
+            for term in terms:
+                built = build_matcher(term, args.regex, args.case_sensitive,
+                                      exact=args.exact)
+                built.term = term      # Klartext für die Belege
+                matchers.append(built)
+            matcher, extra_matchers = matchers[0], matchers[1:]
     except re.error as err:
         print("favenio: fehler: ungültiger regulärer Ausdruck: %s" % err,
               file=sys.stderr)
@@ -3055,7 +3197,7 @@ def main(argv=None):
     # keine Zeilen zu zählen und damit nichts zu sparen.
     content_probe = None
     if args.content:
-        content_probe = build_content_probe(args.pattern, args.regex,
+        content_probe = build_content_probe(terms, args.regex,
                                             args.case_sensitive)
 
     archive_depth = 0 if args.no_archives else args.archive_depth
@@ -3069,7 +3211,8 @@ def main(argv=None):
                     content_probe=content_probe,
                     metadata_mode=metadata_mode,
                     metadata_fields=args.metadata_field or None,
-                    exiftool_path=exiftool_path, **dimension_limits, **fact_limits)
+                    exiftool_path=exiftool_path, extra_matchers=extra_matchers,
+                    **dimension_limits, **fact_limits)
 
     # Erst alle Startpfade prüfen, dann suchen: sonst stünden bei mehreren
     # Pfaden schon Treffer auf stdout, bevor ein späterer Pfad den Fehler

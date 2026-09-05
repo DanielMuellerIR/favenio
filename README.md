@@ -153,6 +153,7 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `-c`, `--content` | search file contents instead of names |
 | `-m`, `--metadata` | search the curated metadata text fields (keywords, title, description …) instead of names; needs `exiftool` |
 | `--metadata-field TAG` | restrict `--metadata` to one field from the curated list (repeatable; implies `--metadata`) |
+| `--term TEXT` | an additional search term that must ALSO match (repeatable); same rules and same target as the pattern; AND across the whole file, not the same line (see below) |
 | `--list-metadata-fields` | print the curated field list, one per line, and exit |
 | `--min-size BYTES`, `--max-size BYTES` | inclusive file-size bounds; whole nonnegative bytes, optionally B/KiB/MiB/GiB/TiB |
 | `--modified-from ISO`, `--modified-to ISO` | inclusive modification-time bounds; ISO datetime with `Z` or explicit offset |
@@ -245,6 +246,33 @@ name. (If a *directory* ends in `.md`, additionally use `--only files` or
 
 Directories can match a name search and known date facts; file-size,
 dimension, metadata and content filters cannot match directories.
+
+### Several terms (`--term`)
+
+Spaces never split the pattern: `alpha beta` is one phrase. To require
+several terms, add each with `--term`:
+
+```bash
+favenio.py --content alpha --term beta --term 2026 ~/Documents
+```
+
+Every term follows the same rules as the pattern (contains / glob / `-r`
+regex, `-s`, `-e`) and runs against the same target (name, `--content` or
+`--metadata`). The terms are ANDed **across the whole file**: for content
+they may sit on different lines, for metadata in different fields. That is
+what a single regex cannot express (same-line AND is a regex lookahead away;
+whole-file AND is not). Duplicates count once; an empty `--term` is an error;
+without a pattern the first `--term` becomes the pattern, and positional
+arguments that all exist as paths are start paths. Cheap first: fixed terms
+are probed in one pass before any line is counted, and the exact pass stops
+when the last term is found; the content is not re-read per term.
+
+Evidence per term: `--json` adds `terms` — `[{"term": "alpha", "line": 1},
+{"term": "beta", "line": 3}]` for content, `[{"term": …, "field": …,
+"value": …}]` for metadata — while `line`, `field` and `value` keep
+describing the first term. Text output prints all lines (`path:1,3`) or all
+fields (`path:Keywords: Winter | Title: Alpen`). Mixing modes per term and
+OR are not available.
 
 ## File size and date filters
 
@@ -397,6 +425,9 @@ From the results list:
   promised files); an already extracted copy is dragged as a plain file
 - **Space**: QuickLook preview. Keyboard focus stays in the result list, so
   Up/Down walks the preview through the hits
+- **More terms**: under *Weitere Filter*, the field *Weitere Begriffe* takes
+  one additional term per line; all must also match (`--term`, see above).
+  The "Fundstelle" column then lists every term's line or field
 
 **Search templates** (menu *Vorlagen*): *Suche als Vorlage sichern…* (⌘S)
 stores the pattern, the current search folder and every option — mode,

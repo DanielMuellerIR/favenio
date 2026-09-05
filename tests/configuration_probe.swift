@@ -20,6 +20,7 @@ import AppKit
                              "created-from": "2000-01-01T00:00:00Z",
                              "created-to": "2099-01-01T00:00:00Z"]
         original.exclusions = ["node_modules", "Cache/*.zip", " whitespace ", "100%+#Ü.txt", "-cache", "--hidden"]
+        original.terms = ["beta", " mit Leerraum ", "-dash", "100%+#Ü"]
         var url = URLComponents()
         url.scheme = "favenio"
         url.host = "results"
@@ -31,6 +32,32 @@ import AppKit
         precondition(args.filter { $0.hasPrefix("--exclude=") }
             .map { String($0.dropFirst("--exclude=".count)) } == original.exclusions)
         precondition(args.contains("1000") && args.contains("--metadata"))
+        precondition(args.filter { $0.hasPrefix("--term=") }
+            .map { String($0.dropFirst("--term=".count)) } == original.terms)
+        // Mehrwortsuche gegen den echten Kern: beide Begriffe in EINER Datei
+        // auf verschiedenen Zeilen, Belege je Begriff im Treffer.
+        let termFixture = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: termFixture, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: termFixture) }
+        try "alpha\nx\nbeta\n".write(to: termFixture.appendingPathComponent("beide.txt"), atomically: true, encoding: .utf8)
+        try "alpha\n".write(to: termFixture.appendingPathComponent("eins.txt"), atomically: true, encoding: .utf8)
+        var termSearch = SearchConfiguration()
+        termSearch.mode = .content
+        termSearch.terms = ["beta"]
+        var termHits: [Hit] = []
+        let termExit = runSearchStreaming(arguments: termSearch.arguments(pattern: "alpha", root: termFixture.path)!,
+                                          onHit: { termHits.append($0) }, onProgress: { _ in })
+        precondition(termExit.status == 0 && termHits.count == 1, "Mehrwortsuche liefert nicht genau beide.txt")
+        precondition(termHits[0].terms.map { $0.line } == [1, 3] && termHits[0].locationText == "1, 3")
+        // Ohne Muster im Suchfeld tragen die Begriffe die Suche allein.
+        termSearch.terms = ["alpha", "beta"]
+        termHits = []
+        let termsOnly = runSearchStreaming(arguments: termSearch.arguments(pattern: "", root: termFixture.path)!,
+                                           onHit: { termHits.append($0) }, onProgress: { _ in })
+        precondition(termsOnly.status == 0 && termHits.count == 1)
+        let view0 = SearchFilterView()
+        view0.terms = ["a", "", "b"]
+        precondition(view0.terms == ["a", "b"] && view0.activeFilterCount == 2)
         let legacy = SearchConfiguration.fromQueryItems([URLQueryItem(name: "content", value: "1")])
         precondition(legacy.mode == .content && !legacy.archives && !legacy.regex && !legacy.caseSensitive)
         for texts in [["10.5", "", "", ""], ["2000", "1000", "", ""],

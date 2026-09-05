@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.34.0 — 2026-09-06
+
+- Mehrwortsuche: `--term TEXT` (wiederholbar) nennt weitere Begriffe, die
+  ZUSÄTZLICH zum Muster zutreffen müssen — gleiche Regeln (Glob, Regex,
+  Groß/klein, Genau) und gleiches Ziel (Name, `--content`, `--metadata`).
+  Verknüpft wird mit UND über die ganze Datei: Im Inhalt dürfen die
+  Begriffe auf verschiedenen Zeilen stehen, in den Metadaten in
+  verschiedenen Feldern. `--json` trägt je Begriff einen Beleg (`terms`:
+  Zeile bzw. Feld und Wert); `line`/`field`/`value` nennen weiter den
+  ersten Begriff. Die Textausgabe zeigt alle Zeilen (`pfad:1,3`) bzw.
+  Felder. Feste Begriffe werden in einem Durchlauf vorgeprüft, der genaue
+  Lauf endet beim letzten gefundenen Begriff; der Inhalt wird nicht je
+  Begriff neu gelesen. Das Muster selbst bleibt unverändert eine Phrase.
+- Beide Apps: Unter „Weitere Filter" nimmt das Feld „Weitere Begriffe" je
+  Zeile einen Begriff; er erreicht Argumente, Übergabe-URL (`term`) und
+  Suchvorlagen. Die Spalte „Fundstelle" nennt je Begriff die Zeile oder das
+  Feld. Ohne Muster im Suchfeld tragen die Begriffe die Suche allein.
+
 ## 0.33.0 — 2026-09-06
 
 - Haupt-App: Menü **Vorlagen** mit benannten Suchvorlagen. „Suche als

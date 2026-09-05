@@ -8,13 +8,15 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    (mehrere Dateien, langsame Extraktion, Abbruch, Fehler). Headless ist der
    Weg seit 0.32.0 geprüft (`tests/test_materialization.py`); der Test am
    Fenster braucht Daniels Freigabe.
-2. Mehrwortsuche als eigene Funktionserweiterung. Priorität 3, Vertrag und
-   offene Produktentscheidung zur Verknüpfung mehrerer Begriffe in
-   [FOLLOWUPS.md](FOLLOWUPS.md).
-3. Sichtbarer Test des Fensters „Suchvorlagen" (Verwalten: Laden,
+2. Sichtbarer Test des Fensters „Suchvorlagen" (Verwalten: Laden,
    Umbenennen in der Zeile, Löschen). Headless ist alles geprüft
    (Selbsttest); das Fenster selbst wurde noch nicht am Bildschirm
    angesehen — braucht Daniels Freigabe für GUI-Fokus.
+3. Sichtbarer Blick auf das neue Feld „Weitere Begriffe" (0.34.0) in beiden
+   Fenstern: Es liegt unter der linken Filterspalte und macht die
+   Filteransicht rund 60 pt höher; offscreen gerendert sieht es richtig aus
+   (`tests/configuration_probe.swift` mit Ausgabepfad), am Fenster der
+   Schnellsuche (Standardhöhe 520 pt, Tabelle darunter) noch nicht geprüft.
 4. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
 5. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
    heraus auf die aktuelle aktualisieren und den Ablauf am Fenster prüfen.
@@ -37,6 +39,12 @@ jetzt auch nach einem Timeout ein; ein mit echtem Prozess erzwungener Timeout
 prüft das. Dies belegt keine Ursache für den ursprünglichen SIGTERM-Fehlschlag.
 Bei erneutem Auftreten Bereitschaftsdatei, Prozessstatus, Ausgabe und Systemlast
 sichern, bevor Timing-Grenzen geändert werden.
+
+Nicht offen — Mehrwortsuche: mit 0.34.0 als `--term` gebaut; Vertrag (UND
+über das ganze Objekt, Belege je Begriff) in AGENTS und beiden READMEs.
+Gemischte Ziele je Begriff und ODER-Verknüpfung sind nicht gebaut und wären
+ein eigener Auftrag. Die Folgeaufträge vom 2026-09-05 (FOLLOWUPS.md) sind
+damit alle umgesetzt; die Datei ist entfernt.
 
 Nicht offen — benannte Suchvorlagen: mit 0.33.0 gebaut (Menü „Vorlagen",
 Datei unter Application Support, versioniertes Format, Selbsttest deckt

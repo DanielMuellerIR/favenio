@@ -143,6 +143,9 @@ struct Hit: Hashable {
     /// ein bsdtar-Eintrag keine von beiden.
     var modified: Double? = nil
     var created: Double? = nil
+    /// Mehrwortsuche (`--term`): je Begriff der Beleg — Zeile bei Inhalt,
+    /// Feld und Wert bei Metadaten. Leer bei einem Begriff.
+    var terms: [TermEvidence] = []
 
     /// Liegt der Treffer INNERHALB eines Archivs?
     var isMember: Bool { !archiveMembers.isEmpty }
@@ -159,6 +162,16 @@ struct Hit: Hashable {
     /// Die Spalte „Fundstelle": Zeilennummer bei Inhaltstreffern,
     /// „Feld: Wert" bei Metadatentreffern, sonst leer.
     var locationText: String {
+        if terms.count > 1 {
+            // Alle Begriffe: „1, 3" bzw. „Keywords: Winter | Title: Alpen".
+            if terms.allSatisfy({ $0.line != nil }) {
+                return terms.map { String($0.line!) }.joined(separator: ", ")
+            }
+            if terms.allSatisfy({ $0.field != nil }) {
+                return terms.map { $0.field! + ": " + ($0.value ?? "") }
+                    .joined(separator: " | ")
+            }
+        }
         if let field, let value { return field + ": " + value }
         return line.map { String($0) } ?? ""
     }
@@ -648,6 +661,30 @@ enum SearchLine {
     case hit(Hit)
 }
 
+/// Ein Beleg der Mehrwortsuche: der Begriff und wo er stand.
+struct TermEvidence: Hashable {
+    let term: String
+    var line: Int? = nil
+    var field: String? = nil
+    var value: String? = nil
+
+    var json: [String: Any] {
+        var object: [String: Any] = ["term": term]
+        if let line { object["line"] = line }
+        if let field { object["field"] = field }
+        if let value { object["value"] = value }
+        return object
+    }
+
+    static func parse(_ object: Any) -> TermEvidence? {
+        guard let dict = object as? [String: Any],
+              let term = dict["term"] as? String else { return nil }
+        return TermEvidence(term: term, line: dict["line"] as? Int,
+                            field: dict["field"] as? String,
+                            value: dict["value"] as? String)
+    }
+}
+
 /// Parst eine JSONL-Zeile GENAU EINMAL und verzweigt am `type`-Feld.
 ///
 /// Bis 0.28.2 liefen zwei getrennte Parser hintereinander: parseProgress
@@ -691,7 +728,9 @@ func parseSearchLine(_ lineData: Data) -> SearchLine? {
                     width: dict["width"] as? Int,
                     height: dict["height"] as? Int,
                     modified: dict["modified"] as? Double,
-                    created: dict["created"] as? Double))
+                    created: dict["created"] as? Double,
+                    terms: (dict["terms"] as? [Any])?
+                        .compactMap(TermEvidence.parse) ?? []))
 }
 
 /// Übersetzt EINE JSONL-Zeile in einen Hit (oder nil bei Müll und bei
@@ -943,13 +982,19 @@ struct SearchConfiguration: Equatable {
     var pixelTexts = ["", "", "", ""]
     var exclusions: [String] = []
     var rawFacts: [String: String] = [:]
+    /// Weitere Suchbegriffe (`--term`), die ZUSÄTZLICH zum Muster zutreffen
+    /// müssen — im selben Ziel (Name, Inhalt, Metadaten), nicht zwingend in
+    /// derselben Zeile. Rohtexte, einer je Zeile des Eingabefelds.
+    var terms: [String] = []
 
     /// Auch fehlerhafter nichtleerer Faktentext muss Python erreichen, damit
-    /// der Nutzer dessen konkrete Diagnose sieht. Ausschlüsse zählen nicht.
+    /// der Nutzer dessen konkrete Diagnose sieht. Ausschlüsse zählen nicht;
+    /// weitere Suchbegriffe zählen — sie sind selbst eine Frage, die auch
+    /// ohne Muster im Suchfeld eine Suche trägt.
     var hasPositiveFilter: Bool {
-        !validatePixelTexts(pixelTexts).limits.isEmpty || FactFilterOption.all.contains {
-            !(rawFacts[$0.key] ?? "").isEmpty
-        }
+        !terms.isEmpty
+            || !validatePixelTexts(pixelTexts).limits.isEmpty
+            || FactFilterOption.all.contains { !(rawFacts[$0.key] ?? "").isEmpty }
     }
 
     var filterSummary: String {
@@ -981,6 +1026,7 @@ struct SearchConfiguration: Equatable {
             if let text = value(option.key), !text.isEmpty { result.rawFacts[option.key] = text }
         }
         result.exclusions = items.filter { $0.name == "exclude" }.compactMap { $0.value }
+        result.terms = items.filter { $0.name == "term" }.compactMap { $0.value }
         return result
     }
 
@@ -1003,13 +1049,16 @@ struct SearchConfiguration: Equatable {
             }
         }
         items += exclusions.map { URLQueryItem(name: "exclude", value: $0) }
+        items += terms.map { URLQueryItem(name: "term", value: $0) }
         return items
     }
 
     func arguments(pattern: String, root: String, progress: Bool = false) -> [String]? {
         let validation = validatePixelTexts(pixelTexts)
         guard validation.errors.allSatisfy({ $0 == nil }), let cli = findCLI() else { return nil }
-        let hasPattern = !pattern.isEmpty
+        // Ohne Muster im Suchfeld tragen weitere Begriffe die Suche: Der
+        // Kern nimmt dann den ersten --term als Muster.
+        let hasPattern = !pattern.isEmpty || !terms.isEmpty
         guard hasPattern || hasPositiveFilter else { return nil }
         var args = ["-u", cli, "--json"]
         if hasPattern {
@@ -1028,13 +1077,14 @@ struct SearchConfiguration: Equatable {
         // Ein Muster darf mit '-' beginnen; '=' bindet es eindeutig an
         // die Option, statt es argparse als neue Option lesen zu lassen.
         for exclusion in exclusions { args.append("--exclude=" + exclusion) }
+        for term in terms { args.append("--term=" + term) }
         for option in FactFilterOption.all {
             if let text = rawFacts[option.key], !text.isEmpty {
                 args.append("--" + option.key + "=" + text)
             }
         }
         args.append("--")
-        if hasPattern { args.append(pattern) }
+        if !pattern.isEmpty { args.append(pattern) }
         args.append(root)
         return args
     }
@@ -1246,6 +1296,9 @@ eine neue Zeile.
 /// das Ausschlussfeld auch, obwohl ein Muster selten länger als 30 Zeichen ist.
 final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelegate {
     let exclusionsEditor = PlaceholderTextView()
+    /// Weitere Suchbegriffe, einer je Zeile — alle müssen zusätzlich zum
+    /// Suchfeld zutreffen (Mehrwortsuche, `--term`).
+    let termsEditor = PlaceholderTextView()
     let helpButton = NSButton()
     private(set) var factFields: [String: NSTextField] = [:]
     private var helpPopover: NSPopover?
@@ -1266,10 +1319,20 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
         }
     }
 
+    /// Leere Zeilen entfallen; Leerraum bleibt Bestandteil des Begriffs,
+    /// genau wie beim Muster im Suchfeld nichts getrennt wird.
+    var terms: [String] {
+        get { termsEditor.string.components(separatedBy: .newlines).filter { !$0.isEmpty } }
+        set {
+            termsEditor.string = newValue.joined(separator: "\n")
+            termsEditor.needsDisplay = true
+        }
+    }
+
     /// Wie viele Filter dieser Ansicht gerade gesetzt sind: jedes nichtleere
-    /// Von/Bis-Feld und jedes Ausschlussmuster zählt eins. Die Haupt-App
-    /// zeigt die Zahl am zugeklappten Aufklapp-Schalter.
-    var activeFilterCount: Int { rawFacts.count + exclusions.count }
+    /// Von/Bis-Feld, jedes Ausschlussmuster und jeder weitere Begriff zählt
+    /// eins. Die Haupt-App zeigt die Zahl am zugeklappten Aufklapp-Schalter.
+    var activeFilterCount: Int { rawFacts.count + exclusions.count + terms.count }
 
     init() {
         super.init(frame: .zero)
@@ -1318,6 +1381,33 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
         hint.font = .systemFont(ofSize: 10)
         hint.textColor = .secondaryLabelColor
         factColumn.addArrangedSubview(hint)
+        // Darunter die weiteren Suchbegriffe: UND zum Suchfeld, einer je
+        // Zeile. Unter der linken Spalte statt als dritte Spalte, damit die
+        // Ansicht nicht breiter wird — die Schnellsuche hat eine feste Breite.
+        let termsLabel = NSTextField(labelWithString: "Weitere Begriffe · alle müssen vorkommen · einer je Zeile")
+        termsLabel.font = .systemFont(ofSize: 11)
+        termsLabel.textColor = .secondaryLabelColor
+        factColumn.addArrangedSubview(termsLabel)
+        termsEditor.isRichText = false
+        termsEditor.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        termsEditor.isAutomaticQuoteSubstitutionEnabled = false
+        termsEditor.isAutomaticDashSubstitutionEnabled = false
+        termsEditor.isAutomaticTextReplacementEnabled = false
+        termsEditor.isVerticallyResizable = true
+        termsEditor.isHorizontallyResizable = false
+        termsEditor.autoresizingMask = [.width]
+        termsEditor.textContainer?.widthTracksTextView = true
+        termsEditor.delegate = self
+        termsEditor.placeholder = "z. B. Rechnung\n2026"
+        termsEditor.toolTip = "Jeder Begriff muss zusätzlich zum Suchfeld zutreffen — im Namen, im Inhalt (auch auf verschiedenen Zeilen) oder in den Metadaten. Gleiche Regeln wie das Suchfeld: Platzhalter, Regex, Groß/klein, Genau."
+        termsEditor.setAccessibilityLabel("Weitere Suchbegriffe, einer je Zeile")
+        let termsScroll = NSScrollView()
+        termsScroll.borderType = .bezelBorder
+        termsScroll.hasVerticalScroller = true
+        termsScroll.documentView = termsEditor
+        factColumn.addArrangedSubview(termsScroll)
+        termsScroll.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        termsScroll.widthAnchor.constraint(equalTo: factColumn.widthAnchor).isActive = true
         factColumn.setContentHuggingPriority(.required, for: .horizontal)
         addArrangedSubview(factColumn)
 
@@ -2157,6 +2247,7 @@ func jsonlData(for hits: [Hit]) -> Data {
         }
         if let modified = hit.modified { object["modified"] = modified }
         if let created = hit.created { object["created"] = created }
+        if !hit.terms.isEmpty { object["terms"] = hit.terms.map { $0.json } }
         if let encoded = try? JSONSerialization.data(withJSONObject: object) {
             data.append(encoded)
             data.append(0x0A)

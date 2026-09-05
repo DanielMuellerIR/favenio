@@ -157,6 +157,7 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `-c`, `--content` | im Dateiinhalt suchen statt in Namen |
 | `-m`, `--metadata` | in den kuratierten Metadaten-Textfeldern suchen (Stichwörter, Titel, Beschreibung …) statt in Namen; braucht `exiftool` |
 | `--metadata-field TAG` | `--metadata` auf ein Feld der kuratierten Liste eingrenzen (wiederholbar; schaltet `--metadata` ein) |
+| `--term TEXT` | weiterer Suchbegriff, der ZUSÄTZLICH zutreffen muss (wiederholbar); gleiche Regeln und gleiches Ziel wie das Muster; UND über die ganze Datei, nicht dieselbe Zeile (siehe unten) |
 | `--list-metadata-fields` | die kuratierte Feldliste ausgeben, eine je Zeile, und beenden |
 | `--min-size BYTES`, `--max-size BYTES` | inklusive Dateigrößengrenzen; ganze nichtnegative Bytezahl, optional B/KiB/MiB/GiB/TiB |
 | `--modified-from ISO`, `--modified-to ISO` | inklusive Grenzen der Änderungszeit; ISO-Zeitpunkt mit `Z` oder ausdrücklichem Offset |
@@ -253,6 +254,35 @@ GUI „Nur Dateien" wählen.) Exakt gleichwertig wäre der Regex `\.md$`.
 
 Ordner können eine Namenssuche und bekannte Datumsfakten erfüllen;
 Dateigrößen-, Maß-, Metadaten- und Inhaltsfilter erfüllen sie nicht.
+
+### Mehrere Begriffe (`--term`)
+
+Leerzeichen trennen das Muster nie: `alpha beta` ist eine Phrase. Sollen
+mehrere Begriffe zutreffen, kommt jeder weitere über `--term`:
+
+```bash
+favenio.py --content alpha --term beta --term 2026 ~/Dokumente
+```
+
+Jeder Begriff folgt denselben Regeln wie das Muster („enthält" / Glob / mit
+`-r` Regex, `-s`, `-e`) und läuft gegen dasselbe Ziel (Name, `--content` oder
+`--metadata`). Verknüpft wird mit UND **über die ganze Datei**: Im Inhalt
+dürfen die Begriffe auf verschiedenen Zeilen stehen, in den Metadaten in
+verschiedenen Feldern. Genau das kann ein einzelner Regex nicht (UND in
+derselben Zeile ist ein Lookahead, UND über die Datei nicht). Doppelte
+Begriffe zählen einmal; ein leerer `--term` ist ein Fehler; ohne Muster wird
+der erste `--term` zum Muster, und Positionsargumente, die alle als Pfad
+existieren, sind Startpfade. Billig zuerst: Feste Begriffe werden in einem
+Durchlauf vorgeprüft, bevor eine Zeile gezählt wird, und der genaue Lauf
+endet beim letzten gefundenen Begriff — der Inhalt wird nicht je Begriff
+neu gelesen.
+
+Belege je Begriff: `--json` ergänzt `terms` — `[{"term": "alpha", "line":
+1}, {"term": "beta", "line": 3}]` bei Inhalt, `[{"term": …, "field": …,
+"value": …}]` bei Metadaten —, während `line`, `field` und `value` weiter den
+ersten Begriff nennen. Die Textausgabe nennt alle Zeilen (`pfad:1,3`) bzw.
+alle Felder (`pfad:Keywords: Winter | Title: Alpen`). Gemischte Ziele je
+Begriff und ODER gibt es nicht.
 
 ## Dateigrößen- und Datumsfilter
 
@@ -414,6 +444,10 @@ Aus der Trefferliste heraus:
 - **Leertaste**: QuickLook-Vorschau. Der Tastaturfokus bleibt in der
   Trefferliste, mit Pfeil hoch/runter wandert die Vorschau also durch die
   Treffer
+- **Weitere Begriffe**: Unter *Weitere Filter* nimmt das Feld *Weitere
+  Begriffe* je Zeile einen zusätzlichen Begriff; alle müssen ebenfalls
+  zutreffen (`--term`, siehe oben). Die Spalte „Fundstelle" nennt dann je
+  Begriff die Zeile oder das Feld
 
 **Suchvorlagen** (Menü *Vorlagen*): *Suche als Vorlage sichern…* (⌘S)
 speichert Muster, den aktuellen Suchordner und alle Optionen — Modus,

@@ -207,8 +207,23 @@ Verbindliches CLI-Verhalten:
   fest — der ältere prüfte nur PNGs und hätte die zweite nie bemerkt. `FileProbe` beantwortet die
   teuren Fragen (Maße, Metadaten, Inhaltszeile) je Datei genau einmal. Ein
   weiteres Textkriterium (mehrere UND-verknüpfte Begriffe) wäre eine weitere
-  Klasse in dieser Liste — der Kern ist dafür geschnitten, die Oberflächen
-  bieten heute einen Begriff.
+  Klasse in dieser Liste — der Kern ist dafür geschnitten.
+- **Mehrwortsuche** (`--term`, wiederholbar, seit 0.34.0): PATTERN und jeder
+  `--term` sind Begriffe, die ALLE im selben Objekt zutreffen müssen —
+  gleiche Regeln (`build_matcher` je Begriff) und dasselbe Ziel. Vertrag,
+  entschieden 2026-09-06: UND über das GANZE Objekt, nicht dieselbe Zeile
+  bzw. derselbe Metadatenwert — das kann kein einzelner Regex, UND in
+  derselben Zeile schon (Lookahead). `Search.matchers` hält alle Begriffe;
+  `NameCriterion`, `MetadataCriterion` und `FileProbe.content_lines()` prüfen
+  alle, `match_content_all()` in EINEM Durchlauf (bei einem Begriff der
+  schlanke Weg `match_content()`), `ContentProbe` nimmt eine Liste fester
+  Begriffe und liest den Inhalt nicht je Begriff neu. Belege in `emit()`:
+  `terms` je Begriff (`line` bzw. `field`/`value`), während
+  `line`/`field`/`value` weiter den ERSTEN Begriff nennen; Text `pfad:1,3`
+  bzw. `pfad:Feld: Wert | Feld: Wert`. Doppelte Begriffe zählen einmal, ein
+  leerer ist Exit 2, ohne PATTERN wird der erste `--term` zum Muster, und
+  die Pfadbeförderung der Positionsargumente gilt auch mit `--term`.
+  Gemischte Ziele je Begriff und ODER sind ein eigener Auftrag.
 - `--min-size`/`--max-size` sind inklusive Grenzen in ganzen nichtnegativen
   Bytes, optional B/KiB/MiB/GiB/TiB. `--modified-from`/`--modified-to` und
   `--created-from`/`--created-to` sind inklusive ISO-Zeitpunkte mit
@@ -358,8 +373,11 @@ Ein URL-Wert `10.5` darf niemals still zu einer leeren Grenze werden.
 `FactFilterOption.all` beschreibt die sechs Größen-/Datumseingaben EINMAL
 für UI, CLI-Argumente, URL und Zusammenfassung. Werte bleiben rohe Texte;
 ausschließlich Python validiert Bytes und Zeitpunkte. `hasPositiveFilter`
-zählt Maße oder nichtleere Faktenfilter, niemals Ausschlüsse allein.
-`SearchFilterView` enthält die sechs Felder und das mehrzeilige Ausschlussfeld
+zählt Maße, nichtleere Faktenfilter oder weitere Suchbegriffe, niemals
+Ausschlüsse allein.
+`SearchFilterView` enthält die sechs Felder, das mehrzeilige Feld „Weitere
+Begriffe" (`termsEditor`, einer je Zeile → `SearchConfiguration.terms`,
+CLI `--term=`, URL `term`) und das mehrzeilige Ausschlussfeld
 beider Apps — zweispaltig: links die drei Von/Bis-Zeilen mit fester
 Feldbreite, rechts das Ausschlussfeld (Platzhalter aus `PlaceholderTextView`,
 ?-Knopf mit Popover aus `exclusionHelpText`). Die Haupt-App zeigt die ganze
