@@ -1,0 +1,8 @@
+{
+  "python": "3.9.6 (default, May 22 2026, 11:13:45) \n[Clang 21.0.0 (clang-2100.1.1.101)]",
+  "platform": "Darwin",
+  "source_sha256": "ddcb05f287eaa62869508e5c95afa5a6a4988affacfd02d0901517b62bd56c89",
+  "repetitions": 3,
+  "timing": "perf_counter: main entry to first emit / main return; interpreter startup excluded",
+  "rss": "ru_maxrss SELF and CHILDREN separately; bytes on macOS"
+}

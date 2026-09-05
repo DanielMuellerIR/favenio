@@ -1,0 +1,4239 @@
+[
+  {
+    "case": "tar-3000-4096-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.04231674999999999,
+          "total": 0.078969666,
+          "rss": 24100864,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.042852707999999996,
+          "total": 0.080251458,
+          "rss": 18432000,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.043164167,
+          "total": 0.08076433300000001,
+          "rss": 18595840,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.0016620420000000025,
+          "total": 0.08166104199999999,
+          "rss": 23937024,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0018916670000000031,
+          "total": 0.086043792,
+          "rss": 18595840,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0016690000000000003,
+          "total": 0.081308125,
+          "rss": 18448384,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-3000-4096-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.08195225,
+          "total": 0.08214033400000001,
+          "rss": 18513920,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "95f1e45ec8d88ada264a5472ddf2fb04a5234d7fe34fcc126eee5306bb176abd",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.08201275,
+          "total": 0.082208542,
+          "rss": 18497536,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "95f1e45ec8d88ada264a5472ddf2fb04a5234d7fe34fcc126eee5306bb176abd",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.08195475,
+          "total": 0.082147542,
+          "rss": 18497536,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "95f1e45ec8d88ada264a5472ddf2fb04a5234d7fe34fcc126eee5306bb176abd",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.08111616699999999,
+          "total": 0.08131187499999999,
+          "rss": 18284544,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "95f1e45ec8d88ada264a5472ddf2fb04a5234d7fe34fcc126eee5306bb176abd",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.08195158300000001,
+          "total": 0.082144916,
+          "rss": 18464768,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "95f1e45ec8d88ada264a5472ddf2fb04a5234d7fe34fcc126eee5306bb176abd",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.082657667,
+          "total": 0.082843667,
+          "rss": 18219008,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "95f1e45ec8d88ada264a5472ddf2fb04a5234d7fe34fcc126eee5306bb176abd",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-3000-4096-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.081083959,
+          "rss": 18595840,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.07833825,
+          "rss": 18399232,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.0789165,
+          "rss": 18415616,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.080454333,
+          "rss": 18300928,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.078388291,
+          "rss": 18219008,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.07932362500000001,
+          "rss": 18366464,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-3000-4096-name-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.042995374999999995,
+          "total": 0.051877957999999995,
+          "rss": 18399232,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "75fe1743df708bdec6060663dbe240547196dc2012a34b0dfc3b49778a87cee7",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.043038124999999997,
+          "total": 0.051482375,
+          "rss": 18464768,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "75fe1743df708bdec6060663dbe240547196dc2012a34b0dfc3b49778a87cee7",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.042756208000000004,
+          "total": 0.051111040999999996,
+          "rss": 18530304,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "75fe1743df708bdec6060663dbe240547196dc2012a34b0dfc3b49778a87cee7",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.0016137919999999993,
+          "total": 0.053381209,
+          "rss": 18481152,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "75fe1743df708bdec6060663dbe240547196dc2012a34b0dfc3b49778a87cee7",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0016310829999999985,
+          "total": 0.060691999999999996,
+          "rss": 18317312,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "75fe1743df708bdec6060663dbe240547196dc2012a34b0dfc3b49778a87cee7",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.001720625,
+          "total": 0.05277224999999999,
+          "rss": 18513920,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "75fe1743df708bdec6060663dbe240547196dc2012a34b0dfc3b49778a87cee7",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-3000-4096-name-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.051243625,
+          "total": 0.05148083299999999,
+          "rss": 18333696,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2704b592b8a0370437faa14b7171da174431e60ca6a4f3fb607e6854125523a6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.055572417,
+          "total": 0.05579308399999999,
+          "rss": 18513920,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2704b592b8a0370437faa14b7171da174431e60ca6a4f3fb607e6854125523a6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.051251874999999995,
+          "total": 0.051456207999999996,
+          "rss": 18415616,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2704b592b8a0370437faa14b7171da174431e60ca6a4f3fb607e6854125523a6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.052736542,
+          "total": 0.05295304199999999,
+          "rss": 18497536,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2704b592b8a0370437faa14b7171da174431e60ca6a4f3fb607e6854125523a6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.052769959000000005,
+          "total": 0.052980542000000005,
+          "rss": 18563072,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2704b592b8a0370437faa14b7171da174431e60ca6a4f3fb607e6854125523a6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.053708291,
+          "total": 0.053920875,
+          "rss": 18415616,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2704b592b8a0370437faa14b7171da174431e60ca6a4f3fb607e6854125523a6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-3000-4096-name-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.056638542,
+          "rss": 18350080,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.055048458,
+          "rss": 18481152,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.051477834,
+          "rss": 18202624,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.059001833000000004,
+          "rss": 18579456,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.05877916600000001,
+          "rss": 18563072,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.05326370899999999,
+          "rss": 18481152,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-3000-4096-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.056262917,
+          "total": 0.105241375,
+          "rss": 18808832,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.055789334,
+          "total": 0.100100042,
+          "rss": 18743296,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.05145029100000001,
+          "total": 0.093157,
+          "rss": 18415616,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.001903499999999999,
+          "total": 0.0969295,
+          "rss": 18710528,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0017217919999999998,
+          "total": 0.09983275000000001,
+          "rss": 18448384,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0016426659999999975,
+          "total": 0.090646375,
+          "rss": 18481152,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-3000-4096-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.093767542,
+          "total": 0.094083958,
+          "rss": 18612224,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9d6d4c44a47516364e0db01ed3cf377aed44915c9550a20f35beae5c80621357",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.092297375,
+          "total": 0.09247325,
+          "rss": 18595840,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9d6d4c44a47516364e0db01ed3cf377aed44915c9550a20f35beae5c80621357",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.091430125,
+          "total": 0.091617584,
+          "rss": 18595840,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9d6d4c44a47516364e0db01ed3cf377aed44915c9550a20f35beae5c80621357",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.08680708300000001,
+          "total": 0.087004625,
+          "rss": 18644992,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9d6d4c44a47516364e0db01ed3cf377aed44915c9550a20f35beae5c80621357",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.091363833,
+          "total": 0.09156162500000001,
+          "rss": 18644992,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9d6d4c44a47516364e0db01ed3cf377aed44915c9550a20f35beae5c80621357",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.089315,
+          "total": 0.089502167,
+          "rss": 18579456,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9d6d4c44a47516364e0db01ed3cf377aed44915c9550a20f35beae5c80621357",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"line\": 109, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-3000-4096-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.089961416,
+          "rss": 18382848,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.09130783299999999,
+          "rss": 18726912,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.091169209,
+          "rss": 18694144,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.08734600000000001,
+          "rss": 18579456,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.10030987499999999,
+          "rss": 18628608,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.086968959,
+          "rss": 18546688,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-3000-4096-name-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.051613792000000006,
+          "total": 0.059981625,
+          "rss": 18628608,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "8de60be9efea0d8686d7184d82d8086bafcc02485270c46083d0eaa2a281ae9e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.05033354200000001,
+          "total": 0.058573042000000006,
+          "rss": 18317312,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "8de60be9efea0d8686d7184d82d8086bafcc02485270c46083d0eaa2a281ae9e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.04910425,
+          "total": 0.057844000000000007,
+          "rss": 18497536,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "8de60be9efea0d8686d7184d82d8086bafcc02485270c46083d0eaa2a281ae9e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.0015437080000000013,
+          "total": 0.05991429100000001,
+          "rss": 18513920,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "8de60be9efea0d8686d7184d82d8086bafcc02485270c46083d0eaa2a281ae9e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0013728750000000026,
+          "total": 0.059368625,
+          "rss": 18300928,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "8de60be9efea0d8686d7184d82d8086bafcc02485270c46083d0eaa2a281ae9e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0015567500000000026,
+          "total": 0.061513374999999995,
+          "rss": 18317312,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "8de60be9efea0d8686d7184d82d8086bafcc02485270c46083d0eaa2a281ae9e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-3000-4096-name-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.057363042,
+          "total": 0.05756700000000001,
+          "rss": 18251776,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1ee78d36e3f72b9dfd9dccf5e410d2f71e1e5250de839aaf5371eb52fa6414dc",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.056986040999999994,
+          "total": 0.057192708,
+          "rss": 18432000,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1ee78d36e3f72b9dfd9dccf5e410d2f71e1e5250de839aaf5371eb52fa6414dc",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0567285,
+          "total": 0.056933874999999995,
+          "rss": 18464768,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1ee78d36e3f72b9dfd9dccf5e410d2f71e1e5250de839aaf5371eb52fa6414dc",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.060068334,
+          "total": 0.060267667,
+          "rss": 18464768,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1ee78d36e3f72b9dfd9dccf5e410d2f71e1e5250de839aaf5371eb52fa6414dc",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.059184042,
+          "total": 0.059378416999999996,
+          "rss": 18317312,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1ee78d36e3f72b9dfd9dccf5e410d2f71e1e5250de839aaf5371eb52fa6414dc",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.059528834,
+          "total": 0.059719625,
+          "rss": 18399232,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1ee78d36e3f72b9dfd9dccf5e410d2f71e1e5250de839aaf5371eb52fa6414dc",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-02999.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-02999.txt\"], \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-3000-4096-name-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.056580583000000004,
+          "rss": 18432000,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.057606083,
+          "rss": 18579456,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.057309834,
+          "rss": 18530304,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.059832209000000004,
+          "rss": 18284544,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.059152459000000004,
+          "rss": 18497536,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.05986466700000001,
+          "rss": 18448384,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-200-262144-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.004427583000000002,
+          "total": 0.04245304200000001,
+          "rss": 17203200,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "ea62b526c56d85e7f373dbab82d8cac0c17001fc55a4634c391c224efee3ae5e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.004792207999999999,
+          "total": 0.043226333,
+          "rss": 17186816,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "ea62b526c56d85e7f373dbab82d8cac0c17001fc55a4634c391c224efee3ae5e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0045247499999999975,
+          "total": 0.042883667,
+          "rss": 17252352,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "ea62b526c56d85e7f373dbab82d8cac0c17001fc55a4634c391c224efee3ae5e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.0016533749999999986,
+          "total": 0.043719333,
+          "rss": 17154048,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "ea62b526c56d85e7f373dbab82d8cac0c17001fc55a4634c391c224efee3ae5e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0017142909999999997,
+          "total": 0.044073957999999996,
+          "rss": 17104896,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "ea62b526c56d85e7f373dbab82d8cac0c17001fc55a4634c391c224efee3ae5e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0017602500000000014,
+          "total": 0.04435183300000001,
+          "rss": 17432576,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "ea62b526c56d85e7f373dbab82d8cac0c17001fc55a4634c391c224efee3ae5e",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-200-262144-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.048361792,
+          "total": 0.048436625,
+          "rss": 17367040,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "e586e21657379d8cbaf57b6f93c33f3294d8c08786320ee9d6a84c47b106b48a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.048728458,
+          "total": 0.048790041000000006,
+          "rss": 17301504,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "e586e21657379d8cbaf57b6f93c33f3294d8c08786320ee9d6a84c47b106b48a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.048587083,
+          "total": 0.048657624999999996,
+          "rss": 17301504,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "e586e21657379d8cbaf57b6f93c33f3294d8c08786320ee9d6a84c47b106b48a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.04885712500000001,
+          "total": 0.048924667,
+          "rss": 17317888,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "e586e21657379d8cbaf57b6f93c33f3294d8c08786320ee9d6a84c47b106b48a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.04915025,
+          "total": 0.049221375000000005,
+          "rss": 17694720,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "e586e21657379d8cbaf57b6f93c33f3294d8c08786320ee9d6a84c47b106b48a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.049360792,
+          "total": 0.04942737500000001,
+          "rss": 17678336,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "e586e21657379d8cbaf57b6f93c33f3294d8c08786320ee9d6a84c47b106b48a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-200-262144-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.039570334,
+          "rss": 17055744,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.039771708,
+          "rss": 17022976,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.039766709,
+          "rss": 17039360,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.040128625,
+          "rss": 17022976,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.039955915999999994,
+          "rss": 17006592,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.041079708000000006,
+          "rss": 17350656,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-200-262144-name-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.004627208000000001,
+          "total": 0.0052411659999999985,
+          "rss": 17072128,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "587dc381f1cfa5f1839ca19baee335aafcf512c7b4b55080bac752916a986541",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.004404708,
+          "total": 0.005021708,
+          "rss": 16728064,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "587dc381f1cfa5f1839ca19baee335aafcf512c7b4b55080bac752916a986541",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.004390583,
+          "total": 0.005021332999999999,
+          "rss": 16695296,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "587dc381f1cfa5f1839ca19baee335aafcf512c7b4b55080bac752916a986541",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.0015328330000000008,
+          "total": 0.005160292,
+          "rss": 17088512,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "587dc381f1cfa5f1839ca19baee335aafcf512c7b4b55080bac752916a986541",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0015817499999999998,
+          "total": 0.005194000000000001,
+          "rss": 16728064,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "587dc381f1cfa5f1839ca19baee335aafcf512c7b4b55080bac752916a986541",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0015428750000000026,
+          "total": 0.005060375000000002,
+          "rss": 16744448,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "587dc381f1cfa5f1839ca19baee335aafcf512c7b4b55080bac752916a986541",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-200-262144-name-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.0049672499999999994,
+          "total": 0.005007875000000002,
+          "rss": 16728064,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "57b0c1a91c87594c0a9096e41f886a6abc974fa35feb865390b89dfb2616ad05",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.004949624999999999,
+          "total": 0.004992416999999999,
+          "rss": 16809984,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "57b0c1a91c87594c0a9096e41f886a6abc974fa35feb865390b89dfb2616ad05",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.004972834000000002,
+          "total": 0.005019084,
+          "rss": 16793600,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "57b0c1a91c87594c0a9096e41f886a6abc974fa35feb865390b89dfb2616ad05",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.005076292,
+          "total": 0.005142707999999999,
+          "rss": 17039360,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "57b0c1a91c87594c0a9096e41f886a6abc974fa35feb865390b89dfb2616ad05",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.005256791,
+          "total": 0.0053127500000000015,
+          "rss": 16744448,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "57b0c1a91c87594c0a9096e41f886a6abc974fa35feb865390b89dfb2616ad05",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.006061500000000004,
+          "total": 0.006130708999999998,
+          "rss": 16744448,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "57b0c1a91c87594c0a9096e41f886a6abc974fa35feb865390b89dfb2616ad05",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-200-262144-name-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.005570459,
+          "rss": 16777216,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.005490999999999999,
+          "rss": 16728064,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.005104916999999997,
+          "rss": 16809984,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.005229000000000001,
+          "rss": 16777216,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.005288749999999998,
+          "rss": 16744448,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.005194874999999998,
+          "rss": 16793600,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-200-262144-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.018902625000000003,
+          "total": 0.063989167,
+          "rss": 17448960,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "654eccd3c7e6e9690885ef92cc8b518906af15ac079b4ad0378a1a632aee3db6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.018908791999999997,
+          "total": 0.063882333,
+          "rss": 17678336,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "654eccd3c7e6e9690885ef92cc8b518906af15ac079b4ad0378a1a632aee3db6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.018756540999999998,
+          "total": 0.062416625,
+          "rss": 17465344,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "654eccd3c7e6e9690885ef92cc8b518906af15ac079b4ad0378a1a632aee3db6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.0017222920000000003,
+          "total": 0.054030625000000006,
+          "rss": 17793024,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "654eccd3c7e6e9690885ef92cc8b518906af15ac079b4ad0378a1a632aee3db6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0017309580000000012,
+          "total": 0.051980208,
+          "rss": 17317888,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "654eccd3c7e6e9690885ef92cc8b518906af15ac079b4ad0378a1a632aee3db6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0016502920000000011,
+          "total": 0.052386375,
+          "rss": 17285120,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "654eccd3c7e6e9690885ef92cc8b518906af15ac079b4ad0378a1a632aee3db6",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-200-262144-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.083168375,
+          "total": 0.083240041,
+          "rss": 17940480,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2a2c3cacea54b468a808e3b591820cdbbfe48fbe7ebbac2a0744117e530cc57f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.084210083,
+          "total": 0.08428895800000001,
+          "rss": 17874944,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2a2c3cacea54b468a808e3b591820cdbbfe48fbe7ebbac2a0744117e530cc57f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.08291537500000001,
+          "total": 0.08298808299999999,
+          "rss": 17547264,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2a2c3cacea54b468a808e3b591820cdbbfe48fbe7ebbac2a0744117e530cc57f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.07083225,
+          "total": 0.070919167,
+          "rss": 17858560,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2a2c3cacea54b468a808e3b591820cdbbfe48fbe7ebbac2a0744117e530cc57f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.071215959,
+          "total": 0.071329834,
+          "rss": 17907712,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2a2c3cacea54b468a808e3b591820cdbbfe48fbe7ebbac2a0744117e530cc57f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.06973479099999999,
+          "total": 0.069820041,
+          "rss": 17580032,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "2a2c3cacea54b468a808e3b591820cdbbfe48fbe7ebbac2a0744117e530cc57f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"line\": 6900, \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-200-262144-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.06012287499999999,
+          "rss": 17235968,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.061659333999999996,
+          "rss": 17825792,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.061506792000000005,
+          "rss": 17661952,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.047344333,
+          "rss": 17235968,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.047922207999999994,
+          "rss": 17252352,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.047282000000000005,
+          "rss": 17186816,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-200-262144-name-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.018705374999999996,
+          "total": 0.019339791000000002,
+          "rss": 16924672,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9bb62bf8e9e5c6a6479f8f7227fa9d7fb7b3d57285c6987650fd636f27e9590c",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.018462792000000002,
+          "total": 0.019086917,
+          "rss": 16875520,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9bb62bf8e9e5c6a6479f8f7227fa9d7fb7b3d57285c6987650fd636f27e9590c",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.018392500000000003,
+          "total": 0.019038209000000004,
+          "rss": 16842752,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9bb62bf8e9e5c6a6479f8f7227fa9d7fb7b3d57285c6987650fd636f27e9590c",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.001404291000000002,
+          "total": 0.019069833,
+          "rss": 16875520,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9bb62bf8e9e5c6a6479f8f7227fa9d7fb7b3d57285c6987650fd636f27e9590c",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0015109999999999985,
+          "total": 0.019351208,
+          "rss": 16842752,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9bb62bf8e9e5c6a6479f8f7227fa9d7fb7b3d57285c6987650fd636f27e9590c",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0014864579999999995,
+          "total": 0.019133290999999997,
+          "rss": 17186816,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "9bb62bf8e9e5c6a6479f8f7227fa9d7fb7b3d57285c6987650fd636f27e9590c",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-200-262144-name-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.018913917,
+          "total": 0.018973833,
+          "rss": 16908288,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "46a99bf7983521fc9217cfca26a25068312dd931e5abd792a9e031920c10e673",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.019008042000000003,
+          "total": 0.019072459,
+          "rss": 16908288,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "46a99bf7983521fc9217cfca26a25068312dd931e5abd792a9e031920c10e673",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.023439541,
+          "total": 0.023514583,
+          "rss": 17350656,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "46a99bf7983521fc9217cfca26a25068312dd931e5abd792a9e031920c10e673",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.019449084000000002,
+          "total": 0.019613459000000003,
+          "rss": 16842752,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "46a99bf7983521fc9217cfca26a25068312dd931e5abd792a9e031920c10e673",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.019745666,
+          "total": 0.019914125,
+          "rss": 16809984,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "46a99bf7983521fc9217cfca26a25068312dd931e5abd792a9e031920c10e673",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.020519416999999998,
+          "total": 0.020684124999999998,
+          "rss": 17137664,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "46a99bf7983521fc9217cfca26a25068312dd931e5abd792a9e031920c10e673",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-200-262144.tar.gz!/file-00199.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-200-262144.tar.gz\", \"archiveMembers\": [\"file-00199.txt\"], \"size\": 262144, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-200-262144-name-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.019865334000000002,
+          "rss": 17203200,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.019446208,
+          "rss": 16973824,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.024436,
+          "rss": 16924672,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.023933707999999998,
+          "rss": 17022976,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.021262958,
+          "rss": 17072128,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.023791375000000003,
+          "rss": 17104896,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-4096-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.012929916999999999,
+          "total": 0.013073000000000001,
+          "rss": 16613376,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "2090fb9142534b8f9487eacbd06a05e22779393eb8c95fabe49db1e4c6f4b820",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.012549208999999999,
+          "total": 0.012648374999999996,
+          "rss": 16662528,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "2090fb9142534b8f9487eacbd06a05e22779393eb8c95fabe49db1e4c6f4b820",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.012603708000000002,
+          "total": 0.012713458,
+          "rss": 16596992,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "2090fb9142534b8f9487eacbd06a05e22779393eb8c95fabe49db1e4c6f4b820",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": 0.008963916999999995,
+          "total": 0.009118042,
+          "rss": 22937600,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "2090fb9142534b8f9487eacbd06a05e22779393eb8c95fabe49db1e4c6f4b820",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.008901167000000001,
+          "total": 0.008989792000000003,
+          "rss": 16613376,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "2090fb9142534b8f9487eacbd06a05e22779393eb8c95fabe49db1e4c6f4b820",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.009204666999999996,
+          "total": 0.009321541999999999,
+          "rss": 16678912,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "2090fb9142534b8f9487eacbd06a05e22779393eb8c95fabe49db1e4c6f4b820",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-4096-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.011586750000000003,
+          "total": 0.011685749999999998,
+          "rss": 16629760,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "23a39b7bf61deb1928c87f97f441ec04288aeb982314adeeec73a76df4f253e2",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 109}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.012823665999999997,
+          "total": 0.012972333000000003,
+          "rss": 16678912,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "23a39b7bf61deb1928c87f97f441ec04288aeb982314adeeec73a76df4f253e2",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 109}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.016382417000000003,
+          "total": 0.016531667,
+          "rss": 16711680,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "23a39b7bf61deb1928c87f97f441ec04288aeb982314adeeec73a76df4f253e2",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 109}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": 0.011230292000000003,
+          "total": 0.011359709000000003,
+          "rss": 16695296,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "23a39b7bf61deb1928c87f97f441ec04288aeb982314adeeec73a76df4f253e2",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 109}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.009967374999999997,
+          "total": 0.010110375000000001,
+          "rss": 16662528,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "23a39b7bf61deb1928c87f97f441ec04288aeb982314adeeec73a76df4f253e2",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 109}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.010393957999999995,
+          "total": 0.01051875,
+          "rss": 16809984,
+          "childrss": 3538944,
+          "code": 0,
+          "hits_sha256": "23a39b7bf61deb1928c87f97f441ec04288aeb982314adeeec73a76df4f253e2",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-4096-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-4096-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 109}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-4096-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.010970333000000002,
+          "rss": 16728064,
+          "childrss": 3555328,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.010453125000000004,
+          "rss": 16515072,
+          "childrss": 3538944,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.008821082999999997,
+          "rss": 16678912,
+          "childrss": 3538944,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": null,
+          "total": 0.009016,
+          "rss": 16629760,
+          "childrss": 3538944,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.009162791000000003,
+          "rss": 16596992,
+          "childrss": 3538944,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.008993875000000002,
+          "rss": 16613376,
+          "childrss": 3538944,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-1048576-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.012104041999999999,
+          "total": 0.012217166999999998,
+          "rss": 17137664,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.013645083000000002,
+          "total": 0.013789333,
+          "rss": 17055744,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.012708624999999998,
+          "total": 0.012836417,
+          "rss": 16695296,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": 0.009901625,
+          "total": 0.010033667,
+          "rss": 16809984,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.008993458,
+          "total": 0.009102500000000003,
+          "rss": 16793600,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.009518749999999996,
+          "total": 0.009665207999999998,
+          "rss": 16793600,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-1048576-early-budget",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.013493875000000002,
+          "total": 0.013626958000000002,
+          "rss": 16793600,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.012644083999999996,
+          "total": 0.012772042,
+          "rss": 17121280,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.012785583,
+          "total": 0.012901667000000002,
+          "rss": 16859136,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": 0.009931208000000004,
+          "total": 0.010065250000000005,
+          "rss": 16826368,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.008642166999999996,
+          "total": 0.008792749999999998,
+          "rss": 16728064,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.009538750000000002,
+          "total": 0.009663666999999997,
+          "rss": 16793600,
+          "childrss": 3784704,
+          "code": 0,
+          "hits_sha256": "2dd304145de7324b451b055754aa864cc2ab01d305261ebe490702d2db99570f",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-1048576-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.017312416,
+          "total": 0.017744624999999997,
+          "rss": 17448960,
+          "childrss": 4636672,
+          "code": 0,
+          "hits_sha256": "f58a076afc04fe967d7f44c1c5aa9f27924accaf35fd9e6e87f9b023d35660c5",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 27595}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.015920125,
+          "total": 0.016044416,
+          "rss": 17563648,
+          "childrss": 4620288,
+          "code": 0,
+          "hits_sha256": "f58a076afc04fe967d7f44c1c5aa9f27924accaf35fd9e6e87f9b023d35660c5",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 27595}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0159175,
+          "total": 0.016028,
+          "rss": 17235968,
+          "childrss": 4620288,
+          "code": 0,
+          "hits_sha256": "f58a076afc04fe967d7f44c1c5aa9f27924accaf35fd9e6e87f9b023d35660c5",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 27595}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": 0.011801583999999997,
+          "total": 0.011915792000000001,
+          "rss": 17088512,
+          "childrss": 4620288,
+          "code": 0,
+          "hits_sha256": "f58a076afc04fe967d7f44c1c5aa9f27924accaf35fd9e6e87f9b023d35660c5",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 27595}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.012520708000000002,
+          "total": 0.012656583000000002,
+          "rss": 17203200,
+          "childrss": 4620288,
+          "code": 0,
+          "hits_sha256": "f58a076afc04fe967d7f44c1c5aa9f27924accaf35fd9e6e87f9b023d35660c5",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 27595}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.011958166000000003,
+          "total": 0.012069582999999998,
+          "rss": 17498112,
+          "childrss": 4620288,
+          "code": 0,
+          "hits_sha256": "f58a076afc04fe967d7f44c1c5aa9f27924accaf35fd9e6e87f9b023d35660c5",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-1048576-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-1048576-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 27595}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-1048576-late-budget",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.009336583000000002,
+          "rss": 16678912,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "7e9a5157a0b9778f9195ba8ec1a81f950e92b409c7d989cebe4c8587e939cfa2",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-late.7z!/data.txt: $BENCH/single-1048576-late.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.009647666000000003,
+          "rss": 16728064,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "7e9a5157a0b9778f9195ba8ec1a81f950e92b409c7d989cebe4c8587e939cfa2",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-late.7z!/data.txt: $BENCH/single-1048576-late.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.008971583999999998,
+          "rss": 16613376,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "7e9a5157a0b9778f9195ba8ec1a81f950e92b409c7d989cebe4c8587e939cfa2",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-late.7z!/data.txt: $BENCH/single-1048576-late.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ],
+      "noprobe": [
+        {
+          "first": null,
+          "total": 0.009771542000000001,
+          "rss": 17121280,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "7e9a5157a0b9778f9195ba8ec1a81f950e92b409c7d989cebe4c8587e939cfa2",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-late.7z!/data.txt: $BENCH/single-1048576-late.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.009708624999999999,
+          "rss": 16809984,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "7e9a5157a0b9778f9195ba8ec1a81f950e92b409c7d989cebe4c8587e939cfa2",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-late.7z!/data.txt: $BENCH/single-1048576-late.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.009693334000000001,
+          "rss": 16793600,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "7e9a5157a0b9778f9195ba8ec1a81f950e92b409c7d989cebe4c8587e939cfa2",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-late.7z!/data.txt: $BENCH/single-1048576-late.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-1048576-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.009209165999999998,
+          "rss": 17104896,
+          "childrss": 4620288,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.009885209000000002,
+          "rss": 16777216,
+          "childrss": 4620288,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.010093957999999997,
+          "rss": 16728064,
+          "childrss": 4620288,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": null,
+          "total": 0.011832499999999996,
+          "rss": 17481728,
+          "childrss": 4620288,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.012148916999999999,
+          "rss": 17055744,
+          "childrss": 4620288,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.011948208000000002,
+          "rss": 17219584,
+          "childrss": 4620288,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-1048576-missing-budget",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.009420416000000001,
+          "rss": 16711680,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "9e1748e75275fc5c3b3c916e93361b3c86fec0fbbff9a4aa773709c2e66cc3d1",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-missing.7z!/data.txt: $BENCH/single-1048576-missing.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.009419917,
+          "rss": 17088512,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "9e1748e75275fc5c3b3c916e93361b3c86fec0fbbff9a4aa773709c2e66cc3d1",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-missing.7z!/data.txt: $BENCH/single-1048576-missing.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.009339249999999997,
+          "rss": 16613376,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "9e1748e75275fc5c3b3c916e93361b3c86fec0fbbff9a4aa773709c2e66cc3d1",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-missing.7z!/data.txt: $BENCH/single-1048576-missing.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ],
+      "noprobe": [
+        {
+          "first": null,
+          "total": 0.009175875,
+          "rss": 16809984,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "9e1748e75275fc5c3b3c916e93361b3c86fec0fbbff9a4aa773709c2e66cc3d1",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-missing.7z!/data.txt: $BENCH/single-1048576-missing.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.009787208000000002,
+          "rss": 16728064,
+          "childrss": 3850240,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "9e1748e75275fc5c3b3c916e93361b3c86fec0fbbff9a4aa773709c2e66cc3d1",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-missing.7z!/data.txt: $BENCH/single-1048576-missing.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.009830875000000003,
+          "rss": 16842752,
+          "childrss": 3768320,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "9e1748e75275fc5c3b3c916e93361b3c86fec0fbbff9a4aa773709c2e66cc3d1",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/single-1048576-missing.7z!/data.txt: $BENCH/single-1048576-missing.7z!/data.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-16777216-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.012196291999999997,
+          "total": 0.012331458999999996,
+          "rss": 16859136,
+          "childrss": 3817472,
+          "code": 0,
+          "hits_sha256": "7eb363c5a64c9c2d2722628c05a55f0fd5b19965f28b7af8b6aece4bf06e2461",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.01269325,
+          "total": 0.012822875000000001,
+          "rss": 16809984,
+          "childrss": 3817472,
+          "code": 0,
+          "hits_sha256": "7eb363c5a64c9c2d2722628c05a55f0fd5b19965f28b7af8b6aece4bf06e2461",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.012842042000000001,
+          "total": 0.012947375,
+          "rss": 16728064,
+          "childrss": 3817472,
+          "code": 0,
+          "hits_sha256": "7eb363c5a64c9c2d2722628c05a55f0fd5b19965f28b7af8b6aece4bf06e2461",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": 0.009216708000000004,
+          "total": 0.009328083000000001,
+          "rss": 16777216,
+          "childrss": 3817472,
+          "code": 0,
+          "hits_sha256": "7eb363c5a64c9c2d2722628c05a55f0fd5b19965f28b7af8b6aece4bf06e2461",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.008732791,
+          "total": 0.008848958,
+          "rss": 17022976,
+          "childrss": 3817472,
+          "code": 0,
+          "hits_sha256": "7eb363c5a64c9c2d2722628c05a55f0fd5b19965f28b7af8b6aece4bf06e2461",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.008825041999999998,
+          "total": 0.008957832999999998,
+          "rss": 17104896,
+          "childrss": 3817472,
+          "code": 0,
+          "hits_sha256": "7eb363c5a64c9c2d2722628c05a55f0fd5b19965f28b7af8b6aece4bf06e2461",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-early.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-early.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 1}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-16777216-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.06828883300000001,
+          "total": 0.06844425,
+          "rss": 17235968,
+          "childrss": 11976704,
+          "code": 0,
+          "hits_sha256": "1b3f4f67778c7a0f041a14aac8158c162b80b3b903730dac5ca05a701611bf4a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 441507}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.0692995,
+          "total": 0.069428125,
+          "rss": 17268736,
+          "childrss": 11976704,
+          "code": 0,
+          "hits_sha256": "1b3f4f67778c7a0f041a14aac8158c162b80b3b903730dac5ca05a701611bf4a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 441507}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.07043845900000001,
+          "total": 0.07058504199999999,
+          "rss": 17481728,
+          "childrss": 11976704,
+          "code": 0,
+          "hits_sha256": "1b3f4f67778c7a0f041a14aac8158c162b80b3b903730dac5ca05a701611bf4a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 441507}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": 0.055116583999999996,
+          "total": 0.055288875,
+          "rss": 17203200,
+          "childrss": 11976704,
+          "code": 0,
+          "hits_sha256": "1b3f4f67778c7a0f041a14aac8158c162b80b3b903730dac5ca05a701611bf4a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 441507}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.055638458,
+          "total": 0.055772292,
+          "rss": 17154048,
+          "childrss": 11976704,
+          "code": 0,
+          "hits_sha256": "1b3f4f67778c7a0f041a14aac8158c162b80b3b903730dac5ca05a701611bf4a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 441507}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": 0.05892016600000001,
+          "total": 0.05912616600000001,
+          "rss": 17481728,
+          "childrss": 11976704,
+          "code": 0,
+          "hits_sha256": "1b3f4f67778c7a0f041a14aac8158c162b80b3b903730dac5ca05a701611bf4a",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/single-16777216-late.7z!/data.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/single-16777216-late.7z\", \"archiveMembers\": [\"data.txt\"], \"line\": 441507}"
+          ],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "single-16777216-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.020102540999999998,
+          "rss": 17088512,
+          "childrss": 11976704,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.020905708999999998,
+          "rss": 16891904,
+          "childrss": 11976704,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.020382792000000004,
+          "rss": 16760832,
+          "childrss": 11976704,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ],
+      "noprobe": [
+        {
+          "first": null,
+          "total": 0.054647458999999995,
+          "rss": 17203200,
+          "childrss": 11976704,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.055658542000000005,
+          "rss": 17154048,
+          "childrss": 11976704,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        },
+        {
+          "first": null,
+          "total": 0.054653292,
+          "rss": 17121280,
+          "childrss": 11976704,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "warnings_count": 0,
+          "warnings_sample": []
+        }
+      ]
+    }
+  },
+  {
+    "case": "corrupt-tar",
+    "equivalent": false,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.001576499999999998,
+          "rss": 16613376,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "118723d6b7735d708bdb19786a6228c871cfdc76e77bff220e2f523b3a9d6651",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/broken.tar: besch\u00e4digtes Archiv: unexpected end of data"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.0015070829999999993,
+          "rss": 16580608,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "118723d6b7735d708bdb19786a6228c871cfdc76e77bff220e2f523b3a9d6651",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/broken.tar: besch\u00e4digtes Archiv: unexpected end of data"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.0015300830000000015,
+          "rss": 16596992,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "118723d6b7735d708bdb19786a6228c871cfdc76e77bff220e2f523b3a9d6651",
+          "warnings_count": 1,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/broken.tar: besch\u00e4digtes Archiv: unexpected end of data"
+          ]
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.0017122079999999998,
+          "total": 0.0018040830000000015,
+          "rss": 16908288,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "347b34e16d1153a94d16a3bd554d54f2f0f1116b18d0c2f2df97edea07465473",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/broken.tar!/first.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/broken.tar\", \"archiveMembers\": [\"first.txt\"], \"line\": 1, \"size\": 7, \"modified\": 0}"
+          ],
+          "warnings_sha256": "ae20a3820f30018a9c567df0623d47b5d82bb0eb2be39d086a04fc4d56ce6bf6",
+          "warnings_count": 2,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/broken.tar!/late.txt: unexpected end of data",
+            "favenio: warnung: $BENCH/broken.tar: besch\u00e4digtes Archiv: unexpected end of data"
+          ]
+        },
+        {
+          "first": 0.001641084000000001,
+          "total": 0.001740292000000001,
+          "rss": 16629760,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "347b34e16d1153a94d16a3bd554d54f2f0f1116b18d0c2f2df97edea07465473",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/broken.tar!/first.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/broken.tar\", \"archiveMembers\": [\"first.txt\"], \"line\": 1, \"size\": 7, \"modified\": 0}"
+          ],
+          "warnings_sha256": "ae20a3820f30018a9c567df0623d47b5d82bb0eb2be39d086a04fc4d56ce6bf6",
+          "warnings_count": 2,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/broken.tar!/late.txt: unexpected end of data",
+            "favenio: warnung: $BENCH/broken.tar: besch\u00e4digtes Archiv: unexpected end of data"
+          ]
+        },
+        {
+          "first": 0.0016315410000000002,
+          "total": 0.001725125000000001,
+          "rss": 16711680,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "347b34e16d1153a94d16a3bd554d54f2f0f1116b18d0c2f2df97edea07465473",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/broken.tar!/first.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/broken.tar\", \"archiveMembers\": [\"first.txt\"], \"line\": 1, \"size\": 7, \"modified\": 0}"
+          ],
+          "warnings_sha256": "ae20a3820f30018a9c567df0623d47b5d82bb0eb2be39d086a04fc4d56ce6bf6",
+          "warnings_count": 2,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/broken.tar!/late.txt: unexpected end of data",
+            "favenio: warnung: $BENCH/broken.tar: besch\u00e4digtes Archiv: unexpected end of data"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-budget-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.042974291000000005,
+          "total": 0.0724205,
+          "rss": 19595264,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": 0.043729832999999996,
+          "total": 0.07316845799999999,
+          "rss": 19529728,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": 0.0426965,
+          "total": 0.072589291,
+          "rss": 19431424,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.0016210419999999996,
+          "total": 0.07167045899999999,
+          "rss": 19513344,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": 0.001696167000000002,
+          "total": 0.071917042,
+          "rss": 19251200,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": 0.0018009579999999983,
+          "total": 0.072749,
+          "rss": 19382272,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "1b65f48ca1e748670c484c844ae7890f2122f0cbd973187537f829e3782bf9b1",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-budget-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.072430125,
+          "rss": 19447808,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.072235375,
+          "rss": 19578880,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.072570875,
+          "rss": 19513344,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.072692125,
+          "rss": 19398656,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.07305191700000001,
+          "rss": 19480576,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.071504333,
+          "rss": 19218432,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar-budget-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.07192475000000001,
+          "rss": 19415040,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.071443959,
+          "rss": 19267584,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.07289395800000001,
+          "rss": 19398656,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.07219695799999999,
+          "rss": 19398656,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.071817042,
+          "rss": 19415040,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.07151750000000001,
+          "rss": 19415040,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "85cd4769acd00c82cf39162c052a828296579e1ecbea3ea4dec82f3708ef3959",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00016.txt: $BENCH/many-3000-4096.tar!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar!/file-00017.txt: $BENCH/many-3000-4096.tar!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-budget-early",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": 0.049698458,
+          "total": 0.083826917,
+          "rss": 19578880,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": 0.049669167,
+          "total": 0.08275954199999999,
+          "rss": 19513344,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": 0.049973917,
+          "total": 0.084108084,
+          "rss": 19562496,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ],
+      "tariter": [
+        {
+          "first": 0.001558915999999997,
+          "total": 0.080344208,
+          "rss": 19611648,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": 0.0016181250000000015,
+          "total": 0.080122,
+          "rss": 19562496,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": 0.001558707999999999,
+          "total": 0.079870166,
+          "rss": 19496960,
+          "childrss": 0,
+          "code": 0,
+          "hits_sha256": "27930da35f2ef80933dc1ab5b62a13eba207cc99c6a8153f9720a05c2cb02ae3",
+          "hits_count": 1,
+          "hits_sample": [
+            "{\"path\": \"$BENCH/many-3000-4096.tar.gz!/file-00000.txt\", \"type\": \"member\", \"isDirectory\": false, \"filesystemPath\": \"$BENCH/many-3000-4096.tar.gz\", \"archiveMembers\": [\"file-00000.txt\"], \"line\": 1, \"size\": 4096, \"modified\": 1234567890}"
+          ],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-budget-late",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.083609792,
+          "rss": 19660800,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.083601167,
+          "rss": 19611648,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.086154417,
+          "rss": 19562496,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.078137916,
+          "rss": 19595264,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.079813625,
+          "rss": 19513344,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.077790417,
+          "rss": 19349504,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "case": "tar.gz-budget-missing",
+    "equivalent": true,
+    "runs": {
+      "base": [
+        {
+          "first": null,
+          "total": 0.08340075,
+          "rss": 19365888,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.082301958,
+          "rss": 19660800,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.082556625,
+          "rss": 19546112,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ],
+      "tariter": [
+        {
+          "first": null,
+          "total": 0.077948959,
+          "rss": 19611648,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.07900499999999999,
+          "rss": 19333120,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        },
+        {
+          "first": null,
+          "total": 0.080901,
+          "rss": 19677184,
+          "childrss": 0,
+          "code": 1,
+          "hits_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "hits_count": 0,
+          "hits_sample": [],
+          "warnings_sha256": "fa3fc07967098bc659d854a5fd4e990795985171eaf0e41671db758aa0293a18",
+          "warnings_count": 2984,
+          "warnings_sample": [
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: $BENCH/many-3000-4096.tar.gz!/file-00016.txt: Gesamtbudget 65536 \u00fcberschritten",
+            "favenio: warnung: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: $BENCH/many-3000-4096.tar.gz!/file-00017.txt: Gesamtbudget 65536 \u00fcberschritten"
+          ]
+        }
+      ]
+    }
+  }
+]
