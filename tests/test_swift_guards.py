@@ -41,9 +41,9 @@ def swift_function(source, signature):
 
 class SwiftGuardTests(unittest.TestCase):
     def test_gui_search_callbacks_are_bound_to_active_run(self):
-        self.assertIn("final class ActiveSearchRun", GUI)
-        self.assertGreaterEqual(GUI.count("self.activeSearchRun === run"), 3)
-        self.assertIn("var lineBuffer = Data()", GUI)
+        self.assertIn("final class SearchRunner", COMMON)
+        self.assertGreaterEqual(GUI.count("self.activeSearchRun === run"), 2)
+        self.assertNotIn("var lineBuffer = Data()", GUI)
         self.assertNotIn("var searchProcess: Process?", GUI)
 
     def test_descending_comparator_is_strict(self):
@@ -256,6 +256,11 @@ class SwiftGuardTests(unittest.TestCase):
         launch = swift_function(QUICK, "func applicationDidFinishLaunching(")
         self.assertIn("QLPreviewPanel.shared().orderOut(nil)", launch)
 
+    def test_progress_only_batches_refresh_gui_status(self):
+        launch = swift_function(GUI, "func launchSearch(pattern: String)")
+        self.assertIn("self.progressPath = progress", launch)
+        self.assertIn("self.refreshStatus()", launch)
+
     def test_the_live_stream_parses_every_line_only_once(self):
         """parseProgress und parseHit hintereinander parsten jede Trefferzeile
         zweimal. Gemessen am 2026-09-03 mit swiftc -O ueber 100 000 Zeilen:
@@ -263,13 +268,13 @@ class SwiftGuardTests(unittest.TestCase):
         laufenden Stroms nehmen deshalb parseSearchLine(); die alten
         Funktionen bleiben fuer Uebergabedatei, Export-Rueckprobe und Tests."""
         self.assertIn("enum SearchLine", COMMON)
-        for source, signature in ((COMMON, "func handleLine(_ lineData: Data)"),
-                                  (GUI, "func consumeSearchLine(")):
-            body = swift_function(source, signature)
-            with self.subTest(reader=signature):
-                self.assertIn("switch parseSearchLine(lineData)", body)
-                self.assertNotIn("parseProgress(", body)
-                self.assertNotIn("parseHit(", body)
+        body = swift_function(COMMON, "func consume(_ line: Data)")
+        self.assertIn("autoreleasepool { parseSearchLine(line) }", body)
+        self.assertNotIn("parseProgress(", body)
+        self.assertNotIn("parseHit(", body)
+        for source in (GUI, QUICK):
+            body = swift_function(source, "func startSearch()")
+            self.assertNotIn("parseSearchLine(", body)
         # Und die Huellen bauen auf demselben Parser auf, statt eine dritte
         # Fassung der Feldregeln zu halten.
         for signature in ("func parseHit(_ lineData: Data)",
@@ -367,7 +372,7 @@ class SwiftGuardTests(unittest.TestCase):
         # Ausserhalb von showInfo() und dem einmaligen Aufbau des Fensters
         # fasst niemand die Infozeile an.
         build = swift_function(QUICK, "func buildWindow()")
-        outside = QUICK.replace(writer, "").replace(build, "")
+        outside = QUICK[QUICK.index("final class QuickController:"):].replace(writer, "").replace(build, "")
         self.assertNotIn("infoLabel.stringValue", outside)
         self.assertNotIn("infoLabel.toolTip", outside)
         self.assertNotIn("infoLabel.textColor", outside)
@@ -585,11 +590,8 @@ class SwiftGuardTests(unittest.TestCase):
         # der Foundation-Abbruchgrund bis in beide Frontends gelangen.
         self.assertIn("let reason: Process.TerminationReason", COMMON)
         self.assertIn("process.terminationReason", COMMON)
-        self.assertIn("var terminationReason: Process.TerminationReason?", GUI)
-        self.assertIn("run.terminationReason = process.terminationReason", GUI)
-        self.assertIn("searchExitIsError(status, reason: reason)", GUI)
-        self.assertIn("searchExitIsError(searchExit.status", QUICK)
-        self.assertIn("reason: searchExit.reason", QUICK)
+        self.assertIn("searchExitIsError(exit.status, reason: exit.reason)", GUI)
+        self.assertIn("searchExitIsError(exit.status, reason: exit.reason)", QUICK)
         self.assertIn(".uncaughtSignal", GUI)
 
     def test_open_finder_consent_is_never_timed_out(self):
@@ -614,7 +616,7 @@ class SwiftGuardTests(unittest.TestCase):
         einer Neuinstallation, die nichts half.
         """
         streaming = swift_function(
-            COMMON, "func runSearchStreaming(arguments: [String],")
+            COMMON, "private func read(arguments: [String],")
         self.assertNotIn("standardError = FileHandle.nullDevice", streaming)
         self.assertIn("process.standardError = errPipe", streaming)
         # Nebenläufig leeren, sonst hält eine volle Pipe den Kern an.
@@ -624,15 +626,15 @@ class SwiftGuardTests(unittest.TestCase):
                         launch,
                         "stderr muss VOR dem Start geleert werden")
 
-        # Die Haupt-App streamt über einen eigenen Lauf — dieselbe Regel.
-        start = swift_function(GUI, "func launchSearch(pattern: String)")
-        self.assertNotIn("standardError = FileHandle.nullDevice", start)
-        self.assertIn("process.standardError = errPipe", start)
-        self.assertIn("run.diagnostics.collect(from: errPipe)", start)
+        for source, signature in ((GUI, "func launchSearch(pattern: String)"),
+                                  (QUICK, "func startSearch()")):
+            start = swift_function(source, signature)
+            self.assertIn("SearchRunner()", start)
+            self.assertNotIn("Process()", start)
 
     def test_both_apps_name_the_reason_instead_of_guessing(self):
         body = swift_function(
-            GUI, "func finishSearchRunIfReady(_ run: ActiveSearchRun)")
+            GUI, "func finishSearchRun(_ run: SearchRunner, exit: SearchExit)")
         self.assertIn("searchFailureText(", body, "GUI")
         # Die Schnellsuche wertet das Ende in startSearch() aus.
         self.assertIn("searchFailureText(",

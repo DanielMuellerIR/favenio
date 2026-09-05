@@ -723,26 +723,6 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
 
 // MARK: - Haupt-Controller
 
-final class ActiveSearchRun {
-    let process: Process
-    let pipe: Pipe
-    /// stderr des Kerns — dort steht der Grund eines Fehlschlags und jede
-    /// Warnung über ein übersprungenes Objekt. Bis 0.27.1 hing die Pipe
-    /// auf nullDevice, und die Fußzeile konnte nur raten.
-    let errPipe: Pipe
-    let diagnostics = SearchDiagnostics()
-    var lineBuffer = Data()
-    var reachedEOF = false
-    var terminationStatus: Int32?
-    var terminationReason: Process.TerminationReason?
-
-    init(process: Process, pipe: Pipe, errPipe: Pipe) {
-        self.process = process
-        self.pipe = pipe
-        self.errPipe = errPipe
-    }
-}
-
 /// Erbt von HitListController (common/FavenioCore.swift): Trefferliste,
 /// Vorschau und die gemeinsamen Kontextmenü-Aktionen stehen dort EINMAL
 /// für beide Apps.
@@ -814,7 +794,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     var finderScopeProblem: String?
     var finderScopeDenied = false
     var searchRoot = FileManager.default.homeDirectoryForCurrentUser
-    var activeSearchRun: ActiveSearchRun?
+    var activeSearchRun: SearchRunner?
     var flushTimer: Timer?
     var pendingURL: URL?            // favenio://-URL, die vor dem Fenster kam
     /// Zustand der Suche für die Fußzeile. Gespeichert wird der ZUSTAND, nie
@@ -1750,59 +1730,21 @@ final class MainController: HitListController, NSApplicationDelegate,
             return
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonPath)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        let errPipe = Pipe()
-        process.standardError = errPipe
-        let run = ActiveSearchRun(process: process, pipe: pipe,
-                                  errPipe: errPipe)
-        // Muss nebenläufig geleert werden: Eine volle stderr-Pipe hielte
-        // den Kern an, während die App auf seine Treffer wartet.
-        run.diagnostics.collect(from: errPipe)
+        let run = SearchRunner()
         activeSearchRun = run
-
-        // Treffer kommen zeilenweise über die Pipe herein (Hintergrund-
-        // Thread) und werden auf dem Main-Thread eingesammelt.
-        pipe.fileHandleForReading.readabilityHandler = { [weak self, weak run]
-                                                          handle in
-            guard let run else { return }
-            let data = handle.availableData
-            if data.isEmpty {                    // EOF
-                handle.readabilityHandler = nil
-                DispatchQueue.main.async {
-                    guard let self, self.activeSearchRun === run else { return }
-                    run.reachedEOF = true
-                    self.finishSearchRunIfReady(run)
-                }
-                return
+        run.start(arguments: arguments, onBatch: { [weak self, weak run] hits, progress in
+            guard let self, let run, self.activeSearchRun === run else { return }
+            if let progress {
+                self.progressPath = progress
+                self.refreshStatus()
             }
-            DispatchQueue.main.async {
-                guard let self, self.activeSearchRun === run else { return }
-                self.consume(data, for: run)
+            for hit in hits where !self.trashedPaths.contains(hit.filesystemPath) {
+                if self.seenPaths.insert(hit.path).inserted { self.pending.append(hit) }
             }
-        }
-        process.terminationHandler = { [weak self, weak run] process in
-            guard let run else { return }
-            DispatchQueue.main.async {
-                guard let self, self.activeSearchRun === run else { return }
-                run.terminationStatus = process.terminationStatus
-                run.terminationReason = process.terminationReason
-                self.finishSearchRunIfReady(run)
-            }
-        }
-        do { try process.run() } catch {
-            activeSearchRun = nil
-            pipe.fileHandleForReading.readabilityHandler = nil
-            errPipe.fileHandleForReading.readabilityHandler = nil
-            process.terminationHandler = nil
-            searchPhase = .failed("Suche ließ sich nicht starten: "
-                                  + error.localizedDescription)
-            refreshStatus()
-            return
-        }
+        }, completion: { [weak self, weak run] exit in
+            guard let self, let run, self.activeSearchRun === run else { return }
+            self.finishSearchRun(run, exit: exit)
+        })
         stopButton.isEnabled = true
         skippedCount = 0
         searchPhase = .running
@@ -1819,9 +1761,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     func stopSearch() {
         let run = activeSearchRun
         activeSearchRun = nil
-        run?.pipe.fileHandleForReading.readabilityHandler = nil
-        run?.process.terminationHandler = nil
-        if run?.process.isRunning == true { run?.process.terminate() }
+        run?.cancel()
         flushTimer?.invalidate()
         flushTimer = nil
         stopButton.isEnabled = false
@@ -1835,38 +1775,6 @@ final class MainController: HitListController, NSApplicationDelegate,
         progressPath = nil
         flushPending()
         refreshStatus()
-    }
-
-    /// Rohbytes aus der Pipe in Zeilen zerlegen und als Hits vormerken.
-    func consume(_ data: Data, for run: ActiveSearchRun) {
-        run.lineBuffer.append(data)
-        while let newline = run.lineBuffer.firstIndex(of: 0x0A) {
-            let lineData = run.lineBuffer.subdata(
-                in: run.lineBuffer.startIndex..<newline)
-            run.lineBuffer.removeSubrange(run.lineBuffer.startIndex...newline)
-            consumeSearchLine(lineData)
-        }
-    }
-
-    func consumeSearchLine(_ lineData: Data) {
-        // Fortschritt (welcher Ordner/welches Archiv gerade dran ist)
-        // wie in der Schnellsuche laufend anzeigen.
-        // Ein Parse je Zeile: Dieser Weg läuft auf dem Main-Thread.
-        switch parseSearchLine(lineData) {
-        case .progress(let path)?:
-            progressPath = path
-            refreshStatus()
-        case .hit(let hit)?:
-            // Schon gezeigte Pfade (z. B. die aus der Schnellsuche
-            // übernommenen 20) nicht erneut auflisten — und nichts, was
-            // dieser Lauf schon in den Papierkorb gelegt hat.
-            if !trashedPaths.contains(hit.filesystemPath),
-               seenPaths.insert(hit.path).inserted {
-                pending.append(hit)
-            }
-        case nil:
-            break
-        }
     }
 
     /// Sortieren, neu laden und dieselben Treffer wieder auswählen.
@@ -1933,30 +1841,17 @@ final class MainController: HitListController, NSApplicationDelegate,
         refreshStatus()
     }
 
-    func finishSearchRunIfReady(_ run: ActiveSearchRun) {
-        guard activeSearchRun === run, run.reachedEOF,
-              let status = run.terminationStatus,
-              let reason = run.terminationReason else { return }
-        if !run.lineBuffer.isEmpty {
-            consumeSearchLine(run.lineBuffer)
-            run.lineBuffer.removeAll()
-        }
+    func finishSearchRun(_ run: SearchRunner, exit: SearchExit) {
+        guard activeSearchRun === run else { return }
         flushPending()
         flushTimer?.invalidate()
         flushTimer = nil
-        run.pipe.fileHandleForReading.readabilityHandler = nil
-        run.process.terminationHandler = nil
-        run.diagnostics.finish(run.errPipe)
         activeSearchRun = nil
         stopButton.isEnabled = false
         progressPath = nil
-        let exit = SearchExit(status: status, reason: reason,
-                              errorMessage: run.diagnostics.errorMessage,
-                              warningCount: run.diagnostics.warningCount)
         skippedCount = exit.warningCount
-        searchPhase = searchExitIsError(status, reason: reason)
-            ? .failed(searchFailureText(exit))
-            : .finished
+        searchPhase = searchExitIsError(exit.status, reason: exit.reason)
+            ? .failed(searchFailureText(exit)) : .finished
         refreshStatus()
     }
 

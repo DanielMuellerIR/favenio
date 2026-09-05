@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.29.3 — 2026-09-05
+
+- Beide Apps verwenden denselben abbrechbaren Suchprozess-Runner. JSONL wird
+  im Hintergrund geparst; höchstens zwei Pakete mit je 256 Treffern und 1 MiB
+  stehen zur Übernahme bereit. Einzelne JSONL-Zeilen über 1 MiB brechen mit
+  konkreter Fehlermeldung ab.
+- Bei 100.000 künstlichen Treffern sank der Spitzenspeicher des GUI-Transports
+  im Median von 339 auf 69 MiB und die maximale Main-Thread-Verzögerung von
+  78 auf 2 ms. Die Gesamtdauer stieg von 0,399 auf 0,438 s; gegenüber dem
+  alten Quick-Transport sank sie von 0,540 auf 0,438 s. Messaufbau und Grenzen:
+  `tests/RUNNER_MEASUREMENTS.md`.
+
 ## 0.29.2 — 2026-09-05
 
 - Beide Apps markieren ungültige Pixelmaße und widersprüchliche Von/Bis-Grenzen

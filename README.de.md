@@ -274,6 +274,12 @@ Zwei Punkte, die man dazu wissen sollte:
 
 ## GUI (Favenio.app)
 
+Beide Apps lesen Suchtreffer im Hintergrund und übernehmen begrenzte Pakete.
+Stopp und Suchwechsel brechen auch einen Lauf mit vielen ausstehenden Treffern
+ab. Eine JSONL-Zeile über 1 MiB beendet den Lauf mit einer konkreten Fehlermeldung.
+
+
+
 EasyFind-artige Oberfläche: Suchfeld, Ordnerwahl, Optionen, Trefferliste.
 Der Umschalter **Name | Inhalt | Metadaten** sagt, wogegen das Muster läuft;
 im Metadaten-Modus grenzt ein Feldmenü auf ein Feld ein. Die Zeile

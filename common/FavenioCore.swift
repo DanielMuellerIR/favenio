@@ -1032,77 +1032,203 @@ func runSearchSync(arguments: [String]) -> [Hit] {
     return hits
 }
 
-/// Wie runSearchSync, liest die Ausgabe aber ZEILENWEISE, während die
-/// Suche läuft: Fortschritts-Zeilen (--progress) werden sofort über den
-/// Callback gemeldet (auf dem Main-Thread). Treffer werden ausschließlich
-/// über `onHit` weitergereicht; der Kern legt keine redundante zweite Kopie an.
-/// Blockiert bis zum Ende der Suche; im Hintergrund-Thread aufrufen.
-///
-/// `register` bekommt (falls gesetzt) den gestarteten Prozess durchgereicht,
-/// damit der Aufrufer ihn abbrechen kann (`process.terminate()`) — z. B. die
-/// Schnellsuche, wenn der Nutzer weitertippt. Nach dem Abbruch bricht die
-/// Lese-Schleife ab (die Pipe schließt) und die Funktion kehrt zurück; der
-/// Ergebnis trägt dann Status UND Signalgrund — der Aufrufer verwirft das
-/// veraltete Ergebnis ohnehin über seinen Generations-Zähler.
-///
-/// `onHit` (falls gesetzt) meldet JEDEN Treffer sofort auf dem Main-Thread —
-/// so kann die Schnellsuche ihre Trefferliste live wachsen lassen, statt bis
-/// zum Ende zu warten.
-func runSearchStreaming(arguments: [String],
-                        register: ((Process) -> Void)? = nil,
-                        onHit: ((Hit) -> Void)? = nil,
-                        onProgress: @escaping (String) -> Void)
-    -> SearchExit {
+/// Ein Suchlauf mit eigener Identität und begrenztem Transport zur Main-Queue.
+/// JSONL wird ausschließlich auf einem Hintergrundthread gelesen und geparst.
+final class SearchRunner {
+    static let batchHitLimit = 256
+    static let batchByteLimit = 1024 * 1024
+    static let recordByteLimit = 1024 * 1024
+    static let outstandingLimit = 2
+
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: pythonPath)
-    process.arguments = arguments
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    // stderr wird MITGELESEN, nicht verworfen: Dort steht der Grund eines
-    // Fehlschlags und jede Warnung über ein übersprungenes Objekt.
-    let errPipe = Pipe()
-    let diagnostics = SearchDiagnostics()
-    process.standardError = errPipe
-    diagnostics.collect(from: errPipe)
-    do { try process.run() } catch {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var started = false
+    private let slots = DispatchSemaphore(value: outstandingLimit)
+    private var outstanding = 0
+    private var maximumOutstanding = 0
+    private var maximumBatchBytes = 0
+
+    /// Messwerte des Transports, ohne Zugriff auf Treffer oder UI-Zustand.
+    var transportPeaks: (packets: Int, bytes: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (maximumOutstanding, maximumBatchBytes)
+    }
+
+    var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled
+    }
+
+    /// Abbruch gilt auch VOR process.run(). Bei ignoriertem SIGTERM folgt
+    /// nach einer halben Sekunde SIGKILL; kein Main-Thread wartet darauf.
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        if process.isRunning { process.terminate() }
+        lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { [self] in
+            lock.lock(); defer { lock.unlock() }
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
+    }
+
+    func start(arguments: [String], executable: String = pythonPath,
+               onBatch: @escaping ([Hit], String?) -> Void,
+               completion: @escaping (SearchExit) -> Void) {
+        lock.lock()
+        precondition(!started)
+        started = true
+        lock.unlock()
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let result = read(arguments: arguments, executable: executable,
+                              onBatch: onBatch)
+            // Alle Pakete wurden vorher in dieselbe serielle Main-Queue
+            // gestellt. completion sieht daher auch die letzte übernommene Zeile.
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    private func read(arguments: [String], executable: String,
+                      onBatch: @escaping ([Hit], String?) -> Void) -> SearchExit {
+        let pipe = Pipe()
+        let errPipe = Pipe()
+        let diagnostics = SearchDiagnostics()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = errPipe
+        diagnostics.collect(from: errPipe)
+        lock.lock()
+        if cancelled {
+            lock.unlock()
+            diagnostics.finish(errPipe)
+            return SearchExit(status: SIGTERM, reason: .uncaughtSignal)
+        }
+        do { try process.run() } catch {
+            lock.unlock()
+            diagnostics.finish(errPipe)
+            return SearchExit(status: 2, reason: .exit,
+                              errorMessage: error.localizedDescription)
+        }
+        lock.unlock()
+        try? pipe.fileHandleForWriting.close()
+
+        var buffer = Data()
+        var hits: [Hit] = []
+        var bytes = 0
+        var progress: String?
+        var protocolError: String?
+        var lastDelivery = ProcessInfo.processInfo.systemUptime
+        func deliver() {
+            guard !hits.isEmpty || progress != nil else { return }
+            // Ein voller Verbraucher bremst den Erzeuger über dessen Pipe.
+            // Das kurze Warten prüft Abbruch auch bei blockierter Main-Queue.
+            while slots.wait(timeout: .now() + 0.05) != .success {
+                if isCancelled { return }
+            }
+            if isCancelled { slots.signal(); return }
+            let packet = hits
+            let latestProgress = progress
+            lock.lock()
+            outstanding += 1
+            maximumOutstanding = max(maximumOutstanding, outstanding)
+            maximumBatchBytes = max(maximumBatchBytes, bytes)
+            lock.unlock()
+            hits = []; bytes = 0; progress = nil
+            lastDelivery = ProcessInfo.processInfo.systemUptime
+            DispatchQueue.main.async { [self] in
+                defer {
+                    lock.lock(); outstanding -= 1; lock.unlock()
+                    slots.signal()
+                }
+                if !isCancelled { onBatch(packet, latestProgress) }
+            }
+        }
+        func consume(_ line: Data) {
+            guard !line.isEmpty else { return }
+            if line.count > Self.recordByteLimit {
+                protocolError = "Suchausgabe: JSONL-Zeile überschreitet 1 MiB."
+                cancel()
+                return
+            }
+            // Auch ein einzelner langer Dateiname belegt Transportbudget.
+            if bytes + line.count > Self.batchByteLimit { deliver() }
+            // Foundation-Temporaries gehören zur Zeile, nicht zum ganzen
+            // lang laufenden Dispatch-Work-Item. Hits bleiben per ARC erhalten.
+            let parsed = autoreleasepool { parseSearchLine(line) }
+            switch parsed {
+            case .hit(let hit)?: hits.append(hit); bytes += line.count
+            case .progress(let path)?: progress = path; bytes += line.count
+            case nil: break
+            }
+            if hits.count >= Self.batchHitLimit || bytes >= Self.batchByteLimit {
+                deliver()
+            }
+        }
+        let descriptor = pipe.fileHandleForReading.fileDescriptor
+        var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+        while !isCancelled {
+            var state = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&state, 1, 50)
+            if ready < 0 {
+                if errno == EINTR { continue }
+                protocolError = "Suchausgabe konnte nicht gelesen werden."
+                cancel(); break
+            }
+            if ready == 0 {
+                if ProcessInfo.processInfo.systemUptime - lastDelivery >= 0.05 { deliver() }
+                continue
+            }
+            let count = Darwin.read(descriptor, &chunk, chunk.count)
+            if count == 0 { break }
+            if count < 0 {
+                if errno == EINTR { continue }
+                protocolError = "Suchausgabe konnte nicht gelesen werden."
+                cancel(); break
+            }
+            buffer.append(contentsOf: chunk.prefix(count))
+            while let newline = buffer.firstIndex(of: 0x0A), !isCancelled {
+                consume(buffer.subdata(in: buffer.startIndex..<newline))
+                buffer.removeSubrange(buffer.startIndex...newline)
+            }
+            if buffer.count > Self.recordByteLimit {
+                protocolError = "Suchausgabe: JSONL-Zeile überschreitet 1 MiB."
+                cancel()
+            }
+            if ProcessInfo.processInfo.systemUptime - lastDelivery >= 0.05 { deliver() }
+        }
+        if !isCancelled { consume(buffer); deliver() }
+        try? pipe.fileHandleForReading.close()
+        // EOF und Prozessende dürfen in jeder Reihenfolge kommen. Erst
+        // nachdem BEIDES abgeschlossen ist, steht der Suchstatus fest.
+        process.waitUntilExit()
         diagnostics.finish(errPipe)
-        return SearchExit(status: 2, reason: .exit,
-                          errorMessage: error.localizedDescription)
+        return SearchExit(status: protocolError == nil ? process.terminationStatus : 2,
+                          reason: protocolError == nil ? process.terminationReason : .exit,
+                          errorMessage: protocolError ?? diagnostics.errorMessage,
+                          warningCount: diagnostics.warningCount)
     }
-    register?(process)   // Aufrufer kann den Lauf ab jetzt abbrechen
+}
 
-    var buffer = Data()    // noch unvollständige Zeile vom Pipe-Ende
-
-    func handleLine(_ lineData: Data) {
-        if lineData.isEmpty { return }
-        switch parseSearchLine(lineData) {
-        case .progress(let path)?:
-            DispatchQueue.main.async { onProgress(path) }
-        case .hit(let hit)?:
-            if let onHit { DispatchQueue.main.async { onHit(hit) } }
-        case nil:
-            break
+/// Synchroner Adapter für Headless-Diagnosen; beide Oberflächen verwenden
+/// SearchRunner direkt. Auf Main wird beim Warten die Queue weiter bedient.
+func runSearchStreaming(arguments: [String],
+                        onHit: ((Hit) -> Void)? = nil,
+                        onProgress: @escaping (String) -> Void) -> SearchExit {
+    let runner = SearchRunner()
+    let done = DispatchSemaphore(value: 0)
+    var result: SearchExit?
+    runner.start(arguments: arguments, onBatch: { hits, progress in
+        for hit in hits { onHit?(hit) }
+        if let progress { onProgress(progress) }
+    }, completion: { exit in result = exit; done.signal() })
+    if Thread.isMainThread {
+        while done.wait(timeout: .now()) != .success {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
         }
-    }
-
-    let handle = pipe.fileHandleForReading
-    while true {
-        let chunk = handle.availableData   // blockiert; leer = Pipe zu
-        if chunk.isEmpty { break }
-        buffer.append(chunk)
-        // Alle vollständigen Zeilen aus dem Puffer abarbeiten.
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            handleLine(buffer.subdata(in: buffer.startIndex..<newline))
-            buffer.removeSubrange(buffer.startIndex...newline)
-        }
-    }
-    handleLine(buffer)   // letzte Zeile, falls ohne Zeilenumbruch
-    process.waitUntilExit()
-    diagnostics.finish(errPipe)
-    return SearchExit(status: process.terminationStatus,
-                      reason: process.terminationReason,
-                      errorMessage: diagnostics.errorMessage,
-                      warningCount: diagnostics.warningCount)
+    } else { done.wait() }
+    return result!
 }
 
 /// Appweiter Cache: jede Aktion auf denselben Archivtreffer verwendet dieselbe

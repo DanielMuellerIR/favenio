@@ -289,6 +289,18 @@ je durch eine Wache festgehalten:
   blockiert, solange irgendein Deskriptor die Pipe noch zum Schreiben offen
   hält — genau der Fall, wenn `process.run()` gescheitert ist.
 
+Beide Apps starten Suchläufe ausschließlich über `SearchRunner`. Der Runner
+zerlegt und parst JSONL im Hintergrund, übergibt höchstens 256 Treffer und
+1 MiB pro Paket und hält höchstens zwei Main-Queue-Pakete gleichzeitig bereit.
+Die Identität des Runners und in Quick zusätzlich die Generation verhindern
+alte Treffer nach einem Suchwechsel. `cancel()` gilt auch vor dem Prozessstart
+und während eines vollen Transports; nach SIGTERM folgt nötigenfalls SIGKILL.
+Eine Zeile über 1 MiB ist ein sichtbarer Protokollfehler (Exit 2), kein still
+verworfener Treffer. EOF und Prozessende müssen beide abgeschlossen sein;
+die Completion steht hinter allen Paketen auf der Main-Queue. Foundation-
+Temporaries werden je JSONL-Zeile freigegeben. Nur der synchrone Headless-
+Adapter `runSearchStreaming` wartet; die Frontends tun das nie.
+
 Die Haupt-App streamt Treffer, erhält die Auswahl bei neuen Ergebnissen und
 bietet Öffnen, Öffnen mit, Finder-Anzeige, Pfadkopie, Quick Look und Drag-and-
 drop. Der `--selftest`-Pfad ist die automatische Grenze zwischen GUI und Kern.

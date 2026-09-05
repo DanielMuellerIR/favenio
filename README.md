@@ -266,6 +266,12 @@ Two consequences worth knowing:
 
 ## GUI (Favenio.app)
 
+Both apps read search results in the background and receive bounded batches.
+Stop and search changes cancel runs even while result delivery is backed up.
+A JSONL record exceeding 1 MiB ends the run with a specific error message.
+
+
+
 EasyFind-style interface: search field, folder picker, options, results list.
 The **Name | Content | Metadata** switch says what the pattern runs against;
 in metadata mode a field menu narrows it to one field. The **Image size** row

@@ -34,7 +34,7 @@ struct FavenioQuickApp {
             controller.minWidthField.stringValue = "10.5"
             controller.startSearch()
             controller.openInMainApp()
-            guard controller.runningProcess == nil, !controller.searching,
+            guard controller.runningSearch == nil, !controller.searching,
                   !controller.queuedQuery,
                   controller.infoLabel.stringValue == controller.minWidthField.toolTip else {
                 print("SELFTEST FEHLER: Ungültige Maße starten oder übergeben die Schnellsuche")
@@ -161,7 +161,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     // Ergebnis der AKTUELLEN Generation zählt.
     var debounceTimer: Timer?
     var flushTimer: Timer?
-    var runningProcess: Process?
+    var runningSearch: SearchRunner?
     var searchGeneration = 0
 
 
@@ -800,7 +800,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         scopeWaitTimer?.invalidate(); scopeWaitTimer = nil
         queuedQuery = false
         searchGeneration += 1
-        runningProcess?.terminate(); runningProcess = nil
+        runningSearch?.cancel(); runningSearch = nil
         pending = []
         searching = false
         spinner.stopAnimation(nil)
@@ -876,61 +876,34 @@ final class QuickController: HitListController, NSApplicationDelegate,
             self?.flushPending()
         }
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let arguments = searchArguments(
-                pattern: query, root: root, content: mode == .content,
-                regex: false, caseSensitive: false,
-                archives: searchArchives, progress: true,
-                only: only,
-                includeHidden: searchHidden, exact: searchExact,
-                metadata: mode == .metadata, pixelLimits: limits)
-            else {
-                DispatchQueue.main.async {
-                    guard let self, generation == self.searchGeneration
-                    else { return }
-                    self.finish(query: query,
-                                errorText: "favenio.py nicht gefunden.")
-                }
-                return
+        guard let arguments = searchArguments(
+            pattern: query, root: root, content: mode == .content,
+            regex: false, caseSensitive: false, archives: searchArchives,
+            progress: true, only: only, includeHidden: searchHidden,
+            exact: searchExact, metadata: mode == .metadata, pixelLimits: limits)
+        else { finish(query: query, errorText: "favenio.py nicht gefunden."); return }
+        let run = SearchRunner()
+        runningSearch = run
+        run.start(arguments: arguments, onBatch: { [weak self, weak run] hits, progress in
+            guard let self, let run, self.runningSearch === run,
+                  generation == self.searchGeneration else { return }
+            // Quick braucht nur zwanzig Treffer, auch ein Transportpaket
+            // darf seinen UI-Puffer nicht darüber hinaus füllen.
+            let room = max(0, Self.maxQuickHits - self.hits.count - self.pending.count)
+            self.pending.append(contentsOf: hits.prefix(room))
+            if let progress { self.showProgress(path: progress) }
+            if self.hits.count + self.pending.count >= Self.maxQuickHits {
+                self.flushPending()
             }
-            let searchExit = runSearchStreaming(arguments: arguments,
-                register: { [weak self] process in
-                    DispatchQueue.main.async {
-                        guard let self else { return }
-                        if generation == self.searchGeneration {
-                            self.runningProcess = process
-                        } else {
-                            process.terminate()   // schon überholt
-                        }
-                    }
-                },
-                onHit: { [weak self] hit in
-                    guard let self, generation == self.searchGeneration
-                    else { return }
-                    self.pending.append(hit)
-                },
-                onProgress: { [weak self] path in
-                    guard let self, generation == self.searchGeneration
-                    else { return }
-                    self.showProgress(path: path)
-                })
-            DispatchQueue.main.async {
-                guard let self, generation == self.searchGeneration
-                else { return }   // abgebrochen/übergeben → verwerfen
-                self.runningProcess = nil
-                // Der Kern nennt den Grund auf stderr, und
-                // runSearchStreaming reicht ihn jetzt durch. Vorher riet
-                // die Zeile hier zu einer Neuinstallation — bei einem
-                // fehlenden exiftool oder einem ungültigen regulären
-                // Ausdruck half die nicht das Geringste.
-                let errorText = searchExitIsError(searchExit.status,
-                                                  reason: searchExit.reason)
-                    ? searchFailureText(searchExit)
-                    : nil
-                self.skippedCount = searchExit.warningCount
-                self.finish(query: query, errorText: errorText)
-            }
-        }
+        }, completion: { [weak self, weak run] exit in
+            guard let self, let run, self.runningSearch === run,
+                  generation == self.searchGeneration else { return }
+            self.runningSearch = nil
+            let errorText = searchExitIsError(exit.status, reason: exit.reason)
+                ? searchFailureText(exit) : nil
+            self.skippedCount = exit.warningCount
+            self.finish(query: query, errorText: errorText)
+        })
     }
 
     /// Zeigt den gerade durchsuchten Ort dezent in der Info-Zeile. Steht dort
