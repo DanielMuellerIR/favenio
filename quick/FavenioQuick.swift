@@ -30,6 +30,13 @@ struct FavenioQuickApp {
                 print("SELFTEST FEHLER: \(error)")
                 exit(1)
             }
+            controller.filterView.exclusions = ["node_modules", " keep spaces "]
+            guard controller.searchConfiguration.exclusions == ["node_modules", " keep spaces "],
+                  SearchConfiguration.fromQueryItems(controller.searchConfiguration.queryItems)
+                    == controller.searchConfiguration else {
+                print("SELFTEST FEHLER: Ausschlussoptionen gehen zwischen Controls und Übergabe verloren")
+                exit(1)
+            }
             controller.field.stringValue = "Treffer"
             controller.minWidthField.stringValue = "10.5"
             controller.startSearch()
@@ -98,6 +105,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         labels: SearchTextMode.allCases.map { $0.title },
         trackingMode: .selectOne, target: nil, action: nil)
     // Bildmaße (Breite/Höhe je von/bis), leer = egal; gelten per UND.
+    let filterView = SearchFilterView()
     let minWidthField = NSTextField(string: "")
     let maxWidthField = NSTextField(string: "")
     let minHeightField = NSTextField(string: "")
@@ -416,7 +424,10 @@ final class QuickController: HitListController, NSApplicationDelegate,
                                                          for: .horizontal)
         }
 
-        let outer = NSStackView(views: [searchRow, optionsRow, sizeRow,
+        filterView.onChange = { [weak self] in
+            self?.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        }
+        let outer = NSStackView(views: [searchRow, optionsRow, sizeRow, filterView,
                                         scrollView])
         outer.orientation = .vertical
         outer.spacing = 8
@@ -439,6 +450,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
             searchRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             optionsRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             sizeRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
+            filterView.widthAnchor.constraint(equalTo: outer.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: outer.widthAnchor),
             field.heightAnchor.constraint(equalToConstant: 32),
             // Beide Felder teilen sich die nutzbare Zeile exakt zur Hälfte.
@@ -763,6 +775,18 @@ final class QuickController: HitListController, NSApplicationDelegate,
         startSearch()
     }
 
+    var searchConfiguration: SearchConfiguration {
+        var configuration = SearchConfiguration()
+        configuration.mode = selectedMode
+        configuration.archives = archivesCheckbox.state == .on
+        configuration.includeHidden = hiddenCheckbox.state == .on
+        configuration.exact = exactCheckbox.state == .on
+        configuration.pixelTexts = pixelFields.map { $0.stringValue }
+        configuration.exclusions = filterView.exclusions
+        configuration.only = selectedOnly
+        return configuration
+    }
+
     var pixelFields: [NSTextField] {
         [minWidthField, maxWidthField, minHeightField, maxHeightField]
     }
@@ -863,12 +887,6 @@ final class QuickController: HitListController, NSApplicationDelegate,
             showInfo("Suche in " + abbreviateHome(root) + " …",
                      detail: root)
         }
-        let mode = selectedMode
-        let searchArchives = archivesCheckbox.state == .on
-        let searchHidden = hiddenCheckbox.state == .on
-        let searchExact = exactCheckbox.state == .on
-        let only = selectedOnly
-
         // Trefferliste ein paar Mal pro Sekunde nachziehen (nicht bei jedem
         // einzelnen Treffer neu zeichnen).
         flushTimer = Timer.scheduledTimer(withTimeInterval: 0.12,
@@ -876,11 +894,8 @@ final class QuickController: HitListController, NSApplicationDelegate,
             self?.flushPending()
         }
 
-        guard let arguments = searchArguments(
-            pattern: query, root: root, content: mode == .content,
-            regex: false, caseSensitive: false, archives: searchArchives,
-            progress: true, only: only, includeHidden: searchHidden,
-            exact: searchExact, metadata: mode == .metadata, pixelLimits: limits)
+        guard let arguments = searchConfiguration.arguments(
+            pattern: query, root: root, progress: true)
         else { finish(query: query, errorText: "favenio.py nicht gefunden."); return }
         let run = SearchRunner()
         runningSearch = run
@@ -1055,31 +1070,8 @@ final class QuickController: HitListController, NSApplicationDelegate,
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "root", value: root),
             URLQueryItem(name: "file", value: resultsFile.path),
-            URLQueryItem(name: "content",
-                         value: selectedMode == .content ? "1" : "0"),
-            URLQueryItem(name: "mode", value: selectedMode.rawValue),
-            URLQueryItem(name: "minw", value: minWidthField.stringValue),
-            URLQueryItem(name: "maxw", value: maxWidthField.stringValue),
-            URLQueryItem(name: "minh", value: minHeightField.stringValue),
-            URLQueryItem(name: "maxh", value: maxHeightField.stringValue),
-            URLQueryItem(name: "archives",
-                         value: archivesCheckbox.state == .on ? "1" : "0"),
-            URLQueryItem(name: "hidden",
-                         value: hiddenCheckbox.state == .on ? "1" : "0"),
-            URLQueryItem(name: "exact",
-                         value: exactCheckbox.state == .on ? "1" : "0"),
-            // Die Schnellsuche hat keine Schalter für Regex und
-            // Groß/Kleinschreibung und sucht immer ohne beide
-            // (startSearch: regex: false, caseSensitive: false). Die
-            // Haupt-App muss sie beim Fortsetzen deshalb AUSSCHALTEN, sonst
-            // passen die übergebenen Treffer nicht zur weiteren Suche.
-            // Ausdrücklich mitschicken statt es dem Leser als „fehlt" zu
-            // überlassen — so steht der Vertrag in der URL selbst.
-            URLQueryItem(name: "regex", value: "0"),
-            URLQueryItem(name: "case", value: "0"),
-            URLQueryItem(name: "only", value: selectedOnly),
             URLQueryItem(name: "continue", value: "1"),
-        ]
+        ] + searchConfiguration.queryItems
         guard let handoffURL = components.url else {
             try? FileManager.default.removeItem(at: resultsFile)
             showInfo("Konnte Ergebnisübergabe nicht erzeugen.")

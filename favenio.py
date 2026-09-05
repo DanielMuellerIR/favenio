@@ -48,7 +48,7 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.29.3"
+__version__ = "0.30.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-05"
@@ -1432,6 +1432,52 @@ class ContentCriterion:
         return probe.content_line() is not None
 
 
+class Exclusions:
+    """Glob-Ausschlüsse relativ zu einer Such- oder Archivwurzel.
+
+    Ohne Schrägstrich gilt ein Muster für jede ganze Pfadkomponente. Mit
+    Schrägstrich gilt es für den ganzen relativen Pfad. Auch dessen Eltern
+    werden geprüft: Ein Archiv muss seine Ordner nicht eigens auflisten,
+    damit beispielsweise `cache/deep` alle Einträge darunter ausschließt.
+    `fnmatchcase` hält Groß-/Kleinschreibung immer auseinander; sein `*`
+    darf auch Schrägstriche überqueren. Suchoptionen wie --regex ändern
+    diese eigenständige Mustersemantik nicht."""
+
+    def __init__(self, patterns):
+        self.component_patterns = []
+        self.path_patterns = []
+        for pattern in patterns:
+            target = (self.path_patterns if "/" in pattern
+                      else self.component_patterns)
+            target.append(pattern)
+
+    def __bool__(self):
+        return bool(self.component_patterns or self.path_patterns)
+
+    def matches(self, relative_path):
+        if not self.component_patterns and not self.path_patterns:
+            return False
+        # `./` ist in TAR-Katalogen üblich. Es bezeichnet keinen Namen.
+        # Nicht normpath(): Ein `..` im Archivnamen bleibt Teil des Namens,
+        # und die Anzeige-/Übergabepfade selbst werden hier nie umgeschrieben.
+        parts = [part for part in relative_path.split("/")
+                 if part not in ("", ".")]
+        for part in parts:
+            if any(fnmatch.fnmatchcase(part, pattern)
+                   for pattern in self.component_patterns):
+                return True
+        if not self.path_patterns:
+            return False
+        prefix = []
+        for part in parts:
+            prefix.append(part)
+            path = "/".join(prefix)
+            if any(fnmatch.fnmatchcase(path, pattern)
+                   for pattern in self.path_patterns):
+                return True
+        return False
+
+
 class Search:
     """Kapselt eine Suche: Muster, Optionen und das Einsammeln der Treffer.
 
@@ -1447,8 +1493,10 @@ class Search:
                  max_archive_ratio=DEFAULT_MAX_ARCHIVE_RATIO,
                  content_probe=None, metadata_mode=False,
                  metadata_fields=None, min_width=None, max_width=None,
-                 min_height=None, max_height=None, exiftool_path=None):
+                 min_height=None, max_height=None, exiftool_path=None,
+                 exclusions=()):
         self.matcher = matcher                # Funktion text -> bool
+        self.exclusions = Exclusions(exclusions)
         self.content_probe = content_probe    # ContentProbe oder None:
                                               # billiger Vortest vor der
                                               # zeilenweisen Inhaltssuche
@@ -1870,6 +1918,13 @@ class Search:
                 # überspringen. dirnames IN PLACE ändern, damit os.walk folgt.
                 dirnames[:] = [d for d in dirnames if not self.is_hidden(d)]
                 filenames = [f for f in filenames if not self.is_hidden(f)]
+            # Der explizite Startordner ist die Wurzel und wird nicht gegen
+            # seinen eigenen Namen geprüft. Seine Kinder müssen dagegen
+            # schon vor Trefferausgabe und Abstieg ausgeschlossen werden.
+            if self.exclusions:
+                dirnames[:] = [d for d in dirnames
+                               if not self.path_is_excluded(
+                                   os.path.join(dirpath, d), root)]
             if self.directories_can_match:
                 # Bei Namenssuche zählen auch Ordnernamen als Treffer. Das
                 # passiert VOR dem Abschneiden unten: Ein Ordner GENAU auf der
@@ -1890,7 +1945,17 @@ class Search:
                     and self.depth_of(root, dirpath) + 1 >= self.max_depth:
                 dirnames[:] = []
             for filename in filenames:
-                self.visit_file(os.path.join(dirpath, filename))
+                self.visit_file(os.path.join(dirpath, filename), root=root)
+
+    def path_is_excluded(self, path, root=None):
+        """Einzel-Startdateien gelten nur mit ihrem Namen; sonst relativ zur
+        jeweiligen Suchwurzel. Diese bleibt ein Argument, kein Zustand, der
+        auf den nächsten Startpfad oder auf Archive übergreifen könnte."""
+        if not self.exclusions:
+            return False
+        relative = (os.path.relpath(path, root) if root is not None
+                    else os.path.basename(path))
+        return self.exclusions.matches(relative)
 
     @staticmethod
     def depth_of(root, dirpath):
@@ -1926,9 +1991,12 @@ class Search:
         birth = getattr(status, "st_birthtime", None)
         return status.st_size, status.st_mtime, birth
 
-    def visit_file(self, path):
+    def visit_file(self, path, root=None):
         """Behandelt EINE Datei im Dateisystem: alle Kriterien gegen die
         Datei selbst, und — falls es ein Archiv ist — der Blick hinein."""
+        # Vor jedem Öffnen, auch vor dem Rückfall auf rohe Archivbytes.
+        if self.path_is_excluded(path, root):
+            return
         name = os.path.basename(path)
         archive_kind = classify_archive(name)
         # Bei einer Metadatensuche lohnt der Blick ins Archiv nicht: Ein
@@ -2091,6 +2159,11 @@ class Search:
 
         # Unsichtbare Archiv-Einträge wie im Dateisystem überspringen.
         if not self.include_hidden and self.member_is_hidden(member_path):
+            return
+
+        # Jede Archivebene hat ihre eigene Wurzel. Direkt member_path prüfen,
+        # niemals display an `!/` zerlegen: Ein echter Name darf `!` enthalten.
+        if self.exclusions.matches(member_path):
             return
 
         if is_dir:
@@ -2574,6 +2647,12 @@ def main(argv=None):
     parser.add_argument("--hidden", action="store_true",
                         help="unsichtbare (Punkt-)Dateien und -Ordner "
                              "mitdurchsuchen (Default: überspringen)")
+    parser.add_argument("--exclude", action="append", default=[],
+                        metavar="GLOB",
+                        help="Dateien/Teilbäume vor dem Öffnen ausschließen "
+                             "(wiederholbar; Groß-/Kleinschreibung gilt); "
+                             "ohne / je Name, mit / relativ zur Such- oder "
+                             "Archivwurzel; * darf / überqueren")
     parser.add_argument("--max-depth", type=positive_int, default=None,
                         metavar="N",
                         help="nur N Ordnerebenen tief suchen (1 = nur direkt "
@@ -2744,6 +2823,7 @@ def main(argv=None):
     search = Search(matcher, args.content, archive_depth, args.json,
                     progress=args.progress, only=args.only,
                     include_hidden=args.hidden, max_depth=args.max_depth,
+                    exclusions=args.exclude,
                     max_archive_member_bytes=args.max_archive_member_bytes,
                     max_archive_total_bytes=args.max_archive_total_bytes,
                     max_archive_ratio=args.max_archive_ratio,

@@ -726,13 +726,13 @@ enum PixelLimitInput: Equatable {
 
 /// Validiert und markiert dieselben vier Felder in beiden Apps. Der erste
 /// konkrete Fehler erscheint zusätzlich in der Statuszeile des Aufrufers.
-func validatePixelFields(_ fields: [NSTextField]) -> (limits: PixelLimits, error: String?) {
-    precondition(fields.count == 4)
+func validatePixelTexts(_ texts: [String]) -> (limits: PixelLimits, errors: [String?]) {
+    precondition(texts.count == 4)
     let labels = ["Breite von", "Breite bis", "Höhe von", "Höhe bis"]
     var values = [Int?](repeating: nil, count: 4)
     var errors = [String?](repeating: nil, count: 4)
-    for (index, field) in fields.enumerated() {
-        switch PixelLimitInput(field.stringValue) {
+    for (index, text) in texts.enumerated() {
+        switch PixelLimitInput(text) {
         case .empty: break
         case .value(let value): values[index] = value
         case .invalid:
@@ -746,14 +746,19 @@ func validatePixelFields(_ fields: [NSTextField]) -> (limits: PixelLimits, error
             errors[high] = error
         }
     }
-    for (index, field) in fields.enumerated() {
-        field.textColor = errors[index] == nil ? .controlTextColor : .systemRed
-        field.toolTip = errors[index]
-        field.setAccessibilityHelp(errors[index])
-    }
     return (PixelLimits(minWidth: values[0], maxWidth: values[1],
-                        minHeight: values[2], maxHeight: values[3]),
-            errors.compactMap { $0 }.first)
+                        minHeight: values[2], maxHeight: values[3]), errors)
+}
+
+func validatePixelFields(_ fields: [NSTextField]) -> (limits: PixelLimits, error: String?) {
+    let validation = validatePixelTexts(fields.map { $0.stringValue })
+    for (index, field) in fields.enumerated() {
+        let error = validation.errors[index]
+        field.textColor = error == nil ? .controlTextColor : .systemRed
+        field.toolTip = error
+        field.setAccessibilityHelp(error)
+    }
+    return (validation.limits, validation.errors.compactMap { $0 }.first)
 }
 
 /// Läuft in beiden Bundle-Selbsttests an den echten Controller-Feldern,
@@ -817,6 +822,131 @@ func metadataFieldList() -> [String] {
     return fields
 }
 
+/// Eine Quelle für CLI-Optionen und Quick-Übergaben. Maßtexte bleiben roh:
+/// Eine ungültige URL-Eingabe darf nicht zu einer leeren Grenze werden.
+struct SearchConfiguration: Equatable {
+    var mode: SearchTextMode = .name
+    var regex = false
+    var caseSensitive = false
+    var archives = false
+    var includeHidden = false
+    var exact = false
+    var only = "both"
+    var metadataField: String? = nil
+    var pixelTexts = ["", "", "", ""]
+    var exclusions: [String] = []
+
+    static let pixelKeys = ["minw", "maxw", "minh", "maxh"]
+
+    static func fromQueryItems(_ items: [URLQueryItem]) -> SearchConfiguration {
+        func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
+        var result = SearchConfiguration()
+        result.mode = SearchTextMode(rawValue: value("mode") ?? "")
+            ?? (value("content") == "1" ? .content : .name)
+        result.regex = value("regex") == "1"
+        result.caseSensitive = value("case") == "1"
+        result.archives = value("archives") == "1"
+        result.includeHidden = value("hidden") == "1"
+        result.exact = value("exact") == "1"
+        result.only = ["both", "files", "dirs"].contains(value("only") ?? "")
+            ? value("only")! : "both"
+        result.metadataField = value("field")
+        result.pixelTexts = pixelKeys.map { value($0) ?? "" }
+        result.exclusions = items.filter { $0.name == "exclude" }.compactMap { $0.value }
+        return result
+    }
+
+    var queryItems: [URLQueryItem] {
+        var items = [URLQueryItem(name: "mode", value: mode.rawValue),
+            URLQueryItem(name: "content", value: mode == .content ? "1" : "0"),
+            URLQueryItem(name: "only", value: only)]
+        for (key, enabled) in [("regex", regex), ("case", caseSensitive),
+                               ("archives", archives), ("hidden", includeHidden),
+                               ("exact", exact)] {
+            items.append(URLQueryItem(name: key, value: enabled ? "1" : "0"))
+        }
+        if let metadataField { items.append(URLQueryItem(name: "field", value: metadataField)) }
+        for (key, text) in zip(Self.pixelKeys, pixelTexts) {
+            items.append(URLQueryItem(name: key, value: text))
+        }
+        items += exclusions.map { URLQueryItem(name: "exclude", value: $0) }
+        return items
+    }
+
+    func arguments(pattern: String, root: String, progress: Bool = false) -> [String]? {
+        let validation = validatePixelTexts(pixelTexts)
+        guard validation.errors.allSatisfy({ $0 == nil }), let cli = findCLI() else { return nil }
+        let hasPattern = !pattern.isEmpty
+        guard hasPattern || !validation.limits.isEmpty else { return nil }
+        var args = ["-u", cli, "--json"]
+        if hasPattern {
+            if mode == .content { args.append("--content") }
+            if mode == .metadata { args.append("--metadata") }
+            if let metadataField, !metadataField.isEmpty { args += ["--metadata-field", metadataField] }
+        }
+        args += validation.limits.arguments
+        if regex { args.append("--regex") }
+        if caseSensitive { args.append("--case-sensitive") }
+        if exact { args.append("--exact") }
+        if !archives { args.append("--no-archives") }
+        if only != "both" { args += ["--only", only] }
+        if includeHidden { args.append("--hidden") }
+        if progress { args.append("--progress") }
+        // Ein Muster darf mit '-' beginnen; '=' bindet es eindeutig an
+        // die Option, statt es argparse als neue Option lesen zu lassen.
+        for exclusion in exclusions { args.append("--exclude=" + exclusion) }
+        args.append("--")
+        if hasPattern { args.append(pattern) }
+        args.append(root)
+        return args
+    }
+}
+
+/// Derselbe Editor in beiden Apps. Return trennt Muster, Leerraum gehört
+/// zum Muster. Nur wirklich leere Zeilen setzen keinen Ausschluss.
+final class SearchFilterView: NSStackView, NSTextViewDelegate {
+    let exclusionsEditor = NSTextView()
+    var onChange: (() -> Void)?
+
+    var exclusions: [String] {
+        get { exclusionsEditor.string.components(separatedBy: .newlines).filter { !$0.isEmpty } }
+        set { exclusionsEditor.string = newValue.joined(separator: "\n") }
+    }
+
+    init() {
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = 4
+        let label = NSTextField(labelWithString: "Ausschließen · ein Muster je Zeile")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        addArrangedSubview(label)
+        exclusionsEditor.isRichText = false
+        exclusionsEditor.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        exclusionsEditor.isAutomaticQuoteSubstitutionEnabled = false
+        exclusionsEditor.isAutomaticDashSubstitutionEnabled = false
+        exclusionsEditor.isAutomaticTextReplacementEnabled = false
+        exclusionsEditor.isVerticallyResizable = true
+        exclusionsEditor.isHorizontallyResizable = false
+        exclusionsEditor.autoresizingMask = [.width]
+        exclusionsEditor.textContainer?.widthTracksTextView = true
+        exclusionsEditor.delegate = self
+        exclusionsEditor.toolTip = "Zum Beispiel node_modules oder Cache/*.zip. Groß-/Kleinschreibung gilt immer. Ohne / gilt das Muster für jede Pfadkomponente; mit / für den relativen Pfad ab Such- oder Archivwurzel."
+        exclusionsEditor.setAccessibilityLabel("Ausschlussmuster, ein Muster je Zeile")
+        let scroll = NSScrollView()
+        scroll.borderType = .bezelBorder
+        scroll.hasVerticalScroller = true
+        scroll.documentView = exclusionsEditor
+        addArrangedSubview(scroll)
+        scroll.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        scroll.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) wird nicht verwendet") }
+    func textDidChange(_ notification: Notification) { onChange?() }
+}
+
 func searchArguments(pattern: String, root: String, content: Bool,
                      regex: Bool, caseSensitive: Bool,
                      archives: Bool, progress: Bool = false,
@@ -826,31 +956,20 @@ func searchArguments(pattern: String, root: String, content: Bool,
                      metadata: Bool = false,
                      metadataField: String? = nil,
                      pixelLimits: PixelLimits = PixelLimits()) -> [String]? {
-    guard let cli = findCLI() else { return nil }
-    // Eine Suche braucht mindestens ein Muster oder einen Maßfilter.
-    let hasPattern = !pattern.isEmpty
-    guard hasPattern || !pixelLimits.isEmpty else { return nil }
-    var args = ["-u", cli, "--json"]   // -u = ungepuffert → Treffer streamen
-    // Nur nach Maßen suchen: Ohne Muster läuft die Suche ganz ohne
-    // Textkriterium. --content und --metadata sagen, WOGEGEN das Muster
-    // läuft, und lehnt der Kern ohne Muster deshalb ab.
-    if content && hasPattern { args.append("--content") }
-    if metadata && hasPattern { args.append("--metadata") }
-    if let metadataField, !metadataField.isEmpty, hasPattern {
-        args += ["--metadata-field", metadataField]
-    }
-    args += pixelLimits.arguments
-    if regex { args.append("--regex") }
-    if caseSensitive { args.append("--case-sensitive") }
-    if exact { args.append("--exact") }
-    if !archives { args.append("--no-archives") }
-    if only != "both" { args.append(contentsOf: ["--only", only]) }
-    if includeHidden { args.append("--hidden") }
-    if progress { args.append("--progress") }
-    args.append("--")   // ab hier nur noch Positionsargumente (Muster darf
-    if hasPattern { args.append(pattern) }  // sonst mit "-" beginnen und
-    args.append(root)                       // argparse verwirren)
-    return args
+    // Kompatibler Adapter für bestehende Headless-Aufrufer; die eigentliche
+    // Optionsweitergabe steht ausschließlich in SearchConfiguration.
+    var configuration = SearchConfiguration()
+    configuration.mode = metadata ? .metadata : (content ? .content : .name)
+    configuration.regex = regex
+    configuration.caseSensitive = caseSensitive
+    configuration.archives = archives
+    configuration.includeHidden = includeHidden
+    configuration.exact = exact
+    configuration.only = only
+    configuration.metadataField = metadataField
+    configuration.pixelTexts = [pixelLimits.minWidth, pixelLimits.maxWidth,
+                                pixelLimits.minHeight, pixelLimits.maxHeight].map { $0.map(String.init) ?? "" }
+    return configuration.arguments(pattern: pattern, root: root, progress: progress)
 }
 
 /// Vollständiges Ende eines Suchprozesses. `status` allein reicht nicht:

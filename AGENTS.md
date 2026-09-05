@@ -78,6 +78,16 @@ Verbindliches CLI-Verhalten:
   weiter eine Warnung, und die Suche läuft weiter.
 - Glob-Muster matchen den vollständigen Namen. Substring-Suche gilt nur ohne
   Platzhalter. Eine Änderung dieser Semantik wäre ein Breaking Change.
+- `--exclude` ist wiederholbar und arbeitet unabhängig vom Suchmatcher über
+  `Exclusions` mit `fnmatchcase`: ohne `/` je ganze Pfadkomponente, mit `/`
+  gegen den ganzen relativen Pfad und dessen Eltern. `*` darf `/` überqueren.
+  Jede Start- und Archivwurzel wird unabhängig geprüft; ein expliziter
+  Startordner bleibt die Wurzel, eine Startdatei zählt mit ihrem Dateinamen.
+  Archiv-Eltern werden auch ohne eigene Katalogeinträge geprüft. Dabei den
+  echten `member_path` verwenden, niemals `display` an `!/` zerlegen.
+  `search_path()` entfernt ausgeschlossene Ordner vor dem Abstieg aus
+  `dirnames`; `visit_file()` und `visit_member()` prüfen vor jedem Öffnen,
+  auch vor dem Rückfall auf rohe Archivbytes. Kein Standardausschluss.
 - Inhalt wird als UTF-8 mit `errors="replace"` gelesen. Dadurch bleiben Treffer
   in teilweise binären Dateien möglich; andere Textkodierungen werden nicht
   versprochen.
@@ -288,6 +298,13 @@ je durch eine Wache festgehalten:
 - `finish()` schließt die Schreibseite VOR dem Lesen: `availableData`
   blockiert, solange irgendein Deskriptor die Pipe noch zum Schreiben offen
   hält — genau der Fall, wenn `process.run()` gescheitert ist.
+
+`SearchConfiguration` ist die gemeinsame Quelle für Suchargumente, Quick-URL-
+Encoder und -Decoder. Pixeltexte bleiben bis zur Validierung unverändert:
+Ein URL-Wert `10.5` darf niemals still zu einer leeren Grenze werden.
+`SearchFilterView` enthält das mehrzeilige Ausschlussfeld beider Apps. Leere
+Zeilen entfallen, Leerraum bleibt Musterbestandteil; die URL trägt wiederholte
+`exclude`-Parameter. Der direkte Start-Fallback übergibt dieselbe URL.
 
 Beide Apps starten Suchläufe ausschließlich über `SearchRunner`. Der Runner
 zerlegt und parst JSONL im Hintergrund, übergibt höchstens 256 Treffer und

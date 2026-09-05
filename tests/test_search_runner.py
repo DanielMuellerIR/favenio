@@ -9,7 +9,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
-def build_probe(directory):
+def build_probe(directory, probe="runner_probe.swift"):
     source = (REPO / 'common/FavenioCore.swift').read_text()
     # Sparkle betrifft ausschließlich den Bundle-Einstieg vor dem Hit-Modell.
     source = ('import AppKit\nimport Darwin\nimport Quartz\n'
@@ -19,7 +19,7 @@ def build_probe(directory):
     core.write_text(source)
     binary = Path(directory) / 'RunnerProbe'
     result = subprocess.run(
-        ['swiftc', '-O', str(core), str(REPO / 'tests/runner_probe.swift'),
+        ['swiftc', '-O', str(core), str(REPO / 'tests' / probe),
          '-o', str(binary)], capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError("Runner-Probe kompiliert nicht:\n" + result.stderr)

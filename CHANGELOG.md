@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.30.0 — 2026-09-05
+
+- Beide Apps bieten ein mehrzeiliges Ausschlussfeld. CLI-Optionen und Quick-
+  Übergabe werden aus derselben Suchkonfiguration erzeugt; ungültige Pixeltexte
+  bleiben bei der Übergabe sichtbar und verhindern weiterhin den Suchstart.
+
+- Wiederholtes `--exclude` lässt passende Dateien und Teilbäume vor Öffnen
+  und Abstieg aus. Glob-Muster unterscheiden Groß-/Kleinschreibung: ohne `/`
+  gelten sie je ganzem Namen, mit `/` relativ zur jeweiligen Such- oder
+  Archivwurzel. Auch implizite Archivordner und verschachtelte Archive
+  beachten die Ausschlüsse; es gibt keine voreingestellten Muster.
+
 ## 0.29.3 — 2026-09-05
 
 - Beide Apps verwenden denselben abbrechbaren Suchprozess-Runner. JSONL wird

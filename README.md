@@ -167,12 +167,39 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `--max-archive-ratio FACTOR` | maximum ZIP compression ratio |
 | `--only both\|files\|dirs` | limit hits to files, directories or both (default) |
 | `--hidden` | include hidden (dot) files and directories |
+| `--exclude GLOB` | exclude matching files and subtrees before opening or descending (repeatable; case-sensitive; see below) |
 | `--json` | JSONL output for scripts/agents (with `size` in bytes where the format states it) |
 | `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
 | `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |
 | `--extract-json JSON` | extract an unambiguous structured JSON hit |
 | `--extract-root FOLDER` | temp root for extraction (used by the apps, which clean it up themselves) |
 | `--version` | show version |
+
+Exclusions use whole-name glob matching (`*`, `?`, `[abc]`), independently of
+the search pattern and `--regex`, `--exact` or `--case-sensitive`. Quote them
+in the shell. Without `/`, a pattern matches any whole path component:
+`--exclude cache` skips every directory or file named `cache`, including its
+contents, but keeps `mycache` and `Cache`. With `/`, it matches the complete
+path relative to each start directory: `--exclude build/generated` skips that
+subtree, but keeps `other/build/generated`. `*` can cross `/`, so
+`--exclude 'build/*/cache'` also skips `build/a/b/cache`. `**` has no separate
+meaning; there is no directory-only trailing-slash syntax.
+
+Each archive, including a nested archive, starts a new relative root for
+these patterns. Parent paths are checked even when the archive lists no
+separate directory entry. `./` components in archive paths are ignored for
+matching. The literal `!` in an entry name remains part of that name;
+`--exclude 'odd!/skip.txt'` matches that relative entry path, not a transition
+between archives. Each of several start paths is independent. An explicitly
+selected start directory remains the search root even when its own name
+matches; an explicitly selected file is checked by its basename. Use relative
+patterns without a leading `/` or `./`.
+
+For example, `./favenio.py --exclude cache --exclude '*.zip' invoice ~/Documents`
+skips cache subtrees and never opens the excluded ZIP files, including for
+raw-byte content search. Exclusions remove the matching objects from results
+as well. There are no default exclusion patterns; the existing `--hidden`
+setting continues to control dot files and directories separately.
 
 `--no-archives` (and `--archive-depth 0`) means **do not look inside**, not
 **skip**. The file then counts as an ordinary file, so with `-c` its raw bytes
@@ -265,6 +292,12 @@ Two consequences worth knowing:
   need that.
 
 ## GUI (Favenio.app)
+
+The **Exclude** field accepts one pattern per line, such as `node_modules`
+or `Cache/*.zip`. Return starts a new line. Empty lines are ignored; spaces
+remain part of the pattern. Quick Search passes all patterns to the main app.
+Matching is case-sensitive independently of the search text; see the
+`--exclude` rules above.
 
 Both apps read search results in the background and receive bounded batches.
 Stop and search changes cancel runs even while result delivery is backed up.

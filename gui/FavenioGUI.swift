@@ -130,6 +130,13 @@ func runSelfTest() -> Int32 {
         return 1
     }
 
+    pixelController.filterView.exclusions = ["node_modules", " keep spaces "]
+    guard pixelController.searchConfiguration.exclusions == ["node_modules", " keep spaces "],
+          SearchConfiguration.fromQueryItems(pixelController.searchConfiguration.queryItems)
+            == pixelController.searchConfiguration else {
+        print("SELFTEST FEHLER: Ausschlussoptionen gehen zwischen Controls und Übergabe verloren")
+        return 1
+    }
     pixelController.searchField.stringValue = "Treffer"
     pixelController.minWidthField.stringValue = "10.5"
     pixelController.startSearch()
@@ -746,6 +753,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     let fieldPopup = NSPopUpButton()
     // Bildmaße: Breite und Höhe je von/bis, leer = egal. Gelten immer
     // zusätzlich (UND) zum Muster; das Muster darf dann auch fehlen.
+    let filterView = SearchFilterView()
     let minWidthField = NSTextField(string: "")
     let maxWidthField = NSTextField(string: "")
     let minHeightField = NSTextField(string: "")
@@ -1029,21 +1037,17 @@ final class MainController: HitListController, NSApplicationDelegate,
         // Treffer nicht zur fortgesetzten Suche. Neue Quick-Versionen
         // schicken regex=0 und case=0 ausdrücklich mit.
         // Alte Quick-Versionen schicken nur content=0/1, neue den Modus.
-        let mode = SearchTextMode(rawValue: value("mode") ?? "")
-            ?? (value("content") == "1" ? .content : .name)
-        selectMode(mode)
-        selectMetadataField(value("field"))
-        minWidthField.stringValue = value("minw") ?? ""
-        maxWidthField.stringValue = value("maxw") ?? ""
-        minHeightField.stringValue = value("minh") ?? ""
-        maxHeightField.stringValue = value("maxh") ?? ""
-        archivesCheckbox.state = value("archives") == "1" ? .on : .off
-        hiddenCheckbox.state = value("hidden") == "1" ? .on : .off
-        regexCheckbox.state = value("regex") == "1" ? .on : .off
-        caseCheckbox.state = value("case") == "1" ? .on : .off
-        exactCheckbox.state = value("exact") == "1" ? .on : .off
-        typeControl.selectedSegment = ["both": 0, "files": 1, "dirs": 2][
-            value("only") ?? "both"] ?? 0
+        let configuration = SearchConfiguration.fromQueryItems(items)
+        selectMode(configuration.mode)
+        selectMetadataField(configuration.metadataField)
+        for (field, text) in zip(pixelFields, configuration.pixelTexts) { field.stringValue = text }
+        filterView.exclusions = configuration.exclusions
+        archivesCheckbox.state = configuration.archives ? .on : .off
+        hiddenCheckbox.state = configuration.includeHidden ? .on : .off
+        regexCheckbox.state = configuration.regex ? .on : .off
+        caseCheckbox.state = configuration.caseSensitive ? .on : .off
+        exactCheckbox.state = configuration.exact ? .on : .off
+        typeControl.selectedSegment = ["both": 0, "files": 1, "dirs": 2][configuration.only] ?? 0
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -1056,6 +1060,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         } else {
             loadResults(from: URL(fileURLWithPath: filePath))
         }
+        // Auch eine reine Ergebnisanzeige markiert ungültige URL-Eingaben;
+        // der nächste Start bleibt durch denselben Validator gesperrt.
+        _ = validatePixelInputs()
     }
 
     /// Fertige Treffer (JSONL-Datei der Schnellsuche) direkt anzeigen —
@@ -1198,7 +1205,13 @@ final class MainController: HitListController, NSApplicationDelegate,
         sizeRow.spacing = 6
         sizeRow.setCustomSpacing(14, after: sizeRow.views[4])
 
-        let stack = NSStackView(views: [topRow, optionsRow, sizeRow, scroll,
+        filterView.onChange = { [weak self] in
+            self?.stopSearch()
+            self?.searchPhase = .idle
+            self?.progressPath = nil
+            self?.refreshStatus()
+        }
+        let stack = NSStackView(views: [topRow, optionsRow, sizeRow, filterView, scroll,
                                         statusLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -1217,6 +1230,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             topRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             optionsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             sizeRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            filterView.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // Statuszeile an die Stack-Breite binden → kann das Fenster nicht
             // in die Breite ziehen (langer „durchsuche …"-Pfad).
@@ -1624,6 +1638,21 @@ final class MainController: HitListController, NSApplicationDelegate,
         launchSearch(pattern: pattern)
     }
 
+    var searchConfiguration: SearchConfiguration {
+        var configuration = SearchConfiguration()
+        configuration.mode = selectedMode
+        configuration.archives = archivesCheckbox.state == .on
+        configuration.includeHidden = hiddenCheckbox.state == .on
+        configuration.exact = exactCheckbox.state == .on
+        configuration.pixelTexts = pixelFields.map { $0.stringValue }
+        configuration.exclusions = filterView.exclusions
+        configuration.regex = regexCheckbox.state == .on
+        configuration.caseSensitive = caseCheckbox.state == .on
+        configuration.metadataField = selectedMetadataField
+        configuration.only = ["both", "files", "dirs"][max(0, min(2, typeControl.selectedSegment))]
+        return configuration
+    }
+
     var pixelFields: [NSTextField] {
         [minWidthField, maxWidthField, minHeightField, maxHeightField]
     }
@@ -1710,20 +1739,8 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// zurück — das machen die Aufrufer je nach Fall.
     func launchSearch(pattern: String) {
         guard validatePixelInputs() else { return }
-        let only = ["both", "files", "dirs"][
-            max(0, typeControl.selectedSegment)]
-        guard let arguments = searchArguments(
-            pattern: pattern, root: searchRoot.path,
-            content: selectedMode == .content,
-            regex: regexCheckbox.state == .on,
-            caseSensitive: caseCheckbox.state == .on,
-            archives: archivesCheckbox.state == .on,
-            progress: true,
-            only: only, includeHidden: hiddenCheckbox.state == .on,
-            exact: exactCheckbox.state == .on,
-            metadata: selectedMode == .metadata,
-            metadataField: selectedMetadataField,
-            pixelLimits: pixelLimits)
+        guard let arguments = searchConfiguration.arguments(
+            pattern: pattern, root: searchRoot.path, progress: true)
         else {
             searchPhase = .failed("favenio.py nicht gefunden.")
             refreshStatus()

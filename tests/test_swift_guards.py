@@ -301,12 +301,14 @@ class SwiftGuardTests(unittest.TestCase):
         Der Vertrag steht in der URL selbst, statt als fehlender Wert vom
         Leser erraten zu werden."""
         handoff = swift_function(QUICK, "func openMainApp(")
-        self.assertIn('URLQueryItem(name: "regex", value: "0")', handoff)
-        self.assertIn('URLQueryItem(name: "case", value: "0")', handoff)
-        start = swift_function(QUICK, "func startSearch()")
-        self.assertIn("regex: false, caseSensitive: false", start)
-        self.assertIn('regexCheckbox.state = value("regex") == "1"', GUI)
-        self.assertIn('caseCheckbox.state = value("case") == "1"', GUI)
+        self.assertIn("searchConfiguration.queryItems", handoff)
+        configuration = swift_function(QUICK, "var searchConfiguration:")
+        self.assertNotIn("configuration.regex =", configuration)
+        self.assertNotIn("configuration.caseSensitive =", configuration)
+        self.assertIn("var regex = false", COMMON)
+        self.assertIn("var caseSensitive = false", COMMON)
+        self.assertIn('regexCheckbox.state = configuration.regex', GUI)
+        self.assertIn('caseCheckbox.state = configuration.caseSensitive', GUI)
 
     def test_path_export_is_offered_in_the_form_pipes_really_need(self):
         """Ein Dateiname darf unter macOS jedes Zeichen ausser / und NUL
@@ -405,19 +407,18 @@ class SwiftGuardTests(unittest.TestCase):
             QUICK.index("func startSearch()"):
             QUICK.index("func showProgress")
         ]
-        self.assertIn("let only = selectedOnly", start)
-        self.assertIn("only: only", start)
+        self.assertIn("configuration.only = selectedOnly", QUICK)
+        self.assertIn("searchConfiguration.arguments(", start)
         handoff = QUICK[
             QUICK.index("func openMainApp("):
             QUICK.index("func locateMainApp()")
         ]
-        self.assertIn('URLQueryItem(name: "only", value: selectedOnly)',
-                      handoff)
+        self.assertIn("searchConfiguration.queryItems", handoff)
         handler = GUI[
             GUI.index("func handleFavenioURL"):
             GUI.index("func loadResults")
         ]
-        self.assertIn('value("only") ?? "both"', handler)
+        self.assertIn("configuration.only", handler)
         continuation = QUICK[
             QUICK.index("func flushPending()"):
             QUICK.index("func finish(")
@@ -693,8 +694,8 @@ class SwiftGuardTests(unittest.TestCase):
                               source)
                 self.assertIn("var pixelLimits: PixelLimits", source)
                 self.assertNotIn("contentCheckbox", source)
-                self.assertIn("metadata: ", source)
-                self.assertIn("pixelLimits: ", source)
+                self.assertIn("configuration.mode = selectedMode", source)
+                self.assertIn("configuration.pixelTexts =", source)
     def test_metadata_field_list_comes_from_the_core(self):
         """Die kuratierte Feldliste ist EINE Konstante in favenio.py. Swift
         fragt sie per --list-metadata-fields ab statt sie abzuschreiben —
@@ -712,14 +713,15 @@ class SwiftGuardTests(unittest.TestCase):
         ganz weg (der Kern laeuft dann ohne Textkriterium; ein kuenstliches
         `*` war unter --regex ein ungueltiger Ausdruck), und beide Apps
         starten die Suche nur, wenn Muster ODER Maßfilter da sind."""
-        arguments = swift_function(COMMON, "func searchArguments(")
-        self.assertIn("args += pixelLimits.arguments", arguments)
+        arguments = swift_function(COMMON, "func arguments(pattern:")
+        self.assertIn("args += validation.limits.arguments", arguments)
         self.assertNotIn('"*"', arguments)
         self.assertIn("if hasPattern { args.append(pattern) }", arguments)
         # --content/--metadata sagen, WOGEGEN das Muster laeuft, und lehnt
         # der Kern ohne Muster ab.
-        self.assertIn("if content && hasPattern", arguments)
-        self.assertIn("if metadata && hasPattern", arguments)
+        self.assertIn("if hasPattern", arguments)
+        self.assertIn("if mode == .content", arguments)
+        self.assertIn("if mode == .metadata", arguments)
         self.assertIn("guard !pattern.isEmpty || !pixelLimits.isEmpty", GUI)
         self.assertIn("guard !query.isEmpty || !limits.isEmpty", QUICK)
     def test_a_size_only_search_can_be_handed_over_and_continued(self):

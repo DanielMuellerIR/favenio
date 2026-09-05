@@ -171,12 +171,42 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `--max-archive-ratio FAKTOR` | maximales ZIP-Kompressionsverhältnis |
 | `--only both\|files\|dirs` | Treffer auf Dateien, Ordner oder beides (Default) begrenzen |
 | `--hidden` | unsichtbare (Punkt-)Dateien und -Ordner mitdurchsuchen |
+| `--exclude GLOB` | passende Dateien und Teilbäume vor Öffnen oder Abstieg ausschließen (wiederholbar; Groß-/Kleinschreibung gilt; siehe unten) |
 | `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` in Bytes, soweit das Format sie nennt) |
 | `--progress` | laufend melden, wo gerade gesucht wird (mit `--json` als JSONL-Objekte, sonst auf stderr) |
 | `--extract TREFFER` | Treffer-Pfad (`!/`-Notation) in einen Temp-Ordner auspacken und den nutzbaren Pfad ausgeben |
 | `--extract-json JSON` | einen eindeutigen strukturierten JSON-Treffer auspacken |
 | `--extract-root ORDNER` | Temp-Wurzel für die Extraktion (nutzen die Apps, die sie selbst aufräumen) |
 | `--version` | Version anzeigen |
+
+Ausschlüsse verwenden Glob-Muster für ganze Namen (`*`, `?`, `[abc]`),
+unabhängig vom Suchmuster und von `--regex`, `--exact` oder `--case-sensitive`.
+In der Shell die Muster in Anführungszeichen setzen. Ohne `/` gilt ein Muster
+für jede ganze Pfadkomponente: `--exclude cache` lässt alle Ordner oder
+Dateien namens `cache` samt Inhalt aus, behält aber `mycache` und `Cache`.
+Mit `/` gilt das Muster für den vollständigen Pfad relativ zum jeweiligen
+Startordner: `--exclude build/generated` lässt diesen Teilbaum aus, behält
+aber `other/build/generated`. `*` darf `/` überqueren:
+`--exclude 'build/*/cache'` lässt auch `build/a/b/cache` aus. `**` hat keine
+eigene Bedeutung; ein abschließendes `/` ist keine besondere Ordnerregel.
+
+Jedes Archiv, auch ein verschachteltes, beginnt für diese Muster eine neue
+relative Wurzel. Elternpfade werden auch geprüft, wenn das Archiv keinen
+eigenen Ordnereintrag nennt. `./`-Komponenten in Archivpfaden werden beim
+Vergleich ausgelassen. Ein echtes `!` im Eintragsnamen bleibt Teil des
+Namens: `--exclude 'odd!/skip.txt'` trifft diesen relativen Eintragspfad,
+keinen Wechsel zwischen Archiven. Mehrere Startpfade gelten unabhängig
+voneinander. Ein ausdrücklich gewählter Startordner bleibt die Suchwurzel,
+auch wenn sein eigener Name passt; eine ausdrücklich gewählte Datei wird
+anhand ihres Dateinamens geprüft. Relative Muster ohne führendes `/` oder
+`./` verwenden.
+
+Zum Beispiel lässt `./favenio.py --exclude cache --exclude '*.zip' rechnung ~/Documents`
+Cache-Teilbäume aus und öffnet die ausgeschlossenen ZIP-Dateien auch für eine
+Inhaltssuche in ihren Rohbytes nicht. Die passenden Objekte erscheinen auch
+nicht als Treffer. Es gibt keine voreingestellten Ausschlussmuster; die
+bisherige Option `--hidden` steuert Punktdateien und Punktordner unabhängig
+davon.
 
 `--no-archives` (und `--archive-depth 0`) heißt **nicht hineinschauen**,
 nicht **auslassen**. Die Datei zählt dann als ganz normale Datei, mit `-c` wird
@@ -273,6 +303,12 @@ Zwei Punkte, die man dazu wissen sollte:
   Dafür ist ein Archivwerkzeug zuständig.
 
 ## GUI (Favenio.app)
+
+Im Feld **Ausschließen** steht ein Muster je Zeile, zum Beispiel
+`node_modules` oder `Cache/*.zip`. Return beginnt eine neue Zeile. Leere Zeilen
+werden ignoriert; Leerzeichen gehören zum Muster. Die Schnellsuche übergibt
+alle Muster an die Haupt-App. Groß-/Kleinschreibung gilt unabhängig vom
+Suchtext; die Musterregeln entsprechen `--exclude` weiter oben.
 
 Beide Apps lesen Suchtreffer im Hintergrund und übernehmen begrenzte Pakete.
 Stopp und Suchwechsel brechen auch einen Lauf mit vielen ausstehenden Treffern
