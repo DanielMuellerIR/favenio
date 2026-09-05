@@ -310,6 +310,23 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn('regexCheckbox.state = configuration.regex', GUI)
         self.assertIn('caseCheckbox.state = configuration.caseSensitive', GUI)
 
+    def test_export_job_preserves_current_search_and_prevents_second_job(self):
+        writer = swift_function(COMMON, "func write(_ hits: [Hit], format:")
+        self.assertIn("guard !isWriting else { return false }", writer)
+        self.assertIn("DispatchQueue.global", writer)
+        self.assertIn("DispatchQueue.main.async", writer)
+        self.assertIn("options: .atomic", writer)
+        export = swift_function(GUI, "func runExport(_ selected:")
+        self.assertIn("guard !exportIsBusy", export)
+        self.assertIn("self.exportWriter.write", export)
+        self.assertNotIn("exportData(for:", export)
+        self.assertNotIn("statusLabel.stringValue", export)
+        refresh = swift_function(GUI, "func refreshStatus()")
+        self.assertIn("statusText()", refresh)
+        self.assertIn("exportStatus.map", refresh)
+        for signature in ("func exportAllHits(", "func exportSelectedHits("):
+            self.assertIn("guard !exportIsBusy", swift_function(GUI, signature))
+
     def test_path_export_is_offered_in_the_form_pipes_really_need(self):
         """Ein Dateiname darf unter macOS jedes Zeichen ausser / und NUL
         enthalten — auch einen Zeilenumbruch. Deshalb gibt es die Pfadliste

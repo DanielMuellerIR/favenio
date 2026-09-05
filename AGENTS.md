@@ -411,6 +411,15 @@ und im Rechtsklick-Menü der Tabelle, jeweils mit sichtbarem Kürzel:
   je Archivebene gegen die Eintragsliste auf (`pick_member()`, längster
   passender Anfang gewinnt). Verlustfrei strukturiert ist nur JSONL.
 
+`ExportWriter` serialisiert und schreibt den unveränderlichen Trefferstand
+im Hintergrund. Start, Einzeljob-Sperre und Completion gehören auf Main;
+`exportData` sowie der atomare Austausch bleiben unverändert. Die GUI erlaubt
+höchstens einen Sichern-Dialog oder Exportjob gleichzeitig. Exportstatus wird
+in `refreshStatus` an den AKTUELLEN Suchstatus angehängt, niemals direkt über
+dessen Text geschrieben. Eine neue Suche oder deren Fehler darf auch nach
+einem späten Exportabschluss sichtbar bleiben. Die komplette Ausgabe wird
+weiterhin als `Data` aufgebaut; dies ist kein speicherbegrenzter Streamingexport.
+
 Die Kürzel auf der Auswahl (⌫, ⌘⌫, ⇧⌘E) gelten nur, solange die Trefferliste
 den Fokus hat. Das ist keine Kosmetik: Ein ungültiger Menüpunkt gibt sein
 Kürzel frei, und nur deshalb löscht ⌫ im Suchfeld weiter ein Zeichen.

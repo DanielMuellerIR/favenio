@@ -411,6 +411,12 @@ active; it never applies inside a dialog.
 | Export all hits… | ⌘E | Writes the whole list to a file |
 | Export selection… | ⇧⌘E | The same for the selected rows only |
 
+Export uses the result snapshot selected when invoked and writes in the
+background, keeping search responsive. The footer shows export and search
+status together. Only one export can run at a time. The output file is
+replaced atomically. Large exports are still assembled entirely in memory;
+background processing does not reduce that memory requirement.
+
 The save dialog offers four formats:
 
 | Format | For |

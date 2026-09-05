@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.31.1 — 2026-09-05
+
+- Trefferexporte serialisieren und schreiben im Hintergrund. Ein einzelner
+  Exportjob hält die gewählte Trefferliste als unveränderlichen Stand; weitere
+  Exporte bleiben bis zum Abschluss gesperrt. Export- und Suchstatus werden
+  gemeinsam angezeigt, ohne dass ein später Exportabschluss eine neue Suche
+  überschreibt. Formate und atomarer Dateiaustausch bleiben unverändert.
+- Bei 100.000 Treffern sank die Main-Thread-Verzögerung des CSV-Exports im
+  Median von 16,57 s auf 2,88 ms, bei JSONL von 271 auf 0,98 ms. Die gesamte
+  Exportdauer wird dadurch nicht kürzer; JSONL benötigt weiterhin rund
+  514 MiB Spitzenspeicher. Aufbau und Rohwerte: `tests/EXPORT_MEASUREMENTS.md`.
+
 ## Prüfungen vom 2026-09-05 nach 0.31.0
 
 - Der Signaltest beendet und sammelt seinen Shell-Prozess auch nach einem

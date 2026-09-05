@@ -2391,6 +2391,37 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
     }
 }
 
+/// Ein Export pro Instanz. Steuerung und Completion gehören auf Main;
+/// Serialisierung und atomarer Dateiaustausch laufen auf einer Worker-Queue.
+/// Der unveränderliche Array-Wert hält genau die beim Start gewählten Treffer.
+final class ExportWriter {
+    private(set) var isWriting = false
+
+    @discardableResult
+    func write(_ hits: [Hit], format: HitExportFormat, to destination: URL,
+               completion: @escaping (Result<Void, Error>) -> Void) -> Bool {
+        precondition(Thread.isMainThread)
+        guard !isWriting else { return false }
+        isWriting = true
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let result: Result<Void, Error> = Result {
+                try autoreleasepool {
+                    // Der Serializer bleibt unverändert, einschließlich BOM,
+                    // Formelpräfixschutz und JSONL-Verhalten. Die vollständige
+                    // Ausgabe liegt weiterhin als Data im Speicher.
+                    try exportData(for: hits, format: format)
+                        .write(to: destination, options: .atomic)
+                }
+            }
+            DispatchQueue.main.async { [self] in
+                isWriting = false
+                completion(result)
+            }
+        }
+        return true
+    }
+}
+
 // MARK: - In den Papierkorb legen
 
 /// Das Kürzel-Zeichen der Rückschritttaste. NSMenuItem zeichnet dafür genau

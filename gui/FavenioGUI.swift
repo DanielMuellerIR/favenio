@@ -160,6 +160,23 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Korrigierter Maßfehler bleibt sichtbar")
         return 1
     }
+    pixelController.exportStatus = "Export läuft"
+    pixelController.searchPhase = .running
+    pixelController.progressPath = "/new-search"
+    pixelController.refreshStatus()
+    guard pixelController.statusLabel.stringValue.contains("/new-search"),
+          pixelController.statusLabel.stringValue.contains("Export läuft") else {
+        print("SELFTEST FEHLER: Exportstatus verdrängt eine neue Suche")
+        return 1
+    }
+    pixelController.searchPhase = .failed("Neuer Suchfehler")
+    pixelController.exportStatus = "Export fertig"
+    pixelController.refreshStatus()
+    guard pixelController.statusLabel.stringValue.contains("Neuer Suchfehler"),
+          pixelController.statusLabel.stringValue.contains("Export fertig") else {
+        print("SELFTEST FEHLER: Exportabschluss verdrängt neuen Suchfehler")
+        return 1
+    }
     guard findCLI() != nil else {
         print("SELFTEST FEHLER: favenio.py nicht gefunden")
         return 1
@@ -837,6 +854,9 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Der offene Sichern-Dialog des Exports; das Format-Aufklappmenü darin
     /// muss seinen Dateinamen ändern können.
     var exportSavePanel: NSSavePanel?
+    let exportWriter = ExportWriter()
+    var exportStatus: String?
+    var exportIsBusy: Bool { exportSavePanel != nil || exportWriter.isWriting }
 
     // ---------- App-Lebenszyklus ----------
 
@@ -1321,7 +1341,14 @@ final class MainController: HitListController, NSApplicationDelegate,
     // ---------- Fußzeile ----------
 
     /// Schreibt die Fußzeile aus dem aktuellen Zustand neu.
-    func refreshStatus() { statusLabel.stringValue = statusText() }
+    func refreshStatus() {
+        // Der Export ist unabhängig von der Suche. Ein später Exportabschluss
+        // darf weder eine neue Suche noch deren Fehlerstatus überschreiben.
+        let search = statusText()
+        let text = exportStatus.map { search + " — " + $0 } ?? search
+        statusLabel.stringValue = text
+        statusLabel.toolTip = text
+    }
 
     /// Formuliert die Fußzeile: Kennzahlen der Trefferliste, dahinter — falls
     /// gerade etwas läuft oder abgebrochen wurde — der Zustand der Suche.
@@ -2174,15 +2201,19 @@ final class MainController: HitListController, NSApplicationDelegate,
         let fromTableMenu = item.menu === tableView.menu
         let mainWindowIsKey = window?.isKeyWindow == true
         switch item.action {
-        case #selector(removeFromResults(_:)), #selector(trashSelected(_:)),
-             #selector(exportSelectedHits(_:)):
+        case #selector(removeFromResults(_:)), #selector(trashSelected(_:)):
             guard fromTableMenu
                     || (mainWindowIsKey
                         && window?.firstResponder === tableView)
             else { return false }
             return !rows(for: item).isEmpty
+        case #selector(exportSelectedHits(_:)):
+            guard !exportIsBusy,
+                  fromTableMenu || (mainWindowIsKey && window?.firstResponder === tableView)
+            else { return false }
+            return !rows(for: item).isEmpty
         case #selector(exportAllHits(_:)):
-            return mainWindowIsKey && !hits.isEmpty
+            return !exportIsBusy && mainWindowIsKey && !hits.isEmpty
         default:
             return true
         }
@@ -2281,10 +2312,12 @@ final class MainController: HitListController, NSApplicationDelegate,
     }
 
     @objc func exportAllHits(_ sender: Any?) {
+        guard !exportIsBusy else { return }
         runExport(hits, scope: "alle Treffer")
     }
 
     @objc func exportSelectedHits(_ sender: Any?) {
+        guard !exportIsBusy else { return }
         runExport(hitsAtRows(rows(for: sender)), scope: "Auswahl")
     }
 
@@ -2302,8 +2335,10 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     /// Sichern-Dialog mit Format-Aufklappmenü und anschließendes Schreiben.
     func runExport(_ selected: [Hit], scope: String) {
+        guard !exportIsBusy else { return }
         guard !selected.isEmpty else {
-            statusLabel.stringValue = "Kein Treffer zum Exportieren."
+            exportStatus = "Kein Treffer zum Exportieren."
+            refreshStatus()
             return
         }
         let formats = HitExportFormat.allCases
@@ -2328,15 +2363,18 @@ final class MainController: HitListController, NSApplicationDelegate,
             guard response == .OK, let url = panel.url,
                   let self else { return }
             let format = formats[max(0, popUp.indexOfSelectedItem)]
-            do {
-                try exportData(for: selected, format: format)
-                    .write(to: url, options: .atomic)
-                self.statusLabel.stringValue =
-                    "\(groupedNumber(selected.count)) Treffer exportiert: "
-                    + abbreviateHome(url.path)
-            } catch {
-                self.statusLabel.stringValue = "Export fehlgeschlagen: "
-                    + error.localizedDescription
+            self.exportStatus = "Export läuft: \(groupedNumber(selected.count)) Treffer…"
+            self.refreshStatus()
+            self.exportWriter.write(selected, format: format, to: url) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.exportStatus = "\(groupedNumber(selected.count)) Treffer exportiert: "
+                        + abbreviateHome(url.path)
+                case .failure(let error):
+                    self.exportStatus = "Export fehlgeschlagen: " + error.localizedDescription
+                }
+                self.refreshStatus()
             }
         }
     }

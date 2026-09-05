@@ -428,6 +428,12 @@ aktiv ist; in einem Dialog gilt es nie.
 | Alle Treffer exportieren… | ⌘E | Schreibt die ganze Liste in eine Datei |
 | Auswahl exportieren… | ⇧⌘E | Dasselbe nur für die markierten Zeilen |
 
+Der Export verwendet den beim Aufruf gewählten Trefferstand und schreibt im
+Hintergrund; die Suche bleibt bedienbar. Die Fußzeile zeigt Export und Suche
+nebeneinander. Bis zum Abschluss ist kein weiterer Export möglich. Die
+Ausgabedatei wird atomar ersetzt. Große Exporte werden weiterhin vollständig
+im Speicher aufgebaut; die Hintergrundverarbeitung spart diesen Speicher nicht.
+
 Der Sichern-Dialog bietet vier Formate an:
 
 | Format | Wofür |
