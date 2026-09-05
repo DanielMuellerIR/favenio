@@ -30,6 +30,7 @@ Nur Python-Standardbibliothek, keine Abhängigkeiten.
 import argparse
 import bz2
 import codecs
+import collections
 import datetime
 import fnmatch
 import gzip
@@ -52,7 +53,7 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.32.0"
+__version__ = "0.32.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-05"
@@ -664,6 +665,143 @@ def classify_archive(name):
     if zstd is not None and lowered.endswith(ZSTD_SINGLE_EXTENSION):
         return ZSTD_SINGLE_EXTENSION
     return None
+
+
+LinePiece = collections.namedtuple("LinePiece",
+                                   "number text complete ends_line")
+LinePiece.__doc__ = """Ein Stück Text aus iter_line_pieces() — die Namen
+seiner vier Felder.
+
+`number` ist die Zeilennummer (1-basiert). `complete` sagt, ob `text` die
+GANZE Zeile ist; ein Bruchstück einer zu langen Zeile hat complete=False —
+auch ihr letztes Stück, denn der Anfang der Zeile ist längst weg.
+`ends_line` sagt, ob mit diesem Stück die Zeile zu Ende ist (bei einer
+vollständigen Zeile immer, bei Bruchstücken nur beim letzten).
+
+Der Generator liefert aus Kostengründen NACKTE Tupel dieser Form, keine
+LinePiece-Objekte: 64 MiB in 80-Zeichen-Zeilen sind 840 000 Zeilen, und
+ein namedtuple je Zeile kostete gemessen am 2026-09-05 0,14 s auf 0,17 s
+Gesamtlauf (`tests/LINE_READER_MEASUREMENTS.md`). Ein Tupel vergleicht
+sich gleich mit dem LinePiece derselben Werte; wer Feldnamen will, nimmt
+`LinePiece._make(piece)`."""
+
+
+def iter_line_pieces(chunks, max_line_chars=None, overlap_chars=None):
+    """Liest Byte-Häppchen als UTF-8-Text und liefert Zeilen als LinePiece.
+
+    Das ist der Leser der Inhaltssuche, herausgelöst aus match_content()
+    (0.32.1, verhaltensneutral — die Tests vergleichen beide Fassungen
+    Eingabe für Eingabe). Was er zusagt:
+
+    - Dekodiert wird als UTF-8 mit errors="replace", damit die Suche auch
+      in „halb-binären" Dateien funktioniert. Der inkrementelle Decoder
+      setzt Mehrbyte-Zeichen über Häppchengrenzen hinweg zusammen; das
+      Ergebnis ist identisch zum Dekodieren der ganzen Datei am Stück.
+    - Zeilen enden an allem, woran str.splitlines() sie beendet
+      (LINE_BREAKS). Ein CRLF über eine Häppchengrenze ist EIN Umbruch:
+      Ein \r am Häppchenende wartet, ob ein \n folgt.
+    - Eine Zeile ohne Umbruch wird nicht vollständig gepuffert
+      (MAX_LINE_CHARS): Läuft sie darüber hinaus, kommt der bisherige Text
+      als Bruchstück (complete=False), und nur der Schwanz
+      (LINE_OVERLAP_CHARS) bleibt für das nächste Stück stehen — damit
+      ein Treffer an der Schnittstelle nicht verlorengeht. Die
+      Überlappung darf nicht 0 werden: `segment[-0:]` ist in Python der
+      GANZE String, die Grenze verschwände lautlos.
+    - Die letzte Zeile ohne Umbruch kommt trotzdem, mit ends_line=True.
+
+    Die Grenzen werden beim Aufruf aus den Modulkonstanten gelesen (Tests
+    setzen sie klein), lassen sich aber auch direkt übergeben."""
+    if max_line_chars is None:
+        max_line_chars = MAX_LINE_CHARS
+    if overlap_chars is None:
+        overlap_chars = LINE_OVERLAP_CHARS
+    pending = []          # Bruchstücke der noch nicht beendeten Zeile
+    pending_chars = 0     # deren Gesamtlänge, ohne sie zusammenzusetzen
+    number = 0
+    fragmented = False    # von der aktuellen Zeile gingen schon Stücke raus
+    # Eine beendete Zeile ist vollständig, wenn nichts von ihr schon als
+    # Bruchstück ging — das steht an drei Stellen unten wörtlich gleich,
+    # statt in einer Hilfsfunktion: Ein Aufruf je Zeile wäre für den
+    # Normalfall (kurze Zeilen) der teuerste Schritt des Lesers.
+    for text in codecs.iterdecode(chunks, "utf-8", errors="replace"):
+        if not text:
+            continue
+        pending.append(text)
+        pending_chars += len(text)
+        # Steckt in diesem Häppchen überhaupt ein Umbruch? Wenn nicht,
+        # gibt es keine fertige Zeile und wir puffern nur weiter — würden
+        # wir den wachsenden Puffer bei jedem Häppchen neu zusammensetzen,
+        # bekämen Dateien ohne Zeilenumbrüche quadratischen Aufwand.
+        # Der \n-Test ist der billige Normalfall; erst wenn er scheitert,
+        # kosten die selteneren Umbruchzeichen einen splitlines()-Lauf.
+        if "\n" not in text and len(text.splitlines()) == 1 \
+                and text[-1] not in LINE_BREAKS:
+            if pending_chars > max_line_chars:
+                segment = "".join(pending)
+                # Im Puffer kann trotzdem ein Zeilenende stecken: ein
+                # einzelnes "\r" aus einem früheren Häppchen, das dort
+                # wartete, weil ein "\n" daraus ein CRLF machen könnte.
+                # DIESES Häppchen hat keinen Umbruch, also wird daraus
+                # keines mehr — die Zeilen sind fertig und werden ganz
+                # normal gezählt. Ohne diesen Schritt verschwanden sie
+                # mit dem Abschnitt, und jede folgende Zeilennummer war
+                # um eins zu klein.
+                finished = segment.splitlines()
+                if len(finished) > 1:
+                    for line in finished[:-1]:
+                        number += 1
+                        yield (number, line, not fragmented, True)
+                        fragmented = False
+                    segment = finished[-1]
+                if len(segment) > max_line_chars:
+                    # Die Zeile ist noch nicht zu Ende, aber schon zu
+                    # lang. Die Zeilennummer bleibt dieselbe, denn es
+                    # ist weiterhin EINE Zeile.
+                    yield (number + 1, segment, False, False)
+                    fragmented = True
+                    # Nicht segment[-overlap_chars:] ohne Prüfung: Bei
+                    # einer Überlappung von 0 wäre das segment[0:], also
+                    # der GANZE Abschnitt — die Grenze verschwände
+                    # lautlos, und genau der Speicherfehler wäre zurück.
+                    segment = (segment[-overlap_chars:]
+                               if overlap_chars > 0 else "")
+                pending = [segment]
+                pending_chars = len(segment)
+            continue
+        buffer = "".join(pending)
+        pending.clear()
+        pending_chars = 0
+        lines = buffer.splitlines()
+        if buffer[-1] not in LINE_BREAKS:
+            # Die letzte Zeile ist noch offen; sie wird im nächsten
+            # Häppchen fortgesetzt.
+            rest = lines.pop()
+            pending.append(rest)
+            pending_chars = len(rest)
+        elif buffer.endswith("\r"):
+            # Umbruch noch offen: folgt im nächsten Häppchen ein \n,
+            # sind beide zusammen EIN Umbruch (CRLF) — sonst zählten
+            # wir hier eine Zeile zu viel.
+            rest = lines.pop() + "\r"
+            pending.append(rest)
+            pending_chars = len(rest)
+        if fragmented and lines:
+            # Nur die ERSTE Zeile dieses Häppchens kann der Rest einer
+            # zu langen Zeile sein.
+            number += 1
+            yield (number, lines[0], False, True)
+            fragmented = False
+            lines = lines[1:]
+        for line in lines:
+            number += 1
+            yield (number, line, True, True)
+    # Rest: die letzte noch offene Zeile. Den Decoder leert iterdecode()
+    # selbst — ein angebrochenes Mehrbyte-Zeichen am Dateiende steht dann
+    # schon als Ersatzzeichen im Puffer.
+    for line in "".join(pending).splitlines():
+        number += 1
+        yield (number, line, not fragmented, True)
+        fragmented = False
 
 
 class ContentProbe:
@@ -1923,121 +2061,35 @@ class Search:
         Chunker. Beim ersten Treffer steigen wir sofort aus; der Rest der
         Datei wird dann gar nicht mehr gelesen.
 
-        Dekodiert wird als UTF-8 mit errors="replace", damit die Suche auch
-        in „halb-binären" Dateien funktioniert, ohne dass das Programm
-        abbricht. Der inkrementelle Decoder setzt Mehrbyte-Zeichen über
-        Häppchengrenzen hinweg korrekt zusammen; das Ergebnis ist deshalb
-        identisch zum Dekodieren der ganzen Datei am Stück."""
-        pending = []          # Bruchstücke der noch nicht beendeten Zeile
-        pending_chars = 0     # deren Gesamtlänge, ohne sie zusammenzusetzen
-        number = 0
+        Das Lesen — Dekodieren, Zeilentrennung, Überlappung, Längengrenze —
+        macht `iter_line_pieces()`; hier steht nur noch, was mit jedem
+        Stück passiert. Nur der reine „enthält"-Test darf ein BRUCHSTÜCK
+        einer zu langen Zeile prüfen (`substring_only`, siehe
+        build_matcher). Verankerte Muster (--regex mit ^/$, Glob, --exact)
+        gelten für die ganze Zeile: `--regex 'A$'` traf am Abschnitts-
+        statt am Zeilenende und meldete einen Treffer, den grep nicht
+        sieht. Für sie bleibt die zu lange Zeile ungeprüft und wird EINMAL
+        als Warnung genannt — gemeldet, statt still falsch beantwortet."""
         # Darf der Matcher ein Bruchstück sehen? Nur der reine
         # „enthält"-Test; alles andere ist verankert (siehe build_matcher).
         piecewise = getattr(self.matcher, "substring_only", False)
-        skipping = False      # Zeile zu lang und mit diesem Muster ungeprüft
-        for text in codecs.iterdecode(chunks, "utf-8", errors="replace"):
-            if not text:
-                continue
-            pending.append(text)
-            pending_chars += len(text)
-            # Steckt in diesem Häppchen überhaupt ein Umbruch? Wenn nicht,
-            # gibt es keine fertige Zeile und wir puffern nur weiter — würden
-            # wir den wachsenden Puffer bei jedem Häppchen neu zusammensetzen,
-            # bekämen Dateien ohne Zeilenumbrüche quadratischen Aufwand.
-            # Der \n-Test ist der billige Normalfall; erst wenn er scheitert,
-            # kosten die selteneren Umbruchzeichen einen splitlines()-Lauf.
-            if "\n" not in text and len(text.splitlines()) == 1 \
-                    and text[-1] not in LINE_BREAKS:
-                if pending_chars > MAX_LINE_CHARS:
-                    segment = "".join(pending)
-                    # Im Puffer kann trotzdem ein Zeilenende stecken: ein
-                    # einzelnes "\r" aus einem früheren Häppchen, das dort
-                    # wartete, weil ein "\n" daraus ein CRLF machen könnte.
-                    # DIESES Häppchen hat keinen Umbruch, also wird daraus
-                    # keines mehr — die Zeilen sind fertig und werden ganz
-                    # normal gezählt. Ohne diesen Schritt verschwanden sie
-                    # mit dem Abschnitt, und jede folgende Zeilennummer war
-                    # um eins zu klein.
-                    finished = segment.splitlines()
-                    if len(finished) > 1:
-                        for line in finished[:-1]:
-                            number += 1
-                            if skipping:
-                                skipping = False
-                            elif self.matcher(line):
-                                return number
-                        segment = finished[-1]
-                    if len(segment) > MAX_LINE_CHARS:
-                        # Die Zeile ist noch nicht zu Ende, aber schon zu
-                        # lang. Die Zeilennummer bleibt dieselbe, denn es
-                        # ist weiterhin EINE Zeile.
-                        if piecewise and not skipping:
-                            if self.matcher(segment):
-                                return number + 1
-                            # Nicht segment[-LINE_OVERLAP_CHARS:] ohne
-                            # Prüfung: Bei einer Überlappung von 0 wäre das
-                            # segment[0:], also der GANZE Abschnitt — die
-                            # Grenze verschwände lautlos, und genau der
-                            # Speicherfehler wäre zurück.
-                            segment = (segment[-LINE_OVERLAP_CHARS:]
-                                       if LINE_OVERLAP_CHARS > 0 else "")
-                        else:
-                            # Verankerte Muster (--regex mit ^ oder $,
-                            # Glob, --exact) gelten für die GANZE Zeile.
-                            # Auf einem Bruchstück geprüft träfen sie
-                            # falsch: `--regex 'A$'` traf am Abschnitts-
-                            # statt am Zeilenende und meldete einen
-                            # Treffer, den grep nicht sieht. Diese Zeile
-                            # bleibt deshalb ungeprüft — gemeldet, statt
-                            # still falsch beantwortet.
-                            if not skipping:
-                                self.warn(
-                                    "%s: Zeile %d ist länger als %d "
-                                    "Zeichen und wird mit diesem Muster "
-                                    "nicht geprüft"
-                                    % (label or "<Eingabe>", number + 1,
-                                       MAX_LINE_CHARS))
-                                skipping = True
-                            segment = ""
-                    pending = [segment]
-                    pending_chars = len(segment)
-                continue
-            buffer = "".join(pending)
-            pending.clear()
-            pending_chars = 0
-            lines = buffer.splitlines()
-            if buffer[-1] not in LINE_BREAKS:
-                # Die letzte Zeile ist noch offen; sie wird im nächsten
-                # Häppchen fortgesetzt.
-                rest = lines.pop()
-                pending.append(rest)
-                pending_chars = len(rest)
-            elif buffer.endswith("\r"):
-                # Umbruch noch offen: folgt im nächsten Häppchen ein \n,
-                # sind beide zusammen EIN Umbruch (CRLF) — sonst zählten
-                # wir hier eine Zeile zu viel.
-                rest = lines.pop() + "\r"
-                pending.append(rest)
-                pending_chars = len(rest)
-            for line in lines:
-                number += 1
-                if skipping:
-                    # Nur der REST der zu langen Zeile wird übersprungen;
-                    # ab der nächsten Zeile wird wieder normal geprüft.
-                    skipping = False
-                    continue
-                if self.matcher(line):
+        matcher = self.matcher
+        warned = None         # Nummer der zu langen Zeile, die gemeldet ist
+        for number, text, complete, _ in iter_line_pieces(chunks):
+            if complete:
+                if matcher(text):
                     return number
-        # Rest: die letzte noch offene Zeile prüfen. Den Decoder leert
-        # iterdecode() selbst — ein angebrochenes Mehrbyte-Zeichen am
-        # Dateiende steht dann schon als Ersatzzeichen im Puffer.
-        for line in "".join(pending).splitlines():
-            number += 1
-            if skipping:
-                skipping = False
                 continue
-            if self.matcher(line):
-                return number
+            # Ein Bruchstück einer zu langen Zeile — auch ihr letztes Stück
+            # ist keine vollständige Zeile.
+            if piecewise:
+                if matcher(text):
+                    return number
+            elif warned != number:
+                self.warn("%s: Zeile %d ist länger als %d Zeichen und wird "
+                          "mit diesem Muster nicht geprüft"
+                          % (label or "<Eingabe>", number, MAX_LINE_CHARS))
+                warned = number
         return None
 
     # ---------- Dateisystem ----------

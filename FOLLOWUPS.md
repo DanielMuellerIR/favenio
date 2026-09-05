@@ -1,28 +1,9 @@
 # Folgeaufträge aus der Codeanalyse vom 2026-09-05
 
 Die Größen-, Datums- und Ausschlussfilter sind umgesetzt, ebenso die
-asynchrone Materialisierung (0.32.0) und der ISO-Ordnertyp (0.31.4). Die
+asynchrone Materialisierung (0.32.0), der ISO-Ordnertyp (0.31.4) und der
+herausgelöste Zeilenleser (0.32.1). Die
 folgenden Aufträge sind getrennte Änderungen mit eigenen Abnahmen.
-
-## Priorität 2: Zeilen- und Segmentleser herauslösen
-
-`Search.match_content()` in `favenio.py` verbindet UTF-8-Dekodierung,
-Zeilentrennung, Überlappung, Längengrenze und Matching. Den Leser in einem
-eigenen verhaltensneutralen Refactor herauslösen; keine gleichzeitige Optimierung.
-
-Jedes Element muss Zeilennummer, vollständige Zeile oder Fragment und das
-Erreichen des Zeilenendes unterscheiden. Auch das letzte Fragment einer
-langen Zeile darf nicht als vollständige Zeile gelten. Nur reine
-Substring-Matcher dürfen Fragmente prüfen; Regex, Glob und Exact behalten
-die bisherige Warnung und überspringen die zu lange Zeile.
-
-Abnahme: bisherige und neue Implementierung mit denselben Eingaben vergleichen:
-LF, CRLF über Chunkgrenzen, einzelnes CR, sämtliche bisherigen Zeilentrenner,
-UTF-8-Grenzen und Ersatzzeichen, letzte Zeile ohne Umbruch, leere Zeilen,
-überlange Zeilen und Treffer im Überlappungsbereich. Treffer, Zeilennummern,
-Warnungen und frühes Leseende müssen identisch bleiben. Archivbudgets und
-Inhaltsvortest bleiben unverändert. Speicher und Laufzeit für kurze und lange
-Zeilen dokumentieren.
 
 ## Priorität 3: Vollständige benannte Suchvorlagen
 

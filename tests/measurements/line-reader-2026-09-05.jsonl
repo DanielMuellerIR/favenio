@@ -1,0 +1,24 @@
+{"exit": 0, "fixture": "short", "pattern": "substring", "repeat": 1, "rss": 20807680, "seconds": 0.177530167, "stderr": "", "variant": "before"}
+{"exit": 0, "fixture": "short", "pattern": "substring", "repeat": 1, "rss": 20807680, "seconds": 0.191572333, "stderr": "", "variant": "after"}
+{"exit": 0, "fixture": "short", "pattern": "regex", "repeat": 1, "rss": 20807680, "seconds": 0.362896125, "stderr": "", "variant": "before"}
+{"exit": 0, "fixture": "short", "pattern": "regex", "repeat": 1, "rss": 20725760, "seconds": 0.36771379099999996, "stderr": "", "variant": "after"}
+{"exit": 0, "fixture": "long", "pattern": "substring", "repeat": 1, "rss": 49037312, "seconds": 0.135530333, "stderr": "", "variant": "before"}
+{"exit": 0, "fixture": "long", "pattern": "substring", "repeat": 1, "rss": 49119232, "seconds": 0.13601829199999999, "stderr": "", "variant": "after"}
+{"exit": 1, "fixture": "long", "pattern": "regex", "repeat": 1, "rss": 49266688, "seconds": 0.096146916, "stderr": "favenio: warnung: /var/folders/jq/vqn8xgtj2lv1dqljb_klt9nc0000gn/T/favenio-lines-gat38e_u/long.txt: Zeile 1 ist l\u00e4nger als 8388608 Zeichen und wird mit diesem Muster nicht gepr\u00fcft", "variant": "before"}
+{"exit": 1, "fixture": "long", "pattern": "regex", "repeat": 1, "rss": 49053696, "seconds": 0.092777291, "stderr": "favenio: warnung: /var/folders/jq/vqn8xgtj2lv1dqljb_klt9nc0000gn/T/favenio-lines-gat38e_u/long.txt: Zeile 1 ist l\u00e4nger als 8388608 Zeichen und wird mit diesem Muster nicht gepr\u00fcft", "variant": "after"}
+{"exit": 0, "fixture": "short", "pattern": "substring", "repeat": 2, "rss": 21069824, "seconds": 0.17299699999999998, "stderr": "", "variant": "before"}
+{"exit": 0, "fixture": "short", "pattern": "substring", "repeat": 2, "rss": 20971520, "seconds": 0.19222683299999999, "stderr": "", "variant": "after"}
+{"exit": 0, "fixture": "short", "pattern": "regex", "repeat": 2, "rss": 20725760, "seconds": 0.347624375, "stderr": "", "variant": "before"}
+{"exit": 0, "fixture": "short", "pattern": "regex", "repeat": 2, "rss": 21037056, "seconds": 0.364920333, "stderr": "", "variant": "after"}
+{"exit": 0, "fixture": "long", "pattern": "substring", "repeat": 2, "rss": 49217536, "seconds": 0.133712167, "stderr": "", "variant": "before"}
+{"exit": 0, "fixture": "long", "pattern": "substring", "repeat": 2, "rss": 49004544, "seconds": 0.133107875, "stderr": "", "variant": "after"}
+{"exit": 1, "fixture": "long", "pattern": "regex", "repeat": 2, "rss": 49217536, "seconds": 0.094308292, "stderr": "favenio: warnung: /var/folders/jq/vqn8xgtj2lv1dqljb_klt9nc0000gn/T/favenio-lines-gat38e_u/long.txt: Zeile 1 ist l\u00e4nger als 8388608 Zeichen und wird mit diesem Muster nicht gepr\u00fcft", "variant": "before"}
+{"exit": 1, "fixture": "long", "pattern": "regex", "repeat": 2, "rss": 49053696, "seconds": 0.0934345, "stderr": "favenio: warnung: /var/folders/jq/vqn8xgtj2lv1dqljb_klt9nc0000gn/T/favenio-lines-gat38e_u/long.txt: Zeile 1 ist l\u00e4nger als 8388608 Zeichen und wird mit diesem Muster nicht gepr\u00fcft", "variant": "after"}
+{"exit": 0, "fixture": "short", "pattern": "substring", "repeat": 3, "rss": 20905984, "seconds": 0.172953625, "stderr": "", "variant": "before"}
+{"exit": 0, "fixture": "short", "pattern": "substring", "repeat": 3, "rss": 20955136, "seconds": 0.195515667, "stderr": "", "variant": "after"}
+{"exit": 0, "fixture": "short", "pattern": "regex", "repeat": 3, "rss": 20692992, "seconds": 0.344341084, "stderr": "", "variant": "before"}
+{"exit": 0, "fixture": "short", "pattern": "regex", "repeat": 3, "rss": 21102592, "seconds": 0.36736316700000005, "stderr": "", "variant": "after"}
+{"exit": 0, "fixture": "long", "pattern": "substring", "repeat": 3, "rss": 49037312, "seconds": 0.1333465, "stderr": "", "variant": "before"}
+{"exit": 0, "fixture": "long", "pattern": "substring", "repeat": 3, "rss": 49102848, "seconds": 0.132735417, "stderr": "", "variant": "after"}
+{"exit": 1, "fixture": "long", "pattern": "regex", "repeat": 3, "rss": 49283072, "seconds": 0.095249292, "stderr": "favenio: warnung: /var/folders/jq/vqn8xgtj2lv1dqljb_klt9nc0000gn/T/favenio-lines-gat38e_u/long.txt: Zeile 1 ist l\u00e4nger als 8388608 Zeichen und wird mit diesem Muster nicht gepr\u00fcft", "variant": "before"}
+{"exit": 1, "fixture": "long", "pattern": "regex", "repeat": 3, "rss": 49152000, "seconds": 0.095146458, "stderr": "favenio: warnung: /var/folders/jq/vqn8xgtj2lv1dqljb_klt9nc0000gn/T/favenio-lines-gat38e_u/long.txt: Zeile 1 ist l\u00e4nger als 8388608 Zeichen und wird mit diesem Muster nicht gepr\u00fcft", "variant": "after"}

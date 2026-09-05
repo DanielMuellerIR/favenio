@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.32.1 — 2026-09-05
+
+- Kern: Das Lesen der Inhaltssuche — UTF-8-Dekodierung, Zeilentrennung,
+  Überlappung, Längengrenze — steht jetzt im eigenen Generator
+  `iter_line_pieces()`; `match_content()` entscheidet nur noch je Stück.
+  Verhaltensneutral: `tests/test_line_reader.py` lässt eine Kopie der alten
+  Fassung gegen die neue laufen. Kurze Zeilen kosten rund 10 % mehr Zeit
+  (0,19 s statt 0,17 s auf 64 MiB), Speicher und lange Zeilen unverändert —
+  `tests/LINE_READER_MEASUREMENTS.md`.
+
 ## 0.32.0 — 2026-09-05
 
 - Beide Apps packen Archivtreffer für Öffnen, „Öffnen mit", „Im Finder

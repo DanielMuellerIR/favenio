@@ -102,6 +102,19 @@ Verbindliches CLI-Verhalten:
   kein Ergebnis, kein Abbruch. Alles andere wird gemeldet und übersprungen.
   Die Namenssuche ist davon unberührt, sie öffnet die Datei gar nicht, und
   eine Pipe bleibt dort ein normaler Treffer.
+- Das Lesen der Inhaltssuche — UTF-8-Dekodierung, Zeilentrennung,
+  Überlappung, Längengrenze — steht seit 0.32.1 EINMAL im Generator
+  `iter_line_pieces()`; `match_content()` entscheidet nur noch je
+  `LinePiece`, was mit ihm passiert. Jedes Stück trägt Zeilennummer,
+  `complete` (ganze Zeile oder Bruchstück — auch das LETZTE Stück einer zu
+  langen Zeile ist keine ganze Zeile) und `ends_line`. Die Abnahme des
+  Refactors ist `tests/test_line_reader.py`: eine wörtliche Kopie der alten
+  `match_content()` läuft dort gegen die neue, Eingabe für Eingabe (LF,
+  CRLF über Häppchengrenzen, einzelnes CR, alle Trenner, UTF-8-Grenzen,
+  Ersatzzeichen, letzte Zeile ohne Umbruch, überlange Zeilen, Treffer in
+  der Überlappung, 300 Zufallseingaben) — gleiche Treffer, Zeilennummern,
+  Warnungen und gleiches frühes Leseende. Messung in
+  `tests/LINE_READER_MEASUREMENTS.md`.
 - Eine Zeile ohne Umbruch wird abschnittsweise geprüft
   (`MAX_LINE_CHARS`, `LINE_OVERLAP_CHARS`). Minifiziertes JSON oder eine
   mysqldump-Zeile pufferte `match_content()` sonst vollständig: gemessen am
