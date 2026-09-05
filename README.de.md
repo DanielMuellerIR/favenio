@@ -402,12 +402,15 @@ Aus der Trefferliste heraus:
 
 - **Doppelklick**: Öffnet die Datei. Archiv-Einträge werden einmal in einen
   app-eigenen Temp-Ordner ausgepackt und für Vorschau, Öffnen, Finder und Ziehen
-  wiederverwendet
+  wiederverwendet. Das Auspacken läuft im Hintergrund; die Fußzeile sagt es
+  solange, ⎋ bricht ab
 - **Rechtsklick**: Öffnen / **Öffnen mit…** (alle passenden Apps) /
   Im Finder zeigen / Pfad kopieren
 - **Drag & Drop**: Treffer in den Finder oder andere Apps ziehen.
-  Das geht auch mit Dateien aus Archiven; gezogen wird dann die
-  ausgepackte Kopie
+  Das geht auch mit Dateien aus Archiven: Ein noch nicht ausgepackter
+  Eintrag wird als Dateiversprechen gezogen und beim Ablegen ausgepackt
+  (Finder und Apps, die versprochene Dateien annehmen); eine schon
+  ausgepackte Kopie wird als normale Datei gezogen
 - **Leertaste**: QuickLook-Vorschau. Der Tastaturfokus bleibt in der
   Trefferliste, mit Pfeil hoch/runter wandert die Vorschau also durch die
   Treffer

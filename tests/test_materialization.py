@@ -1,0 +1,163 @@
+"""Abbrechbare Materialisierung von Archivtreffern: echte Unterprozesse,
+keine App, kein Fenster (Probe: tests/materialization_probe.swift)."""
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
+import unittest
+import zipfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_search_runner import build_probe  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent
+
+# Ein Kern-Ersatz, der die Argumente von --extract-json/--extract-root
+# versteht und sich sonst verhält, wie der jeweilige Fall es braucht.
+FAKE_CLI_HEAD = textwrap.dedent('''\
+    import json, os, sys, tempfile, time
+    args = sys.argv[1:]
+    root = args[args.index("--extract-root") + 1]
+    record = json.loads(args[args.index("--extract-json") + 1])
+    def emit():
+        out_dir = tempfile.mkdtemp(prefix="hit-", dir=root)
+        path = os.path.join(out_dir, os.path.basename(record["archiveMembers"][-1]))
+        with open(path, "w") as handle:
+            handle.write("FAKE")
+        print(path)
+    ''')
+
+
+@unittest.skipUnless(shutil.which('swiftc'), 'swiftc fehlt')
+class MaterializationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(prefix='favenio-mat-test-')
+        cls.root = Path(cls.tmp.name)
+        cls.binary = build_probe(cls.tmp.name, 'materialization_probe.swift')
+        cls.archive = cls.root / 'probe.zip'
+        with zipfile.ZipFile(cls.archive, 'w') as archive:
+            archive.writestr('inner/geheim.txt', 'FAVENIO_PROBE im Zip')
+            for index in range(20):
+                archive.writestr('member-%d.txt' % index, 'nr %d' % index)
+        cls.broken = cls.root / 'kaputt.zip'
+        cls.broken.write_bytes(b'PK\x03\x04 abgeschnitten')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def fake_cli(self, name, body):
+        path = self.root / (name + '.py')
+        path.write_text(FAKE_CLI_HEAD + textwrap.dedent(body))
+        return str(path)
+
+    def run_probe(self, *arguments, timeout=30):
+        result = subprocess.run([str(self.binary)] + [str(a) for a in arguments],
+                                capture_output=True, text=True, timeout=timeout)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(report['on_main'])
+        return report
+
+    def test_a_member_is_extracted_off_the_main_thread(self):
+        report = self.run_probe('benchmark', self.archive, 'inner/geheim.txt')
+        self.assertTrue(report['ok'], report)
+        self.assertEqual(report['bytes'], len('FAVENIO_PROBE im Zip'))
+        # Der Aufruf selbst kehrt sofort zurück; Main bleibt frei.
+        self.assertLess(report['blocked_seconds'], 0.01)
+        self.assertLess(report['max_delay'], 0.05)
+
+    def test_open_and_preview_share_one_extracted_file(self):
+        report = self.run_probe('same-file', self.archive, 'inner/geheim.txt')
+        self.assertEqual(report['state'], 'ready')
+        self.assertTrue(report['deferred'])
+        # Die zweite Anforderung kommt aus dem Cache: sofort, synchron,
+        # dieselbe Datei — die auch knownURL() (Drag-and-drop) nennt.
+        self.assertEqual(report['second']['state'], 'ready')
+        self.assertEqual(report['second']['path'], report['path'])
+        self.assertFalse(report['second_deferred'])
+        self.assertEqual(report['known'], report['path'])
+
+    def test_start_error_names_the_interpreter(self):
+        report = self.run_probe('start-error', self.archive, 'inner/geheim.txt')
+        self.assertEqual(report['state'], 'failed')
+        self.assertIn('nicht startbar', report['reason'])
+
+    def test_a_broken_archive_reports_the_core_reason(self):
+        report = self.run_probe('broken', self.broken, 'inner/geheim.txt')
+        self.assertEqual(report['state'], 'failed')
+        # Die Fehlerzeile des Kerns, nicht ein pauschales „fehlgeschlagen".
+        self.assertIn('kaputt.zip', report['reason'])
+        self.assertNotIn('Status', report['reason'])
+
+    def test_a_budget_overrun_reports_the_limit(self):
+        report = self.run_probe('budget', self.archive, 'inner/geheim.txt')
+        self.assertEqual(report['state'], 'failed')
+        self.assertIn('Einzelgrenze 10', report['reason'])
+
+    def test_a_stderr_flood_does_not_stall_the_extraction(self):
+        # Eine volle stderr-Pipe hält den Kern an, während wir auf stdout
+        # warten. 200 000 Zeilen sind weit mehr als ein Pipe-Puffer.
+        cli = self.fake_cli('flood', '''
+            for i in range(200000):
+                print("favenio: warnung: %d" % i, file=sys.stderr)
+            emit()
+            ''')
+        report = self.run_probe('stderr-flood', cli, self.archive, 'x.txt')
+        self.assertEqual(report['state'], 'ready', report)
+
+    def test_cancel_terminates_the_core(self):
+        pid_file = self.root / 'cancel.pid'
+        cli = self.fake_cli('slow', '''
+            open(%r, "w").write(str(os.getpid()))
+            time.sleep(20)
+            emit()
+            ''' % str(pid_file))
+        report = self.run_probe('cancel', cli, self.archive, 'x.txt', pid_file)
+        self.assertEqual(report['state'], 'cancelled')
+        self.assertLess(report['cancel_seconds'], 2)
+        self.assertTrue(report['process_gone'])
+
+    def test_rapid_selection_changes_deliver_only_the_last(self):
+        report = self.run_probe('rapid', self.archive, timeout=60)
+        self.assertEqual(report['completed'], 20)
+        self.assertFalse(report['last_cancelled'])
+        self.assertEqual(len(report['last_urls']), 1)
+        self.assertTrue(report['last_urls'][0].endswith('member-19.txt'))
+        # Alle anderen wurden abgebrochen — kein alter Auftrag legt sich
+        # über die letzte Auswahl.
+        self.assertEqual(report['cancelled'], 19)
+
+    def test_concurrent_requests_share_one_extraction(self):
+        counter = self.root / 'shared.count'
+        cli = self.fake_cli('counted', '''
+            with open(%r, "a") as handle:
+                handle.write("x")
+            time.sleep(0.3)
+            emit()
+            ''' % str(counter))
+        report = self.run_probe('shared', cli, self.archive, 'x.txt')
+        self.assertEqual(report['first']['state'], 'ready')
+        self.assertEqual(report['second']['state'], 'ready')
+        self.assertEqual(report['first']['path'], report['second']['path'])
+        self.assertEqual(counter.read_text(), 'x')
+
+    def test_cleanup_stops_running_jobs_and_creates_nothing_afterwards(self):
+        cli = self.fake_cli('late', '''
+            time.sleep(0.5)
+            emit()
+            ''')
+        report = self.run_probe('cleanup', cli, self.archive, 'x.txt')
+        self.assertEqual(report['state'], 'cancelled')
+        # Der Root ist nach cleanup() weg und kommt durch den späten
+        # Auftrag nicht wieder.
+        self.assertEqual(report['dirs_after_cleanup'], report['dirs_before'])
+        self.assertEqual(report['dirs_end'], report['dirs_before'])
+
+
+if __name__ == '__main__':
+    unittest.main()

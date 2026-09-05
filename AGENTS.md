@@ -298,8 +298,9 @@ Verbindliches CLI-Verhalten:
 
 Beide Apps sind programmatische AppKit-Frontends ohne Xcode-Projekt.
 `common/FavenioCore.swift` enthält das Hit-Modell, JSONL-Parsing,
-Unterprozessaufrufe und `materializeHit()`. Änderungen am JSONL-Schema zuerst im
-Kern und in gemeinsamen Tests spezifizieren, dann beide Frontends anpassen.
+Unterprozessaufrufe und den `MaterializationManager`. Änderungen am
+JSONL-Schema zuerst im Kern und in gemeinsamen Tests spezifizieren, dann beide
+Frontends anpassen.
 Dort steht auch `HitListController`, die Basisklasse BEIDER Controller:
 Trefferliste, wirksame Zeilenmenge (`actionRows`), Quick-Look-Vorschau samt
 Tastenweiterleitung und die Kontextmenü-Aktionen „Öffnen mit", „Im Finder
@@ -354,6 +355,35 @@ verworfener Treffer. EOF und Prozessende müssen beide abgeschlossen sein;
 die Completion steht hinter allen Paketen auf der Main-Queue. Foundation-
 Temporaries werden je JSONL-Zeile freigegeben. Nur der synchrone Headless-
 Adapter `runSearchStreaming` wartet; die Frontends tun das nie.
+
+Dasselbe gilt fürs Auspacken von Archivtreffern (`MaterializationManager`,
+seit 0.32.0): `request(hit)` startet den Kern im Hintergrund und liefert
+`ready(URL)`, `failed(Grund)` oder `cancelled` auf der Main-Queue — sofort
+und synchron nur, wenn die Datei ohne Auspacken feststeht (`knownURL`:
+normale Datei, schon ausgepackter Eintrag). Bis 0.31.4 las `materialize()`
+stdout synchron und wartete mit `waitUntilExit()` aus Öffnen, Quick Look
+und Drag-and-drop heraus auf dem Main-Thread; Messung in
+`tests/MATERIALIZATION_MEASUREMENTS.md`. Die synchrone Fassung
+`materializeHit()` gibt es nur noch für den Headless-Selbsttest; ein
+Wächter-Test verbietet sie in beiden Controllern. Drei Zusagen, jede von
+`tests/materialization_probe.swift` geprüft: gleichzeitige Anforderungen
+desselben Treffers teilen EINEN Unterprozess und dieselbe Datei; stderr wird
+nebenläufig geleert (`SearchDiagnostics`), sonst hält eine volle Pipe den
+Kern an, während wir auf stdout warten; nach `cleanup()` legt kein noch
+laufender Auftrag eine Datei neu an (`epoch`, ein zu spätes Ergebnis wird
+gelöscht). `cancel()` nimmt nur den eigenen Anforderer vom Auftrag, der
+letzte beendet den Prozess (SIGTERM, nach 1 s SIGKILL). In
+`HitListController` arbeitet `withActionSelection` mit der FESTEN Auswahl
+vom Klick, `requestPreview` nimmt für Quick Look nur die ZULETZT
+angeforderte Auswahl (die vorige wird abgebrochen, ein spätes Ergebnis
+verworfen); beide zeigen den Ladezustand über `presentMaterializationState`
+(Haupt-App: Fußzeile, Schnellsuche: Infozeile), und ⎋ ruft in beiden
+Tastaturmonitoren zuerst `cancelMaterializations()`. Drag-and-drop in der
+Haupt-App verlangt im Pasteboard-Callback sofort eine Antwort: Was
+`knownURL` kennt, geht als URL, ein noch nicht ausgepackter Eintrag als
+`NSFilePromiseProvider`, das der Finder beim Ablegen über denselben Manager
+einlöst. Abwägung gegen vorab ausgepackte URLs in der Messnotiz; der
+sichtbare Drag-and-drop-Test am Fenster steht noch aus (eigene Freigabe).
 
 Die Haupt-App streamt Treffer, erhält die Auswahl bei neuen Ergebnissen und
 bietet Öffnen, Öffnen mit, Finder-Anzeige, Pfadkopie, Quick Look und Drag-and-

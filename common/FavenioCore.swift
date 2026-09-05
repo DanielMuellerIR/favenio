@@ -297,8 +297,92 @@ struct MaterializedHitSelection {
     let rows: [Int]
     let urls: [URL]
     let unavailable: [Hit]
+    /// Der konkrete Grund je Auspackfehler (nur für Treffer mit
+    /// `hasOpenableFile`), in der Reihenfolge von `unavailable`.
+    var reasons: [String] = []
+    /// Wurde der Auftrag abgebrochen, bevor alle Treffer fertig waren?
+    /// Dann sind `urls` und `unavailable` unvollständig und keine Grundlage
+    /// für eine Aktion.
+    var cancelled = false
 }
 
+/// Griff auf die Materialisierung einer ganzen Zeilenmenge: bricht alle
+/// noch laufenden Einzelaufträge ab. Die Completion kommt danach genau
+/// einmal mit `cancelled == true`.
+final class MaterializationSelectionRequest {
+    private var children: [MaterializationRequest] = []
+    private(set) var isCancelled = false
+
+    fileprivate func add(_ request: MaterializationRequest) {
+        if isCancelled { request.cancel() } else { children.append(request) }
+    }
+
+    func cancel() {
+        isCancelled = true
+        children.forEach { $0.cancel() }
+        children.removeAll()
+    }
+}
+
+/// Materialisiert eine FESTE Zeilenmenge asynchron und liefert das Ergebnis
+/// in einem Stück — auf der Main-Queue, oder sofort und synchron, wenn kein
+/// Treffer ausgepackt werden muss (normale Dateien, schon ausgepackte
+/// Einträge). Nur von der Main-Queue rufen: Die Teilergebnisse werden dort
+/// eingesammelt.
+///
+/// `rows` ist eine Momentaufnahme: Was danach mit der Tabelle passiert,
+/// ändert den Auftrag nicht mehr — Öffnen arbeitet mit genau der Auswahl,
+/// die beim Klick galt.
+@discardableResult
+func materializeHitSelection(
+    _ hits: [Hit], rows: [Int],
+    completion: @escaping (MaterializedHitSelection) -> Void)
+    -> MaterializationSelectionRequest {
+    let group = MaterializationSelectionRequest()
+    let selected = rows.filter { hits.indices.contains($0) }.map { hits[$0] }
+    var outcomes = [MaterializationOutcome?](repeating: nil,
+                                             count: selected.count)
+    var remaining = selected.count
+    func finish() {
+        var urls: [URL] = []
+        var unavailable: [Hit] = []
+        var reasons: [String] = []
+        var cancelled = false
+        for (hit, outcome) in zip(selected, outcomes) {
+            switch outcome {
+            case .ready(let url):
+                urls.append(url)
+            case .failed(let reason):
+                unavailable.append(hit)
+                if hit.hasOpenableFile { reasons.append(reason) }
+            case .cancelled:
+                cancelled = true
+            case nil:
+                cancelled = true
+            }
+        }
+        completion(MaterializedHitSelection(
+            rows: rows, urls: urls, unavailable: unavailable,
+            reasons: reasons, cancelled: cancelled))
+    }
+    guard !selected.isEmpty else {
+        finish()
+        return group
+    }
+    for (index, hit) in selected.enumerated() {
+        let request = MaterializationManager.shared.request(hit) { outcome in
+            outcomes[index] = outcome
+            remaining -= 1
+            if remaining == 0 { finish() }
+        }
+        if let request { group.add(request) }
+    }
+    return group
+}
+
+/// Synchrone Fassung für den Headless-Selbsttest und Werkzeuge. Die Apps
+/// rufen sie NIE aus einer Aktion — dort gilt die Completion-Fassung; ein
+/// Wächter-Test hält das fest.
 func materializeHitSelection(_ hits: [Hit], rows: [Int])
     -> MaterializedHitSelection {
     var urls: [URL] = []
@@ -342,9 +426,14 @@ func hitActionIssue(_ selection: MaterializedHitSelection)
     }
     guard !parts.isEmpty else { return nil }
     // Der Detailpfad nennt den ersten betroffenen Treffer in derselben
-    // Reihenfolge, in der die Meldung die Gruppen aufzählt.
-    let firstPath = (archiveFolders.first ?? extractionFailures.first)?.path
-    return (parts.joined(separator: " "), firstPath)
+    // Reihenfolge, in der die Meldung die Gruppen aufzählt; bei einem
+    // Auspackfehler steht der konkrete Grund des Kerns dahinter.
+    if let folder = archiveFolders.first {
+        return (parts.joined(separator: " "), folder.path)
+    }
+    let failure = extractionFailures.first
+    let reason = selection.reasons.first.map { " — " + $0 } ?? ""
+    return (parts.joined(separator: " "), failure.map { $0.path + reason })
 }
 
 /// Schnittmenge der Anwendungen über ALLE öffenbaren Treffer der Auswahl.
@@ -1565,15 +1654,85 @@ func runSearchStreaming(arguments: [String],
     return result!
 }
 
+/// Ergebnis eines Materialisierungsauftrags.
+enum MaterializationOutcome: Equatable {
+    case ready(URL)
+    /// Der konkrete Grund — die Fehlerzeile des Kerns oder, wenn er keine
+    /// schrieb, was auf unserer Seite scheiterte.
+    case failed(String)
+    case cancelled
+}
+
+/// Griff auf einen laufenden Auftrag. `cancel()` nimmt nur DIESEN Anforderer
+/// vom Auftrag; der Unterprozess endet erst, wenn niemand mehr wartet. Die
+/// Completion des Anforderers kommt danach genau einmal mit `.cancelled`.
+final class MaterializationRequest {
+    fileprivate let id = UUID()
+    fileprivate let hit: Hit
+    private weak var manager: MaterializationManager?
+
+    fileprivate init(hit: Hit, manager: MaterializationManager) {
+        self.hit = hit
+        self.manager = manager
+    }
+
+    func cancel() { manager?.cancel(self) }
+}
+
 /// Appweiter Cache: jede Aktion auf denselben Archivtreffer verwendet dieselbe
 /// materialisierte Datei. Alle Kopien liegen unter einem eindeutigen Root und
 /// werden beim App-Ende gemeinsam entfernt.
+///
+/// Seit 0.32.0 asynchron: `request()` startet den Python-Kern im Hintergrund
+/// und liefert das Ergebnis auf der Main-Queue. Bis 0.31.4 las
+/// `materialize()` stdout synchron und wartete mit `waitUntilExit()` — auf
+/// dem Main-Thread, aus Öffnen, Quick Look und Drag-and-drop heraus.
+/// Gemessen am 2026-09-05 (`tests/MATERIALIZATION_MEASUREMENTS.md`) fror
+/// das Fenster dabei so lange ein, wie der Kern brauchte.
+///
+/// Drei Zusagen, jede durch die Probe `tests/materialization_probe.swift`
+/// geprüft:
+/// - Gleichzeitige Anforderungen desselben Treffers teilen EINEN
+///   Unterprozess und dieselbe Datei (`jobs`).
+/// - stderr wird nebenläufig geleert (`SearchDiagnostics.collect`), sonst
+///   hält eine volle Pipe den Kern an, während wir auf stdout warten.
+/// - Nach `cleanup()` legt kein noch laufender Auftrag eine Datei neu an:
+///   `epoch` markiert jeden Auftrag, ein zu spätes Ergebnis wird gelöscht
+///   und als `.cancelled` gemeldet.
 final class MaterializationManager {
     static let shared = MaterializationManager()
-    private var cache: [Hit: URL] = [:]
-    private var root: URL?
 
-    private func materializationRoot() -> URL? {
+    /// Haken für Tests: anderer Interpreter, anderer Kern, Zusatzargumente
+    /// (etwa ein winziges `--max-archive-member-bytes`). Die Apps lassen
+    /// alle drei auf ihren Vorgaben.
+    var interpreter = pythonPath
+    var cliPath: String?
+    var extraArguments: [String] = []
+
+    private let lock = NSLock()
+    private var cache: [Hit: URL] = [:]
+    private var jobs: [Hit: Job] = [:]
+    private var root: URL?
+    private var epoch = 0
+    private let queue = DispatchQueue(label: "favenio.materialize",
+                                      qos: .userInitiated,
+                                      attributes: .concurrent)
+
+    /// Ein laufender Auspackvorgang samt allen, die auf ihn warten.
+    private final class Job {
+        let hit: Hit
+        let epoch: Int
+        var waiters: [(UUID, (MaterializationOutcome) -> Void)] = []
+        var process: Process?
+        var cancelled = false
+        init(hit: Hit, epoch: Int) {
+            self.hit = hit
+            self.epoch = epoch
+        }
+    }
+
+    /// Nur mit gehaltenem `lock` aufrufen.
+    private func materializationRootLocked() -> URL? {
         if let root { return root }
         let candidate = FileManager.default.temporaryDirectory
             .appendingPathComponent("Favenio-\(UUID().uuidString)",
@@ -1589,66 +1748,231 @@ final class MaterializationManager {
         }
     }
 
-    /// Bewusst synchron: Öffnen, Quick Look und besonders Drag-and-drop
-    /// brauchen in ihren AppKit-Callbacks sofort die fertige URL. Der
-    /// Python-Kern begrenzt die dabei entpackten Daten durch Mitglieds- und
-    /// Gesamtbudget. Ein Wechsel auf Task.detached müsste deshalb zuerst die
-    /// Aktionsschnittstellen beider Frontends asynchron machen.
-    func materialize(_ hit: Hit) -> URL? {
+    /// Die URL, die OHNE Auspacken feststeht: eine normale Datei oder ein
+    /// Ordner im Dateisystem, oder ein schon ausgepackter Eintrag. nil heißt
+    /// „muss erst ausgepackt werden" — oder „gibt es nicht" (Ordner im
+    /// Archiv, siehe `Hit.hasOpenableFile`). Drag-and-drop fragt hier, weil
+    /// AppKit im Pasteboard-Callback sofort eine Antwort will.
+    func knownURL(for hit: Hit) -> URL? {
         if !hit.isMember {
             return URL(fileURLWithPath: hit.filesystemPath)
+        }
+        if hit.isDirectory { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = cache[hit],
+           FileManager.default.fileExists(atPath: cached.path) {
+            return cached
+        }
+        return nil
+    }
+
+    /// Fordert die Datei hinter einem Treffer an.
+    ///
+    /// Steht sie schon fest (`knownURL`), kommt die Completion SOFORT und
+    /// synchron auf dem rufenden Thread, und es gibt keinen Griff (nil).
+    /// Sonst läuft der Kern im Hintergrund, die Completion kommt auf der
+    /// Main-Queue, und der Griff erlaubt den Abbruch. Läuft für denselben
+    /// Treffer schon ein Auftrag, hängt sich die Anforderung an ihn.
+    @discardableResult
+    func request(_ hit: Hit,
+                 completion: @escaping (MaterializationOutcome) -> Void)
+        -> MaterializationRequest? {
+        if let url = knownURL(for: hit) {
+            completion(.ready(url))
+            return nil
         }
         // Ein ORDNER im Archiv hat keinen Inhalt zum Herausschreiben: Bei ZIP
         // entstand dabei eine leere Datei, bei TAR scheiterte die Extraktion
         // (Review-Fund 2026-08-17). Dateiaktionen gibt es dafür deshalb nicht;
         // sichtbar bleibt der Treffer trotzdem.
         if hit.isDirectory {
+            completion(.failed("Ordner im Archiv — keine Datei zum Öffnen"))
             return nil
         }
-        if let cached = cache[hit],
-           FileManager.default.fileExists(atPath: cached.path) {
-            return cached
+        let request = MaterializationRequest(hit: hit, manager: self)
+        lock.lock()
+        // Ein Auftrag, den alle verlassen haben, stirbt gerade; ihm darf
+        // sich niemand mehr anschließen — er endete mit `.cancelled`.
+        if let job = jobs[hit], !job.cancelled {
+            job.waiters.append((request.id, completion))
+            lock.unlock()
+            return request
         }
-        guard let cli = findCLI(), let root = materializationRoot() else {
-            return nil
+        let job = Job(hit: hit, epoch: epoch)
+        job.waiters.append((request.id, completion))
+        jobs[hit] = job
+        lock.unlock()
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.finish(job, with: self.execute(job))
+        }
+        return request
+    }
+
+    /// Nimmt einen Anforderer vom Auftrag. Der letzte beendet den Prozess.
+    fileprivate func cancel(_ request: MaterializationRequest) {
+        lock.lock()
+        guard let job = jobs[request.hit],
+              let index = job.waiters.firstIndex(where: { $0.0 == request.id })
+        else {
+            lock.unlock()
+            return
+        }
+        let (_, completion) = job.waiters.remove(at: index)
+        if job.waiters.isEmpty { terminateLocked(job) }
+        lock.unlock()
+        DispatchQueue.main.async { completion(.cancelled) }
+    }
+
+    /// Nur mit gehaltenem `lock` aufrufen. SIGTERM übersetzt der Kern in ein
+    /// normales Ende (`install_termination_handlers`); bleibt er trotzdem
+    /// stehen, folgt nach einer Sekunde SIGKILL — wie im SearchRunner.
+    private func terminateLocked(_ job: Job) {
+        job.cancelled = true
+        guard let process = job.process, process.isRunning else { return }
+        process.terminate()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
+    }
+
+    /// Läuft auf `queue`: startet den Kern und wartet auf ihn — hier darf
+    /// gewartet werden, das ist nicht der Main-Thread.
+    private func execute(_ job: Job) -> MaterializationOutcome {
+        lock.lock()
+        let stale = job.cancelled || job.epoch != epoch
+        let root = stale ? nil : materializationRootLocked()
+        lock.unlock()
+        if stale { return .cancelled }
+        guard let root else {
+            return .failed("Temp-Ordner für ausgepackte Dateien nicht anlegbar")
+        }
+        guard let cli = cliPath ?? findCLI() else {
+            return .failed("favenio.py nicht gefunden")
         }
         let object: [String: Any] = [
-            "filesystemPath": hit.filesystemPath,
-            "archiveMembers": hit.archiveMembers,
+            "filesystemPath": job.hit.filesystemPath,
+            "archiveMembers": job.hit.archiveMembers,
         ]
         guard let json = try? JSONSerialization.data(withJSONObject: object),
               let jsonText = String(data: json, encoding: .utf8) else {
-            return nil
+            return .failed("Treffer nicht als JSON darstellbar")
         }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonPath)
+        process.executableURL = URL(fileURLWithPath: interpreter)
         process.arguments = [cli, "--extract-json", jsonText,
-                             "--extract-root", root.path]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                             "--extract-root", root.path] + extraArguments
+        let output = Pipe()
+        let errors = Pipe()
+        process.standardOutput = output
+        process.standardError = errors
+        // stderr NEBENLÄUFIG leeren — dieselbe Wache wie beim Suchlauf: Eine
+        // volle Pipe hält den Kern an, während wir auf sein stdout warten.
+        let diagnostics = SearchDiagnostics()
+        diagnostics.collect(from: errors)
+        lock.lock()
+        if job.cancelled {
+            lock.unlock()
+            diagnostics.finish(errors)
+            return .cancelled
+        }
+        do {
+            try process.run()
+        } catch {
+            lock.unlock()
+            diagnostics.finish(errors)
+            return .failed("Python-Kern nicht startbar: "
+                           + error.localizedDescription)
+        }
+        job.process = process
+        lock.unlock()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0,
-              let output = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              !output.isEmpty else { return nil }
-        let url = URL(fileURLWithPath: output)
-        cache[hit] = url
-        return url
+        diagnostics.finish(errors)
+        lock.lock()
+        let cancelled = job.cancelled
+        lock.unlock()
+        let path = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if cancelled {
+            // Der Kern war womöglich schneller als das Signal: Was er
+            // schon geschrieben hat, will niemand mehr.
+            if !path.isEmpty { discard(URL(fileURLWithPath: path)) }
+            return .cancelled
+        }
+        guard process.terminationStatus == 0, !path.isEmpty else {
+            return .failed(diagnostics.errorMessage
+                ?? "Auspacken fehlgeschlagen (Status "
+                   + "\(process.terminationStatus))")
+        }
+        return .ready(URL(fileURLWithPath: path))
     }
 
+    /// Entfernt eine ausgepackte Datei samt ihrem `hit-…`-Ordner.
+    private func discard(_ url: URL) {
+        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    }
+
+    /// Trägt das Ergebnis ein und benachrichtigt alle Wartenden auf Main.
+    private func finish(_ job: Job, with result: MaterializationOutcome) {
+        var outcome = result
+        lock.lock()
+        if case .ready(let url) = outcome {
+            if job.epoch != epoch {
+                // cleanup() lief inzwischen: Die Datei liegt unter einem
+                // Root, den es nicht mehr geben soll.
+                discard(url)
+                outcome = .cancelled
+            } else {
+                cache[job.hit] = url
+            }
+        }
+        if jobs[job.hit] === job { jobs[job.hit] = nil }
+        let waiters = job.waiters
+        job.waiters = []
+        lock.unlock()
+        guard !waiters.isEmpty else { return }
+        DispatchQueue.main.async {
+            waiters.forEach { $0.1(outcome) }
+        }
+    }
+
+    /// Bricht alle laufenden Aufträge ab und entfernt alle ausgepackten
+    /// Dateien. Ein Auftrag, der danach noch zu Ende kommt, löscht sein
+    /// Ergebnis selbst (`epoch`).
     func cleanup() {
+        lock.lock()
+        epoch += 1
+        jobs.values.forEach { terminateLocked($0) }
+        jobs.removeAll()
         cache.removeAll()
-        guard let root else { return }
-        try? FileManager.default.removeItem(at: root)
-        self.root = nil
+        let old = root
+        root = nil
+        lock.unlock()
+        if let old { try? FileManager.default.removeItem(at: old) }
     }
 }
 
+/// Synchron — NUR für den Headless-Selbsttest und Werkzeuge. Auf dem
+/// Main-Thread dreht die RunLoop weiter, bis die Completion da ist; die
+/// Apps rufen das aus keiner Aktion, dort gilt `request()`.
 func materializeHit(_ hit: Hit) -> URL? {
-    MaterializationManager.shared.materialize(hit)
+    var result: MaterializationOutcome?
+    let done = DispatchSemaphore(value: 0)
+    MaterializationManager.shared.request(hit) {
+        result = $0
+        done.signal()
+    }
+    if Thread.isMainThread {
+        while done.wait(timeout: .now()) != .success {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
+        }
+    } else {
+        done.wait()
+    }
+    if case .ready(let url)? = result { return url }
+    return nil
 }
 
 func cleanupMaterializedHits() {
@@ -2724,6 +3048,22 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     var contextRow = -1             // Zeile, auf die der Rechtsklick ging
     var previewURLs: [URL] = []     // gerade in der QuickLook-Vorschau
 
+    /// Die zuletzt angeforderte Vorschau. Quick Look zeigt AUSSCHLIESSLICH
+    /// die letzte Auswahl: Jede neue Anforderung bricht die vorige ab, und
+    /// eine spät eintreffende alte wird verworfen (Identitätsvergleich).
+    var previewRequest: MaterializationSelectionRequest?
+    /// Laufende Aufträge von Öffnen, „Öffnen mit" und „Im Finder zeigen".
+    /// Jeder arbeitet mit der FESTEN Auswahl vom Klick; ⎋ bricht sie ab.
+    var actionRequests: [MaterializationSelectionRequest] = []
+
+    /// Wird gerade ein Archivtreffer ausgepackt? Die Apps zeigen das an.
+    var isMaterializing: Bool {
+        previewRequest != nil || !actionRequests.isEmpty
+    }
+
+    /// Der Satz, den beide Apps während des Auspackens zeigen.
+    static let materializingNote = "Packe Archivtreffer aus… (⎋ bricht ab)"
+
     // ---------- Wirksame Zeilenmenge ----------
 
     func actionRows() -> [Int] {
@@ -2731,9 +3071,55 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
                       contextRow: contextRow)
     }
 
-    func actionSelection() -> MaterializedHitSelection {
-        materializeHitSelection(hits, rows: actionRows())
+    /// Materialisiert die wirksame Zeilenmenge und ruft `body` mit dem
+    /// Ergebnis — sofort, wenn nichts ausgepackt werden muss, sonst auf der
+    /// Main-Queue nach dem Auspacken. Solange dauert der Ladezustand
+    /// (`presentMaterializationState`). Ein Abbruch über ⎋ ruft `body` nicht
+    /// und meldet sich stattdessen als Hinweis.
+    func withActionSelection(
+        _ body: @escaping (MaterializedHitSelection) -> Void) {
+        let rows = actionRows()
+        var request: MaterializationSelectionRequest?
+        var finished = false
+        let started = materializeHitSelection(hits, rows: rows) {
+            [weak self] selection in
+            finished = true
+            guard let self else { return }
+            if let request {
+                self.actionRequests.removeAll { $0 === request }
+                self.presentMaterializationState()
+            }
+            if selection.cancelled {
+                self.presentActionIssue(summary: "Auspacken abgebrochen.",
+                                        detail: nil)
+                return
+            }
+            body(selection)
+        }
+        if !finished {
+            request = started
+            actionRequests.append(started)
+            presentMaterializationState()
+        }
     }
+
+    /// Bricht alle laufenden Auspackvorgänge ab (Vorschau und Aktionen).
+    /// Liefert, ob es etwas abzubrechen gab — der Tastaturmonitor gibt ⎋
+    /// nur dann nicht weiter.
+    @discardableResult
+    func cancelMaterializations() -> Bool {
+        guard isMaterializing else { return false }
+        previewRequest?.cancel()
+        previewRequest = nil
+        actionRequests.forEach { $0.cancel() }
+        actionRequests.removeAll()
+        presentMaterializationState()
+        return true
+    }
+
+    /// Von jeder App überschrieben: zeigt `isMaterializing` an — die
+    /// Haupt-App in der Fußzeile, die Schnellsuche in der Infozeile.
+    func presentMaterializationState() {}
 
     /// Die ausgewählten Treffer als Pfade — modellbezogen statt über
     /// Zeilennummern, die ein `reloadData()` nicht überlebt.
@@ -2757,7 +3143,8 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     // ---------- QuickLook-Vorschau ----------
 
     /// Vorschau der ausgewählten Treffer ein-/ausblenden. Archiv-Einträge
-    /// werden dafür (wie beim Öffnen) in einen Temp-Ordner ausgepackt.
+    /// werden dafür (wie beim Öffnen) in einen Temp-Ordner ausgepackt —
+    /// im Hintergrund; das Panel geht erst auf, wenn die Dateien da sind.
     @objc func togglePreview() {
         guard let panel = QLPreviewPanel.shared() else { return }
         if QLPreviewPanel.sharedPreviewPanelExists() && panel.isVisible {
@@ -2765,44 +3152,92 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
             return
         }
         // Erst nachsehen, ob es überhaupt etwas zu zeigen gibt. Ein ORDNER im
-        // Archiv hat keine Datei: materializeHit() liefert nil, das Panel
-        // bliebe leer. Im Kontextmenü ist die Vorschau dafür schon grau — über
-        // die Leertaste war sie trotzdem erreichbar (Review-Fund 2026-08-20).
-        let selection = rebuildPreviewURLs()
-        guard !previewURLs.isEmpty else {
-            showActionIssue(selection)
+        // Archiv hat keine Datei: Das Panel bliebe leer. Im Kontextmenü ist
+        // die Vorschau dafür schon grau — über die Leertaste war sie trotzdem
+        // erreichbar (Review-Fund 2026-08-20). Das steht ohne Auspacken fest.
+        let rows = actionRows()
+        let selected = rows.compactMap {
+            hits.indices.contains($0) ? hits[$0] : nil
+        }
+        guard selected.contains(where: { $0.hasOpenableFile }) else {
+            showActionIssue(MaterializedHitSelection(
+                rows: rows, urls: [], unavailable: selected))
             return
         }
-        showActionIssue(selection)
-        // Das Panel wird NUR nach vorn geholt, nicht zum Tastaturfenster
-        // gemacht. Sonst gehen Pfeil hoch/runter dorthin und die Vorschau
-        // lässt sich nicht durch die Trefferliste blättern — genau das, was
-        // der Finder kann.
-        //
-        // Ein erster Versuch holte den Fokus danach per DispatchQueue zurück.
-        // Das ist ein Rennen und verliert: Am 2026-09-02 am laufenden Fenster
-        // gemessen blieb das Panel Tastaturfenster, die Auswahl in der Tabelle
-        // wurde grau und die Pfeiltaste bewegte nichts. Deshalb wird der
-        // Fokus gar nicht erst abgegeben.
-        //
-        // Damit entfällt auch der Weg, über den QuickLook seinen Controller
-        // sonst sucht: `beginPreviewPanelControl` kommt über die
-        // Responder-Kette beim Wechsel des Tastaturfensters. Ohne diesen
-        // Wechsel muss die Datenquelle hier ausdrücklich gesetzt werden,
-        // sonst bliebe das Panel leer.
-        panel.dataSource = self
-        panel.delegate = self
-        panel.orderFront(nil)
-        panel.reloadData()
-        // Der Fokus gehört in die Tabelle — von dort blättern die Pfeiltasten.
-        window.makeFirstResponder(tableView)
+        requestPreview(rows: rows) { [weak self] selection in
+            guard let self, let panel = QLPreviewPanel.shared() else { return }
+            self.previewURLs = selection.urls
+            self.showActionIssue(selection)
+            guard !previewURLs.isEmpty else { return }
+            // Das Panel wird NUR nach vorn geholt, nicht zum Tastaturfenster
+            // gemacht. Sonst gehen Pfeil hoch/runter dorthin und die Vorschau
+            // lässt sich nicht durch die Trefferliste blättern — genau das,
+            // was der Finder kann.
+            //
+            // Ein erster Versuch holte den Fokus danach per DispatchQueue
+            // zurück. Das ist ein Rennen und verliert: Am 2026-09-02 am
+            // laufenden Fenster gemessen blieb das Panel Tastaturfenster, die
+            // Auswahl in der Tabelle wurde grau und die Pfeiltaste bewegte
+            // nichts. Deshalb wird der Fokus gar nicht erst abgegeben.
+            //
+            // Damit entfällt auch der Weg, über den QuickLook seinen
+            // Controller sonst sucht: `beginPreviewPanelControl` kommt über
+            // die Responder-Kette beim Wechsel des Tastaturfensters. Ohne
+            // diesen Wechsel muss die Datenquelle hier ausdrücklich gesetzt
+            // werden, sonst bliebe das Panel leer.
+            panel.dataSource = self
+            panel.delegate = self
+            panel.orderFront(nil)
+            panel.reloadData()
+            // Der Fokus gehört in die Tabelle — von dort blättern die
+            // Pfeiltasten.
+            window.makeFirstResponder(tableView)
+        }
     }
 
-    @discardableResult
-    func rebuildPreviewURLs() -> MaterializedHitSelection {
-        let selection = materializeHitSelection(hits, rows: actionRows())
-        previewURLs = selection.urls
-        return selection
+    /// Fordert die Vorschau-Dateien einer FESTEN Zeilenmenge an. Nur die
+    /// zuletzt angeforderte Auswahl zählt: Die vorige wird abgebrochen, und
+    /// `completion` läuft nur, wenn dieser Auftrag noch der aktuelle ist —
+    /// ein schneller Auswahlwechsel kann sonst eine alte Vorschau über die
+    /// neue legen.
+    func requestPreview(
+        rows: [Int],
+        completion: @escaping (MaterializedHitSelection) -> Void) {
+        previewRequest?.cancel()
+        previewRequest = nil
+        var request: MaterializationSelectionRequest?
+        var finished = false
+        let started = materializeHitSelection(hits, rows: rows) {
+            [weak self] selection in
+            finished = true
+            guard let self else { return }
+            if let request {
+                guard self.previewRequest === request else { return }
+                self.previewRequest = nil
+                self.presentMaterializationState()
+            }
+            guard !selection.cancelled else { return }
+            completion(selection)
+        }
+        if !finished {
+            request = started
+            previewRequest = started
+            presentMaterializationState()
+        }
+    }
+
+    /// Offene Vorschau auf die aktuelle Auswahl nachziehen. Das Panel lädt
+    /// nur neu, wenn es jetzt andere Dateien meint.
+    func refreshPreview() {
+        requestPreview(rows: actionRows()) { [weak self] selection in
+            guard let self else { return }
+            let shown = self.previewURLs
+            self.previewURLs = selection.urls
+            if self.previewURLs != shown,
+               QLPreviewPanel.sharedPreviewPanelExists() {
+                QLPreviewPanel.shared().reloadData()
+            }
+        }
     }
 
     // QuickLook fragt diese Methoden über die Responder-Kette + den
@@ -2810,9 +3245,9 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     @objc override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!)
         -> Bool { true }
     @objc override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        rebuildPreviewURLs()
         panel.dataSource = self
         panel.delegate = self
+        refreshPreview()
     }
     @objc override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
 
@@ -2858,24 +3293,36 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
 
     @objc func ctxOpenWith(_ sender: NSMenuItem) {
         guard let appURL = sender.representedObject as? URL else { return }
-        let selection = actionSelection()
-        guard !selection.urls.isEmpty else {
-            showActionIssue(selection)
-            return
+        withActionSelection { [weak self] selection in
+            guard let self else { return }
+            if !selection.urls.isEmpty {
+                NSWorkspace.shared.open(
+                    selection.urls, withApplicationAt: appURL,
+                    configuration: NSWorkspace.OpenConfiguration())
+            }
+            self.showActionIssue(selection)
         }
-        NSWorkspace.shared.open(selection.urls, withApplicationAt: appURL,
-                                configuration: NSWorkspace.OpenConfiguration())
-        showActionIssue(selection)
     }
 
     @objc func ctxReveal() {
         // Für Archiv-Einträge zeigt das die ausgepackte Temp-Kopie —
         // das ist genau die Datei, die man beim Öffnen/Ziehen bekommt.
-        let selection = actionSelection()
-        if !selection.urls.isEmpty {
-            NSWorkspace.shared.activateFileViewerSelecting(selection.urls)
+        withActionSelection { [weak self] selection in
+            guard let self else { return }
+            if !selection.urls.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting(selection.urls)
+            }
+            self.showActionIssue(selection)
         }
-        showActionIssue(selection)
+    }
+
+    /// „Öffnen" auf der wirksamen Zeilenmenge — mit der Standard-App.
+    func openActionRows() {
+        withActionSelection { [weak self] selection in
+            guard let self else { return }
+            selection.urls.forEach { NSWorkspace.shared.open($0) }
+            self.showActionIssue(selection)
+        }
     }
 
     @objc func ctxCopyPath() {

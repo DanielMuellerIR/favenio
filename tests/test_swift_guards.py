@@ -124,10 +124,71 @@ class SwiftGuardTests(unittest.TestCase):
         toggle = swift_function(COMMON, "@objc func togglePreview() {")
         self.assertIn("guard !previewURLs.isEmpty else {", toggle)
         self.assertIn("showActionIssue(selection)", toggle)
-        # Das Panel wird erst NACH dem Aufbau der Liste gezeigt (nur nach
-        # vorn geholt, siehe test_quicklook_keeps_the_focus…).
-        self.assertLess(toggle.index("rebuildPreviewURLs()"),
+        # Ob es überhaupt eine Datei gibt, steht OHNE Auspacken fest
+        # (hasOpenableFile) — sonst liefe für einen Archivordner erst ein
+        # Kern-Prozess, der nichts zu tun hat.
+        self.assertIn("selected.contains(where: { $0.hasOpenableFile })",
+                      toggle)
+        # Das Panel wird erst NACH dem Auspacken gezeigt (nur nach vorn
+        # geholt, siehe test_quicklook_keeps_the_focus…): Der Aufbau der
+        # Liste läuft asynchron, orderFront steht in der Completion.
+        self.assertLess(toggle.index("requestPreview(rows: rows)"),
                         toggle.index("panel.orderFront(nil)"))
+
+    def test_archive_hits_are_never_extracted_on_the_main_thread(self):
+        """Bis 0.31.4 las materialize() stdout synchron und wartete mit
+        waitUntilExit() — aus Oeffnen, Quick Look und Drag-and-drop heraus,
+        also auf dem Main-Thread; das Fenster fror so lange ein, wie der Kern
+        brauchte (tests/MATERIALIZATION_MEASUREMENTS.md). Die Apps rufen nur
+        noch die Completion-Fassung; die synchrone bleibt dem
+        Headless-Selbsttest vorbehalten."""
+        selftest = swift_function(GUI, "func runSelfTest() -> Int32 {")
+        for source, name in ((GUI.replace(selftest, ""), "FavenioGUI"),
+                             (QUICK, "FavenioQuick")):
+            with self.subTest(app=name):
+                self.assertNotIn("materializeHit(", source)
+                self.assertNotIn("materializeHitSelection(hits, rows: "
+                                 "actionRows())", source)
+                # ⎋ bricht ein laufendes Auspacken ab — vor allem anderen.
+                self.assertIn("if self.cancelMaterializations() { return nil }",
+                              source)
+                self.assertIn("override func presentMaterializationState()",
+                              source)
+        manager = COMMON[COMMON.index("final class MaterializationManager"):
+                         COMMON.index("func cleanupMaterializedHits()")]
+        # stderr wird NEBENLAEUFIG geleert, wie beim Suchlauf: Eine volle Pipe
+        # haelt den Kern an, waehrend wir auf stdout warten.
+        self.assertIn("diagnostics.collect(from: errors)", manager)
+        self.assertNotIn("FileHandle.nullDevice", manager)
+        # Gleichzeitige Anforderungen desselben Treffers teilen EINEN Auftrag.
+        self.assertIn("if let job = jobs[hit], !job.cancelled {", manager)
+        # Nach cleanup() legt kein spaeter Auftrag eine Datei neu an.
+        self.assertIn("if job.epoch != epoch {", manager)
+        # Die Basisklasse haelt die Aktionen; keine App baut sie nach.
+        for signature in ("func withActionSelection(", "func requestPreview(",
+                          "func cancelMaterializations()", "func openActionRows()"):
+            self.assertIn(signature, COMMON)
+            self.assertNotIn(signature, GUI)
+            self.assertNotIn(signature, QUICK)
+        # Quick Look nimmt nur die ZULETZT angeforderte Auswahl.
+        preview = swift_function(COMMON, "func requestPreview(")
+        self.assertIn("previewRequest?.cancel()", preview)
+        self.assertIn("guard self.previewRequest === request else { return }",
+                      preview)
+
+    def test_drag_and_drop_promises_files_instead_of_extracting_on_grab(self):
+        """pasteboardWriterForRow verlangt sofort eine Antwort. Was schon als
+        Datei vorliegt, geht als URL; ein noch nicht ausgepackter Eintrag als
+        NSFilePromiseProvider, den der Finder beim Ablegen einloest — ueber
+        denselben Manager, im Hintergrund."""
+        writer = swift_function(GUI, "                   pasteboardWriterForRow row: Int)")
+        self.assertIn("MaterializationManager.shared.knownURL(for: hit)", writer)
+        self.assertIn("NSFilePromiseProvider(fileType:", writer)
+        self.assertNotIn("materializeHit(", writer)
+        promise = swift_function(GUI, "                             writePromiseTo url: URL,")
+        self.assertIn("MaterializationManager.shared.request(hit)", promise)
+        self.assertIn("copyItem(at: source, to: url)", promise)
+        self.assertIn("NSFilePromiseProviderDelegate", GUI)
         issue = swift_function(COMMON, "func hitActionIssue(")
         self.assertIn("Ordner im Archiv", issue)
         self.assertIn("Kein Treffer ausgewählt", issue)

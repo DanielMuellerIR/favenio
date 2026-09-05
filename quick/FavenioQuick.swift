@@ -212,6 +212,8 @@ final class QuickController: HitListController, NSApplicationDelegate,
                   self.window.isKeyWindow
             else { return event }
             if event.keyCode == 53 {                       // 53 = Escape
+                // Zuerst ein laufendes Auspacken abbrechen.
+                if self.cancelMaterializations() { return nil }
                 // Die Vorschau ist nicht das Tastaturfenster (siehe
                 // togglePreview) und kann sich deshalb nicht selbst
                 // schließen: ⎋ schließt zuerst sie, erst ein leeres Suchfeld
@@ -709,6 +711,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     func showInfo(_ text: String, detail: String? = nil,
                   color: NSColor = .secondaryLabelColor,
                   lineBreak: NSLineBreakMode = .byTruncatingTail) {
+        lastInfo = (text, detail, color, lineBreak)
         infoLabel.textColor = color
         infoLabel.lineBreakMode = lineBreak
         infoLabel.stringValue = text
@@ -852,6 +855,9 @@ final class QuickController: HitListController, NSApplicationDelegate,
         runScopeMismatch = nil
         skippedCount = 0
         previewURLs = []
+        // Eine noch laufende Vorschau-Anforderung gehört zur alten Anfrage.
+        previewRequest?.cancel()
+        previewRequest = nil
         tableView.reloadData()
         showInfo(Self.hint)
         if QLPreviewPanel.sharedPreviewPanelExists(),
@@ -963,8 +969,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         // Eine offene Vorschau zeigt sonst weiter den Treffer der alten Zeile.
         if QLPreviewPanel.sharedPreviewPanelExists(),
            QLPreviewPanel.shared().isVisible {
-            rebuildPreviewURLs()
-            QLPreviewPanel.shared().reloadData()
+            refreshPreview()
         }
     }
 
@@ -1208,17 +1213,42 @@ final class QuickController: HitListController, NSApplicationDelegate,
 
     @objc func openSelected() {
         if tableView.clickedRow >= 0 { contextRow = tableView.clickedRow }
-        let selection = actionSelection()
-        selection.urls.forEach { NSWorkspace.shared.open($0) }
-        showActionIssue(selection)
+        openActionRows()
+    }
+
+    /// Was showInfo() zuletzt geschrieben hat — die Infozeile wird nur
+    /// dort angefasst (Wächter-Test), gelesen wird deshalb hier.
+    typealias InfoState = (text: String, detail: String?, color: NSColor,
+                           lineBreak: NSLineBreakMode)
+    var lastInfo: InfoState = (QuickController.hint, nil,
+                               .secondaryLabelColor, .byTruncatingTail)
+    /// Ladezustand des Auspackens in der Infozeile. Die Zeile ist nicht aus
+    /// dem Zustand formuliert; deshalb wird gemerkt, was vorher dort stand,
+    /// und nach dem Auspacken wiederhergestellt — sofern inzwischen nichts
+    /// anderes hingeschrieben wurde.
+    private var infoBeforeMaterializing: InfoState?
+
+    override func presentMaterializationState() {
+        if isMaterializing {
+            if infoBeforeMaterializing == nil {
+                infoBeforeMaterializing = lastInfo
+                showInfo(Self.materializingNote)
+            }
+            return
+        }
+        guard let previous = infoBeforeMaterializing else { return }
+        infoBeforeMaterializing = nil
+        if lastInfo.text == Self.materializingNote {
+            showInfo(previous.text, detail: previous.detail,
+                     color: previous.color, lineBreak: previous.lineBreak)
+        }
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         contextRow = -1
         if QLPreviewPanel.sharedPreviewPanelExists(),
            QLPreviewPanel.shared().isVisible {
-            rebuildPreviewURLs()
-            QLPreviewPanel.shared().reloadData()
+            refreshPreview()
         }
     }
 

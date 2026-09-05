@@ -3,8 +3,11 @@
 Vor jedem Punkt gegen Code und Git verifizieren. Erledigte Punkte in Changelog
 oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
-1. Archivtreffer asynchron für Öffnen und Quick Look vorbereiten; Drag-and-drop
-   mit eigenem AppKit-Vertrag lösen. Priorität 1, Abnahme in [FOLLOWUPS.md](FOLLOWUPS.md).
+1. Sichtbarer Drag-and-drop-Test am Fenster der Haupt-App: einen noch nicht
+   ausgepackten Archiv-Eintrag als Dateiversprechen in den Finder ziehen
+   (mehrere Dateien, langsame Extraktion, Abbruch, Fehler). Headless ist der
+   Weg seit 0.32.0 geprüft (`tests/test_materialization.py`); der Test am
+   Fenster braucht Daniels Freigabe.
 2. Zeilen-/Segmentleser als eigenen verhaltensneutralen Refactor herauslösen.
    Priorität 2, Abnahme in [FOLLOWUPS.md](FOLLOWUPS.md).
 3. Vollständige benannte Suchvorlagen und Mehrwortsuche als getrennte

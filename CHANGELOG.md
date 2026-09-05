@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.32.0 — 2026-09-05
+
+- Beide Apps packen Archivtreffer für Öffnen, „Öffnen mit", „Im Finder
+  zeigen" und Quick Look im Hintergrund aus. Bis 0.31.4 lief der Python-Kern
+  dabei synchron auf dem Main-Thread; das Fenster fror so lange ein, wie das
+  Auspacken dauerte (gemessen am 2026-09-05: 0,16 s bei 128 MiB aus einem
+  gespeicherten Zip, 0,15 s bei einem Zip im Zip, 4,6 s bei 128 MiB aus einem
+  7z — `tests/MATERIALIZATION_MEASUREMENTS.md`). Jetzt bleibt die größte
+  Main-Verzögerung bei rund 2,5 ms. Solange zeigt die Fußzeile bzw.
+  Infozeile „Packe Archivtreffer aus… (⎋ bricht ab)"; ⎋ bricht ab und
+  beendet den Kern.
+- Öffnen arbeitet mit der Auswahl vom Klick, Quick Look zeigt nur die zuletzt
+  angeforderte Auswahl; gleichzeitige Anforderungen desselben Treffers teilen
+  eine Extraktion und dieselbe Datei. Scheitert das Auspacken, nennt die
+  Meldung den Grund des Kerns (beschädigtes Archiv, überschrittenes Budget,
+  nicht startbarer Kern) statt nur „Konnte nicht auspacken".
+- Drag-and-drop aus der Haupt-App: Ein noch nicht ausgepackter Archiv-Eintrag
+  wird als Dateiversprechen gezogen und erst beim Ablegen im Finder
+  ausgepackt. Normale Dateien und schon ausgepackte Einträge gehen wie
+  bisher als Datei-URL.
+
 ## 0.31.4 — 2026-09-05
 
 - Ein leerer Ordner in einem ISO ist wieder ein Ordner: Der Eintragstyp der

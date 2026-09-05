@@ -791,6 +791,7 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
 /// für beide Apps.
 final class MainController: HitListController, NSApplicationDelegate,
                             NSTableViewDataSource, NSTableViewDelegate,
+                            NSFilePromiseProviderDelegate,
                             NSMenuDelegate, NSMenuItemValidation,
                             NSSearchFieldDelegate {
 
@@ -982,6 +983,9 @@ final class MainController: HitListController, NSApplicationDelegate,
                 self.togglePreview()
                 return nil
             case 53 where modifiers.isEmpty:               // ⎋
+                // Zuerst ein laufendes Auspacken abbrechen — das ist der
+                // sichtbare Weg, eine langsame Extraktion zu stoppen.
+                if self.cancelMaterializations() { return nil }
                 // Die Vorschau ist nicht mehr das Tastaturfenster und kann
                 // sich deshalb nicht mehr selbst schließen. Nur abfangen,
                 // wenn sie wirklich offen ist — sonst gehört ⎋ weiter dem
@@ -1039,11 +1043,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         guard !isRestoringSelection else { return }
         contextRow = -1
         refreshStatus()     // „N ausgewählt" in der Fußzeile mitziehen
-        if QLPreviewPanel.sharedPreviewPanelExists(),
-           QLPreviewPanel.shared().isVisible {
-            rebuildPreviewURLs()
-            QLPreviewPanel.shared().reloadData()
-        }
+        reloadPreviewIfSelectionChanged()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(
@@ -1477,6 +1477,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         default:
             break
         }
+        if isMaterializing { text += " — " + Self.materializingNote }
         return text + skippedNote(skippedCount)
     }
 
@@ -1964,10 +1965,11 @@ final class MainController: HitListController, NSApplicationDelegate,
     func reloadPreviewIfSelectionChanged() {
         guard QLPreviewPanel.sharedPreviewPanelExists(),
               QLPreviewPanel.shared().isVisible else { return }
-        let shown = previewURLs
-        rebuildPreviewURLs()
-        if previewURLs != shown { QLPreviewPanel.shared().reloadData() }
+        refreshPreview()
     }
+
+    /// Ladezustand des Auspackens in der Fußzeile (Teil von statusText).
+    override func presentMaterializationState() { refreshStatus() }
 
     func flushPending() {
         guard !pending.isEmpty else { return }
@@ -2166,13 +2168,88 @@ final class MainController: HitListController, NSApplicationDelegate,
         hits = zusammen
     }
 
-    /// Drag & Drop: die gezogene Zeile liefert eine Datei-URL —
-    /// Archiv-Einträge werden dafür beim Anfassen ausgepackt.
+    /// Drag & Drop: Was schon als Datei vorliegt — jede normale Datei, jeder
+    /// schon ausgepackte Eintrag —, geht als URL ins Pasteboard. Ein noch
+    /// nicht ausgepackter Archiv-Eintrag geht als DATEIVERSPRECHEN
+    /// (`NSFilePromiseProvider`): AppKit will in diesem Callback sofort eine
+    /// Antwort, und bis 0.31.4 wurde deshalb hier synchron ausgepackt — beim
+    /// Anfassen der Zeile, auf dem Main-Thread. Das Versprechen löst der
+    /// Empfänger (Finder) erst beim Ablegen ein; dann packt derselbe
+    /// Manager im Hintergrund aus (`filePromiseProvider(_:writePromiseTo:)`).
+    /// Abwägung in `tests/MATERIALIZATION_MEASUREMENTS.md`.
     func tableView(_ tableView: NSTableView,
                    pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-        guard row < hits.count,
-              let url = materializeHit(hits[row]) else { return nil }
-        return url as NSURL
+        guard row < hits.count else { return nil }
+        let hit = hits[row]
+        guard hit.hasOpenableFile else { return nil }
+        if let url = MaterializationManager.shared.knownURL(for: hit) {
+            return url as NSURL
+        }
+        let fileExtension = (hit.path as NSString).pathExtension
+        let type = UTType(filenameExtension: fileExtension) ?? .data
+        let provider = NSFilePromiseProvider(fileType: type.identifier,
+                                             delegate: self)
+        provider.userInfo = hit
+        return provider
+    }
+
+    // ---------- Dateiversprechen für Archiv-Einträge ----------
+
+    /// Eigene Queue: Die Delegate-Aufrufe des Versprechens laufen dort,
+    /// nicht auf Main.
+    let promiseQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "favenio.file-promise"
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+
+    func filePromiseProvider(_ provider: NSFilePromiseProvider,
+                             fileNameForType fileType: String) -> String {
+        guard let hit = provider.userInfo as? Hit else { return "Datei" }
+        return (hit.archiveMembers.last.map { ($0 as NSString).lastPathComponent }
+                ?? (hit.path as NSString).lastPathComponent)
+    }
+
+    /// Der Empfänger löst das Versprechen ein: auspacken (oder aus dem
+    /// Cache nehmen) und an die gewünschte Stelle KOPIEREN — die Temp-Datei
+    /// bleibt für weitere Aktionen erhalten, aufgeräumt wird beim App-Ende.
+    /// Fehler und Abbruch gehen als Error an den Empfänger, der sie nennt.
+    func filePromiseProvider(_ provider: NSFilePromiseProvider,
+                             writePromiseTo url: URL,
+                             completionHandler: @escaping (Error?) -> Void) {
+        guard let hit = provider.userInfo as? Hit else {
+            completionHandler(promiseError("Treffer nicht mehr bekannt"))
+            return
+        }
+        DispatchQueue.main.async {
+            MaterializationManager.shared.request(hit) { outcome in
+                switch outcome {
+                case .ready(let source):
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        do {
+                            try FileManager.default.copyItem(at: source, to: url)
+                            completionHandler(nil)
+                        } catch {
+                            completionHandler(error)
+                        }
+                    }
+                case .failed(let reason):
+                    completionHandler(self.promiseError(reason))
+                case .cancelled:
+                    completionHandler(self.promiseError("Auspacken abgebrochen"))
+                }
+            }
+        }
+    }
+
+    func operationQueue(for provider: NSFilePromiseProvider) -> OperationQueue {
+        promiseQueue
+    }
+
+    private func promiseError(_ reason: String) -> NSError {
+        NSError(domain: "Favenio", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: reason])
     }
 
     // ---------- Aktionen (Doppelklick, Kontextmenü) ----------
@@ -2238,12 +2315,6 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// gesetzt, und der gilt — deshalb NICHT über `openSelected`, das ihn
     /// für den Doppelklick-Weg neu bestimmt.
     @objc func ctxOpen() { openActionRows() }
-
-    private func openActionRows() {
-        let selection = actionSelection()
-        selection.urls.forEach { NSWorkspace.shared.open($0) }
-        showActionIssue(selection)
-    }
 
     // ---------- Trefferliste verfeinern, exportieren, löschen ----------
 

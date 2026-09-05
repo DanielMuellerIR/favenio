@@ -386,11 +386,15 @@ order are remembered. **Location** shows the line number of a content hit or
 From the results list:
 
 - **Double-click**: opens the file. Archive members are extracted once into an
-  app-owned temporary folder and reused by preview, open, reveal and drag
+  app-owned temporary folder and reused by preview, open, reveal and drag.
+  Extraction runs in the background; the footer says so meanwhile, and
+  Escape cancels it
 - **Right-click**: Open / **Open With…** (all matching apps) /
   Show in Finder / Copy path
 - **Drag & drop**: drag hits into Finder or other apps. This also works for
-  files inside archives; the extracted copy is dragged
+  files inside archives: an entry that is not extracted yet is dragged as a
+  file promise and extracted when you drop it (Finder and apps that accept
+  promised files); an already extracted copy is dragged as a plain file
 - **Space**: QuickLook preview. Keyboard focus stays in the result list, so
   Up/Down walks the preview through the hits
 

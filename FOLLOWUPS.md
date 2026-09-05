@@ -1,39 +1,8 @@
 # Folgeaufträge aus der Codeanalyse vom 2026-09-05
 
-Die Größen-, Datums- und Ausschlussfilter sind umgesetzt. Die folgenden
-Aufträge sind getrennte Änderungen mit eigenen Abnahmen.
-
-## Priorität 1: Archivtreffer asynchron vorbereiten
-
-`MaterializationManager.materialize()` in `common/FavenioCore.swift` liest
-stdout synchron, wartet mit `waitUntilExit()` und verwirft stderr. Öffnen,
-Finder-Anzeige und Quick Look können damit den Main-Thread blockieren.
-Zuerst Laufzeit und Main-Thread-Verzögerung mit großen und verschachtelten
-Archivtreffern messen; für diesen Pfad liegt noch keine Laufzeitmessung vor.
-
-Materialisierung als abbrechbaren Auftrag mit Ergebnis oder konkretem
-Fehlergrund anbieten. stderr nebenläufig lesen. Gleichzeitige Anforderungen
-desselben Treffers teilen eine Extraktion und denselben Cache. Öffnen arbeitet
-mit einer festen Trefferauswahl; Quick Look übernimmt ausschließlich die
-zuletzt angeforderte Auswahl. Ladezustand und Abbruch müssen sichtbar sein.
-Cache und Temp-Wurzel gegen gleichzeitigen Zugriff schützen; laufende Aufträge
-dürfen nach `cleanup()` keine Dateien erneut anlegen.
-
-Abnahme: Startfehler, beschädigtes Archiv, Budgetüberschreitung, stderr-Flut,
-Abbruch, schnelle Auswahlwechsel und gleichzeitige Anforderungen prüfen.
-Öffnen und Vorschau verwenden weiterhin dieselbe materialisierte Datei.
-Keine synchrone Extraktion im Main-Thread; Verzögerung vorher/nachher messen.
-
-### Drag-and-drop gesondert lösen
-
-`tableView(_:pasteboardWriterForRow:)` in `gui/FavenioGUI.swift` verlangt heute
-sofort eine fertige URL. Ein bloßes `Task.detached` erfüllt diesen Vertrag nicht.
-
-Einen AppKit-Prototyp mit Dateiversprechen (`NSFilePromiseProvider`) gegen
-vorab vorbereitete URLs vergleichen. Quelldateien weiter über denselben
-Manager beziehen. Mehrere Dateien, langsame Extraktion, Abbruch, Fehler und
-Übernahme durch den Finder prüfen; Temp-Dateien erst nach ihrer Verwendung
-bereinigen. Den sichtbaren Drag-and-drop-Test gesondert freigeben lassen.
+Die Größen-, Datums- und Ausschlussfilter sind umgesetzt, ebenso die
+asynchrone Materialisierung (0.32.0) und der ISO-Ordnertyp (0.31.4). Die
+folgenden Aufträge sind getrennte Änderungen mit eigenen Abnahmen.
 
 ## Priorität 2: Zeilen- und Segmentleser herauslösen
 
