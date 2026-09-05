@@ -81,6 +81,8 @@ class SearchRunnerTests(unittest.TestCase):
                 self.assertNotEqual(result['status'], 0)
                 if mode != 'cancel':
                     self.assertEqual(result['hits'], 0)
+                if mode == 'backpressure':
+                    self.assertEqual(result['peak_packets'], 2)
 
     def test_oversize_record_is_an_explicit_error(self):
         result = self.run_probe('oversize')

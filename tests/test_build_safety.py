@@ -588,21 +588,72 @@ class InstallTransactionTest(unittest.TestCase):
             ["zsh", "-c", self.install_script("    return 0", prelude)],
             cwd=REPO, env=environment, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT)
-        deadline = time.monotonic() + 5
-        while not ready.exists() and time.monotonic() < deadline:
-            if process.poll() is not None:
-                break
-            time.sleep(0.01)
-        if not ready.exists():
-            process.kill()
-            output = process.communicate()[0].decode("utf-8", "replace")
-            self.fail("Tauschphase nicht erreicht:\n%s" % output)
-        process.send_signal(signum)
-        output = process.communicate(timeout=5)[0].decode("utf-8", "replace")
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and time.monotonic() < deadline:
+                if process.poll() is not None:
+                    break
+                time.sleep(0.01)
+            if not ready.exists():
+                if process.poll() is None:
+                    process.kill()
+                output = process.communicate()[0].decode("utf-8", "replace")
+                self.fail("Tauschphase nicht erreicht:\n%s" % output)
+            process.send_signal(signum)
+            output = process.communicate(timeout=5)[0].decode("utf-8", "replace")
+        finally:
+            # Auch bei Timeout oder einer fehlgeschlagenen Assertion darf
+            # die wartende Shell nicht weiterlaufen; anschließend einsammeln.
+            if process.poll() is None:
+                process.kill()
+            if not process.stdout.closed:
+                process.communicate()
+            else:
+                process.wait()
         self.assertEqual(process.returncode, 2, output)
         self.assertEqual(self.marker(self.dest, "Favenio.app"), "alt")
         self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
         self.assertEqual(self.leftovers(), [])
+
+    def test_signal_timeout_reaps_the_waiting_shell(self):
+        real_popen = subprocess.Popen
+        children = []
+
+        def start_child(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            communicate = child.communicate
+
+            def timeout_once(*args, **kwargs):
+                if kwargs.get("timeout") == 5:
+                    raise subprocess.TimeoutExpired(child.args, 5)
+                return communicate(*args, **kwargs)
+
+            child.communicate = timeout_once
+            # Die echte Shell bleibt an der Bereitschaftsdatei stehen,
+            # damit ein fehlendes finally sicher einen Prozess hinterließe.
+            send_signal = child.send_signal
+            child.send_signal = lambda signum: (
+                None if signum == signal.SIGTERM else send_signal(signum))
+            return child
+
+        try:
+            with unittest.mock.patch.object(subprocess, "Popen", start_child):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    self.assert_signal_during_swap_restores_both_bundles(
+                        signal.SIGTERM)
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].poll())
+        finally:
+            # Der Regressionstest räumt auch auf, wenn die zu prüfende
+            # Bereinigung später wieder entfernt wird.
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                if not child.stdout.closed:
+                    child.communicate()
+                else:
+                    child.wait()
 
     def test_sigint_during_the_swap_restores_both_bundles(self):
         self.assert_signal_during_swap_restores_both_bundles(signal.SIGINT)

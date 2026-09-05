@@ -89,7 +89,11 @@ import Darwin
         if mode == "backpressure" {
             // Main verarbeitet absichtlich keine Pakete; Abbruch muss den
             // Hintergrundleser trotzdem aus dem vollen Transport holen.
-            Thread.sleep(forTimeInterval: 0.2)
+            let fullDeadline = ProcessInfo.processInfo.systemUptime + 5
+            while runner.transportPeaks.packets < 2
+                    && ProcessInfo.processInfo.systemUptime < fullDeadline {
+                Thread.sleep(forTimeInterval: 0.001)
+            }
             runner.cancel()
         }
         while completed == nil && ProcessInfo.processInfo.systemUptime - start < 15 {

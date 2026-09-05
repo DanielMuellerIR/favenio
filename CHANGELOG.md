@@ -1,5 +1,15 @@
 # Changelog
 
+## Prüfungen vom 2026-09-05 nach 0.31.0
+
+- Der Signaltest beendet und sammelt seinen Shell-Prozess auch nach einem
+  Timeout ein. Ein erzwungener Timeout mit echtem Prozess prüft die Bereinigung.
+  Der Runner-Abbruchtest wartet auf zwei belegte Transportplätze und beweist
+  damit die volle Warteschlange vor dem Abbruch.
+- Eine erzeugbare ISO-Fixture bestätigt den noch offenen Typfehler leerer
+  Ordner. Folgeaufträge für Materialisierung, Zeilenleser, Suchvorlagen und
+  Mehrwortsuche sind mit getrennten Abnahmen in `FOLLOWUPS.md` beschrieben.
+
 ## 0.31.0 — 2026-09-05
 
 - Beide Apps bieten Von/Bis-Felder für Dateigröße, Änderung und Erstellung.

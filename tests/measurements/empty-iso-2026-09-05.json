@@ -1,0 +1,25 @@
+{
+  "fixture": "empty.iso",
+  "listing": ".\nempty\n",
+  "files": {
+    "exit": 0,
+    "hits": [
+      {
+        "path": "$FIXTURE/empty.iso!/empty",
+        "type": "member",
+        "isDirectory": false,
+        "filesystemPath": "$FIXTURE/empty.iso",
+        "archiveMembers": [
+          "empty"
+        ]
+      }
+    ],
+    "stderr": ""
+  },
+  "dirs": {
+    "exit": 1,
+    "hits": [],
+    "stderr": ""
+  },
+  "directory_type_correct": false
+}

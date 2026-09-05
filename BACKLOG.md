@@ -3,33 +3,39 @@
 Vor jedem Punkt gegen Code und Git verifizieren. Erledigte Punkte in Changelog
 oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
-1. Mehrwortmodus als eigene Produktentscheidung spezifizieren.
-2. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
-3. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
+1. Archivtreffer asynchron für Öffnen und Quick Look vorbereiten; Drag-and-drop
+   mit eigenem AppKit-Vertrag lösen. Priorität 1, Abnahme in [FOLLOWUPS.md](FOLLOWUPS.md).
+2. Leere ISO-Ordner korrekt typisieren. Die Fixture in
+   `tools/reproduce-empty-iso.py` reproduziert den Fehler ohne Mount;
+   `tests/measurements/empty-iso-2026-09-05.json` hält den Befund fest.
+   Typtragende Auflistung noch offen, Priorität 1.
+3. Zeilen-/Segmentleser als eigenen verhaltensneutralen Refactor herauslösen.
+   Priorität 2, Abnahme in [FOLLOWUPS.md](FOLLOWUPS.md).
+4. Vollständige benannte Suchvorlagen und Mehrwortsuche als getrennte
+   Funktionserweiterungen. Priorität 3, Verträge und offene Produktentscheidung
+   zur Verknüpfung mehrerer Begriffe in [FOLLOWUPS.md](FOLLOWUPS.md).
+5. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
+6. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
    heraus auf die aktuelle aktualisieren und den Ablauf am Fenster prüfen.
    Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
    Durchlauf am Bildschirm.
 
-## Flackernder Test 2026-09-03
+## Flackernder Test: Ursache weiterhin offen
 
 `test_sigterm_during_the_swap_restores_both_bundles`
-(`tests/test_build_safety.py`) schlug am 2026-09-03 zweimal fehl und war
-danach in sieben Läufen hintereinander grün. Beide Male lag die Systemlast
-des Rechners bei rund 100 (fremde Prozesse anderer Projekte). Der Test
-schickt SIGTERM an ein Shell-Skript und prüft danach den Zustand — unter
-extremer Last ist das zeitkritisch. Zu klären: ob der Test auf eine feste
-Wartezeit baut, die sich durch ein Warten auf einen Zustand ersetzen lässt.
-Nicht reproduziert, deshalb keine Änderung.
+(`tests/test_build_safety.py`) schlug am 2026-09-03 zweimal unter hoher
+Systemlast fehl und war danach siebenmal grün. Der aktuelle Test wartet
+bereits auf eine Bereitschaftsdatei, die genau beim Austausch der zweiten App
+entsteht. Die frühere Vermutung einer bloßen festen Startwartezeit trifft
+nicht zu. Am 2026-09-05 bestanden zehn weitere Wiederholungen (0,565 s gesamt).
+Der ursprüngliche Fehlschlag wurde damit nicht reproduziert.
 
-## Offen aus der Code-Review-Triage 2026-08-02
-
-- Leerer Ordner in einem ISO wird als Datei geführt. `bsdtar -tf` listet ihn
-  ohne Schrägstrich, und ohne Kinder greift die Ordner-Erkennung nicht;
-  `--only files --exact <name>` findet ihn deshalb, `--only dirs` nicht. Ein
-  sauberer Fix braucht eine typtragende Auflistung (etwa `bsdtar -tvf`,
-  dessen erste Spalte den Typ nennt) — die ist aber schwerer verlässlich zu
-  zerlegen als die reine Namensliste. Vor der Umsetzung: leeren ISO-Ordner
-  als Fixture ergänzen.
+Separat bestätigt und korrigiert: Bei `communicate(timeout=5)` fehlte die
+garantierte Prozessbereinigung. Ein `finally` beendet und sammelt die Shell
+jetzt auch nach einem Timeout ein; ein mit echtem Prozess erzwungener Timeout
+prüft das. Dies belegt keine Ursache für den ursprünglichen SIGTERM-Fehlschlag.
+Bei erneutem Auftreten Bereitschaftsdatei, Prozessstatus, Ausgabe und Systemlast
+sichern, bevor Timing-Grenzen geändert werden.
 
 Nicht offen: der frühere Finder-Ordner-Fehler; `osascript` als Unterprozess ist
 die verifizierte Lösung und eine Dauerregel.
