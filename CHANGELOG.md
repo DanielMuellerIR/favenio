@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.29.2 — 2026-09-05
+
+- Beide Apps markieren ungültige Pixelmaße und widersprüchliche Von/Bis-Grenzen
+  rot mit konkreter Fehlermeldung. Suche und Übergabe starten erst nach der
+  Korrektur; eine leere Grenze bleibt erlaubt.
+- Beide Bundle-Selbsttests prüfen die Maßfelder und blockierte Suchstarts.
+
 ## 0.29.1 — 2026-09-05
 
 Drei Funde des Nacht-Reviews vom 2026-09-05.

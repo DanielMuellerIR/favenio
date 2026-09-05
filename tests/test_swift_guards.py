@@ -946,6 +946,21 @@ print("OHNE|" + (zustand.runScopeNoteText() ?? "nil"))
 
 
 
+class PixelFieldValidationGuards(unittest.TestCase):
+    def test_both_frontends_gate_search_and_run_field_selftests(self):
+        for source in (GUI, QUICK):
+            self.assertIn("pixelFieldSelfTest(", source)
+            self.assertIn("func validatePixelInputs()", source)
+            self.assertIn("validatePixelFields(pixelFields)", source)
+            start = swift_function(source, "func startSearch()")
+            self.assertIn("guard validatePixelInputs() else { return }", start)
+        for source, signature in ((GUI, "func launchSearch(pattern:"),
+                                  (GUI, "func continueSearch(from"),
+                                  (QUICK, "func openInMainApp()")):
+            self.assertIn("guard validatePixelInputs() else { return }",
+                          swift_function(source, signature))
+
+
 class ParsePixelLimitBehaviourTest(unittest.TestCase):
     """parsePixelLimit() haengt von nichts ab und laesst sich deshalb wirklich
     AUSFUEHREN: Die Funktion wird unveraendert aus common/FavenioCore.swift

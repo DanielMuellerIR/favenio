@@ -278,7 +278,11 @@ EasyFind-artige Oberfläche: Suchfeld, Ordnerwahl, Optionen, Trefferliste.
 Der Umschalter **Name | Inhalt | Metadaten** sagt, wogegen das Muster läuft;
 im Metadaten-Modus grenzt ein Feldmenü auf ein Feld ein. Die Zeile
 **Bildmaße** (Breite und Höhe je von/bis) filtert per UND und funktioniert auch
-allein ohne Muster. Die Spalten in ihrer Reihenfolge: **Name**, **Größe**
+allein ohne Muster. In beiden Apps werden ungültige Maßfelder rot markiert;
+Statuszeile und Feldhinweis nennen den Fehler. Suche und Übergabe an die
+Haupt-App bleiben bis zur Korrektur gesperrt. Leer heißt keine Grenze,
+`1.000 px` heißt 1000. Negative Zahlen, Dezimalzahlen, Zahlenüberlauf und
+von > bis werden abgelehnt. Die Spalten in ihrer Reihenfolge: **Name**, **Größe**
 (Bytes), **Pfad**, **Typ**, **Änderungsdatum**, **Erstellungsdatum**,
 **Fundstelle**, **Maße**. **Pfad** ist der Ordner des Treffers relativ zum
 Suchordner — der Dateiname steht schon in der ersten Spalte — und wird am

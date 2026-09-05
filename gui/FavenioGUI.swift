@@ -122,6 +122,31 @@ func checkDiagnosticsReachTheSurface(sandbox: URL) -> String? {
 
 func runSelfTest() -> Int32 {
     defer { cleanupMaterializedHits() }
+    _ = NSApplication.shared
+    let pixelController = MainController()
+    if let error = pixelFieldSelfTest(pixelController.pixelFields,
+                                     validate: pixelController.validatePixelInputs) {
+        print("SELFTEST FEHLER: \(error)")
+        return 1
+    }
+
+    pixelController.searchField.stringValue = "Treffer"
+    pixelController.minWidthField.stringValue = "10.5"
+    pixelController.startSearch()
+    guard pixelController.activeSearchRun == nil,
+          pixelController.minWidthField.toolTip != nil else {
+        print("SELFTEST FEHLER: Ungültige Maße starten die Hauptsuche")
+        return 1
+    }
+    pixelController.minWidthField.stringValue = "1000"
+    pixelController.controlTextDidChange(Notification(
+        name: NSControl.textDidChangeNotification,
+        object: pixelController.minWidthField))
+    guard case .idle = pixelController.searchPhase,
+          pixelController.minWidthField.toolTip == nil else {
+        print("SELFTEST FEHLER: Korrigierter Maßfehler bleibt sichtbar")
+        return 1
+    }
     guard findCLI() != nil else {
         print("SELFTEST FEHLER: favenio.py nicht gefunden")
         return 1
@@ -1179,6 +1204,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             field.widthAnchor.constraint(equalToConstant: 64).isActive = true
             field.target = self
             field.action = #selector(startSearch)
+            field.delegate = self
         }
         let sizeRow = NSStackView(views: [
             NSTextField(labelWithString: "Bildmaße:"),
@@ -1537,6 +1563,17 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     /// Live-Färbung des Suchfelds beim Tippen (nur im Regex-Modus).
     func controlTextDidChange(_ notification: Notification) {
+        if let field = notification.object as? NSTextField, pixelFields.contains(where: { $0 === field }) {
+            // Die sichtbare Konfiguration gehört ab jetzt zu einem neuen
+            // Lauf. Alte Treffer dürfen keinen neuen Fehlerstatus überholen.
+            stopSearch()
+            progressPath = nil
+            if validatePixelInputs() {
+                searchPhase = .idle
+                refreshStatus()
+            }
+            return
+        }
         guard notification.object as? NSSearchField === searchField else { return }
         recolorRegexField()
     }
@@ -1591,6 +1628,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         seenPaths = []
         trashedPaths = TrashedPaths()
         applyHitsToTable(keepingSelection: [])
+        guard validatePixelInputs() else { return }
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
         statistics = HitStatistics()
@@ -1606,12 +1644,22 @@ final class MainController: HitListController, NSApplicationDelegate,
         launchSearch(pattern: pattern)
     }
 
-    /// Die vier Maßfelder als Grenzen; leer oder unbrauchbar = keine Grenze.
-    var pixelLimits: PixelLimits {
-        PixelLimits(minWidth: parsePixelLimit(minWidthField.stringValue),
-                    maxWidth: parsePixelLimit(maxWidthField.stringValue),
-                    minHeight: parsePixelLimit(minHeightField.stringValue),
-                    maxHeight: parsePixelLimit(maxHeightField.stringValue))
+    var pixelFields: [NSTextField] {
+        [minWidthField, maxWidthField, minHeightField, maxHeightField]
+    }
+
+    var pixelLimits: PixelLimits { validatePixelFields(pixelFields).limits }
+
+    /// Kein Start und keine Übergabe darf ungültige sichtbare Grenzen ignorieren.
+    @discardableResult
+    func validatePixelInputs() -> Bool {
+        let result = validatePixelFields(pixelFields)
+        if let error = result.error {
+            searchPhase = .failed(error)
+            refreshStatus()
+            return false
+        }
+        return true
     }
 
     var selectedMode: SearchTextMode {
@@ -1664,6 +1712,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         searchPhase = .handedOver
         progressPath = nil
         applyHitsToTable(keepingSelection: [])
+        guard validatePixelInputs() else { return }
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
         // Wie startSearch(): ohne Muster nur weitersuchen, wenn ein
@@ -1680,6 +1729,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// `continueSearch` vorbelegte) Tabelle. Setzt hits/seenPaths NICHT
     /// zurück — das machen die Aufrufer je nach Fall.
     func launchSearch(pattern: String) {
+        guard validatePixelInputs() else { return }
         let only = ["both", "files", "dirs"][
             max(0, typeControl.selectedSegment)]
         guard let arguments = searchArguments(

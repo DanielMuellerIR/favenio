@@ -270,7 +270,11 @@ EasyFind-style interface: search field, folder picker, options, results list.
 The **Name | Content | Metadata** switch says what the pattern runs against;
 in metadata mode a field menu narrows it to one field. The **Image size** row
 (width and height, each from/to) filters with AND and works on its own without
-a pattern. The columns, in order: **Name**, **Size** (bytes), **Path**,
+a pattern. In both apps, invalid pixel fields turn red and show a concrete
+error in the status line and field tooltip. Search and transfer to the main
+app stay blocked until corrected. Empty fields mean no limit; `1.000 px`
+means 1000. Negative, decimal and overflowing numbers, and from > to, are
+rejected. The columns, in order: **Name**, **Size** (bytes), **Path**,
 **Type**, **Modified**, **Created**, **Location**, **Dimensions**. **Path**
 is the folder of the hit relative to the search folder — the file name is
 already in the first column — and is truncated at the start, so the

@@ -23,6 +23,29 @@ import Quartz   // QLPreviewPanel (QuickLook-Vorschau)
 struct FavenioQuickApp {
     static func main() {
         if CommandLine.arguments.contains("--selftest") {
+            _ = NSApplication.shared
+            let controller = QuickController()
+            if let error = pixelFieldSelfTest(controller.pixelFields,
+                                             validate: controller.validatePixelInputs) {
+                print("SELFTEST FEHLER: \(error)")
+                exit(1)
+            }
+            controller.field.stringValue = "Treffer"
+            controller.minWidthField.stringValue = "10.5"
+            controller.startSearch()
+            controller.openInMainApp()
+            guard controller.runningProcess == nil, !controller.searching,
+                  !controller.queuedQuery,
+                  controller.infoLabel.stringValue == controller.minWidthField.toolTip else {
+                print("SELFTEST FEHLER: Ungültige Maße starten oder übergeben die Schnellsuche")
+                exit(1)
+            }
+            controller.field.stringValue = ""
+            controller.optionsChanged()
+            guard controller.minWidthField.toolTip != nil else {
+                print("SELFTEST FEHLER: Maßfehler ohne Suchtext bleibt unsichtbar")
+                exit(1)
+            }
             if let error = validateSparkleConfiguration(
                 expectedBundleIdentifier: "local.favenio.quick"
             ) {
@@ -311,6 +334,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
             field.widthAnchor.constraint(equalToConstant: 48).isActive = true
             field.target = self
             field.action = #selector(optionsChanged)
+            field.delegate = self
         }
 
         for checkbox in [archivesCheckbox, hiddenCheckbox, exactCheckbox] {
@@ -722,7 +746,8 @@ final class QuickController: HitListController, NSApplicationDelegate,
         // (Review-Fund 2026-08-21).
         clearHits()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return }
+        guard validatePixelInputs() else { return }
+        guard !query.isEmpty || !pixelLimits.isEmpty else { return }
         debounceTimer = Timer.scheduledTimer(
             withTimeInterval: Self.debounceInterval, repeats: false) {
             [weak self] _ in self?.startSearch()
@@ -734,18 +759,25 @@ final class QuickController: HitListController, NSApplicationDelegate,
 
     /// Umschalten einer Suchoption startet dieselbe Suche neu.
     @objc func optionsChanged() {
-        if !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
-            || !pixelLimits.isEmpty {
-            startSearch()
-        }
+        // Auch ein ungültiges Feld ohne Suchtext braucht eine Fehlermeldung.
+        startSearch()
     }
 
-    /// Die vier Maßfelder als Grenzen; leer oder unbrauchbar = keine Grenze.
-    var pixelLimits: PixelLimits {
-        PixelLimits(minWidth: parsePixelLimit(minWidthField.stringValue),
-                    maxWidth: parsePixelLimit(maxWidthField.stringValue),
-                    minHeight: parsePixelLimit(minHeightField.stringValue),
-                    maxHeight: parsePixelLimit(maxHeightField.stringValue))
+    var pixelFields: [NSTextField] {
+        [minWidthField, maxWidthField, minHeightField, maxHeightField]
+    }
+
+    var pixelLimits: PixelLimits { validatePixelFields(pixelFields).limits }
+
+    /// Kein Start und keine Übergabe darf ungültige sichtbare Grenzen ignorieren.
+    @discardableResult
+    func validatePixelInputs() -> Bool {
+        let result = validatePixelFields(pixelFields)
+        if let error = result.error {
+            showInfo(error, detail: error, color: .systemRed)
+            return false
+        }
+        return true
     }
 
     var selectedMode: SearchTextMode {
@@ -798,6 +830,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         clearHits()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         // Ohne Suchbegriff nur mit Maßfilter — „alle Bilder über 1000 px".
+        guard validatePixelInputs() else { return }
         let limits = pixelLimits
         guard !query.isEmpty || !limits.isEmpty else { return }
 
@@ -1007,6 +1040,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     /// Treffer an die Haupt-App übergeben, die sie sofort zeigt und die Suche
     /// vollständig fortsetzt (dort kann man sortieren und alle sehen).
     @objc func openInMainApp() {
+        guard validatePixelInputs() else { return }
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         // Dieselbe Bedingung wie startSearch(): eine reine Maßsuche ist eine
         // vollständige Frage und muss sich übergeben lassen. Sonst sind der

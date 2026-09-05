@@ -705,6 +705,79 @@ func parsePixelLimit(_ text: String) -> Int? {
     return value
 }
 
+/// Ein leeres Feld setzt keine Grenze; eine falsche Eingabe darf niemals
+/// dieselbe Bedeutung bekommen. Der Zahlenleser bleibt für gültige Syntax
+/// die einzige Quelle.
+enum PixelLimitInput: Equatable {
+    case empty
+    case value(Int)
+    case invalid
+
+    init(_ text: String) {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self = .empty
+        } else if let value = parsePixelLimit(text) {
+            self = .value(value)
+        } else {
+            self = .invalid
+        }
+    }
+}
+
+/// Validiert und markiert dieselben vier Felder in beiden Apps. Der erste
+/// konkrete Fehler erscheint zusätzlich in der Statuszeile des Aufrufers.
+func validatePixelFields(_ fields: [NSTextField]) -> (limits: PixelLimits, error: String?) {
+    precondition(fields.count == 4)
+    let labels = ["Breite von", "Breite bis", "Höhe von", "Höhe bis"]
+    var values = [Int?](repeating: nil, count: 4)
+    var errors = [String?](repeating: nil, count: 4)
+    for (index, field) in fields.enumerated() {
+        switch PixelLimitInput(field.stringValue) {
+        case .empty: break
+        case .value(let value): values[index] = value
+        case .invalid:
+            errors[index] = labels[index] + ": Positive ganze Pixelzahl eingeben (z. B. 1.000 px); keine Dezimalzahl oder Zahl über " + String(Int.max) + "."
+        }
+    }
+    for (low, high, label) in [(0, 1, "Breite"), (2, 3, "Höhe")] {
+        if let minimum = values[low], let maximum = values[high], minimum > maximum {
+            let error = label + ": Von darf nicht größer als bis sein."
+            errors[low] = error
+            errors[high] = error
+        }
+    }
+    for (index, field) in fields.enumerated() {
+        field.textColor = errors[index] == nil ? .controlTextColor : .systemRed
+        field.toolTip = errors[index]
+        field.setAccessibilityHelp(errors[index])
+    }
+    return (PixelLimits(minWidth: values[0], maxWidth: values[1],
+                        minHeight: values[2], maxHeight: values[3]),
+            errors.compactMap { $0 }.first)
+}
+
+/// Läuft in beiden Bundle-Selbsttests an den echten Controller-Feldern,
+/// ohne Fenster zu öffnen oder einen Suchprozess zu starten.
+func pixelFieldSelfTest(_ fields: [NSTextField], validate: () -> Bool) -> String? {
+    for (inputs, valid) in [(["", "", "", ""], true),
+                            (["1.000 px", "1000", "", ""], true),
+                            (["-1", "", "", ""], false),
+                            (["10.5", "", "", ""], false),
+                            ([String(Int.max) + "0", "", "", ""], false),
+                            (["1001", "1000", "", ""], false),
+                            (["", "", "2", "1"], false),
+                            (["", "", "1", "2"], true)] {
+        for (field, input) in zip(fields, inputs) { field.stringValue = input }
+        guard validate() == valid else { return "Maßvalidierung falsch: \(inputs)" }
+        guard valid ? fields.allSatisfy({ $0.toolTip == nil })
+                    : fields.contains(where: { $0.toolTip != nil && $0.textColor == .systemRed })
+        else { return "Maßfelder markieren Fehler nicht korrekt: \(inputs)" }
+    }
+    for field in fields { field.stringValue = "" }
+    _ = validate()
+    return nil
+}
+
 /// Wie das Suchmuster gelesen wird: gegen Namen, Inhalt oder Metadaten.
 enum SearchTextMode: String, CaseIterable {
     case name, content, metadata

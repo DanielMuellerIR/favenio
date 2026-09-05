@@ -297,7 +297,10 @@ Beide Apps tragen den Umschalter **Name | Inhalt | Metadaten**
 (`SearchTextMode`, `modeControl`) und vier Maßfelder (Breite/Höhe je
 von/bis, `PixelLimits`, gelesen über `parsePixelLimit`, das „1.000 px" als
 1000 versteht — eine positive Ganzzahl, wahlweise in Dreierblöcken gruppiert;
-alles andere setzt KEINE Grenze, denn ein Streichen aller Nicht-Ziffern machte
+`PixelLimitInput` unterscheidet leer, gültig und ungültig;
+`validatePixelFields` markiert Fehler und widersprüchliche Von/Bis-Grenzen.
+Beide Apps verhindern damit Suchstart und Übergabe, bis die Eingabe stimmt.
+Ein Streichen aller Nicht-Ziffern machte
 aus „-1" eine 1 und aus „10.5" eine 105). Die Haupt-App zeigt im Metadaten-Modus zusätzlich ein
 Feldmenü, dessen Einträge `metadataFieldList()` vom Kern holt. Ohne Muster
 startet eine Suche nur mit gesetztem Maßfilter; `searchArguments` lässt das
