@@ -192,7 +192,10 @@ Mit `/` gilt das Muster für den vollständigen Pfad relativ zum jeweiligen
 Startordner: `--exclude build/generated` lässt diesen Teilbaum aus, behält
 aber `other/build/generated`. `*` darf `/` überqueren:
 `--exclude 'build/*/cache'` lässt auch `build/a/b/cache` aus. `**` hat keine
-eigene Bedeutung; ein abschließendes `/` ist keine besondere Ordnerregel.
+eigene Bedeutung. Ein abschließendes `/` (wie es die Tab-Vervollständigung der
+Shell anhängt) und ein führendes `./` werden ignoriert: `--exclude build/`
+meint weiterhin das Pfadmuster `build`, und ein Muster mit `/` bleibt ein
+Pfadmuster.
 
 Jedes Archiv, auch ein verschachteltes, beginnt für diese Muster eine neue
 relative Wurzel. Elternpfade werden auch geprüft, wenn das Archiv keinen
@@ -202,8 +205,9 @@ Namens: `--exclude 'odd!/skip.txt'` trifft diesen relativen Eintragspfad,
 keinen Wechsel zwischen Archiven. Mehrere Startpfade gelten unabhängig
 voneinander. Ein ausdrücklich gewählter Startordner bleibt die Suchwurzel,
 auch wenn sein eigener Name passt; eine ausdrücklich gewählte Datei wird
-anhand ihres Dateinamens geprüft. Relative Muster ohne führendes `/` oder
-`./` verwenden.
+anhand ihres Dateinamens geprüft. Muster werden immer relativ zu dieser
+Wurzel verglichen; ein absolutes Muster (führendes `/`) wird deshalb mit
+Exit-Code 2 abgelehnt, statt still nichts auszuschließen.
 
 Zum Beispiel lässt `./favenio.py --exclude cache --exclude '*.zip' rechnung ~/Documents`
 Cache-Teilbäume aus und öffnet die ausgeschlossenen ZIP-Dateien auch für eine
@@ -296,7 +300,10 @@ einer Größengrenze liefert deshalb keine Treffer.
 
 `--modified-from`/`--modified-to` filtern die Änderungszeit,
 `--created-from`/`--created-to` die Erstellungszeit. Alle Grenzen sind inklusive
-Zeitpunkte, keine ganzen Kalendertage. Format:
+Zeitpunkte, keine ganzen Kalendertage. Eine Obergrenze schließt die ganze
+genannte Sekunde ein (ohne Sekunden: die ganze Minute): `--modified-to
+2024-01-01T23:59:59Z` behält eine um 23:59:59,7 geänderte Datei; mit
+ausdrücklichen Sekundenbruchteilen gilt die Grenze genau. Format:
 `YYYY-MM-DDTHH:MM[:SS[.ffffff]]` mit `Z` oder ausdrücklichem `±HH:MM`-Offset,
 zum Beispiel `2024-01-01T00:00:00Z` oder `2024-01-01T01:00+01:00`; beide
 Werte bezeichnen denselben Zeitpunkt. Ein Datum ohne Uhrzeit und eine Uhrzeit

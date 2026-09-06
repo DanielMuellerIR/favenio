@@ -997,13 +997,19 @@ struct SearchConfiguration: Equatable {
             || FactFilterOption.all.contains { !(rawFacts[$0.key] ?? "").isEmpty }
     }
 
+    /// Kurzfassung der positiven Filter für Endmeldung und Vorlagen-
+    /// Tooltip: Maße, Fakten und weitere Begriffe — alles, was
+    /// `hasPositiveFilter` zählt. Eine reine Begriffssuche ohne Muster
+    /// nannte bis 0.34.0 „Keine Treffer in ~" ohne die Begriffe.
     var filterSummary: String {
         let pixels = validatePixelTexts(pixelTexts).limits.summary
         let facts = FactFilterOption.all.compactMap { option -> String? in
             guard let text = rawFacts[option.key], !text.isEmpty else { return nil }
             return option.title + " " + text
         }
-        return ([pixels].filter { !$0.isEmpty } + facts).joined(separator: ", ")
+        let termList = terms.isEmpty ? ""
+            : "Begriffe " + terms.map { "„\($0)“" }.joined(separator: ", ")
+        return ([pixels, termList].filter { !$0.isEmpty } + facts).joined(separator: ", ")
     }
 
     static let pixelKeys = ["minw", "maxw", "minh", "maxh"]
@@ -1090,6 +1096,22 @@ struct SearchConfiguration: Equatable {
     }
 }
 
+/// Gibt es den Suchordner (noch)? Beide Apps fragen das VOR dem Start.
+/// Ohne Muster steht der Ordner als einziges Positionsargument in der
+/// Kommandozeile, und der Kern befördert es nur zum Startpfad, wenn es
+/// existiert — einen gelöschten oder umbenannten Ordner las er still als
+/// Namensmuster und suchte im Arbeitsverzeichnis der App, für ein Bundle
+/// ist das `/`. Seit `--term` (0.34.0) betraf das jede Begriffssuche ohne
+/// Muster, nicht mehr nur die reine Maßsuche.
+func searchRootProblem(_ root: String) -> String? {
+    var isDirectory: ObjCBool = false
+    if FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory),
+       isDirectory.boolValue {
+        return nil
+    }
+    return "Suchordner fehlt: " + abbreviateHome(root)
+}
+
 // ---------- Benannte Suchvorlagen ----------
 
 /// Eine gespeicherte Suche: Name, Suchmuster, der beim Sichern gewählte
@@ -1111,12 +1133,7 @@ struct SearchTemplate: Equatable {
 
     /// nil, wenn kein Ordner gespeichert ist oder er existiert.
     var missingRootMessage: String? {
-        guard let root else { return nil }
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory),
-           isDirectory.boolValue {
-            return nil
-        }
+        guard let root, searchRootProblem(root) != nil else { return nil }
         return "Suchordner der Vorlage „\(name)“ fehlt: " + root
     }
 }
@@ -1144,9 +1161,20 @@ enum SearchTemplateFormat {
         return components.percentEncodedQuery ?? ""
     }
 
-    static func decodeOptions(_ options: String) -> SearchConfiguration {
-        var components = URLComponents()
-        components.percentEncodedQuery = options
+    /// Liest die Optionen einer Vorlage. NICHT über `percentEncodedQuery`:
+    /// Dessen Setter bricht bei einem Zeichen, das in einer kodierten Query
+    /// nichts zu suchen hat (Leerzeichen, Umlaut, nacktes `%`), mit einem
+    /// `Fatal error` ab — und die Datei ist lesbares JSON, das zum
+    /// Handedit einlädt; die App startete dann gar nicht mehr (belegt
+    /// 2026-09-06). `URLComponents(string:)` nimmt solche Zeichen an und
+    /// kodiert sie nach. Nur ein `#` schnitte alles dahinter still als
+    /// Fragment ab — das ist ein Fehler mit Grund, kein halbes Ergebnis.
+    static func decodeOptions(_ options: String) throws -> SearchConfiguration {
+        guard !options.contains("#"),
+              let components = URLComponents(string: "?" + options) else {
+            throw SearchTemplateError(
+                description: "Optionen „\(options)“ sind keine gültige Query")
+        }
         return SearchConfiguration.fromQueryItems(components.queryItems ?? [])
     }
 
@@ -1162,8 +1190,18 @@ enum SearchTemplateFormat {
     }
 
     static func decode(_ data: Data) throws -> [SearchTemplate] {
-        guard let object = try? JSONSerialization.jsonObject(with: data),
-              let dictionary = object as? [String: Any] else {
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            // Den Grund des Parsers mitgeben (Zeile, fehlendes Komma …),
+            // statt jede Syntaxpanne als „kein JSON-Objekt" zu melden.
+            let detail = (error as NSError).userInfo[NSDebugDescriptionErrorKey] as? String
+                ?? error.localizedDescription
+            throw SearchTemplateError(
+                description: "Vorlagendatei ist kein gültiges JSON: " + detail)
+        }
+        guard let dictionary = object as? [String: Any] else {
             throw SearchTemplateError(
                 description: "Vorlagendatei ist kein JSON-Objekt")
         }
@@ -1185,11 +1223,18 @@ enum SearchTemplateFormat {
                 throw SearchTemplateError(
                     description: "Vorlage \(index + 1) hat keinen Namen")
             }
+            let configuration: SearchConfiguration
+            do {
+                configuration = try decodeOptions(entry["options"] as? String ?? "")
+            } catch let error as SearchTemplateError {
+                throw SearchTemplateError(
+                    description: "Vorlage \(index + 1): " + error.description)
+            }
             return SearchTemplate(
                 name: name,
                 pattern: entry["pattern"] as? String ?? "",
                 root: entry["root"] as? String,
-                configuration: decodeOptions(entry["options"] as? String ?? ""))
+                configuration: configuration)
         }
     }
 }
@@ -1245,9 +1290,8 @@ final class SearchTemplateStore {
     }
 }
 
-/// Derselbe Editor in beiden Apps. Return trennt Muster, Leerraum gehört
-/// zum Muster. Nur wirklich leere Zeilen setzen keinen Ausschluss.
-/// Mehrzeiliges Eingabefeld mit Platzhalter. `NSTextView` kennt keinen
+/// Mehrzeiliges Eingabefeld mit Platzhalter, in beiden Apps für die
+/// Ausschlüsse und (seit 0.34.0) die weiteren Begriffe. `NSTextView` kennt keinen
 /// `placeholderString`; der graue Beispieltext wird gezeichnet, solange das
 /// Feld leer ist, und verschwindet mit dem ersten Zeichen.
 final class PlaceholderTextView: NSTextView {
@@ -1306,11 +1350,12 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
         get { factFields.mapValues { $0.stringValue }.filter { !$0.value.isEmpty } }
         set {
             for (key, field) in factFields { field.stringValue = newValue[key] ?? "" }
-            exclusionsEditor.needsDisplay = true
         }
     }
     var onChange: (() -> Void)?
 
+    /// Return trennt Muster, Leerraum gehört zum Muster. Nur wirklich
+    /// leere Zeilen setzen keinen Ausschluss.
     var exclusions: [String] {
         get { exclusionsEditor.string.components(separatedBy: .newlines).filter { !$0.isEmpty } }
         set {
@@ -1494,31 +1539,6 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
         popover.show(relativeTo: helpButton.bounds, of: helpButton, preferredEdge: .maxY)
         helpPopover = popover
     }
-}
-
-func searchArguments(pattern: String, root: String, content: Bool,
-                     regex: Bool, caseSensitive: Bool,
-                     archives: Bool, progress: Bool = false,
-                     only: String = "both",
-                     includeHidden: Bool = false,
-                     exact: Bool = false,
-                     metadata: Bool = false,
-                     metadataField: String? = nil,
-                     pixelLimits: PixelLimits = PixelLimits()) -> [String]? {
-    // Kompatibler Adapter für bestehende Headless-Aufrufer; die eigentliche
-    // Optionsweitergabe steht ausschließlich in SearchConfiguration.
-    var configuration = SearchConfiguration()
-    configuration.mode = metadata ? .metadata : (content ? .content : .name)
-    configuration.regex = regex
-    configuration.caseSensitive = caseSensitive
-    configuration.archives = archives
-    configuration.includeHidden = includeHidden
-    configuration.exact = exact
-    configuration.only = only
-    configuration.metadataField = metadataField
-    configuration.pixelTexts = [pixelLimits.minWidth, pixelLimits.maxWidth,
-                                pixelLimits.minHeight, pixelLimits.maxHeight].map { $0.map(String.init) ?? "" }
-    return configuration.arguments(pattern: pattern, root: root, progress: progress)
 }
 
 /// Vollständiges Ende eines Suchprozesses. `status` allein reicht nicht:

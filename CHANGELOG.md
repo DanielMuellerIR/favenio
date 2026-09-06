@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.34.1 — 2026-09-06
+
+Nacht-Code-Review vom 2026-09-06 abgearbeitet (29 Funde; siehe Commit).
+
+- Haupt-App: Das Fenster „Vorlagen verwalten" zeigte keine Vorlagen, und
+  Laden/Umbenennen/Löschen blieben grau — die Tabelle hing an falsch
+  benannten Delegate-Methoden, die AppKit nie rief. Der Selbsttest füllt
+  das Fenster jetzt und prüft Zeilen und Knöpfe.
+- Haupt-App: Eine von Hand bearbeitete Vorlagendatei mit Leerzeichen,
+  Umlaut oder `%` in den Optionen beendete die App beim Start
+  (`percentEncodedQuery`). Solche Optionen werden jetzt gelesen; nur ein
+  `#` ist ein genannter Fehler, und ein JSON-Syntaxfehler nennt seinen
+  Grund. Ist die Datei nicht lesbar (etwa eine neuere Formatversion),
+  wird nicht gesichert — vorher ersetzte die eine neue Vorlage alle
+  Vorlagen der neueren Fassung.
+- Beide Apps: Ein gelöschter oder umbenannter Suchordner ist ein
+  genannter Fehler. Ohne Muster (reine Maß-/Faktensuche, seit 0.34.0
+  auch jede Begriffssuche) las der Kern den Ordnerpfad sonst als
+  Namensmuster und suchte still im Arbeitsverzeichnis der App.
+- Kern: `--exclude build/` (Schrägstrich aus der Tab-Vervollständigung)
+  und `--exclude ./cache` schlossen still nichts aus; beide gelten jetzt.
+  Ein absolutes Muster ist ein Fehler (Exit 2), weil immer relativ zur
+  Wurzel verglichen wird. `--exact` mit mehreren Begriffen im Namensmodus
+  ist ebenfalls Exit 2 statt still „keine Treffer".
+- Kern: `--modified-to`/`--created-to` schließen die ganze genannte
+  Sekunde (ohne Sekunden: Minute) ein; eine Datei mit Änderungszeit
+  23:59:59,7 fiel aus `…T23:59:59Z` heraus, obwohl die Grenze inklusive ist.
+- Haupt-App: Der Exporttext in der Fußzeile verschwindet mit dem nächsten
+  Suchstart statt die ganze Sitzung zu bleiben; Vorlage sichern nimmt nur
+  den eigenen Fehler zurück, nicht den der letzten Suche; ⎋ bricht das
+  Auspacken auch aus dem Suchfeld ab; eine neue Suche, Übergabe oder
+  Vorlage bricht Vorschau/Öffnen der alten Liste ab; eine Filteränderung
+  zeigt die schon empfangenen Treffer noch; eine Vorlage mit unbekanntem
+  Metadatenfeld sagt, dass „Alle Textfelder" gilt; der Selbsttest löscht
+  den gespeicherten Aufklappzustand der Filter nicht mehr.
+- Schnellsuche: Endmeldung und Vorlagen-Tooltip nennen die weiteren
+  Begriffe; der Hinweis „Packe Archivtreffer aus…" fehlte nach einer
+  abgebrochenen Vorschau einmal.
+- Aufgeräumt: `searchArguments`-Adapter, `pixelLimits`-Getter,
+  `FileProbe.content_line()` und `ContentProbe.needle` ohne Aufrufer
+  entfernt; `Search` lehnt weitere Begriffe ohne erstes Muster ab.
+
 ## 0.34.0 — 2026-09-06
 
 - Mehrwortsuche: `--term TEXT` (wiederholbar) nennt weitere Begriffe, die

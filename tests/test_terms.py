@@ -96,6 +96,24 @@ class TermsTest(TempTreeTest):
                               "--term", "BETA hier", self.root])
         self.assertEqual(self.paths(lines), ["beide.txt"])
 
+    def test_exact_with_several_terms_is_refused_in_name_mode(self):
+        """Jeder Begriff müsste der GANZE Name sein — das kann keine Datei.
+        Bis 0.34.0 endete das still mit Exit 1."""
+        code, lines, err = run(["--exact", "alpha", "--term", "beta", self.root])
+        self.assertEqual((code, lines), (2, []))
+        self.assertIn("--exact mit mehreren Begriffen", err)
+        # Ein Begriff bleibt erlaubt, im Inhalt auch mehrere (je Zeile).
+        code, _, err = run(["--exact", "alpha", self.root])
+        self.assertEqual(code, 1, err)
+        code, _, err = run(["--content", "--exact", "zweite", "--term", "BETA hier",
+                            self.root])
+        self.assertEqual(code, 0, err)
+
+    def test_search_refuses_extra_matchers_without_a_matcher(self):
+        with self.assertRaises(ValueError):
+            favenio.Search(None, False, 1, False,
+                           extra_matchers=[favenio.build_matcher("x", False, False)])
+
     def test_the_content_is_not_reread_per_term(self):
         # Ein Vortest über alle festen Begriffe, dann EIN genauer Durchlauf:
         # höchstens zwei Öffnungen je Datei, egal wie viele Begriffe.

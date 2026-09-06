@@ -819,8 +819,6 @@ final class QuickController: HitListController, NSApplicationDelegate,
         [minWidthField, maxWidthField, minHeightField, maxHeightField]
     }
 
-    var pixelLimits: PixelLimits { validatePixelFields(pixelFields).limits }
-
     /// Kein Start und keine Übergabe darf ungültige sichtbare Grenzen ignorieren.
     @discardableResult
     func validatePixelInputs() -> Bool {
@@ -868,8 +866,12 @@ final class QuickController: HitListController, NSApplicationDelegate,
         skippedCount = 0
         previewURLs = []
         // Eine noch laufende Vorschau-Anforderung gehört zur alten Anfrage.
+        // Danach den Ladezustand nachziehen: Sonst blieb die gemerkte
+        // Infozeile (`infoBeforeMaterializing`) stehen, und beim nächsten
+        // Auspacken fehlte der Hinweis „Packe Archivtreffer aus…" einmal.
         previewRequest?.cancel()
         previewRequest = nil
+        presentMaterializationState()
         tableView.reloadData()
         showInfo(Self.hint)
         if QLPreviewPanel.sharedPreviewPanelExists(),
@@ -904,6 +906,12 @@ final class QuickController: HitListController, NSApplicationDelegate,
             return
         }
 
+        // Ein verschwundener Ordner ist ein genannter Fehler — der Kern
+        // läse ihn sonst als Namensmuster (siehe searchRootProblem).
+        if let problem = searchRootProblem(root) {
+            showInfo(problem, detail: root, color: .systemRed)
+            return
+        }
         let generation = searchGeneration
         searching = true
         spinner.startAnimation(nil)

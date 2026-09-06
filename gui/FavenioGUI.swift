@@ -132,7 +132,17 @@ func runSelfTest() -> Int32 {
 
     // Aufklappen: Ohne gespeicherten Zustand sind die Filter zugeklappt, der
     // Schalter öffnet sie, und eine übergebene Konfiguration mit Filtern
-    // klappt sie von selbst auf.
+    // klappt sie von selbst auf. Der gespeicherte Zustand des Entwicklers
+    // wird dafür beiseitegelegt und am Ende zurückgeschrieben — jeder
+    // Build löschte ihn sonst (build-app.sh führt den Selbsttest aus).
+    let savedFiltersExpanded = UserDefaults.standard.object(forKey: MainController.filtersExpandedKey)
+    defer {
+        if let savedFiltersExpanded {
+            UserDefaults.standard.set(savedFiltersExpanded, forKey: MainController.filtersExpandedKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: MainController.filtersExpandedKey)
+        }
+    }
     UserDefaults.standard.removeObject(forKey: MainController.filtersExpandedKey)
     let collapsedController = MainController()
     collapsedController.buildWindow()   // sonst erst in applicationDidFinishLaunching
@@ -231,8 +241,8 @@ func runSelfTest() -> Int32 {
                   pattern: validTemplate.pattern, root: existingRoot),
           SearchConfiguration.fromQueryItems(loader.searchConfiguration.queryItems)
               == validTemplate.configuration,
-          SearchTemplateFormat.decodeOptions(
-              SearchTemplateFormat.encodeOptions(validTemplate.configuration))
+          (try? SearchTemplateFormat.decodeOptions(
+              SearchTemplateFormat.encodeOptions(validTemplate.configuration)))
               == validTemplate.configuration else {
         print("SELFTEST FEHLER: Vorlage, CLI-Argumente und URL beschreiben verschiedene Suchen")
         return 1
@@ -263,6 +273,44 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Neuere Vorlagendatei wird nicht abgelehnt: \(migrationError)")
         return 1
     }
+    // Solange die Datei nicht lesbar ist, wird NICHT gesichert: Sonst
+    // ersetzte die eine sichtbare Vorlage alle Vorlagen der neueren Fassung.
+    loader.reloadTemplates()
+    let versionTwo = FileManager.default.contents(atPath: templateFile.path)
+    guard loader.templateLoadError != nil, loader.templates.isEmpty,
+          loader.storeTemplate(validTemplate) != nil,
+          loader.renameTemplate("x", to: "y") != nil,
+          FileManager.default.contents(atPath: templateFile.path) == versionTwo,
+          loader.statusLabel.stringValue.contains("nicht gesichert") else {
+        print("SELFTEST FEHLER: Sichern bei unlesbarer Vorlagendatei überschreibt sie")
+        return 1
+    }
+    // Ein Handedit mit Leerzeichen oder Umlaut in den Optionen darf die
+    // App nicht beenden (percentEncodedQuery brach mit Fatal error ab);
+    // nur ein „#" schnitte still ab und ist deshalb ein genannter Fehler.
+    try? Data("{\"version\": 1, \"templates\": [{\"name\": \"Hand\", \"options\": \"mode=content&exclude=a b&term=ä\"}]}".utf8)
+        .write(to: templateFile)
+    guard let handEdited = try? SearchTemplateStore(fileURL: templateFile).load(),
+          handEdited.first?.configuration.mode == .content,
+          handEdited.first?.configuration.exclusions == ["a b"],
+          handEdited.first?.configuration.terms == ["ä"] else {
+        print("SELFTEST FEHLER: Handbearbeitete Vorlagenoptionen werden nicht gelesen")
+        return 1
+    }
+    try? Data("{\"version\": 1, \"templates\": [{\"name\": \"Raute\", \"options\": \"mode=name#exclude=x\"}]}".utf8)
+        .write(to: templateFile)
+    var fragmentError = ""
+    do { _ = try SearchTemplateStore(fileURL: templateFile).load() } catch { fragmentError = "\(error)" }
+    // Fehlendes Komma — ein Komma zu viel nähme Apples Parser stillschweigend an.
+    try? Data("{\"version\": 1 \"templates\": []}".utf8).write(to: templateFile)
+    var syntaxError = ""
+    do { _ = try SearchTemplateStore(fileURL: templateFile).load() } catch { syntaxError = "\(error)" }
+    guard fragmentError.contains("Vorlage 1"), fragmentError.contains("#"),
+          syntaxError.contains("kein gültiges JSON: "),
+          syntaxError.count > "Vorlagendatei ist kein gültiges JSON: ".count else {
+        print("SELFTEST FEHLER: Vorlagenfehler ohne Grund: \(fragmentError) / \(syntaxError)")
+        return 1
+    }
     try? Data("{\"version\": 1, \"später\": true, \"templates\": [{\"name\": \"Alt\", \"extra\": 1}]}".utf8)
         .write(to: templateFile)
     guard (try? SearchTemplateStore(fileURL: templateFile).load())
@@ -272,11 +320,40 @@ func runSelfTest() -> Int32 {
         return 1
     }
     loader.reloadTemplates()
-    guard loader.templates.count == 1, case .idle = loader.searchPhase,
+    guard loader.templates.count == 1, loader.templateLoadError == nil,
+          case .idle = loader.searchPhase,
           !regexTemplates.isEmpty else {
         print("SELFTEST FEHLER: Vorlagen neu laden oder Regex-Einfügehilfe")
         return 1
     }
+    // Das Fenster „Vorlagen verwalten": Die Tabelle füllt ihre Zeilen über
+    // die echten NSTableViewDelegate-Methoden. Bis 0.34.0 hießen sie
+    // `templateTable(_:viewFor:row:)` — AppKit rief sie nie, jede Zeile
+    // blieb leer, und die Knöpfe wurden bei einer Auswahl nicht aktiv.
+    let manager = SearchTemplateManager(owner: loader)
+    guard manager.templateTable.numberOfRows == 1,
+          (manager.templateTable.view(atColumn: 0, row: 0, makeIfNecessary: true)
+              as? NSTextField)?.stringValue == "Alt",
+          !manager.loadButton.isEnabled, !manager.deleteButton.isEnabled else {
+        print("SELFTEST FEHLER: Vorlagenfenster zeigt die Vorlagen nicht")
+        return 1
+    }
+    manager.templateTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+    guard manager.selectedTemplate?.name == "Alt",
+          manager.loadButton.isEnabled, manager.renameButton.isEnabled,
+          manager.deleteButton.isEnabled,
+          manager.summaryLabel.stringValue == loader.templateSummary(loader.templates[0]) else {
+        print("SELFTEST FEHLER: Auswahl im Vorlagenfenster schaltet die Knöpfe nicht frei")
+        return 1
+    }
+    // Ein Sichern nimmt nur den EIGENEN Fehler zurück, nicht den der Suche.
+    loader.searchPhase = .failed("Kernfehler der letzten Suche")
+    guard loader.storeTemplate(validTemplate) == nil,
+          loader.statusLabel.stringValue.contains("Kernfehler der letzten Suche") else {
+        print("SELFTEST FEHLER: Vorlage sichern löscht den Fehler der letzten Suche")
+        return 1
+    }
+    loader.searchPhase = .idle
 
     // Mehrwortsuche: Begriffe aus der Filteransicht erreichen Argumente,
     // URL und Vorlage; ohne Muster tragen sie die Suche; Belege im Treffer.
@@ -343,6 +420,21 @@ func runSelfTest() -> Int32 {
     guard pixelController.statusLabel.stringValue.contains("Neuer Suchfehler"),
           pixelController.statusLabel.stringValue.contains("Export fertig") else {
         print("SELFTEST FEHLER: Exportabschluss verdrängt neuen Suchfehler")
+        return 1
+    }
+    // Der nächste Suchstart nimmt den Exporttext aus der Fußzeile — er
+    // hing sonst die ganze Sitzung hinter jedem Suchstatus. Und ein
+    // verschwundener Suchordner ist ein genannter Fehler, keine stille
+    // Suche über `/` (der Kern las den Pfad sonst als Namensmuster).
+    let rootController = MainController()
+    rootController.exportStatus = "Export fertig"
+    rootController.setSearchRoot(URL(fileURLWithPath: "/nicht/vorhanden/favenio-selftest"))
+    rootController.launchSearch(pattern: "x")
+    guard rootController.activeSearchRun == nil, rootController.exportStatus == nil,
+          rootController.statusLabel.stringValue.contains("Suchordner fehlt"),
+          rootController.statusLabel.stringValue.contains("/nicht/vorhanden/favenio-selftest") else {
+        print("SELFTEST FEHLER: Fehlender Suchordner oder alter Exportstatus: "
+              + rootController.statusLabel.stringValue)
         return 1
     }
     guard findCLI() != nil else {
@@ -413,10 +505,12 @@ func runSelfTest() -> Int32 {
     try? zipBuilder.run()
     zipBuilder.waitUntilExit()
 
-    guard let args = searchArguments(pattern: "FAVENIO_PROBE",
-                                     root: tmp.path, content: true,
-                                     regex: false, caseSensitive: true,
-                                     archives: true) else { return 1 }
+    var probeConfiguration = SearchConfiguration()
+    probeConfiguration.mode = .content
+    probeConfiguration.caseSensitive = true
+    probeConfiguration.archives = true
+    guard let args = probeConfiguration.arguments(pattern: "FAVENIO_PROBE",
+                                                  root: tmp.path) else { return 1 }
     let hits = runSearchSync(arguments: args)
     guard hits.count == 2 else {
         print("SELFTEST FEHLER: \(hits.count) Treffer statt 2")
@@ -446,12 +540,12 @@ func runSelfTest() -> Int32 {
         return 1
     }
     let limits = PixelLimits(minWidth: 1000, maxHeight: 900)
+    var sizeConfiguration = SearchConfiguration()
+    sizeConfiguration.archives = true
+    sizeConfiguration.pixelTexts = ["1000", "", "", "900"]
     guard limits.arguments == ["--min-width", "1000", "--max-height", "900"],
           limits.summary == "B ≥ 1000, H ≤ 900",
-          let sizeArgs = searchArguments(pattern: "", root: tmp.path,
-                                         content: false, regex: false,
-                                         caseSensitive: false, archives: true,
-                                         pixelLimits: limits),
+          let sizeArgs = sizeConfiguration.arguments(pattern: "", root: tmp.path),
           sizeArgs.contains("--min-width"),
           // Ohne Muster kein synthetisches „*": Der Kern läuft dann ganz
           // ohne Textkriterium (Review-Fund 2026-09-02).
@@ -461,15 +555,15 @@ func runSelfTest() -> Int32 {
     }
     // --content/--metadata brauchen ein Muster; ohne eines lehnt der Kern
     // sie ab und die reine Maßsuche wäre nicht mehr startbar.
-    guard let sizeOnlyArgs = searchArguments(
-            pattern: "", root: tmp.path, content: true, regex: false,
-            caseSensitive: false, archives: true, metadata: false,
-            metadataField: "Title", pixelLimits: limits),
+    var sizeOnlyConfiguration = sizeConfiguration
+    sizeOnlyConfiguration.mode = .content
+    sizeOnlyConfiguration.metadataField = "Title"
+    var emptyConfiguration = SearchConfiguration()
+    emptyConfiguration.archives = true
+    guard let sizeOnlyArgs = sizeOnlyConfiguration.arguments(pattern: "", root: tmp.path),
           !sizeOnlyArgs.contains("--content"),
           !sizeOnlyArgs.contains("--metadata-field"),
-          searchArguments(pattern: "", root: tmp.path, content: false,
-                          regex: false, caseSensitive: false,
-                          archives: true) == nil else {
+          emptyConfiguration.arguments(pattern: "", root: tmp.path) == nil else {
         print("SELFTEST FEHLER: Textmodus ohne Muster wird mitgeschickt")
         return 1
     }
@@ -487,11 +581,11 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Metadaten-Feldliste nicht vom Kern erhalten")
         return 1
     }
-    guard let metaArgs = searchArguments(pattern: "Winter", root: tmp.path,
-                                         content: false, regex: false,
-                                         caseSensitive: false, archives: true,
-                                         metadata: true,
-                                         metadataField: "Title"),
+    var metaConfiguration = SearchConfiguration()
+    metaConfiguration.mode = .metadata
+    metaConfiguration.metadataField = "Title"
+    metaConfiguration.archives = true
+    guard let metaArgs = metaConfiguration.arguments(pattern: "Winter", root: tmp.path),
           metaArgs.contains("--metadata"),
           metaArgs.contains("--metadata-field") else {
         print("SELFTEST FEHLER: Metadatensuche wird nicht an den Kern gereicht")
@@ -1033,6 +1127,11 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// muss seinen Dateinamen ändern können.
     var exportSavePanel: NSSavePanel?
     let exportWriter = ExportWriter()
+    /// Exporttext hinter dem Suchstatus in der Fußzeile. Er überlebt eine
+    /// LAUFENDE Suche (ein später Exportabschluss darf sie nicht
+    /// verdrängen), aber nicht den nächsten Start: `launchSearch()` und
+    /// `loadResults()` nehmen ihn weg — bis 0.34.0 hing er die ganze
+    /// Sitzung hinter jedem Status.
     var exportStatus: String?
     var exportIsBusy: Bool { exportSavePanel != nil || exportWriter.isWriting }
 
@@ -1104,8 +1203,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             // (Review-Fund 2026-09-02).
             guard let self,
                   event.window === self.window,
-                  self.window.isKeyWindow,
-                  self.window.firstResponder === self.tableView
+                  self.window.isKeyWindow
             else { return event }
             // Nur die echten Zusatztasten vergleichen. Caps Lock, Zehnerblock
             // und das Funktionsbit hängen je nach Tastatur mit dran und
@@ -1113,15 +1211,21 @@ final class MainController: HitListController, NSApplicationDelegate,
             let modifiers = event.modifierFlags
                 .intersection(.deviceIndependentFlagsMask)
                 .subtracting([.capsLock, .numericPad, .function])
+            // ⎋ bricht ein laufendes Auspacken ab, egal wo der Fokus steht:
+            // Der Hinweis „(⎋ bricht ab)" verspricht das ohne Einschränkung,
+            // und wer nach „Öffnen" ins Suchfeld klickte, leerte damit bis
+            // 0.34.0 nur das Suchfeld, während die Extraktion weiterlief.
+            if event.keyCode == 53, modifiers.isEmpty {
+                if self.cancelMaterializations() { return nil }
+            }
+            // Alles Weitere gilt nur, solange die Trefferliste den Fokus hat.
+            guard self.window.firstResponder === self.tableView else { return event }
             switch event.keyCode {
             case 49 where modifiers.isEmpty:               // Leertaste
                 self.contextRow = -1
                 self.togglePreview()
                 return nil
             case 53 where modifiers.isEmpty:               // ⎋
-                // Zuerst ein laufendes Auspacken abbrechen — das ist der
-                // sichtbare Weg, eine langsame Extraktion zu stoppen.
-                if self.cancelMaterializations() { return nil }
                 // Die Vorschau ist nicht mehr das Tastaturfenster und kann
                 // sich deshalb nicht mehr selbst schließen. Nur abfangen,
                 // wenn sie wirklich offen ist — sonst gehört ⎋ weiter dem
@@ -1268,6 +1372,8 @@ final class MainController: HitListController, NSApplicationDelegate,
             return
         }
         stopSearch()
+        cancelMaterializations()   // Vorschau/Öffnen der alten Liste
+        exportStatus = nil
         hits = loaded
         pending = []
         seenPaths = Set(loaded.map { $0.path })
@@ -1400,10 +1506,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         sizeRow.setCustomSpacing(14, after: sizeRow.views[4])
 
         filterView.onChange = { [weak self] in
-            self?.stopSearch()
-            self?.searchPhase = .idle
-            self?.progressPath = nil
-            self?.refreshStatus()
+            self?.stopSearchForChangedCriteria()
             self?.refreshFiltersTitle()
         }
         // Aufklapp-Zeile: Dreieck plus klickbarer Titel, beide schalten um.
@@ -1790,17 +1893,43 @@ final class MainController: HitListController, NSApplicationDelegate,
         reloadTemplates()
     }
 
+    /// Grund, warum die Vorlagendatei zuletzt nicht lesbar war. Solange er
+    /// steht, wird NICHT gesichert: Die Liste ist dann leer, und ein
+    /// Sichern schriebe die Datei mit der einen neuen Vorlage — alle
+    /// Vorlagen einer neueren Fassung (Formatversion 2) wären weg.
+    var templateLoadError: String?
+    /// Die zuletzt von den Vorlagen selbst gesetzte Fehlermeldung — nur die
+    /// nimmt ein gelungenes Sichern zurück, nicht den Fehler der letzten
+    /// Suche („favenio.py nicht gefunden.", Kernfehler).
+    var templateFailure: String?
+
     /// Liest die Vorlagendatei neu; ein Lesefehler steht in der Fußzeile,
     /// die Liste bleibt dann leer — nicht still eine alte.
     func reloadTemplates() {
         do {
             templates = try templateStore.load()
+            templateLoadError = nil
+            clearTemplateFailure()
         } catch {
             templates = []
-            searchPhase = .failed("Vorlagen nicht geladen: \(error)")
-            refreshStatus()
+            templateLoadError = "\(error)"
+            failTemplates("Vorlagen nicht geladen: \(error)")
         }
         rebuildTemplatesMenu()
+    }
+
+    private func failTemplates(_ message: String) {
+        templateFailure = message
+        searchPhase = .failed(message)
+        refreshStatus()
+    }
+
+    private func clearTemplateFailure() {
+        if let templateFailure, case .failed(let reason) = searchPhase,
+           reason == templateFailure {
+            searchPhase = .idle
+        }
+        templateFailure = nil
     }
 
     func rebuildTemplatesMenu() {
@@ -1901,18 +2030,23 @@ final class MainController: HitListController, NSApplicationDelegate,
     }
 
     private func commitTemplates(_ updated: [SearchTemplate], note: String) -> String? {
+        if let templateLoadError {
+            let message = "Vorlage nicht gesichert — die Vorlagendatei ist "
+                + "nicht lesbar und bliebe sonst überschrieben: " + templateLoadError
+            failTemplates(message)
+            return message
+        }
         do {
             try templateStore.save(updated)
         } catch {
             let message = "\(error)"
-            searchPhase = .failed(message)
-            refreshStatus()
+            failTemplates(message)
             return message
         }
         templates = updated
         rebuildTemplatesMenu()
         templateManager?.reload()
-        if case .failed = searchPhase { searchPhase = .idle }
+        clearTemplateFailure()
         templateNote = note
         refreshStatus()
         return nil
@@ -1932,6 +2066,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// genannt; der aktuelle Ordner bleibt dann stehen.
     func applyTemplate(_ template: SearchTemplate) {
         stopSearch()
+        cancelMaterializations()
         applyConfiguration(template.configuration)
         searchField.stringValue = template.pattern
         var note = "Vorlage „\(template.name)“ geladen — ↩ startet die Suche."
@@ -1939,6 +2074,14 @@ final class MainController: HitListController, NSApplicationDelegate,
             note += " " + missing
         } else if let root = template.root {
             setSearchRoot(URL(fileURLWithPath: root))
+        }
+        // Ein Feld, das das Menü nicht kennt (andere Feldliste des Kerns),
+        // fällt auf „Alle Textfelder" zurück — das steht dann dabei, statt
+        // dass die Vorlage still breiter sucht als gespeichert.
+        if template.configuration.mode == .metadata,
+           let field = template.configuration.metadataField,
+           selectedMetadataField != field {
+            note += " Metadatenfeld „\(field)“ ist unbekannt — es gilt „Alle Textfelder“."
         }
         searchPhase = .idle
         progressPath = nil
@@ -2001,12 +2144,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         if let field = notification.object as? NSTextField, pixelFields.contains(where: { $0 === field }) {
             // Die sichtbare Konfiguration gehört ab jetzt zu einem neuen
             // Lauf. Alte Treffer dürfen keinen neuen Fehlerstatus überholen.
-            stopSearch()
-            progressPath = nil
-            if validatePixelInputs() {
-                searchPhase = .idle
-                refreshStatus()
-            }
+            stopSearchForChangedCriteria()
             refreshFiltersTitle()
             return
         }
@@ -2055,6 +2193,10 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     @objc func startSearch() {
         stopSearch()
+        // Vorschau oder Öffnen aus der ALTEN Liste: abbrechen, sonst zeigte
+        // die Fußzeile „Packe Archivtreffer aus…" über einer leeren Tabelle,
+        // und die fertige Vorschau öffnete einen Treffer, den es nicht mehr gibt.
+        cancelMaterializations()
         // Frische Suche: Tabelle leeren und von vorn sammeln. Auch das leere
         // Modell geht über applyHitsToTable — sonst gäbe es doch wieder einen
         // Weg an der Sortierung vorbei, und genau daran krankten vorher
@@ -2124,8 +2266,6 @@ final class MainController: HitListController, NSApplicationDelegate,
         [minWidthField, maxWidthField, minHeightField, maxHeightField]
     }
 
-    var pixelLimits: PixelLimits { validatePixelFields(pixelFields).limits }
-
     /// Kein Start und keine Übergabe darf ungültige sichtbare Grenzen ignorieren.
     @discardableResult
     func validatePixelInputs() -> Bool {
@@ -2179,6 +2319,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             return
         }
         stopSearch()
+        cancelMaterializations()   // Vorschau/Öffnen der alten Liste
         hits = seed
         pending = []
         seenPaths = Set(seed.map { $0.path })
@@ -2207,6 +2348,15 @@ final class MainController: HitListController, NSApplicationDelegate,
     func launchSearch(pattern: String) {
         guard validatePixelInputs() else { return }
         templateNote = nil
+        exportStatus = nil
+        // Ohne Muster ist der Ordner das einzige Positionsargument; einen
+        // verschwundenen Ordner läse der Kern still als Namensmuster und
+        // suchte im Arbeitsverzeichnis (siehe searchRootProblem).
+        if let problem = searchRootProblem(searchRoot.path) {
+            searchPhase = .failed(problem)
+            refreshStatus()
+            return
+        }
         guard let arguments = searchConfiguration.arguments(
             pattern: pattern, root: searchRoot.path, progress: true)
         else {
@@ -2250,6 +2400,21 @@ final class MainController: HitListController, NSApplicationDelegate,
         flushTimer?.invalidate()
         flushTimer = nil
         stopButton.isEnabled = false
+    }
+
+    /// Ein Filter oder Maßfeld wurde geändert: Der laufende Lauf gehört zu
+    /// den alten Kriterien. Anhalten, aber die schon empfangenen Treffer
+    /// noch zeigen — `stopSearch()` allein ließ bis zu 150 ms Nachschub
+    /// unsichtbar in `pending` liegen, während die Fußzeile ihn mitzählte.
+    /// Ein Fehler der Maßfelder bleibt stehen, solange er besteht.
+    func stopSearchForChangedCriteria() {
+        stopSearch()
+        flushPending()
+        progressPath = nil
+        if validatePixelInputs() {
+            searchPhase = .idle
+        }
+        refreshStatus()
     }
 
     /// Klick auf den Stopp-Button: laufende Suche abbrechen.
@@ -2549,6 +2714,10 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Cache nehmen) und an die gewünschte Stelle KOPIEREN — die Temp-Datei
     /// bleibt für weitere Aktionen erhalten, aufgeräumt wird beim App-Ende.
     /// Fehler und Abbruch gehen als Error an den Empfänger, der sie nennt.
+    /// Bewusst NICHT in `actionRequests`/⎋ eingebunden: Der Auftrag gehört
+    /// dem Finder, der auf die versprochene Datei wartet; ein Abbruch aus
+    /// unserem Fenster ließe seinen Ablegevorgang mit einem Fehler enden.
+    /// Deshalb auch kein „Packe aus…" in der Fußzeile.
     func filePromiseProvider(_ provider: NSFilePromiseProvider,
                              writePromiseTo url: URL,
                              completionHandler: @escaping (Error?) -> Void) {
@@ -3063,7 +3232,6 @@ final class SearchTemplateManager: NSObject, NSTableViewDataSource,
         window.center()
         let column = NSTableColumn(identifier: .init("name"))
         column.title = "Vorlage"
-        column.isEditable = true
         templateTable.addTableColumn(column)
         templateTable.headerView = nil
         templateTable.dataSource = self
@@ -3120,7 +3288,10 @@ final class SearchTemplateManager: NSObject, NSTableViewDataSource,
 
     func numberOfRows(in templateTable: NSTableView) -> Int { owner.templates.count }
 
-    func templateTable(_ templateTable: NSTableView, viewFor tableColumn: NSTableColumn?,
+    // Die Namen sind Vertrag mit AppKit: `tableView(_:viewFor:row:)` und
+    // `tableViewSelectionDidChange(_:)`. Bis 0.34.0 hießen sie
+    // `templateTable(…)` — nie gerufen, alle Zeilen leer, Knöpfe grau.
+    func tableView(_ templateTable: NSTableView, viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
         guard owner.templates.indices.contains(row) else { return nil }
         let field: NSTextField
@@ -3138,7 +3309,7 @@ final class SearchTemplateManager: NSObject, NSTableViewDataSource,
         return field
     }
 
-    func templateTableSelectionDidChange(_ notification: Notification) { selectionChanged() }
+    func tableViewSelectionDidChange(_ notification: Notification) { selectionChanged() }
 
     /// Der Name wurde in der Zeile bearbeitet: umbenennen, Fehler nennen.
     func controlTextDidEndEditing(_ notification: Notification) {

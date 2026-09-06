@@ -187,7 +187,9 @@ contents, but keeps `mycache` and `Cache`. With `/`, it matches the complete
 path relative to each start directory: `--exclude build/generated` skips that
 subtree, but keeps `other/build/generated`. `*` can cross `/`, so
 `--exclude 'build/*/cache'` also skips `build/a/b/cache`. `**` has no separate
-meaning; there is no directory-only trailing-slash syntax.
+meaning. A trailing `/` (as added by shell tab completion) and a leading `./`
+are ignored: `--exclude build/` still means the path pattern `build`, and a
+pattern that had a `/` stays a path pattern.
 
 Each archive, including a nested archive, starts a new relative root for
 these patterns. Parent paths are checked even when the archive lists no
@@ -196,8 +198,9 @@ matching. The literal `!` in an entry name remains part of that name;
 `--exclude 'odd!/skip.txt'` matches that relative entry path, not a transition
 between archives. Each of several start paths is independent. An explicitly
 selected start directory remains the search root even when its own name
-matches; an explicitly selected file is checked by its basename. Use relative
-patterns without a leading `/` or `./`.
+matches; an explicitly selected file is checked by its basename. Patterns are
+always compared relative to that root, so an absolute pattern (leading `/`)
+is rejected with exit code 2 instead of silently excluding nothing.
 
 For example, `./favenio.py --exclude cache --exclude '*.zip' invoice ~/Documents`
 skips cache subtrees and never opens the excluded ZIP files, including for
@@ -285,7 +288,10 @@ filters; `--only dirs` together with a size bound therefore yields no hits.
 
 `--modified-from`/`--modified-to` filter modification times, and
 `--created-from`/`--created-to` filter creation times. All bounds are inclusive
-instants, not whole calendar days. Use `YYYY-MM-DDTHH:MM[:SS[.ffffff]]` with
+instants, not whole calendar days. An upper bound includes the whole second it
+names (or the whole minute when given without seconds): `--modified-to
+2024-01-01T23:59:59Z` keeps a file modified at 23:59:59.7; with explicit
+fractional seconds the bound is exact. Use `YYYY-MM-DDTHH:MM[:SS[.ffffff]]` with
 `Z` or an explicit `±HH:MM` offset, for example `2024-01-01T00:00:00Z` or
 `2024-01-01T01:00+01:00`; these two values denote the same instant. Date-only
 values and times without a zone are rejected. Up to six fractional-second

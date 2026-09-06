@@ -323,6 +323,15 @@ class LinePieceTest(unittest.TestCase):
         self.assertTrue(pieces[-1].ends_line)
         self.assertTrue(all(not p.ends_line for p in pieces[:-1]))
 
+    def test_without_overlap_an_empty_piece_still_ends_the_last_line(self):
+        """Überlappung 0 gibt es nur in Tests — aber der Vertrag „die letzte
+        Zeile endet mit ends_line=True" gilt auch dort: Sonst fehlte der
+        zu langen letzten Zeile ihr Abschluss ganz."""
+        pieces = self.pieces("a" * 30, chunk=10, max_chars=20, overlap=0)
+        self.assertEqual(pieces[-1], favenio.LinePiece(1, "", False, True))
+        self.assertTrue(all(not p.ends_line for p in pieces[:-1]))
+        self.assertTrue(all(p.number == 1 for p in pieces))
+
     def test_the_search_only_matches_fragments_with_a_substring_matcher(self):
         text = "a" * 100 + "ZIEL" + "a" * 100 + "\nZIEL\n"
         vorher = (favenio.MAX_LINE_CHARS, favenio.LINE_OVERLAP_CHARS)

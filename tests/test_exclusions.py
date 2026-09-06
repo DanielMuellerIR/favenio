@@ -94,6 +94,35 @@ class ExclusionTest(TempTreeTest):
         self.assertEqual(run(["*.txt", "--exclude", "cache", "./one"], cwd=self.root),
                          (0, ["./one/keep.txt"], ""))
 
+    def test_trailing_slash_and_leading_dot_slash_are_ignored(self):
+        """`--exclude build/` kommt aus der Tab-Vervollständigung der Shell
+        und schloss bis 0.34.0 still nichts aus; `./cache` ebenso. Ein
+        Muster mit Schrägstrich bleibt dabei ein PFADmuster: `build/`
+        meint nur den Ordner an der Wurzel, nicht jeden `build`."""
+        self.write_nested("build/skip.txt")
+        self.write_nested("other/build/keep.txt")
+        self.write_nested("cache/skip.txt")
+        self.write_nested("keep.txt")
+        code, lines, errors = run(["--exclude", "build/", "--exclude", "./cache",
+                                   "*.txt", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(set(lines), {os.path.join(self.root, "other/build/keep.txt"),
+                                     os.path.join(self.root, "keep.txt")})
+        self.assertEqual(errors, "")
+        self.assertTrue(favenio.Exclusions(["build/"]).matches("build/x.txt"))
+        self.assertFalse(favenio.Exclusions(["build/"]).matches("other/build/x.txt"))
+        self.assertTrue(favenio.Exclusions(["./cache"]).matches("cache/x.txt"))
+
+    def test_absolute_and_empty_patterns_are_rejected(self):
+        """Verglichen wird immer relativ zur Wurzel; ein absolutes Muster
+        träfe nie. Lieber Exit 2 als still nichts ausschließen."""
+        self.write_nested("keep.txt")
+        for pattern in ("/" + os.path.join(self.root, "keep.txt"), "/", "./", ""):
+            with self.subTest(pattern=pattern):
+                code, lines, errors = run(["--exclude", pattern, "*", self.root])
+                self.assertEqual((code, lines), (2, []))
+                self.assertIn("favenio: fehler: --exclude", errors)
+
     def test_path_patterns_are_relative_to_each_start_directory(self):
         for root in ("one", "two"):
             self.write_nested(root + "/build/generated/skip.txt")

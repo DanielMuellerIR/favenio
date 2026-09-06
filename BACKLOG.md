@@ -23,6 +23,24 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
    Durchlauf am Bildschirm.
 
+6. Refactoring aus dem Nacht-Review vom 2026-09-06: Der Getter
+   `searchConfiguration` samt `pixelFields`/`validatePixelInputs` steht in
+   beiden Apps fast wortgleich (`gui/FavenioGUI.swift`,
+   `quick/FavenioQuick.swift`); jede neue Option (zuletzt `--term`) muss
+   zweimal nachgezogen werden. Gemeinsamer Bauer in `FavenioCore`
+   (Checkboxen + `SearchFilterView` + Pixelfelder → `SearchConfiguration`)
+   mit Anzeige-Callback für den Fehlerfall. Ebenso ein
+   `HitListController.resetHits()`, das Trefferliste und laufende
+   Auspackvorgänge an genau einer Stelle zurücksetzt — seit 0.34.1 rufen
+   `startSearch`/`continueSearch`/`loadResults`/`applyTemplate` und Quicks
+   `clearHits()` das getrennt.
+7. Kern, klein: `file_timestamp()` erlaubt 1–6 Nachkommastellen, das
+   System-Python 3.9 (`fromisoformat`) liest aber nur 3 oder 6 —
+   `--modified-to …T00:00:00.5Z` endet dort mit Exit 2 und Formatfehler,
+   unter Python 3.11+ läuft es. Entweder die Stellen vor dem Parsen auf
+   sechs auffüllen oder die Hilfe auf 3/6 Stellen festlegen (aufgefallen
+   2026-09-06 beim Test der inklusiven Obergrenzen).
+
 ## Flackernder Test: Ursache weiterhin offen
 
 `test_sigterm_during_the_swap_restores_both_bundles`

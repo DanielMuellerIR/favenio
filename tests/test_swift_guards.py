@@ -209,6 +209,25 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("let regexTemplates: [RegexTemplate]", GUI)
         self.assertIn("@objc func insertTemplate(_ sender: NSMenuItem)", GUI)
 
+    def test_a_new_hit_list_cancels_extractions_and_checks_the_root(self):
+        """Jeder Weg zu einer NEUEN Trefferliste bricht Vorschau/Öffnen der
+        alten ab (sonst „Packe aus…" über leerer Tabelle, Panel mit altem
+        Treffer) und prüft den Suchordner, bevor der Kern ihn ohne Muster
+        als Namensmuster liest. Der Exporttext läuft mit dem Start ab."""
+        self.assertIn("func searchRootProblem(_ root: String) -> String?", COMMON)
+        for name in ("@objc func startSearch() {", "func continueSearch(from file: URL) {",
+                     "func loadResults(from file: URL) {", "func applyTemplate("):
+            with self.subTest(function=name):
+                self.assertIn("cancelMaterializations()", swift_function(GUI, name))
+        launch = swift_function(GUI, "func launchSearch(pattern: String) {")
+        self.assertIn("searchRootProblem(searchRoot.path)", launch)
+        self.assertIn("exportStatus = nil", launch)
+        self.assertIn("searchRootProblem(root)",
+                      swift_function(QUICK, "func startSearch() {"))
+        # Die Vorlagentabelle hängt an den ECHTEN Delegate-Namen.
+        self.assertIn("func tableView(_ templateTable: NSTableView, viewFor", GUI)
+        self.assertNotIn("func templateTable(_ templateTable", GUI)
+
     def test_drag_and_drop_promises_files_instead_of_extracting_on_grab(self):
         """pasteboardWriterForRow verlangt sofort eine Antwort. Was schon als
         Datei vorliegt, geht als URL; ein noch nicht ausgepackter Eintrag als
@@ -804,7 +823,10 @@ class SwiftGuardTests(unittest.TestCase):
             with self.subTest(app=name):
                 self.assertIn("SearchTextMode.allCases.map { $0.title }",
                               source)
-                self.assertIn("var pixelLimits: PixelLimits", source)
+                self.assertIn("validatePixelFields(pixelFields)", source)
+                # Der frühere Getter `pixelLimits` hatte keinen Aufrufer und
+                # färbte als Nebenwirkung Felder um.
+                self.assertNotIn("var pixelLimits: PixelLimits", source)
                 self.assertNotIn("contentCheckbox", source)
                 self.assertIn("configuration.mode = selectedMode", source)
                 self.assertIn("configuration.pixelTexts =", source)
@@ -821,7 +843,7 @@ class SwiftGuardTests(unittest.TestCase):
             self.assertNotIn('"%s"' % field, QUICK)
             self.assertNotIn('"%s"' % field, COMMON)
     def test_size_filters_reach_the_core_and_allow_an_empty_pattern(self):
-        """Ohne Muster nur mit Maßfilter: searchArguments laesst das Muster
+        """Ohne Muster nur mit Maßfilter: SearchConfiguration.arguments laesst das Muster
         ganz weg (der Kern laeuft dann ohne Textkriterium; ein kuenstliches
         `*` war unter --regex ein ungueltiger Ausdruck), und beide Apps
         starten die Suche nur, wenn Muster ODER Maßfilter da sind."""

@@ -89,6 +89,10 @@ Verbindliches CLI-Verhalten:
   Startordner bleibt die Wurzel, eine Startdatei zählt mit ihrem Dateinamen.
   Archiv-Eltern werden auch ohne eigene Katalogeinträge geprüft. Dabei den
   echten `member_path` verwenden, niemals `display` an `!/` zerlegen.
+  Muster werden wie die Pfade normalisiert (`Exclusions.normalize_pattern()`,
+  seit 0.34.1): `build/` und `./cache` gelten; ob Pfad- oder
+  Komponentenmuster, entscheidet das rohe Muster. Absolute Muster lehnt
+  `main()` mit Exit 2 ab — sie träfen nie.
   `search_path()` entfernt ausgeschlossene Ordner vor dem Abstieg aus
   `dirnames`; `visit_file()` und `visit_member()` prüfen vor jedem Öffnen,
   auch vor dem Rückfall auf rohe Archivbytes. Kein Standardausschluss.
@@ -227,7 +231,10 @@ Verbindliches CLI-Verhalten:
 - `--min-size`/`--max-size` sind inklusive Grenzen in ganzen nichtnegativen
   Bytes, optional B/KiB/MiB/GiB/TiB. `--modified-from`/`--modified-to` und
   `--created-from`/`--created-to` sind inklusive ISO-Zeitpunkte mit
-  ausdrücklichem Z/Offset, nie implizite lokale Kalendertage. Unbekannte
+  ausdrücklichem Z/Offset, nie implizite lokale Kalendertage. Eine
+  Obergrenze ohne Sekundenbruchteile schließt die ganze genannte Sekunde
+  ein (ohne Sekunden die Minute; `file_timestamp_end()`) — Dateisysteme
+  führen Bruchteile, der Nutzer nennt sie nicht. Unbekannte
   oder ungültige angefragte Fakten erfüllen den Filter nicht; dazu gehören
   NaN/inf aus PAX-Zeitfeldern. `FileProbe.facts()` hält Größe und beide
   Zeitpunkte für Kriterien UND Ausgabe aus derselben Abfrage fest. Ordner

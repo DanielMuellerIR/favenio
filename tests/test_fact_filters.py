@@ -70,6 +70,28 @@ class FactFilterTest(TempTreeTest):
                               ("--modified-to", "2023-12-31T23:59:59Z")):
             self.assertEqual(run([option, stamp, "*", path]), (1, [], ""))
 
+    def test_upper_time_bounds_include_the_whole_named_second_or_minute(self):
+        """Dateisysteme führen Sekundenbruchteile, der Nutzer nennt sie nicht:
+        `--modified-to …T00:00:00Z` schließt die Datei mit 00:00:00,7 ein
+        (bis 0.34.0 fiel sie still heraus). Ohne Sekunden gilt die ganze
+        Minute; mit genannten Bruchteilen der Zeitpunkt genau."""
+        path = self.write("data.txt", "NEEDLE\n")
+        os.utime(path, (self.STAMP + 0.7, self.STAMP + 0.7))
+        self.assertEqual(run(["--modified-to", self.ISO, "*", path]), (0, [path], ""))
+        self.assertEqual(run(["--modified-to", "2024-01-01T00:00Z", "*", path]),
+                         (0, [path], ""))
+        self.assertEqual(run(["--modified-to", "2024-01-01T00:00:00.500Z", "*", path]),
+                         (1, [], ""))
+        self.assertEqual(run(["--modified-to", "2024-01-01T00:00:00.900+00:00", "*", path]),
+                         (0, [path], ""))
+        # (Drei Nachkommastellen: das System-Python 3.9 liest nur 3 oder 6.)
+        # Die Untergrenze bleibt genau: 00:00:01 liegt hinter 00:00:00,7.
+        self.assertEqual(run(["--modified-from", "2024-01-01T00:00:01Z", "*", path]),
+                         (1, [], ""))
+        with mock.patch.object(favenio.Search, "file_facts",
+                               return_value=(7, self.STAMP, self.STAMP + 0.7)):
+            self.assertEqual(run(["--created-to", self.ISO, "*", path]), (0, [path], ""))
+
     def test_created_bounds_are_inclusive_and_unknown_is_not_zero(self):
         path = self.timed_file()
         with mock.patch.object(favenio.Search, "file_facts", return_value=(7, self.STAMP, self.STAMP)):

@@ -53,7 +53,7 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.34.0"
+__version__ = "0.34.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-06"
@@ -707,7 +707,10 @@ def iter_line_pieces(chunks, max_line_chars=None, overlap_chars=None):
       ein Treffer an der Schnittstelle nicht verlorengeht. Die
       Überlappung darf nicht 0 werden: `segment[-0:]` ist in Python der
       GANZE String, die Grenze verschwände lautlos.
-    - Die letzte Zeile ohne Umbruch kommt trotzdem, mit ends_line=True.
+    - Die letzte Zeile ohne Umbruch kommt trotzdem, mit ends_line=True —
+      auch dann, wenn von ihr schon Bruchstücke gingen und (Überlappung
+      0) nichts mehr im Puffer steht: Dann schließt ein leeres Stück die
+      Zeile ab, damit ends_line einmal je Zeile wahr ist.
 
     Die Grenzen werden beim Aufruf aus den Modulkonstanten gelesen (Tests
     setzen sie klein), lassen sich aber auch direkt übergeben."""
@@ -798,7 +801,13 @@ def iter_line_pieces(chunks, max_line_chars=None, overlap_chars=None):
     # Rest: die letzte noch offene Zeile. Den Decoder leert iterdecode()
     # selbst — ein angebrochenes Mehrbyte-Zeichen am Dateiende steht dann
     # schon als Ersatzzeichen im Puffer.
-    for line in "".join(pending).splitlines():
+    rest = "".join(pending).splitlines()
+    if not rest and fragmented:
+        # Von der letzten Zeile gingen Stücke, aber kein Rest steht mehr
+        # im Puffer (nur bei Überlappung 0). Ohne Abschluss hätte diese
+        # Zeile nie ein ends_line=True — der Vertrag oben verspricht es.
+        rest = [""]
+    for line in rest:
         number += 1
         yield (number, line, not fragmented, True)
         fragmented = False
@@ -851,7 +860,6 @@ class ContentProbe:
             needles = [text.replace(GREEK_FINAL_SIGMA, GREEK_SMALL_SIGMA)
                        for text in needles]
         self.needles = needles
-        self.needle = needles[0]
         self.case_sensitive = case_sensitive
 
     def hits(self, chunks):
@@ -1000,6 +1008,28 @@ def file_timestamp(value):
             "erwartet einen gültigen ISO-Zeitpunkt mit Z oder Offset "
             "(z. B. 2024-01-01T00:00:00Z oder 2024-01-01T01:00+01:00); "
             "ein Datum ohne Uhrzeit/Zone reicht nicht") from None
+
+
+def file_timestamp_end(value):
+    """Obergrenze eines Zeitfilters (--modified-to, --created-to).
+
+    Die Grenze ist inklusive, und zwar so genau, wie sie genannt wurde:
+    Ohne Sekundenbruchteile gehört die ganze genannte Sekunde dazu, ohne
+    Sekunden die ganze Minute. Eine Datei mit Änderungszeit 23:59:59,7
+    fiel bis 0.34.0 aus `--modified-to …T23:59:59Z` heraus, obwohl die
+    Hilfe „inklusive" verspricht — Dateisysteme führen Bruchteile, der
+    Nutzer nennt sie nicht. Mit genannten Bruchteilen gilt der Zeitpunkt
+    genau."""
+    stamp = file_timestamp(value)
+    text = value.strip()
+    clock = text[11:]                  # hinter dem T: Uhrzeit samt Zone
+    if "." in clock:
+        return stamp                   # Bruchteile genannt: genau so
+    # Die Zone trägt selbst einen Doppelpunkt (+01:00); die Uhrzeit hat
+    # dann mit Sekunden drei, ohne zwei. Mit „Z" ist es einer weniger.
+    zone_colons = 0 if clock.endswith("Z") else 1
+    has_seconds = clock.count(":") - zone_colons >= 2
+    return stamp + (0.999999 if has_seconds else 59.999999)
 
 
 def positive_int(value):
@@ -1629,12 +1659,6 @@ class FileProbe:
             self._content_lines = self.search.find_content_lines(self)
         return self._content_lines
 
-    def content_line(self):
-        """Zeilennummer des ersten Inhaltstreffers (erster Begriff) oder None."""
-        lines = self.content_lines()
-        return None if lines is None else lines[0]
-
-
 # Die Kriterien einer Suche. Alle müssen zutreffen; `Search` sortiert sie
 # nach `cost` und bricht beim ersten Nein ab. Reihenfolge: Name (gratis) →
 # Dateifakten (stat/Katalog) → Maße (0,2 ms) → Metadaten (0,75 ms) → Inhalt.
@@ -1758,15 +1782,38 @@ class Exclusions:
     damit beispielsweise `cache/deep` alle Einträge darunter ausschließt.
     `fnmatchcase` hält Groß-/Kleinschreibung immer auseinander; sein `*`
     darf auch Schrägstriche überqueren. Suchoptionen wie --regex ändern
-    diese eigenständige Mustersemantik nicht."""
+    diese eigenständige Mustersemantik nicht.
+
+    Muster werden wie die Pfade normalisiert (`normalize_pattern()`):
+    ein `./` am Anfang und ein `/` am Ende fallen weg — die Shell hängt
+    bei der Tab-Vervollständigung eines Ordners den Schrägstrich an, und
+    `--exclude build/` schloss bis 0.34.0 still gar nichts aus. Ob ein
+    Muster den Pfad oder nur eine Komponente meint, entscheidet weiter
+    das ROHE Muster: `build/` bleibt ein Pfadmuster (nur der Ordner
+    `build` an der Wurzel), `build` gilt für jede Komponente. Ein
+    absolutes Muster kann nie treffen, weil immer relativ zur Wurzel
+    verglichen wird; `main()` lehnt es deshalb ab, ebenso ein Muster,
+    von dem nach der Normalisierung nichts übrig bleibt."""
+
+    @staticmethod
+    def normalize_pattern(pattern):
+        """Muster in dieselbe Form bringen wie `matches()` die Pfade:
+        leere Komponenten und `.` entfallen. Liefert das normalisierte
+        Muster und ob es (roh) einen Schrägstrich trug, also ein Pfad-
+        statt Komponentenmuster ist."""
+        parts = [part for part in pattern.split("/") if part not in ("", ".")]
+        return "/".join(parts), "/" in pattern
 
     def __init__(self, patterns):
         self.component_patterns = []
         self.path_patterns = []
         for pattern in patterns:
-            target = (self.path_patterns if "/" in pattern
+            normalized, is_path = self.normalize_pattern(pattern)
+            if not normalized:
+                continue               # `/`, `./` oder "": nichts auszuschließen
+            target = (self.path_patterns if is_path
                       else self.component_patterns)
-            target.append(pattern)
+            target.append(normalized)
 
     def __bool__(self):
         return bool(self.component_patterns or self.path_patterns)
@@ -1818,6 +1865,12 @@ class Search:
         # Mehrwortsuche (--term): weitere Testfunktionen, die ZUSÄTZLICH
         # zutreffen müssen — im selben Ziel (Name, Inhalt oder Metadaten),
         # aber nicht in derselben Zeile bzw. demselben Wert.
+        if matcher is None and extra_matchers:
+            # main() macht den ersten Begriff zum Muster; ein direkter
+            # Aufrufer, der nur weitere Begriffe gibt, bekäme sonst still
+            # eine Suche OHNE Textkriterium.
+            raise ValueError("extra_matchers ohne matcher: der erste "
+                             "Begriff gehört in matcher")
         self.matchers = ([] if matcher is None
                          else [matcher] + list(extra_matchers))
         # Die Begriffe im Klartext, für die Belege in der Ausgabe; main()
@@ -2648,6 +2701,8 @@ class Search:
         Ordner in einem ISO war deshalb bis 0.31.3 eine Datei. Nur wenn
         sich die beiden Auflistungen nicht zeilenweise decken, gilt die
         alte Heuristik: Schrägstrich am Ende oder Einträge darunter.
+        Kosten: je bsdtar-Archiv zwei Prozesse (`-tf` und `-tvf`), und
+        beide Auflistungen werden bis MAX_ARCHIVE_LISTING_BYTES gepuffert.
         Größen liefert die Auflistung nicht (size=None), die Byte-Budgets
         greifen beim Lesen."""
         bsdtar, _, env = external_archive_tools()
@@ -2957,12 +3012,14 @@ def main(argv=None):
                              "unbekannte Größe und Ordner erfüllen den Filter nicht")
     parser.add_argument("--modified-from", type=file_timestamp, metavar="ISO",
                         help="Änderungszeit ab diesem ISO-Zeitpunkt mit Zone (inklusive)")
-    parser.add_argument("--modified-to", type=file_timestamp, metavar="ISO",
-                        help="Änderungszeit bis zu diesem ISO-Zeitpunkt mit Zone (inklusive)")
+    parser.add_argument("--modified-to", type=file_timestamp_end, metavar="ISO",
+                        help="Änderungszeit bis zu diesem ISO-Zeitpunkt mit Zone "
+                             "(inklusive der ganzen genannten Sekunde bzw. Minute)")
     parser.add_argument("--created-from", type=file_timestamp, metavar="ISO",
                         help="Erstellungszeit ab diesem ISO-Zeitpunkt mit Zone (inklusive)")
-    parser.add_argument("--created-to", type=file_timestamp, metavar="ISO",
-                        help="Erstellungszeit bis zu diesem ISO-Zeitpunkt mit Zone (inklusive); "
+    parser.add_argument("--created-to", type=file_timestamp_end, metavar="ISO",
+                        help="Erstellungszeit bis zu diesem ISO-Zeitpunkt mit Zone "
+                             "(inklusive der ganzen genannten Sekunde bzw. Minute); "
                              "ohne bekannten Zeitpunkt kein Treffer")
     parser.add_argument("--min-width", type=positive_int, metavar="PX",
                         help="nur Bilder ab dieser Breite (Pixel)")
@@ -2997,7 +3054,9 @@ def main(argv=None):
                         help="Dateien/Teilbäume vor dem Öffnen ausschließen "
                              "(wiederholbar; Groß-/Kleinschreibung gilt); "
                              "ohne / je Name, mit / relativ zur Such- oder "
-                             "Archivwurzel; * darf / überqueren")
+                             "Archivwurzel; * darf / überqueren; ein "
+                             "./ am Anfang und ein / am Ende zählen nicht, "
+                             "ein absolutes Muster ist ein Fehler")
     parser.add_argument("--max-depth", type=positive_int, default=None,
                         metavar="N",
                         help="nur N Ordnerebenen tief suchen (1 = nur direkt "
@@ -3145,6 +3204,16 @@ def main(argv=None):
     metadata_mode = args.metadata or bool(args.metadata_field)
     if args.content and metadata_mode:
         parser.error("--content und --metadata schließen sich aus")
+    # Ausschlüsse werden immer RELATIV zur Such- oder Archivwurzel
+    # verglichen. Ein absolutes Muster träfe deshalb nie — lieber sofort
+    # sagen als still nichts ausschließen. Ein Muster ohne Rest (`/`,
+    # `./`, "") ebenso.
+    for pattern in args.exclude:
+        if pattern.startswith("/"):
+            parser.error("--exclude %r: Muster gelten relativ zur Such- "
+                         "oder Archivwurzel, nicht absolut" % pattern)
+        if not Exclusions.normalize_pattern(pattern)[0]:
+            parser.error("--exclude %r: leeres Muster" % pattern)
     # Mehrwortsuche: PATTERN und jedes --term sind Begriffe, die ALLE
     # zutreffen müssen. Ohne PATTERN wird der erste --term zum Muster; ein
     # leerer Begriff ist ein Fehler (er träfe alles und sagte nichts), ein
@@ -3157,6 +3226,14 @@ def main(argv=None):
             terms.append(term)
     if terms and not args.pattern:
         args.pattern = terms[0]
+    if args.exact and len(terms) > 1 and not args.content and not metadata_mode:
+        # Im Namensmodus muss JEDER Begriff den ganzen Namen treffen — zwei
+        # verschiedene ganze Namen hat eine Datei nicht. Die Suche endete
+        # sonst immer mit „keine Treffer", ohne zu sagen, warum. Im Inhalt
+        # (je Zeile) und in den Metadaten (je Feld) ist die Kombination
+        # dagegen sinnvoll.
+        parser.error("--exact mit mehreren Begriffen kann im Namensmodus "
+                     "nie treffen (jeder Begriff müsste der ganze Name sein)")
     if not args.pattern and (args.content or metadata_mode):
         # Ohne Muster läuft die Suche ganz ohne Textkriterium (nur die
         # Maß-/Faktengrenzen zählen). --content und --metadata sagen, WOGEGEN das
