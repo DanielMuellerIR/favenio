@@ -20,6 +20,7 @@ import tarfile
 import tempfile
 import time
 import unittest
+from unittest import mock
 import zipfile
 import zlib
 from contextlib import redirect_stderr, redirect_stdout
@@ -209,7 +210,7 @@ class FavenioTest(TempTreeTest):
         record = json.loads(lines[0])
         self.assertEqual(record["size"], 5)
 
-    def test_size_is_absent_when_a_plain_file_cannot_be_stated(self):
+    def test_facts_are_absent_when_a_plain_file_cannot_be_stated(self):
         # os.walk liefert einen toten Symlink als Dateinamen, getsize() kann
         # dessen Ziel aber nicht statten. Der Treffer bleibt brauchbar; `size`
         # fehlt nach dem dokumentierten optionalen Vertrag.
@@ -220,7 +221,8 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(len(lines), 1)
         record = json.loads(lines[0])
         self.assertEqual(record["type"], "file")
-        self.assertNotIn("size", record)
+        for field in ("size", "modified", "created"):
+            self.assertNotIn(field, record)
 
     def test_json_carries_modified_and_created(self):
         # Änderungs- und Erstellungszeit als Unix-Zeit: Datei und Ordner im
@@ -264,17 +266,6 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(zip_member["modified"],
                          time.mktime(date_time + (0, 0, -1)))
         self.assertNotIn("created", zip_member)
-
-    def test_dates_are_absent_when_a_plain_file_cannot_be_stated(self):
-        # Derselbe tote Symlink wie bei der Größe: Ohne stat gibt es weder
-        # Größe noch Daten, und der Treffer bleibt trotzdem brauchbar.
-        broken = os.path.join(self.root, "kaputte-zeit.txt")
-        os.symlink(os.path.join(self.root, "fehlt.txt"), broken)
-        code, lines, err = run(["--json", "kaputte-zeit", self.root])
-        self.assertEqual(code, 0, err)
-        record = json.loads(lines[0])
-        self.assertNotIn("modified", record)
-        self.assertNotIn("created", record)
 
     def test_zip_member_mtime_rejects_nonsense_dates(self):
         # Ein Zip-Eintrag ohne brauchbares Datum liefert None, keinen Abbruch.
@@ -763,7 +754,7 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(code, 0)
 
 
-class ChunkedContentTest(TempTreeTest):
+class ChunkedContentTest(unittest.TestCase):
     """Die Inhaltssuche liest häppchenweise. Diese Tests sichern ab, dass
     dabei GENAU dieselben Zeilen entstehen wie beim Dekodieren am Stück —
     inklusive Zeilennummern, Häppchengrenzen und kaputter Bytes."""
@@ -819,6 +810,10 @@ class ChunkedContentTest(TempTreeTest):
 
     def test_empty_file(self):
         self.assert_same_as_whole(b"")
+
+
+class ChunkedContentFileTest(TempTreeTest):
+    """Der echte Dateileser muss dieselben Zeilennummern liefern."""
 
     def test_line_number_beyond_chunk_boundary(self):
         # Treffer weit hinten: die Zeilennummer muss über Häppchengrenzen
@@ -1299,6 +1294,107 @@ def have_zstd():
     return favenio.external_archive_tools()[1] is not None
 
 
+class BsdtarCatalogTest(unittest.TestCase):
+    """Katalog und Werkzeugauswahl ohne installierte externe Programme."""
+
+    def test_directory_fallback_only_fills_unknown_entry_types(self):
+        cases = (
+            ([("folder", False), ("folder/file.txt", False), ("empty", True)],
+             [("folder", False), ("folder/file.txt", False), ("empty", True)]),
+            ([("folder", None), ("folder/file.txt", False), ("empty/", None)],
+             [("folder", True), ("folder/file.txt", False), ("empty", True)]),
+        )
+        search = favenio.Search(favenio.build_matcher("*", False, False), False, 1, False)
+        self.addCleanup(search.close)
+        for entries, expected in cases:
+            with self.subTest(entries=entries), \
+                    mock.patch.object(favenio, "bsdtar_list", return_value=(b"", b"", 0)), \
+                    mock.patch.object(favenio, "bsdtar_listing_entries", return_value=entries), \
+                    mock.patch.object(search, "visit_member") as visit, \
+                    mock.patch.object(search, "warn") as warn:
+                search.walk_bsdtar("fixture.7z", None, "fixture.7z", 1, "fixture.7z", ())
+                self.assertEqual([call.args[:2] for call in visit.call_args_list], expected)
+                self.assertEqual(warn.call_count, int(any(flag is None for _, flag in entries)))
+
+    def test_listing_entries_take_the_type_from_the_verbose_listing(self):
+        names = b"./\n./x -> y.txt\n./leer\n./tab\\tname.txt\n./link\n"
+        verbose = (b"drwxr-xr-x  0 0 0 0 Sep  5 23:29 ./\n"
+                   b"-rw-r--r--  0 0 0 1 Sep  5 23:29 ./x -> y.txt\n"
+                   b"drwxr-xr-x  0 0 0 0 Sep  5 23:29 ./leer\n"
+                   b"-rw-r--r--  0 0 0 1 Sep  5 23:29 ./tab\\tname.txt\n"
+                   b"lrwxr-xr-x  0 0 0 0 Sep  5 23:29 ./link -> x -> y.txt\n")
+        self.assertEqual(
+            favenio.bsdtar_listing_entries(names, verbose),
+            [("x -> y.txt", False), ("leer", True), ("tab\tname.txt", False),
+             ("link", False)])
+        # Ohne oder mit nicht zeilengleicher -tvf-Ausgabe bleibt der Typ
+        # offen (None); die Namen sind dieselben wie in
+        # bsdtar_listing_names.
+        for broken in (None, verbose.split(b"\n", 1)[1]):
+            entries = favenio.bsdtar_listing_entries(names, broken)
+            self.assertEqual([name for name, _ in entries],
+                             favenio.bsdtar_listing_names(names))
+            self.assertTrue(all(is_dir is None for _, is_dir in entries))
+
+    def test_bsdtar_unescape_reverses_the_listing_format(self):
+        self.assertEqual(favenio.bsdtar_unescape(rb"tab\tname.txt"),
+                         b"tab\tname.txt")
+        self.assertEqual(favenio.bsdtar_unescape(rb"back\\slash.txt"),
+                         b"back\\slash.txt")
+        # Ein echter Backslash kommt maskiert an; die Ziffern danach bleiben
+        # dadurch Ziffern und werden nicht als Oktalfolge gelesen.
+        self.assertEqual(favenio.bsdtar_unescape(rb"a\\123.txt"),
+                         b"a\\123.txt")
+        # Nicht druckbare Bytes kommen dreistellig oktal (hier UTF-8 für „ä").
+        self.assertEqual(favenio.bsdtar_unescape(rb"gr\303\244n"),
+                         "grän".encode("utf-8"))
+        self.assertEqual(favenio.bsdtar_unescape(b"schlicht.txt"),
+                         b"schlicht.txt")
+
+    def test_without_tools_files_stay_plain(self):
+        # Simuliert „Werkzeuge fehlen": die Endungen zählen dann nicht als
+        # Archiv, die Dateien bleiben normale Dateien (Verhalten vor der
+        # Integration).
+        original = favenio._EXTERNAL_TOOLS
+        favenio._EXTERNAL_TOOLS = (None, None, None)
+        try:
+            self.assertIsNone(favenio.classify_archive("a.7z"))
+            self.assertIsNone(favenio.classify_archive("a.iso"))
+            self.assertIsNone(favenio.classify_archive("a.tar.zst"))
+            self.assertIsNone(favenio.classify_archive("a.zst"))
+        finally:
+            favenio._EXTERNAL_TOOLS = original
+
+    def test_tar_zst_needs_both_tools(self):
+        original = favenio.external_archive_tools()
+        # Reine Formaterkennung: Der Pfad muss nur vorhanden erscheinen,
+        # auf dem Testrechner wird kein bsdtar gestartet oder vorausgesetzt.
+        favenio._EXTERNAL_TOOLS = ("/fake/bsdtar", None, None)
+        try:
+            self.assertIsNone(favenio.classify_archive("a.tar.zst"))
+            self.assertIsNone(favenio.classify_archive("a.zst"))
+            self.assertEqual(favenio.classify_archive("a.7z"), "bsdtar")
+        finally:
+            favenio._EXTERNAL_TOOLS = original
+
+    def test_tar_zst_without_bsdtar_is_no_archive(self):
+        # Die andere Hälfte: zstd da, bsdtar nicht. „a.tar.zst" endet auch auf
+        # „.zst" und wurde früher als einzeln komprimierte Datei behandelt —
+        # der entpackte Tar-Strom erschien dann als Mitglied „a.tar".
+        original = favenio.external_archive_tools()
+        # Reine Formaterkennung: zstd wird nie gestartet. Ein synthetischer
+        # Pfad macht diesen Fall unabhängig von installierten Werkzeugen.
+        zstd = "/fake/zstd"
+        favenio._EXTERNAL_TOOLS = (None, zstd, original[2])
+        try:
+            self.assertIsNone(favenio.classify_archive("a.tar.zst"))
+            self.assertIsNone(favenio.classify_archive("a.tzst"))
+            self.assertIsNone(favenio.classify_archive("a.7z"))
+            self.assertEqual(favenio.classify_archive("a.zst"), ".zst")
+        finally:
+            favenio._EXTERNAL_TOOLS = original
+
+
 @unittest.skipUnless(have_bsdtar(), "bsdtar nicht gefunden")
 class BsdtarFormatsTest(TempTreeTest):
     """Formate, die nur über das externe bsdtar lesbar sind (7z, ISO,
@@ -1432,25 +1528,6 @@ class BsdtarFormatsTest(TempTreeTest):
         with open(lines[0], encoding="utf-8") as handle:
             self.assertEqual(handle.read(), self.CONTENT)
 
-    def test_listing_entries_take_the_type_from_the_verbose_listing(self):
-        names = b"./\n./x -> y.txt\n./leer\n./tab\\tname.txt\n./link\n"
-        verbose = (b"drwxr-xr-x  0 0 0 0 Sep  5 23:29 ./\n"
-                   b"-rw-r--r--  0 0 0 1 Sep  5 23:29 ./x -> y.txt\n"
-                   b"drwxr-xr-x  0 0 0 0 Sep  5 23:29 ./leer\n"
-                   b"-rw-r--r--  0 0 0 1 Sep  5 23:29 ./tab\\tname.txt\n"
-                   b"lrwxr-xr-x  0 0 0 0 Sep  5 23:29 ./link -> x -> y.txt\n")
-        self.assertEqual(
-            favenio.bsdtar_listing_entries(names, verbose),
-            [("x -> y.txt", False), ("leer", True), ("tab\tname.txt", False),
-             ("link", False)])
-        # Ohne oder mit nicht zeilengleicher -tvf-Ausgabe bleibt der Typ
-        # offen (None); die Namen sind dieselben wie in
-        # bsdtar_listing_names.
-        for broken in (None, verbose.split(b"\n", 1)[1]):
-            entries = favenio.bsdtar_listing_entries(names, broken)
-            self.assertEqual([name for name, _ in entries],
-                             favenio.bsdtar_listing_names(names))
-            self.assertTrue(all(is_dir is None for _, is_dir in entries))
 
     def test_extract_7z_member(self):
         archive = self.make_archive("arch.7z", "7zip",
@@ -1514,20 +1591,6 @@ class BsdtarFormatsTest(TempTreeTest):
         with open(lines[0], encoding="utf-8") as handle:
             self.assertEqual(handle.read(), self.CONTENT)
 
-    def test_bsdtar_unescape_reverses_the_listing_format(self):
-        self.assertEqual(favenio.bsdtar_unescape(rb"tab\tname.txt"),
-                         b"tab\tname.txt")
-        self.assertEqual(favenio.bsdtar_unescape(rb"back\\slash.txt"),
-                         b"back\\slash.txt")
-        # Ein echter Backslash kommt maskiert an; die Ziffern danach bleiben
-        # dadurch Ziffern und werden nicht als Oktalfolge gelesen.
-        self.assertEqual(favenio.bsdtar_unescape(rb"a\\123.txt"),
-                         b"a\\123.txt")
-        # Nicht druckbare Bytes kommen dreistellig oktal (hier UTF-8 für „ä").
-        self.assertEqual(favenio.bsdtar_unescape(rb"gr\303\244n"),
-                         "grän".encode("utf-8"))
-        self.assertEqual(favenio.bsdtar_unescape(b"schlicht.txt"),
-                         b"schlicht.txt")
 
     def test_zip_inside_7z_needs_depth_2(self):
         inner = io.BytesIO()
@@ -1598,49 +1661,6 @@ class BsdtarFormatsTest(TempTreeTest):
         self.assertEqual(code, 1)
         self.assertEqual(lines, [])
         self.assertIn("Einzelgrenze", err)
-
-    def test_without_tools_files_stay_plain(self):
-        # Simuliert „Werkzeuge fehlen": die Endungen zählen dann nicht als
-        # Archiv, die Dateien bleiben normale Dateien (Verhalten vor der
-        # Integration).
-        original = favenio._EXTERNAL_TOOLS
-        favenio._EXTERNAL_TOOLS = (None, None, None)
-        try:
-            self.assertIsNone(favenio.classify_archive("a.7z"))
-            self.assertIsNone(favenio.classify_archive("a.iso"))
-            self.assertIsNone(favenio.classify_archive("a.tar.zst"))
-            self.assertIsNone(favenio.classify_archive("a.zst"))
-        finally:
-            favenio._EXTERNAL_TOOLS = original
-
-    def test_tar_zst_needs_both_tools(self):
-        original = favenio.external_archive_tools()
-        favenio._EXTERNAL_TOOLS = (original[0], None, None)
-        try:
-            self.assertIsNone(favenio.classify_archive("a.tar.zst"))
-            self.assertIsNone(favenio.classify_archive("a.zst"))
-            self.assertEqual(favenio.classify_archive("a.7z"), "bsdtar")
-        finally:
-            favenio._EXTERNAL_TOOLS = original
-
-    def test_tar_zst_without_bsdtar_is_no_archive(self):
-        # Die andere Hälfte: zstd da, bsdtar nicht. „a.tar.zst" endet auch auf
-        # „.zst" und wurde früher als einzeln komprimierte Datei behandelt —
-        # der entpackte Tar-Strom erschien dann als Mitglied „a.tar".
-        original = favenio.external_archive_tools()
-        # Der Test ordnet nur Dateinamen zu und startet zstd nie. Die Klasse
-        # hängt aber allein an bsdtar: Fehlt zstd auf dem Rechner, wäre
-        # original[1] None und „a.zst" käme als „kein Archiv" zurück. Deshalb
-        # hier ein garantiert nicht leerer Pfad statt des echten Fundorts.
-        zstd = original[1] or "/usr/bin/zstd"
-        favenio._EXTERNAL_TOOLS = (None, zstd, original[2])
-        try:
-            self.assertIsNone(favenio.classify_archive("a.tar.zst"))
-            self.assertIsNone(favenio.classify_archive("a.tzst"))
-            self.assertIsNone(favenio.classify_archive("a.7z"))
-            self.assertEqual(favenio.classify_archive("a.zst"), ".zst")
-        finally:
-            favenio._EXTERNAL_TOOLS = original
 
 
 @unittest.skipUnless(have_bsdtar() and have_zstd(),

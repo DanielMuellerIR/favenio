@@ -10,6 +10,9 @@
   ohne blockierendes Öffnen übersprungen.
 - `--max-archive-ratio` verlangt einen endlichen positiven Wert; NaN und
   Infinity können den Vergleich nicht mehr unwirksam machen.
+- Die Ordnerheuristik für bsdtar-Kataloge wird nur noch aufgebaut, wenn
+  Eintragstypen fehlen. Reine Katalogtests laufen auch ohne installiertes
+  bsdtar; sechs Zeilenlesertests brauchen keine temporären Ordner mehr.
 
 ## 0.34.3 — 2026-09-08
 

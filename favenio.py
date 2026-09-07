@@ -2750,17 +2750,19 @@ class Search:
                 verbose, verbose_status = None, 1
             entries = bsdtar_listing_entries(
                 raw, verbose if verbose_status == 0 else None)
+            dir_names = set()
             if any(is_dir is None for _, is_dir in entries):
                 self.warn("%s: Eintragstypen nicht bestimmbar, Ordner "
                           "werden geschätzt" % display)
-            dir_names = set()
-            for name, _ in entries:
-                clean = name.rstrip("/")
-                if name.endswith("/"):
-                    dir_names.add(clean)
-                parts = clean.split("/")
-                for count in range(1, len(parts)):
-                    dir_names.add("/".join(parts[:count]))
+                # Nur der Rückfall braucht Elternnamen. Bei bekannten
+                # Typen entfällt der sonst unbenutzte vollständige Satz.
+                for name, _ in entries:
+                    clean = name.rstrip("/")
+                    if name.endswith("/"):
+                        dir_names.add(clean)
+                    parts = clean.split("/")
+                    for count in range(1, len(parts)):
+                        dir_names.add("/".join(parts[:count]))
             seen = set()
             for name, is_dir in entries:
                 clean = name.rstrip("/")
