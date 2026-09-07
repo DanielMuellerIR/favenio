@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 1341876
+    "tokens_spent": 1380849
   },
   "campaign_history": [
     {
@@ -331,15 +331,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "completed_at": "2026-09-08T01:30:10+02:00",
-        "observed_head": "30a6e54b180ba359e70d1c90d4efbb4fe3929d2c",
-        "content_sha256": "9cf3a4df8b4a2369141c6a012eec205fb1a1e12097d022ae79ac0c14828498e1",
+        "completed_at": "2026-09-08T01:32:45+02:00",
+        "observed_head": "e7ba08ce5204a44992f96bdc1a46982d89d54435",
+        "content_sha256": "e102ace9b1331a8cc6a6b1fd58b6edebc409285a7ae45714a35908697ac23bea",
         "file_count": 12,
-        "review": "full",
+        "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Vollständiger Review aller zwölf Dateien und Grenzen. Gemeinsamer Build und isolierte Prozesse belegt; Runner-Reihenfolge und Main-Callbacks verstärkt, zwei redundante oder timingabhängige Tests entfernt, Materialisierungs-Aufräumung zustandsbasiert und stderr-Fixture verkleinert. Export-Timing-Prüfung als Theme erfasst.",
+        "summary": "Delta seit vollständigem Bereichsreview: Exportprobe ersetzt Timingannahme durch steuerbaren Workerauftrag; echte Format-, Fehler- und Retryprüfungen bleiben. Keine weiteren Bereichsänderungen.",
         "tests": [
-          "25 ausführbare Swift-Tests in einem Python-Prozess: 13.831 s, ein Build, alle grün; frühere Prozess-Aufräumungs-Mutationen erkennen verwaiste Kinder; beide aktuellen App-Selbsttests grün."
+          "Exportprobe und 74 Swift-Wachen in 8.907 s bestanden; synchrone Gegenprobe rot; beide App-Selbsttests grün."
         ]
       }
     },
@@ -715,14 +715,18 @@
         "tests/export_probe.swift"
       ],
       "priority": 2,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-08T01:29:13+02:00",
       "campaign_id": "20260908T002533785169+0200",
       "started_at": "2026-09-08T01:30:46+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:30:46+02:00",
-        "observed_head": "30a6e54b180ba359e70d1c90d4efbb4fe3929d2c"
+        "completed_at": "2026-09-08T01:32:45+02:00",
+        "observed_head": "e7ba08ce5204a44992f96bdc1a46982d89d54435",
+        "summary": "Exporttest steuert einen injizierten Arbeitsauftrag und beweist Main-/Worker-Zuordnung ohne 3000 Treffer oder 0.2-s-Grenze. Standardoperation unverändert; vier redundante Quelltextwachen entfernt.",
+        "tests": [
+          "75 Export-/Swift-Prüfungen, 8 Dokumentationsprüfungen und beide App-Selbsttests bestanden; synchrone Mutation scheitert mit Exit -5."
+        ]
       }
     }
   ]
