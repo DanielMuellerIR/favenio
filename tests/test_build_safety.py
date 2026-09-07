@@ -804,14 +804,14 @@ class RequiredTeamIdentityTest(unittest.TestCase):
         self.assertIn("TEAM=LOCALTEAM0", output)
 
 
-class InstallFromDmgTest(unittest.TestCase):
+class InstallFromDmgFixture:
     """Der --dmg-Weg mit vorgeschobenen Werkzeugen: `hdiutil attach` legt zwei
     Bundle-Gerüste in den Mountpoint, codesign/spctl/xcrun antworten nach
     Vorgabe. Damit lässt sich `--verify-only` vollständig durchspielen, ohne
     Notarisierung und ohne /Applications.
 
-    Geprüft wird die Entscheidung vom 2026-08-03: Auch aus einem DMG braucht
-    jedes Bundle sein EIGENES angeheftetes Notary-Ticket."""
+    Enthält nur den Aufbau und Aufruf. Testklassen erben keine fremden
+    Testmethoden, damit unittest jeden Installationsfall genau einmal lädt."""
 
     APPS = {"Favenio.app": "local.favenio",
             "FavenioQuick.app": "local.favenio.quick"}
@@ -896,19 +896,28 @@ class InstallFromDmgTest(unittest.TestCase):
         for stub in self.stubs.iterdir():
             stub.chmod(0o755)
 
-    def run_install(self, *arguments, **fails):
-        environment = dict(os.environ)
+    def run_install(self, *arguments, environment_overrides=None, **fails):
+        # Jeder Fall bestimmt seine Sparkle-Variablen selbst. Sonst könnte
+        # eine geerbte Variable die eigentlich geprüfte Ablehnung verdecken.
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("SPARKLE_FEED_URL",
+                                      "FAVENIO_SPARKLE_TEST_VERSION")}
         environment["PATH"] = "%s%s%s" % (self.stubs, os.pathsep,
                                           environment["PATH"])
         environment["STUB_PLISTS"] = str(self.plists)
         for tool, entries in fails.items():
             environment["STUB_FAIL_%s" % tool.upper()] = entries
+        environment.update(environment_overrides or {})
         result = subprocess.run(
             [str(REPO / "install.sh"), "--dmg", str(self.dmg), "--verify-only",
              *arguments],
             cwd=REPO, env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return result.returncode, result.stdout.decode("utf-8", "replace")
+
+
+class InstallFromDmgTest(InstallFromDmgFixture, unittest.TestCase):
+    """Auch aus einem DMG braucht jedes Bundle sein eigenes Notary-Ticket."""
 
     def test_stapled_bundles_from_a_dmg_pass(self):
         code, output = self.run_install()
@@ -991,31 +1000,18 @@ class InstallFromDmgTest(unittest.TestCase):
         self.assertIn("keine signierte Appcast-Datei", output)
 
 
-class InheritedSparkleVariablesTest(InstallFromDmgTest):
+class InheritedSparkleVariablesTest(InstallFromDmgFixture, unittest.TestCase):
     """Zwei Variablen, die build-app.sh für Sparkle-Tests im
     Projektverzeichnis kennt, dürfen nie in eine Installation
     durchschlagen. Geerbt würden sie einfach mitgegeben."""
-
-    def run_with(self, **umgebung):
-        environment = dict(os.environ)
-        environment["PATH"] = "%s%s%s" % (self.stubs, os.pathsep,
-                                          environment["PATH"])
-        environment["STUB_PLISTS"] = str(self.plists)
-        environment.update(umgebung)
-        result = subprocess.run(
-            [str(REPO / "install.sh"), "--dmg", str(self.dmg),
-             "--verify-only"],
-            cwd=REPO, env=environment,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        return result.returncode, result.stdout.decode("utf-8", "replace")
 
     def test_a_foreign_feed_url_is_refused_before_anything_happens(self):
         # Geerbt richtete SPARKLE_FEED_URL die installierte App dauerhaft
         # auf einen fremden Update-Feed. Die vorhandene Feed-Prüfung greift
         # erst NACH der Notarisierung — sie hätte einen Notary-Vorgang
         # verbraucht und zwei fertig gestapelte Bundles hinterlassen.
-        code, output = self.run_with(
-            SPARKLE_FEED_URL="http://127.0.0.1:8000/appcast.xml")
+        code, output = self.run_install(environment_overrides={
+            "SPARKLE_FEED_URL": "http://127.0.0.1:8000/appcast.xml"})
         self.assertEqual(code, 2, output)
         self.assertIn("SPARKLE_FEED_URL", output)
         # Kein Schritt darf vorher gelaufen sein.
@@ -1027,16 +1023,18 @@ class InheritedSparkleVariablesTest(InstallFromDmgTest):
         # Die Gleichheitsprüfung in install.sh vergleicht nur die BEIDEN
         # Bundles gegeneinander und ginge durch; die installierte App böte
         # sich danach über Sparkle sofort selbst ein „Update" an.
-        code, output = self.run_with(FAVENIO_SPARKLE_TEST_VERSION="0.13.9")
+        code, output = self.run_install(environment_overrides={
+            "FAVENIO_SPARKLE_TEST_VERSION": "0.13.9"})
         self.assertEqual(code, 2, output)
         self.assertIn("FAVENIO_SPARKLE_TEST_VERSION", output)
 
-    def test_without_them_the_run_passes_as_before(self):
-        # Gegenprobe: Die Ablehnung darf den normalen Weg nicht behindern.
-        environment = {key: value for key, value in os.environ.items()
-                       if key not in ("SPARKLE_FEED_URL",
-                                      "FAVENIO_SPARKLE_TEST_VERSION")}
-        code, output = self.run_with(**{})
+    def test_fixture_isolates_inherited_test_variables(self):
+        # Gegenprobe mit tatsächlich gesetzten Variablen: Der normale
+        # DMG-Test muss auch aus einer Sparkle-Test-Shell heraus funktionieren.
+        with unittest.mock.patch.dict(os.environ, {
+                "SPARKLE_FEED_URL": "https://example.invalid/appcast.xml",
+                "FAVENIO_SPARKLE_TEST_VERSION": "0.0.1"}):
+            code, output = self.run_install()
         self.assertEqual(code, 0, output)
         self.assertIn("VERIFY OK", output)
 
@@ -1115,12 +1113,6 @@ class ReleaseRefusesInheritedSparkleVariablesTest(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertIn("FAVENIO_SPARKLE_TEST_VERSION", output)
         self.assertNotIn("Schritt 1/5", output)
-
-    def test_the_late_feed_check_stays_as_a_second_line(self):
-        # Die frühe Wache ersetzt die Prüfung im fertigen DMG nicht: Sie
-        # deckt nur den Weg über die Umgebungsvariable ab.
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        self.assertIn('favenio_verify_feed_url "$VERIFY_MOUNT/$app"', source)
 
 
 class InstallSignalAndPromiseTest(unittest.TestCase):

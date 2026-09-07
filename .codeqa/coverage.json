@@ -2,13 +2,10 @@
   "schema_version": 2,
   "project": "favenio",
   "campaign": {
-    "id": "20260903T100457590492+0200",
-    "token_budget": 4000000,
-    "status": "complete",
-    "started_at": "2026-09-03T10:04:57+02:00",
-    "tokens_spent": 1629546,
-    "finished_at": "2026-09-03T18:19:48+02:00",
-    "finish_reason": "all-current"
+    "id": "20260908T002533785169+0200",
+    "token_budget": 6000000,
+    "status": "active",
+    "started_at": "2026-09-08T00:25:33+02:00"
   },
   "campaign_history": [
     {
@@ -36,6 +33,15 @@
       "started_at": "2026-08-19T20:07:33+02:00",
       "tokens_spent": 82408,
       "finished_at": "2026-08-19T20:19:18+02:00",
+      "finish_reason": "all-current"
+    },
+    {
+      "id": "20260903T100457590492+0200",
+      "token_budget": 4000000,
+      "status": "complete",
+      "started_at": "2026-09-03T10:04:57+02:00",
+      "tokens_spent": 1629546,
+      "finished_at": "2026-09-03T18:19:48+02:00",
       "finish_reason": "all-current"
     }
   ],
@@ -69,9 +75,38 @@
       "CLAUDE.md",
       "BACKLOG.md",
       "tests/test_docs_contract.py",
-      "CHANGELOG.md"
+      "CHANGELOG.md",
+      "tests",
+      "tools",
+      ".gitignore",
+      "docs/codeqa-2026-09.md"
     ],
-    "exclusions": []
+    "exclusions": [
+      {
+        "path": "tests/EXPORT_MEASUREMENTS.md",
+        "reason": "Historische Messergebnisse und Begleitprotokolle; keine Laufzeitlogik, Referenzdaten unverändert erhalten"
+      },
+      {
+        "path": "tests/LINE_READER_MEASUREMENTS.md",
+        "reason": "Historische Messergebnisse und Begleitprotokolle; keine Laufzeitlogik, Referenzdaten unverändert erhalten"
+      },
+      {
+        "path": "tests/MATERIALIZATION_MEASUREMENTS.md",
+        "reason": "Historische Messergebnisse und Begleitprotokolle; keine Laufzeitlogik, Referenzdaten unverändert erhalten"
+      },
+      {
+        "path": "tests/RUNNER_MEASUREMENTS.md",
+        "reason": "Historische Messergebnisse und Begleitprotokolle; keine Laufzeitlogik, Referenzdaten unverändert erhalten"
+      },
+      {
+        "path": "tests/export-measurements-2026-09-05.jsonl",
+        "reason": "Historische Messergebnisse und Begleitprotokolle; keine Laufzeitlogik, Referenzdaten unverändert erhalten"
+      },
+      {
+        "path": "tests/measurements",
+        "reason": "Historische Messergebnisse und Begleitprotokolle; keine Laufzeitlogik, Referenzdaten unverändert erhalten"
+      }
+    ]
   },
   "areas": [
     {
@@ -84,7 +119,7 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Schreibt nach /Applications; Identitätsprüfung, atomarer Austausch und Rollback schützen Nutzerdaten",
-      "state": "completed",
+      "state": "in_progress",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
         "completed_at": "2026-09-03T18:09:41+02:00",
@@ -97,18 +132,29 @@
         "tests": [
           "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed"
         ]
+      },
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T00:25:36+02:00",
+        "required_review": "delta-plus-boundaries",
+        "status_at_start": "changed",
+        "covered_pending_paths": []
       }
     },
     {
       "id": "python-search-core",
       "paths": [
         "favenio.py",
-        "tests/test_favenio.py"
+        "tests/test_favenio.py",
+        "tests/test_exclusions.py",
+        "tests/test_fact_filters.py",
+        "tests/test_terms.py",
+        "tests/test_line_reader.py"
       ],
       "risk": "critical",
       "priority": 1,
       "reason": "Einzige Suchsemantik; Traversierung, Archive, Extraktion und JSONL-Vertrag",
-      "state": "completed",
+      "state": "pending",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
         "completed_at": "2026-09-03T18:09:41+02:00",
@@ -121,7 +167,13 @@
         "tests": [
           "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed"
         ]
-      }
+      },
+      "pending_paths": [
+        "tests/test_exclusions.py",
+        "tests/test_fact_filters.py",
+        "tests/test_terms.py",
+        "tests/test_line_reader.py"
+      ]
     },
     {
       "id": "release-appcast",
@@ -163,12 +215,13 @@
         "assets/favenio.entitlements",
         "icons/make-icons.swift",
         ".github/workflows/ci.yml",
-        "THIRD-PARTY.md"
+        "THIRD-PARTY.md",
+        ".gitignore"
       ],
       "risk": "high",
       "priority": 2,
       "reason": "Reproduzierbarer App-Aufbau, gepinnte Updater-Abhängigkeit, Signierung und CI",
-      "state": "completed",
+      "state": "pending",
       "last_run": {
         "campaign_id": "20260819T173504680851+0200",
         "completed_at": "2026-08-19T18:12:17+02:00",
@@ -182,7 +235,10 @@
           "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 212 passed",
           "./build-app.sh in dieser Sitzung mehrfach gelaufen: beide Bundles signiert gebaut, beide Headless-Selbsttests bestanden"
         ]
-      }
+      },
+      "pending_paths": [
+        ".gitignore"
+      ]
     },
     {
       "id": "docs-contracts",
@@ -193,12 +249,13 @@
         "CLAUDE.md",
         "BACKLOG.md",
         "tests/test_docs_contract.py",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "docs/codeqa-2026-09.md"
       ],
       "risk": "high",
       "priority": 2,
       "reason": "Oeffentliche Nutzerdoku und Projektkanon beschreiben denselben CLI-Vertrag wie favenio.py; Drift fuehrt Nutzer und jede spaetere Session in die Irre",
-      "state": "completed",
+      "state": "pending",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
         "completed_at": "2026-09-03T18:19:36+02:00",
@@ -211,7 +268,10 @@
         "tests": [
           "python3 -m unittest test_docs_contract: OK"
         ]
-      }
+      },
+      "pending_paths": [
+        "docs/codeqa-2026-09.md"
+      ]
     },
     {
       "id": "quick-app",
@@ -261,6 +321,23 @@
       }
     },
     {
+      "id": "swift-test-support",
+      "paths": [
+        "tests/test_export_writer.py",
+        "tests/test_materialization.py",
+        "tests/test_search_configuration.py",
+        "tests/test_search_runner.py",
+        "tests/configuration_probe.swift",
+        "tests/export_probe.swift",
+        "tests/materialization_probe.swift",
+        "tests/runner_probe.swift"
+      ],
+      "risk": "high",
+      "priority": 2,
+      "reason": "Headless-Verhaltensprüfungen und wiederholte Swift-Kompilierung; Testabdeckung und Laufzeit gemeinsam verbessern",
+      "state": "pending"
+    },
+    {
       "id": "main-app",
       "paths": [
         "gui/FavenioGUI.swift"
@@ -282,16 +359,33 @@
           "./build-app.sh: Selbsttest OK"
         ]
       }
+    },
+    {
+      "id": "performance-tools",
+      "paths": [
+        "tests/benchmark_export.py",
+        "tests/benchmark_line_reader.py",
+        "tests/benchmark_materialization.py",
+        "tests/benchmark_runner.py",
+        "tests/export_benchmark.swift",
+        "tests/materialization_benchmark.swift",
+        "tests/runner_benchmark.swift",
+        "tools"
+      ],
+      "risk": "medium",
+      "priority": 3,
+      "reason": "Reproduzierbare Leistungsmessung, Ergebnisgleichheit und begrenzte Testprozesse",
+      "state": "pending"
     }
   ],
   "architecture": {
-    "campaign_id": "20260903T100457590492+0200",
-    "recorded_at": "2026-09-03T10:05:28+02:00",
-    "observed_head": "ac04c9738c5a9b3b1aa7e2c01ba41bd37a71a42a",
-    "summary": "Die Trennung haelt: favenio.py besitzt die gesamte Suchsemantik, die Swift-Apps bauen keine nach — im Review gezielt geprueft, es gibt in den Frontends keine Endungslisten, keine Archiv-Erkennung, keine Glob-Regeln und keine Metadaten-Feldliste. Die Spannung liegt NICHT zwischen den Schichten, sondern innerhalb der Adapterschicht: rund 145 Zeilen stehen woertlich gleich in beiden Apps, statt in common/FavenioCore.swift.",
-    "paradigm": "Schichtenmodell mit einem gemeinsamen Suchkern und duennen AppKit-Adaptern",
-    "fit": "passt",
-    "recommendation": "Kein Paradigmenwechsel noetig und keiner empfohlen. Stattdessen die Adapterschicht zusammenfuehren: Trefferlisten-Aktionen, QuickLook-Protokoll, Zellenaufbau und Finder-Generationswaechter nach common/. Beleg fuer die Kosten: der QuickLook-Fokusfix vom 2026-09-02 landete nur in der Haupt-App, die Schnellsuche hat weiterhin den alten Stand."
+    "campaign_id": "20260908T002533785169+0200",
+    "recorded_at": "2026-09-08T00:25:35+02:00",
+    "observed_head": "78594f145f91a865ea4f15ab1a45b489ed2dd447",
+    "summary": "Die Suchsemantik bleibt im Python-Kern. Gemeinsame Runner und Materialisierung tragen beide Apps. Die Controller koppeln inzwischen Eingabeauswertung, Konfiguration, Trefferzustand und Darstellung; Suchoptionen werden in beiden Fenstern erneut zusammengesetzt. Der Testaufbau kompiliert dieselben Swift-Quellen mehrfach.",
+    "paradigm": "Schichtenmodell: Python-Suchkern, gemeinsamer Swift-Prozessadapter, ereignisgesteuerte AppKit-Controller",
+    "fit": "gespannt",
+    "recommendation": "Kein Paradigmenwechsel. Bestehende gemeinsame Konfiguration und Controllerbasis gezielt erweitern; Eingabeauswertung und Listenwechsel einmal definieren. Testhilfen bündeln und unabhängige Verhaltensprüfungen erhalten. Nach Erreichen des Budgets keinen neuen Bereich beginnen; den laufenden Bereich einschließlich Tests, Abdeckungsstand und sicherem Abschluss fertigstellen."
   },
   "themes": [
     {
@@ -440,6 +534,86 @@
           "neue Wache gegen dca8e3d rot"
         ]
       }
+    },
+    {
+      "id": "search-input-duplication",
+      "summary": "Beide Apps bauen searchConfiguration und Pixelvalidierung fast gleich. Gemeinsame vorhandene Konfiguration erweitern; alle Rohtexte und Unterschiede des Metadatenfeldmenüs erhalten.",
+      "evidence": [
+        "common/FavenioCore.swift",
+        "gui/FavenioGUI.swift",
+        "quick/FavenioQuick.swift"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-09-08T00:27:57+02:00",
+      "campaign_id": "20260908T002533785169+0200"
+    },
+    {
+      "id": "selection-cancellation",
+      "summary": "MaterializationSelectionRequest.cancel wird im Abschluss nicht berücksichtigt, wenn das Auspacken fertig und die Main-Queue-Completion noch ausstehend ist. Quick.clearHits bricht außerdem nur Vorschauanforderungen ab. Feste Aktionsauswahl bei Abbruch und Listenwechsel deterministisch prüfen.",
+      "evidence": [
+        "common/FavenioCore.swift",
+        "quick/FavenioQuick.swift",
+        "tests/materialization_probe.swift"
+      ],
+      "priority": 1,
+      "state": "pending",
+      "noted_at": "2026-09-08T00:27:57+02:00",
+      "campaign_id": "20260908T002533785169+0200"
+    },
+    {
+      "id": "structured-hit-identity",
+      "summary": "Haupt-App dedupliziert und beide Apps merken Auswahl anhand hit.path. Ein normales Mitglied inner.zip!/x.txt kollidiert mit x.txt im verschachtelten inner.zip. Identität aus filesystemPath und archiveMembers für Deduplikation, Auswahl und Entfernen verwenden.",
+      "evidence": [
+        "common/FavenioCore.swift",
+        "gui/FavenioGUI.swift",
+        "quick/FavenioQuick.swift"
+      ],
+      "priority": 1,
+      "state": "pending",
+      "noted_at": "2026-09-08T00:27:57+02:00",
+      "campaign_id": "20260908T002533785169+0200"
+    },
+    {
+      "id": "export-serialization-cost",
+      "summary": "CSV erzeugt je Zeitfeld einen ISO8601DateFormatter; vorhandene Messung 100000 CSV-Treffer 16,779 s. Einen lokalen Formatter je Export messen. JSONL baut je Treffer Foundation-Objekte ohne autoreleasepool auf; Peak-Speicher vor und nach begrenzter Lebensdauer vergleichen.",
+      "evidence": [
+        "common/FavenioCore.swift",
+        "tests/benchmark_export.py",
+        "tests/export_benchmark.swift"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-09-08T00:27:57+02:00",
+      "campaign_id": "20260908T002533785169+0200"
+    },
+    {
+      "id": "swift-probe-builds",
+      "summary": "Neun Swift-Kompilierungen kosten im Ausgangslauf 29,592 s von 78,053 s. Gemeinsamen Testcode einmal kompilieren, jeden Probefall weiterhin im eigenen Prozess ausführen; keine Messung durch Compilerwiederholung belasten.",
+      "evidence": [
+        "tests/test_search_runner.py",
+        "tests/test_swift_guards.py",
+        "tests/test_materialization.py",
+        "tests/test_export_writer.py",
+        "tests/test_search_configuration.py"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-09-08T00:27:57+02:00",
+      "campaign_id": "20260908T002533785169+0200"
+    },
+    {
+      "id": "quick-double-click-context",
+      "summary": "Quick.openSelected setzt contextRow nur bei nichtnegativem clickedRow; nach geschlossenem Kontextmenü kann ein Doppelklick im leeren Bereich die alte Kontextzeile öffnen. Haupt-App setzt bereits auch -1. Handler und echten Auswahlvertrag gemeinsam prüfen.",
+      "evidence": [
+        "quick/FavenioQuick.swift",
+        "gui/FavenioGUI.swift",
+        "common/FavenioCore.swift"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-09-08T00:27:57+02:00",
+      "campaign_id": "20260908T002533785169+0200"
     }
   ]
 }
