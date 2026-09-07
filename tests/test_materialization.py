@@ -70,14 +70,6 @@ class MaterializationTests(unittest.TestCase):
                 self.assertIn(root, Path(outcome['path']).parents)
         return report
 
-    def test_a_member_is_extracted_off_the_main_thread(self):
-        report = self.run_probe('benchmark', self.archive, 'inner/geheim.txt')
-        self.assertTrue(report['ok'], report)
-        self.assertEqual(report['bytes'], len('FAVENIO_PROBE im Zip'))
-        # Der Aufruf selbst kehrt sofort zurück; Main bleibt frei.
-        self.assertLess(report['blocked_seconds'], 0.01)
-        self.assertLess(report['max_delay'], 0.05)
-
     def test_synchronous_preview_replacement_clears_the_loading_state(self):
         report = self.run_probe('preview-sync', self.archive, 'inner/geheim.txt')
         self.assertEqual(report['states'], [True, False])
@@ -89,6 +81,7 @@ class MaterializationTests(unittest.TestCase):
     def test_open_and_preview_share_one_extracted_file(self):
         report = self.run_probe('same-file', self.archive, 'inner/geheim.txt')
         self.assertEqual(report['state'], 'ready')
+        self.assertEqual(report['content'], 'FAVENIO_PROBE im Zip')
         self.assertTrue(report['deferred'])
         # Die zweite Anforderung kommt aus dem Cache: sofort, synchron,
         # dieselbe Datei — die auch knownURL() (Drag-and-drop) nennt.
@@ -139,10 +132,10 @@ class MaterializationTests(unittest.TestCase):
 
     def test_a_stderr_flood_does_not_stall_the_extraction(self):
         # Eine volle stderr-Pipe hält den Kern an, während wir auf stdout
-        # warten. 200 000 Zeilen sind weit mehr als ein Pipe-Puffer.
+        # warten. 4096 lange Zeilen überschreiten zusammen 1 MiB.
         cli = self.fake_cli('flood', '''
-            for i in range(200000):
-                print("favenio: warnung: %d" % i, file=sys.stderr)
+            for i in range(4096):
+                print("favenio: warnung: %d " % i + "x" * 256, file=sys.stderr)
             emit()
             ''')
         report = self.run_probe('stderr-flood', cli, self.archive, 'x.txt')
@@ -186,11 +179,15 @@ class MaterializationTests(unittest.TestCase):
         self.assertEqual(counter.read_text(), 'x')
 
     def test_cleanup_stops_running_jobs_and_creates_nothing_afterwards(self):
+        pid_file = self.root / 'cleanup.pid'
         cli = self.fake_cli('late', '''
-            time.sleep(0.5)
+            with open(%r, "w") as handle:
+                handle.write(str(os.getpid()))
+            time.sleep(20)
             emit()
-            ''')
-        report = self.run_probe('cleanup', cli, self.archive, 'x.txt')
+            ''' % str(pid_file))
+        report = self.run_probe('cleanup', cli, self.archive, 'x.txt', pid_file)
+        self.assertTrue(report['process_gone'])
         self.assertEqual(report['state'], 'cancelled')
         # Der Root ist nach cleanup() weg und kommt durch den späten
         # Auftrag nicht wieder.

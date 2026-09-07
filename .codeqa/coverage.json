@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 1299612
+    "tokens_spent": 1341876
   },
   "campaign_history": [
     {
@@ -328,13 +328,25 @@
       "risk": "high",
       "priority": 2,
       "reason": "Headless-Verhaltensprüfungen und wiederholte Swift-Kompilierung; Testabdeckung und Laufzeit gemeinsam verbessern",
-      "state": "pending",
+      "state": "in_progress",
       "pending_paths": [
         "tests/swift_test_support.py",
         "tests/test_probe.swift",
         "tests/quick_scope_probe.swift.in",
         "tests/test_swift_test_support.py"
-      ]
+      ],
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:26:57+02:00",
+        "required_review": "full",
+        "status_at_start": "pending",
+        "covered_pending_paths": [
+          "tests/swift_test_support.py",
+          "tests/test_probe.swift",
+          "tests/quick_scope_probe.swift.in",
+          "tests/test_swift_test_support.py"
+        ]
+      }
     },
     {
       "id": "main-app",
@@ -611,14 +623,18 @@
         "tests/export_benchmark.swift"
       ],
       "priority": 2,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-08T00:27:57+02:00",
       "campaign_id": "20260908T002533785169+0200",
       "started_at": "2026-09-08T01:23:21+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:23:21+02:00",
-        "observed_head": "87104d115239e78b2da6da75492c263a72545ca6"
+        "completed_at": "2026-09-08T01:26:57+02:00",
+        "observed_head": "b91e15e1c61ed4a44ba9e1bc3c1ba0e2dfbf9078",
+        "summary": "CSV verwendet einen lokalen Formatter je Export, JSONL gibt Foundation-Zwischenobjekte je Zeile frei. Vollständiger Ausgabevergleich und drei wechselweise Messpaare: CSV 16.005 auf 0.289 s; JSONL-Peak 514.016 auf 66.047 MiB.",
+        "tests": [
+          "Exportprobe bestanden; 74 Swift-Wachen, 8 Dokumentationsprüfungen und beide App-Selbsttests 0.34.6 grün; 24 geprüfte Messläufe."
+        ]
       }
     },
     {
@@ -695,6 +711,18 @@
           "14 System-Materialisierungstests in12,558s, Dokumentationstests und beide App-Selbsttests0.34.6 bestanden; Diff geprüft"
         ]
       }
+    },
+    {
+      "id": "export-test-scheduling",
+      "summary": "Exportprobe prüft freie Main-Queue noch mit 3000 CSV-Treffern und 0.2-s-/Timergrenzen. Nach starker Serializer-Beschleunigung ist dies hardwareabhängig. Einen kleinen injizierbaren Exportauftrag im bestehenden Writer nutzen, den ausschließlich Main nach Rückkehr des Starts freigibt; echte Format-/Fehlertests behalten.",
+      "evidence": [
+        "common/FavenioCore.swift",
+        "tests/export_probe.swift"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-09-08T01:29:13+02:00",
+      "campaign_id": "20260908T002533785169+0200"
     }
   ]
 }

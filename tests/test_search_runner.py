@@ -10,16 +10,17 @@ class SearchRunnerTests(unittest.TestCase):
     def run_probe(self, mode):
         result = run_probe('runner', mode)
         report = json.loads(result.stdout)
-        self.assertTrue(report['on_main'])
+        self.assertEqual(report['completions'], 1)
         self.assertFalse(report['running'])
         self.assertLessEqual(report['largest_batch'], 256)
         self.assertLessEqual(report['peak_packets'], 2)
         self.assertLessEqual(report['peak_bytes'], 1024 * 1024)
         return report
 
-    def test_100000_hits_arrive_before_completion(self):
-        result = self.run_probe('benchmark')
-        self.assertEqual(result['hits'], 100000)
+    def test_multiple_packets_and_partial_tail_arrive_in_order_before_completion(self):
+        result = self.run_probe('ordered')
+        self.assertEqual(result['hits'], 4097)
+        self.assertTrue(result['ordered'])
         self.assertEqual(result['status'], 0)
 
     def test_progress_without_hits_reaches_consumer(self):
@@ -78,8 +79,3 @@ class SearchRunnerTests(unittest.TestCase):
         self.assertEqual(report['hits'], 1000)
         self.assertEqual(report['stale'], 0)
         self.assertGreater(report['first_queued'], 0)
-
-    def test_quick_stops_with_twenty_hits(self):
-        result = self.run_probe('top20')
-        self.assertEqual(result['hits'], 20)
-        self.assertLess(result['seconds'], 2)

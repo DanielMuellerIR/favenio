@@ -10,6 +10,7 @@ struct RunnerProbe {
         var current: SearchRunner?
         var runners: [SearchRunner] = []
         var completed = 0
+        var completionCounts = Array(repeating: 0, count: 20)
         var accepted: [String] = []
         for index in 0..<20 {
             current?.cancel()
@@ -18,9 +19,15 @@ struct RunnerProbe {
             current = runner
             let script = "import json; [print(json.dumps({'path':'/run-\(index)/'+str(i),'type':'file','isDirectory':False,'filesystemPath':'/run-\(index)/'+str(i),'archiveMembers':[]})) for i in range(1000)]"
             runner.start(arguments: ["-c", script], onBatch: { [weak runner] hits, _ in
+                precondition(Thread.isMainThread)
                 guard let runner, current === runner else { return }
                 accepted.append(contentsOf: hits.map { $0.path })
-            }, completion: { _ in completed += 1 })
+            }, completion: { _ in
+                precondition(Thread.isMainThread)
+                completionCounts[index] += 1
+                precondition(completionCounts[index] == 1)
+                completed += 1
+            })
             // A hat wirklich Zeit zum Produzieren. Main hält seine Pakete
             // zurück, bevor B die aktuelle Identität übernimmt.
             if index == 0 {
@@ -60,12 +67,12 @@ struct RunnerProbe {
         case "exit-first": script += "hit(0)\nif os.fork()==0:\n time.sleep(.1);os._exit(0)\nos._exit(0)"
         case "oversize": script += "sys.stdout.write('x'*1100000);sys.stdout.flush();time.sleep(5)"
         case "cancel-before", "cancel", "backpressure": script += "[hit(i) for i in range(100000)];time.sleep(5)"
-        default: script += "[hit(i) for i in range(100000)]"
+        default: script += "[hit(i) for i in range(4097)]"
         }
         var hits: [Hit] = []
         var completed: SearchExit?
         var largestBatch = 0
-        var callbacksOnMain = true
+        var completionCount = 0
         var lastProgress = ""
         let runner = SearchRunner()
         if mode == "cancel-before" { runner.cancel() }
@@ -79,20 +86,20 @@ struct RunnerProbe {
         runner.start(arguments: ["-u", "-c", script],
                      executable: mode == "start-error" ? "/no-such-favenio-interpreter" : pythonPath,
                      onBatch: { batch, progress in
+            precondition(Thread.isMainThread)
             if let progress {
                 lastProgress = progress
                 if mode == "ignore-term", progress == "ready" { runner.cancel() }
             }
-            callbacksOnMain = callbacksOnMain && Thread.isMainThread
             largestBatch = max(largestBatch, batch.count)
-            if mode == "top20" {
-                hits.append(contentsOf: batch.prefix(max(0, 20 - hits.count)))
-                if hits.count == 20 { runner.cancel() }
-            } else { hits.append(contentsOf: batch) }
-        }, completion: { completed = $0 })
-        if mode == "cancel" {
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { runner.cancel() }
-        }
+            hits.append(contentsOf: batch)
+            if mode == "cancel", !batch.isEmpty { runner.cancel() }
+        }, completion: {
+            precondition(Thread.isMainThread)
+            completionCount += 1
+            precondition(completionCount == 1)
+            completed = $0
+        })
         if mode == "backpressure" {
             // Main verarbeitet absichtlich keine Pakete; Abbruch muss den
             // Hintergrundleser trotzdem aus dem vollen Transport holen.
@@ -112,7 +119,8 @@ struct RunnerProbe {
             "seconds": ProcessInfo.processInfo.systemUptime - start,
             "rss": usage.ru_maxrss, "peak_packets": runner.transportPeaks.packets,
             "peak_bytes": runner.transportPeaks.bytes, "progress": lastProgress, "max_delay": delay, "largest_batch": largestBatch,
-            "on_main": callbacksOnMain, "running": runner.process.isRunning, "status": completed?.status ?? -999,
+            "completions": completionCount,
+            "ordered": hits.enumerated().allSatisfy { $0.element.path == "/fixture/file-\($0.offset).txt" }, "running": runner.process.isRunning, "status": completed?.status ?? -999,
             "warnings": completed?.warningCount ?? -1,
             "error": completed?.errorMessage ?? ""]
         print(String(decoding: try! JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]), as: UTF8.self))

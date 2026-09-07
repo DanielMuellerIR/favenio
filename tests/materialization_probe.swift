@@ -134,6 +134,9 @@ struct MaterializationProbe {
             _ = spin(until: { outcome != nil })
             report.merge(describe(outcome)) { $1 }
             if mode == "same-file" {
+                if case .ready(let url)? = outcome {
+                    report["content"] = try! String(contentsOf: url, encoding: .utf8)
+                }
                 // Zweite Anforderung: aus dem Cache, sofort und synchron.
                 var second: MaterializationOutcome?
                 let again = manager.request(target) {
@@ -198,12 +201,19 @@ struct MaterializationProbe {
             manager.cliPath = arguments[2]
             let before = favenioTempDirectories()
             manager.request(hit(arguments[3], [arguments[4]])) { received(); outcome = $0 }
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            let pidFile = arguments[5]
+            precondition(spin(until: {
+                guard let text = try? String(contentsOfFile: pidFile, encoding: .utf8),
+                      let pid = Int32(text) else { return false }
+                return pid > 0
+            }, seconds: 5), "Kern hat keine PID veröffentlicht")
+            let pid = Int32(try! String(contentsOfFile: pidFile, encoding: .utf8))!
             manager.cleanup()
             let afterCleanup = favenioTempDirectories()
             _ = spin(until: { outcome != nil })
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 1.0))
+            let gone = spin(until: { kill(pid, 0) != 0 && errno == ESRCH }, seconds: 3)
             report = describe(outcome)
+            report["process_gone"] = gone
             report["dirs_before"] = before
             report["dirs_after_cleanup"] = afterCleanup
             report["dirs_end"] = favenioTempDirectories()

@@ -70,6 +70,7 @@ struct ExportProbe {
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protected.path) }
         var fileFailed = false
         writer.write(fixture, format: .paths, to: existing) { result in
+            precondition(Thread.isMainThread && !writer.isWriting)
             if case .failure = result { fileFailed = true }
         }
         wait { fileFailed }
@@ -84,6 +85,7 @@ struct ExportProbe {
         let many = Array(repeating: fixture[0], count: 3000)
         let submitStart = ProcessInfo.processInfo.systemUptime
         precondition(writer.write(many, format: .csv, to: root.appendingPathComponent("retry.csv")) { result in
+            precondition(Thread.isMainThread && !writer.isWriting)
             if case .failure(let error) = result { fatalError(error.localizedDescription) }
             precondition(ticks > 0)
             retried = true
