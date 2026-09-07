@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 1498782
+    "tokens_spent": 1554554
   },
   "campaign_history": [
     {
@@ -247,15 +247,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "completed_at": "2026-09-08T01:43:21+02:00",
-        "observed_head": "efacaf5e46335c9caa686aff547b0ef7f5aea269",
-        "content_sha256": "72f4c46241633adfbd6540ff7286a99507f37091a7a5bdfa8d6635df21b04206",
+        "completed_at": "2026-09-08T01:47:08+02:00",
+        "observed_head": "fddce4c812cfda964b93cef1ea20565d1134559a",
+        "content_sha256": "40d4c5afbc6c2785865d1ca979e36da082b8065dbc9a5b0a8d648bdea6a96eec",
         "file_count": 8,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta und heutige Dokumentationsgrenzen geprüft; redundante Tabellen-/Quelltexttests entfernt, CLI-Optionen per AST robust erfasst, Regex-Erklärung auf Favenios Zeilenvertrag präzisiert, Backlog mit Reviewentscheidungen abgeglichen.",
+        "summary": "Delta seit Bereichsreview: bearbeiteten Reset-Backlog entfernt, Changelog und Kampagnenbericht mit verifiziertem gemeinsamen Trefferersatz aktualisiert.",
         "tests": [
-          "6 Dokumentationstests grün, echte JSONL-Ausgabe für vier Trefferarten; alle 33 CLI-Optionen auch nach AST-Neuformatierung gleich erkannt; Diff-Review ohne weiteren Befund."
+          "6 Dokumentationsprüfungen und beide App-Selbsttests bestanden; Diff-Review bestätigt erledigten Backlog-Punkt."
         ]
       }
     },
@@ -748,14 +748,18 @@
         "common/FavenioCore.swift"
       ],
       "priority": 2,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-08T01:42:25+02:00",
       "campaign_id": "20260908T002533785169+0200",
       "started_at": "2026-09-08T01:43:32+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:43:32+02:00",
-        "observed_head": "efacaf5e46335c9caa686aff547b0ef7f5aea269"
+        "completed_at": "2026-09-08T01:47:08+02:00",
+        "observed_head": "fddce4c812cfda964b93cef1ea20565d1134559a",
+        "summary": "Haupt-App ersetzt Treffer, Deduplikationsmenge, Statistiken und Auswahl für Suchstart und beide Übergaben an einer Stelle. Quick und Vorlagen behalten ihre unterschiedlichen Abläufe; Backlog-Punkt erledigt.",
+        "tests": [
+          "Echter Controller-Selbsttest mit neuer und leerer Liste, Auswahl und altem Fortschritt; beide App-Selbsttests 0.34.6 und 80 Swift-/Dokumentationstests grün."
+        ]
       }
     }
   ]
