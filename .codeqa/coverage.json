@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 407916
+    "tokens_spent": 638251
   },
   "campaign_history": [
     {
@@ -151,36 +151,22 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Einzige Suchsemantik; Traversierung, Archive, Extraktion und JSONL-Vertrag",
-      "state": "in_progress",
+      "state": "completed",
       "last_run": {
-        "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:09:41+02:00",
-        "observed_head": "67098dcf2f13df4528186f8180bcc0a036de10f4",
-        "content_sha256": "bd97b5e76c427a678e16f8076ab92e3917aadcf860f4deaea64131f16ecd5761",
-        "file_count": 2,
-        "review": "delta-plus-boundaries",
-        "outcome": "reviewed-clean",
-        "summary": "Delta ist ausschliesslich der Versionsbump 0.28.1 -> 0.28.2",
-        "tests": [
-          "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed"
-        ]
-      },
-      "pending_paths": [
-        "tests/test_exclusions.py",
-        "tests/test_fact_filters.py",
-        "tests/test_terms.py",
-        "tests/test_line_reader.py"
-      ],
-      "active_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T00:29:23+02:00",
-        "required_review": "delta-plus-boundaries",
-        "status_at_start": "changed",
-        "covered_pending_paths": [
-          "tests/test_exclusions.py",
-          "tests/test_fact_filters.py",
-          "tests/test_terms.py",
-          "tests/test_line_reader.py"
+        "completed_at": "2026-09-08T00:38:10+02:00",
+        "observed_head": "ce71cc6035846908ab0267f0c90d7270815b28b7",
+        "content_sha256": "03c80be73aec08eb1308ca2822e7427d023a6a79591622173ee3008eb4bee545",
+        "file_count": 6,
+        "review": "delta-plus-boundaries",
+        "outcome": "improved",
+        "summary": "Gesamte heutige Kernmechanismen und neue Facts/Terms/Exclusions/LineReader-Tests geprüft. Sieben bestätigte Randfehler korrigiert; gemeinsame Faktenvalidierung, bedingte bsdtar-Elternheuristik und schlankere Testfixtures. Alle Änderungen unabhängig nachgeprüft; Protokoll docs/codeqa-2026-09.md.",
+        "tests": [
+          "267 Kerntests: System-Python 3,818 s und Python 3.14.7 3,524 s, alle bestanden",
+          "Beide Apps 0.34.4 gebaut, beide Headless-Selbsttests bestanden",
+          "Neue Bugregressionen vor Fix rot; 6 Katalogtests auch bei fehlenden Werkzeugen bestanden",
+          "10000 identische simulierte bsdtar-Einträge: Ergebnisse exakt gleich, Median 11,944 auf 2,724 ms, Python-Peak 5698691 auf 1170880 Bytes",
+          "Unabhängiger Diff-Review und AST-Vergleich der verschobenen Testkörper ohne Befund"
         ]
       }
     },
