@@ -38,10 +38,22 @@ def reproduce(root, source):
                      result.stdout.replace(str(root), "$FIXTURE").splitlines()],
             "stderr": result.stderr.replace(str(root), "$FIXTURE"),
         }
-    correct = (report["files"]["exit"] == 1
-               and report["dirs"]["exit"] == 0
-               and len(report["dirs"]["hits"]) == 1
-               and report["dirs"]["hits"][0]["isDirectory"] is True)
+    files, dirs = report["files"], report["dirs"]
+    for result in (files, dirs):
+        if result['stderr'] or result['exit'] != (0 if result['hits'] else 1):
+            raise RuntimeError('Unvollständiger oder widersprüchlicher Suchlauf')
+        if any(not isinstance(hit, dict) or type(hit.get('isDirectory')) is not bool
+               or hit.get('filesystemPath') != '$FIXTURE/empty.iso'
+               or hit.get('archiveMembers') != ['empty']
+               or hit.get('type') != 'member'
+               for hit in result['hits']):
+            raise ValueError('Ungültiger Treffertyp im JSONL-Strom')
+    correct = (not files['hits'] and len(dirs['hits']) == 1
+               and dirs['hits'][0]['isDirectory'] is True)
+    reproduced = (not dirs['hits'] and len(files['hits']) == 1
+                  and files['hits'][0]['isDirectory'] is False)
+    if not correct and not reproduced:
+        raise RuntimeError('Ausgabe entspricht weder korrektem Ordner noch bekanntem Typfehler')
     report["directory_type_correct"] = correct
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0 if correct else 1
@@ -69,6 +81,6 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print("ISO-Repro fehlgeschlagen: " + str(error), file=sys.stderr)
         sys.exit(2)

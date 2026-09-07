@@ -5,6 +5,7 @@ import Darwin
   let mode = CommandLine.arguments[1]
   var hits: [Hit] = []
   var done = false
+  var status: Int32?
   let start = ProcessInfo.processInfo.systemUptime
   var last = start
   var maxDelay = 0.0
@@ -15,8 +16,8 @@ import Darwin
   let args = ["-u", "-c", "import json,sys; [print(json.dumps({'path':'/fixture/file-%d.txt'%i,'type':'file','isDirectory':False,'filesystemPath':'/fixture/file-%d.txt'%i,'archiveMembers':[]})) for i in range(100000)]"]
   if mode == "quick" {
    DispatchQueue.global().async {
-    _ = runSearchStreaming(arguments: args, onHit: { hits.append($0) }, onProgress: { _ in })
-    DispatchQueue.main.async { done = true }
+    let result = runSearchStreaming(arguments: args, onHit: { hits.append($0) }, onProgress: { _ in })
+    DispatchQueue.main.async { status = result.status; done = true }
    }
   } else {
    let process = Process(); process.executableURL = URL(fileURLWithPath: pythonPath); process.arguments = args
@@ -37,13 +38,23 @@ import Darwin
      DispatchQueue.main.async { eof = true; done = eof && ended }
     } else { DispatchQueue.main.async { consume(data) } }
    }
-   process.terminationHandler = { _ in DispatchQueue.main.async { ended = true; done = eof && ended } }
+   process.terminationHandler = { process in DispatchQueue.main.async { status = process.terminationStatus; ended = true; done = eof && ended } }
    try! process.run()
   }
   while !done && ProcessInfo.processInfo.systemUptime-start < 60 { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001)) }
   timer.invalidate()
+  let elapsed = ProcessInfo.processInfo.systemUptime-start
   var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
-  print("mode=\(mode) hits=\(hits.count) seconds=\(ProcessInfo.processInfo.systemUptime-start) rss=\(usage.ru_maxrss) max_delay=\(maxDelay)")
-  if hits.count != 100000 { exit(1) }
+  guard done, status == 0 else {
+   fputs("Runner-Messung nicht erfolgreich abgeschlossen\n", stderr)
+   exit(2)
+  }
+  guard hits.count == 100000,
+        hits.enumerated().allSatisfy({ $0.element.path == "/fixture/file-\($0.offset).txt" }) else {
+   fputs("Runner-Messung verliert oder vertauscht Treffer\n", stderr)
+   exit(2)
+  }
+  print("mode=\(mode) hits=\(hits.count) seconds=\(elapsed) rss=\(usage.ru_maxrss) max_delay=\(maxDelay)")
+
  }
 }

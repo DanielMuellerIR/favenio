@@ -9,6 +9,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
+from swift_test_support import run_process
 
 REPO = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser(description=__doc__)
@@ -33,7 +34,7 @@ with tempfile.TemporaryDirectory() as temp:
         command = ['swiftc', '-O', str(core), str(REPO / 'tests/export_benchmark.swift'), '-o', str(binary)]
         if 'final class ExportWriter' in source:
             command += ['-D', 'AFTER']
-        subprocess.run(command, check=True, capture_output=True, cwd=REPO, timeout=120)
+        run_process(command, timeout=120).check_returncode()
         builds[variant] = binary
     for repeat in range(args.repetitions):
         for format_name in ('paths', 'pathsNUL', 'jsonl', 'csv'):
@@ -41,9 +42,10 @@ with tempfile.TemporaryDirectory() as temp:
             order = ('before', 'after') if repeat % 2 == 0 else ('after', 'before')
             for variant in order:
                 destination = Path(temp) / (variant + '.export')
-                output = subprocess.check_output(
-                    [str(builds[variant]), format_name, str(destination)],
-                    text=True, cwd=REPO, timeout=130)
+                result = run_process(
+                    [str(builds[variant]), format_name, str(destination)], timeout=130)
+                result.check_returncode()
+                output = result.stdout
                 report = json.loads(output)
                 data = destination.read_bytes()
                 if report['hits'] != 100000 or report['bytes'] != len(data) or not data:

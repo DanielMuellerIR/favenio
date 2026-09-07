@@ -12,12 +12,14 @@ from pathlib import Path
 import platform
 import resource
 import statistics
-import subprocess
 import sys
 import tarfile
 import tempfile
 import time
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+from swift_test_support import run_process
 
 REPETITIONS = 3
 LARGE_BUDGET = "1000000000"
@@ -144,10 +146,10 @@ def bsdtar_cases(output):
                 content = content[:-8] + b"\nNEEDLE\n"
             (folder / "data.txt").write_bytes(content)
             path = output / (label + ".7z")
-            subprocess.run([
+            run_process([
                 "/usr/bin/tar", "-cf", str(path), "--format", "7zip",
                 "-C", str(folder), "data.txt",
-            ], check=True)
+            ], timeout=120).check_returncode()
             cases.append(make_case("bsdtar", path, "content", "NEEDLE", label))
             if size == 1048576:
                 cases.append(make_case("bsdtar", path, "content", "NEEDLE", label + "-budget", "65536"))
@@ -232,11 +234,15 @@ def measure_case(output, case):
     for repeat in range(REPETITIONS):
         order = variants if repeat % 2 == 0 else tuple(reversed(variants))
         for name in order:
-            process = subprocess.run([
+            process = run_process([
                 sys.executable, str(Path(__file__).resolve()), "--worker",
                 str(output), name, json.dumps(case),
-            ], capture_output=True, text=True, check=True)
-            runs[name].append(json.loads(process.stdout))
+            ], timeout=120)
+            process.check_returncode()
+            measured = json.loads(process.stdout)
+            if measured['code'] not in (0, 1):
+                raise RuntimeError('Ungültiger Suchlauf: ' + repr(measured))
+            runs[name].append(measured)
     signatures = {
         (result["code"], result["hits"], result["warnings"])
         for variant_runs in runs.values() for result in variant_runs

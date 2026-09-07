@@ -13,12 +13,12 @@ des jeweiligen favenio.py als Unterprozess: Wanduhrzeit und Spitzenspeicher
 """
 import argparse
 import json
-import os
 import resource
 import subprocess
 import tempfile
 import time
 from pathlib import Path
+from swift_test_support import run_process
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -31,13 +31,13 @@ def measure(script, fixture, interpreter, pattern):
     before = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     start = time.perf_counter()
     result = subprocess.run([interpreter, str(script)] + PATTERNS[pattern]
-                            + [str(fixture)], capture_output=True, text=True)
+                            + [str(fixture)], capture_output=True, text=True, timeout=60)
     seconds = time.perf_counter() - start
     # ru_maxrss der Kinder ist ein Höchststand über ALLE bisherigen Kinder;
     # deshalb läuft jede Messung in einem eigenen Python-Prozess (siehe main).
     after = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     return {'seconds': seconds, 'rss': max(after, before),
-            'exit': result.returncode, 'stderr': result.stderr.strip()}
+            'exit': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr}
 
 
 def main():
@@ -50,6 +50,8 @@ def main():
                         metavar=('SCRIPT', 'FIXTURE', 'PY', 'PATTERN'),
                         help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.repetitions < 1:
+        parser.error("--repetitions muss positiv sein")
     if args.measure:
         print(json.dumps(measure(*args.measure)))
         return
@@ -57,7 +59,7 @@ def main():
         temp_path = Path(temp)
         old = temp_path / 'favenio_old.py'
         old.write_text(subprocess.check_output(
-            ['git', 'show', args.baseline + ':favenio.py'], cwd=REPO, text=True))
+            ['git', 'show', args.baseline + ':favenio.py'], cwd=REPO, text=True, timeout=30))
         scripts = {'before': old, 'after': REPO / 'favenio.py'}
         line = ('x' * 79 + '\n').encode()
         short = temp_path / 'short.txt'
@@ -73,17 +75,26 @@ def main():
         for repeat in range(args.repetitions):
             for fixture_name, fixture in (('short', short), ('long', long)):
                 for pattern in PATTERNS:
-                    for variant, script in scripts.items():
-                        output = subprocess.check_output(
-                            [args.interpreter, __file__, '--baseline',
-                             args.baseline, '--measure', str(script),
-                             str(fixture), args.interpreter, pattern],
-                            text=True)
-                        report = json.loads(output)
+                    reports = {}
+                    order = ('before', 'after') if repeat % 2 == 0 else ('after', 'before')
+                    for variant in order:
+                        output = run_process(
+                            [args.interpreter, str(Path(__file__).resolve()), '--baseline',
+                             args.baseline, '--measure', str(scripts[variant]),
+                             str(fixture), args.interpreter, pattern], timeout=65)
+                        output.check_returncode()
+                        report = json.loads(output.stdout)
+                        expected_exit = 1 if fixture_name == 'long' and pattern == 'regex' else 0
+                        if report['exit'] != expected_exit:
+                            raise RuntimeError('Unerwarteter Suchstatus: ' + repr(report))
                         report.update({'variant': variant, 'pattern': pattern,
-                                       'fixture': fixture_name,
-                                       'repeat': repeat + 1})
-                        print(json.dumps(report, sort_keys=True), flush=True)
+                                       'fixture': fixture_name, 'repeat': repeat + 1})
+                        reports[variant] = report
+                    for field in ('exit', 'stdout', 'stderr'):
+                        if reports['before'][field] != reports['after'][field]:
+                            raise RuntimeError('Zeilenleser-Ausgaben unterscheiden sich: ' + field)
+                    for variant in order:
+                        print(json.dumps(dict(reports[variant], equivalent=True), sort_keys=True), flush=True)
 
 
 if __name__ == '__main__':

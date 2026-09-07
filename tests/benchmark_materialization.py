@@ -12,6 +12,7 @@ Kerns (256 MiB je Eintrag, 1 GiB gesamt).
 """
 import argparse
 import io
+import hashlib
 import json
 import os
 import shutil
@@ -19,18 +20,26 @@ import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+from swift_test_support import run_process
 
 REPO = Path(__file__).resolve().parent.parent
 HEADER = ('import AppKit\nimport Darwin\nimport Quartz\n'
           'import UniformTypeIdentifiers\nlet pythonPath = "/usr/bin/python3"\n')
 
 
-def build(temp, name, source, probe):
+def build(temp, name, source, asynchronous=False):
     core = Path(temp) / (name + '.swift')
+    # Foundation ignoriert TMPDIR auf manchen macOS-Versionen. Nur die
+    # Temp-Wurzel im Messbuild ersetzen, bei alter und neuer Quelle gleich.
+    source = source.replace('FileManager.default.temporaryDirectory',
+                            'URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"]!, isDirectory: true)')
     core.write_text(HEADER + source[source.index('struct Hit:'):])
     binary = Path(temp) / name
-    subprocess.run(['swiftc', '-O', str(core), str(REPO / 'tests' / probe),
-                    '-o', str(binary)], check=True, capture_output=True)
+    command = ['swiftc', '-O', str(core), str(REPO / 'tests/materialization_benchmark.swift'),
+               '-o', str(binary)]
+    if asynchronous:
+        command += ['-D', 'ASYNC']
+    run_process(command, timeout=120).check_returncode()
     return binary
 
 
@@ -49,8 +58,13 @@ def make_fixtures(root):
     nested = root / 'outer.zip'
     with zipfile.ZipFile(nested, 'w', zipfile.ZIP_STORED) as archive:
         archive.writestr('inner.zip', inner.getvalue())
-    fixtures = {'big': [str(big), 'big.bin'],
-                'nested': [str(nested), 'inner.zip', 'inner.bin']}
+    def repeated_hash(count):
+        digest = hashlib.sha256()
+        for _ in range(count):
+            digest.update(payload)
+        return digest.hexdigest()
+    fixtures = {'big': ([str(big), 'big.bin'], 128 * len(payload), repeated_hash(128)),
+                'nested': ([str(nested), 'inner.zip', 'inner.bin'], 64 * len(payload), repeated_hash(64))}
     # Ein 7z (LZMA) mit 128 MiB Zufallsdaten: Hier arbeitet der Entpacker
     # wirklich, statt nur Bytes zu kopieren — sich wiederholende Daten
     # dekodiert LZMA fast so schnell wie ein gespeichertes Zip (gemessen
@@ -59,12 +73,15 @@ def make_fixtures(root):
     if bsdtar:
         staging = root / 'staging'
         staging.mkdir()
+        digest = hashlib.sha256()
         with open(staging / 'big7z.bin', 'wb') as handle:
             for _ in range(128):
-                handle.write(os.urandom(1024 * 1024))
-        subprocess.run([bsdtar, '-cf', str(root / 'big.7z'), '--format', '7zip',
-                        '-C', str(staging), 'big7z.bin'], check=True)
-        fixtures['big7z'] = [str(root / 'big.7z'), 'big7z.bin']
+                chunk = os.urandom(1024 * 1024)
+                handle.write(chunk)
+                digest.update(chunk)
+        run_process([bsdtar, '-cf', str(root / 'big.7z'), '--format', '7zip',
+                        '-C', str(staging), 'big7z.bin'], timeout=180).check_returncode()
+        fixtures['big7z'] = ([str(root / 'big.7z'), 'big7z.bin'], 128 * len(payload), digest.hexdigest())
     return fixtures
 
 
@@ -76,31 +93,33 @@ def main():
     parser.add_argument('--skip-async', action='store_true',
                         help='nur den synchronen Weg messen (alter Stand)')
     args = parser.parse_args()
+    if args.repetitions < 1:
+        parser.error("--repetitions muss positiv sein")
     with tempfile.TemporaryDirectory(prefix='favenio-mat-') as temp:
         temp_path = Path(temp)
         fixtures = make_fixtures(temp_path)
         before = subprocess.check_output(
             ['git', 'show', args.baseline + ':common/FavenioCore.swift'],
-            cwd=REPO, text=True)
+            cwd=REPO, text=True, timeout=30)
         after = (REPO / 'common/FavenioCore.swift').read_text()
-        runs = [('before', build(temp, 'before', before,
-                                 'materialization_benchmark.swift')),
-                ('after-sync', build(temp, 'after_sync', after,
-                                     'materialization_benchmark.swift'))]
+        runs = [('before', build(temp, 'before', before)),
+                ('after-sync', build(temp, 'after_sync', after))]
         if not args.skip_async:
-            runs.append(('after-async', build(temp, 'after_async', after,
-                                              'materialization_probe.swift')))
+            runs.append(('after-async', build(temp, 'after_async', after, asynchronous=True)))
         for repeat in range(args.repetitions):
-            for fixture, arguments in fixtures.items():
-                for variant, binary in runs:
-                    command = [str(binary)]
-                    if variant == 'after-async':
-                        command.append('benchmark')
-                    output = subprocess.check_output(command + arguments,
-                                                     text=True, timeout=120)
-                    report = json.loads(output)
+            for fixture, (arguments, size, digest) in fixtures.items():
+                order = runs if repeat % 2 == 0 else list(reversed(runs))
+                for variant, binary in order:
+                    with tempfile.TemporaryDirectory(prefix='extraction-', dir=temp) as extraction:
+                        environment = dict(os.environ, TMPDIR=extraction + os.sep)
+                        output = run_process([str(binary)] + arguments,
+                                             environment=environment, timeout=120)
+                        output.check_returncode()
+                        report = json.loads(output.stdout)
+                        if not report['ok'] or report['bytes'] != size or report['sha256'] != digest:
+                            raise RuntimeError('Extrahierter Inhalt stimmt nicht: ' + repr(report))
                     report.update({'variant': variant, 'fixture': fixture,
-                                   'repeat': repeat + 1})
+                                   'repeat': repeat + 1, 'verified': True})
                     print(json.dumps(report, sort_keys=True), flush=True)
 
 

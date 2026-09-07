@@ -381,7 +381,14 @@
       "risk": "medium",
       "priority": 3,
       "reason": "Reproduzierbare Leistungsmessung, Ergebnisgleichheit und begrenzte Testprozesse",
-      "state": "pending"
+      "state": "in_progress",
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:34:16+02:00",
+        "required_review": "full",
+        "status_at_start": "pending",
+        "covered_pending_paths": []
+      }
     }
   ],
   "architecture": {
