@@ -2,7 +2,6 @@
 keine App, kein Fenster (Probe: tests/materialization_probe.swift)."""
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 import textwrap
@@ -11,7 +10,7 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_search_runner import build_probe  # noqa: E402
+from swift_test_support import run_probe  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -37,7 +36,6 @@ class MaterializationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix='favenio-mat-test-')
         cls.root = Path(cls.tmp.name)
-        cls.binary = build_probe(cls.tmp.name, 'materialization_probe.swift')
         cls.archive = cls.root / 'probe.zip'
         with zipfile.ZipFile(cls.archive, 'w') as archive:
             archive.writestr('inner/geheim.txt', 'FAVENIO_PROBE im Zip')
@@ -56,9 +54,7 @@ class MaterializationTests(unittest.TestCase):
         return str(path)
 
     def run_probe(self, *arguments, timeout=30):
-        result = subprocess.run([str(self.binary)] + [str(a) for a in arguments],
-                                capture_output=True, text=True, timeout=timeout)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        result = run_probe('materialization', *arguments, timeout=timeout)
         report = json.loads(result.stdout)
         self.assertTrue(report['on_main'])
         return report

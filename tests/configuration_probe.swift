@@ -1,7 +1,14 @@
 import AppKit
 
-@main struct ConfigurationProbe {
+#if !FAVENIO_TEST_SUITE
+@main
+#endif
+struct ConfigurationProbe {
     static func main() throws {
+        try run(CommandLine.arguments)
+    }
+
+    static func run(_ arguments: [String]) throws {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         var original = SearchConfiguration()
@@ -136,7 +143,7 @@ import AppKit
         view.onChange = { changes += 1 }
         view.textDidChange(Notification(name: NSText.didChangeNotification))
         precondition(changes == 1)
-        if CommandLine.arguments.count > 1 {
+        if arguments.count > 1 {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 240),
                                   styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
@@ -159,7 +166,7 @@ import AppKit
             else { fatalError("Offscreen-Bitmap fehlt") }
             window.contentView!.cacheDisplay(in: window.contentView!.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])!.write(
-                to: URL(fileURLWithPath: CommandLine.arguments[1]))
+                to: URL(fileURLWithPath: arguments[1]))
         }
         print("CONFIGURATION OK")
     }

@@ -1,0 +1,72 @@
+// Testattrappen ohne Finder-Zugriff; die drei markierten Methoden
+// werden beim Build unverändert aus FavenioQuick.swift eingesetzt.
+final class QuickScopeRefreshHarness {
+    final class TimerStub { func invalidate() {} }
+    var finderCallbacks: [(FinderScopeOutcome) -> Void] = []
+    func finderWindowFoldersAsync(completion: @escaping (FinderScopeOutcome) -> Void) {
+        finderCallbacks.append(completion)
+    }
+    var scopeFinderFolders: [String] = []
+    var refreshingScope = false
+    var scopeRefreshGeneration = 0
+    var queuedScopeRefreshGeneration: Int?
+    var scopeResolved = false
+    var scopeProblem: String?
+    var runScopeMismatch: (searched: String, finder: String)?
+    var scopeDenied = false
+    var searching = false
+    var userPickedScope = false
+    var searchRoot = "/ersatz"
+    var queuedQuery = false
+    var scopeWaitTimer: TimerStub?
+    var rebuilds = 0
+    var shownProblems: [String] = []
+    var deniedReports = 0
+
+    func rebuildScopePopup() { rebuilds += 1 }
+    func showScopeProblem(_ text: String) { shownProblems.append(text) }
+    func runScopeNoteText() -> String? { nil }
+    func maybeReportDeniedAutomation() { deniedReports += 1 }
+    func startSearch() {}
+
+/* REFRESH */
+
+/* APPLY */
+
+    static func run() {
+        let state = QuickScopeRefreshHarness()
+        state.scopeRefreshGeneration = 1
+        state.refreshFinderFoldersAsync()
+        state.scopeRefreshGeneration = 2
+        state.refreshFinderFoldersAsync()
+        let old = state.finderCallbacks.removeFirst()
+        old(.folders(["/alt"]))
+        print("NACH_ALT|\(state.scopeFinderFolders)|\(state.scopeResolved)|"
+              + "\(state.finderCallbacks.count)|\(state.refreshingScope)")
+        let current = state.finderCallbacks.removeFirst()
+        current(.denied)
+        print("NACH_DENIED|\(state.scopeFinderFolders)|\(state.scopeResolved)|"
+              + "\(state.scopeDenied)|\(state.rebuilds)|\(state.deniedReports)|"
+              + "\(state.shownProblems.count)|\(state.refreshingScope)")
+    }
+}
+final class QuickScopeNoteHarness {
+    var searching = false
+    var userPickedScope = false
+    var runScopeMismatch: (searched: String, finder: String)?
+/* NOTE */
+
+    static func run() {
+        let zustand = QuickScopeNoteHarness()
+        zustand.runScopeMismatch = (searched: "/eins", finder: "/zwei")
+        zustand.searching = true
+        print("LAEUFT|" + (zustand.runScopeNoteText() ?? "nil"))
+        zustand.searching = false
+        print("FERTIG|" + (zustand.runScopeNoteText() ?? "nil"))
+        zustand.userPickedScope = true
+        print("GEWAEHLT|" + (zustand.runScopeNoteText() ?? "nil"))
+        zustand.userPickedScope = false
+        zustand.runScopeMismatch = nil
+        print("OHNE|" + (zustand.runScopeNoteText() ?? "nil"))
+    }
+}

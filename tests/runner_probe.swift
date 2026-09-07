@@ -2,7 +2,10 @@
 import Foundation
 import Darwin
 
-@main struct RunnerProbe {
+#if !FAVENIO_TEST_SUITE
+@main
+#endif
+struct RunnerProbe {
     static func rapidChanges() {
         var current: SearchRunner?
         var runners: [SearchRunner] = []
@@ -39,7 +42,11 @@ import Darwin
     }
 
     static func main() {
-        let mode = CommandLine.arguments[1]
+        run(CommandLine.arguments)
+    }
+
+    static func run(_ arguments: [String]) {
+        let mode = arguments[1]
         if mode == "rapid" { rapidChanges(); return }
         let payload = "import json,sys,os,time\ndef hit(i):\n print(json.dumps({'path':'/fixture/file-%d.txt'%i,'type':'file','isDirectory':False,'filesystemPath':'/fixture/file-%d.txt'%i,'archiveMembers':[]}),flush=True)\n"
         var script = payload

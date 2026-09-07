@@ -6,7 +6,10 @@
 import Foundation
 import Darwin
 
-@main struct MaterializationProbe {
+#if !FAVENIO_TEST_SUITE
+@main
+#endif
+struct MaterializationProbe {
     static var report: [String: Any] = [:]
 
     static func hit(_ path: String, _ members: [String]) -> Hit {
@@ -42,7 +45,10 @@ import Darwin
     }
 
     static func main() {
-        let arguments = CommandLine.arguments
+        run(CommandLine.arguments)
+    }
+
+    static func run(_ arguments: [String]) {
         let mode = arguments[1]
         let manager = MaterializationManager.shared
         var outcome: MaterializationOutcome?

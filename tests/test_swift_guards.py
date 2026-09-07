@@ -1,9 +1,9 @@
+import json
 import re
 import shutil
-import subprocess
-import tempfile
 import unittest
 from pathlib import Path
+from swift_test_support import run_probe, swift_function
 
 
 # Gegen das Repo, nicht gegen das Arbeitsverzeichnis: Ein Lauf aus einem
@@ -20,23 +20,6 @@ def favenio_constant(name):
     treffer = re.search(r"^%s = (.+)$" % re.escape(name), quelle, re.M)
     assert treffer is not None, "Konstante %s fehlt in favenio.py" % name
     return str(eval(treffer.group(1), {"__builtins__": {}}, {}))
-
-
-def swift_function(source, signature):
-    """Schneidet eine Swift-Funktion samt Rumpf aus dem Quelltext: von der
-    Signatur bis zur passenden schließenden Klammer. Gezählt werden schlicht
-    die geschweiften Klammern — das trägt, solange im Rumpf keine in einem
-    Text steht."""
-    start = source.index(signature)
-    depth = 0
-    for index in range(start, len(source)):
-        if source[index] == "{":
-            depth += 1
-        elif source[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return source[start:index + 1]
-    raise AssertionError("Funktion %r ist nicht abgeschlossen" % signature)
 
 
 class SwiftGuardTests(unittest.TestCase):
@@ -909,94 +892,11 @@ class QuickScopeRefreshBehaviourTest(unittest.TestCase):
     Automation deterministisch prüfen, ohne die TCC-Einstellungen des Macs zu
     verändern."""
 
-    HARNESS = r'''
-// Von tests/test_swift_guards.py erzeugt — kein Bestandteil der Apps.
-enum FinderScopeOutcome {
-    case folders([String])
-    case denied
-
-    var folders: [String] {
-        if case .folders(let value) = self { return value }
-        return []
-    }
-    var problemText: String? {
-        if case .denied = self { return "Finder-Zugriff nicht erlaubt" }
-        return nil
-    }
-}
-
-var finderCallbacks: [(FinderScopeOutcome) -> Void] = []
-func finderWindowFoldersAsync(
-    completion: @escaping (FinderScopeOutcome) -> Void
-) {
-    finderCallbacks.append(completion)
-}
-
-final class TimerStub { func invalidate() {} }
-
-final class Attrappe {
-    var scopeFinderFolders: [String] = []
-    var refreshingScope = false
-    var scopeRefreshGeneration = 0
-    var queuedScopeRefreshGeneration: Int?
-    var scopeResolved = false
-    var scopeProblem: String?
-    var runScopeMismatch: (searched: String, finder: String)?
-    var scopeDenied = false
-    var searching = false
-    var userPickedScope = false
-    var searchRoot = "/ersatz"
-    var queuedQuery = false
-    var scopeWaitTimer: TimerStub?
-    var rebuilds = 0
-    var shownProblems: [String] = []
-    var deniedReports = 0
-
-    func rebuildScopePopup() { rebuilds += 1 }
-    func showScopeProblem(_ text: String) { shownProblems.append(text) }
-    func runScopeNoteText() -> String? { nil }
-    func maybeReportDeniedAutomation() { deniedReports += 1 }
-    func startSearch() {}
-
-%s
-
-%s
-}
-
-let state = Attrappe()
-state.scopeRefreshGeneration = 1
-state.refreshFinderFoldersAsync()
-state.scopeRefreshGeneration = 2
-state.refreshFinderFoldersAsync()
-let old = finderCallbacks.removeFirst()
-old(.folders(["/alt"]))
-print("NACH_ALT|\(state.scopeFinderFolders)|\(state.scopeResolved)|"
-      + "\(finderCallbacks.count)|\(state.refreshingScope)")
-let current = finderCallbacks.removeFirst()
-current(.denied)
-print("NACH_DENIED|\(state.scopeFinderFolders)|\(state.scopeResolved)|"
-      + "\(state.scopeDenied)|\(state.rebuilds)|\(state.deniedReports)|"
-      + "\(state.shownProblems.count)|\(state.refreshingScope)")
-'''
 
     @classmethod
     def setUpClass(cls):
-        refresh = swift_function(
-            QUICK, "func refreshFinderFoldersAsync() {")
-        apply = swift_function(
-            QUICK, "func applyScopeOutcome(_ outcome: FinderScopeOutcome) {")
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "main.swift"
-            source.write_text(cls.HARNESS % (refresh, apply), encoding="utf-8")
-            binary = Path(tmp) / "refreshtest"
-            subprocess.run(["swiftc", "-o", str(binary), str(source)],
-                           check=True, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT)
-            result = subprocess.run([str(binary)], check=True,
-                                    stdout=subprocess.PIPE)
-        cls.lines = dict(
-            line.split("|", 1)
-            for line in result.stdout.decode("utf-8").splitlines() if line)
+        result = run_probe('scope-refresh')
+        cls.lines = dict(line.split('|', 1) for line in result.stdout.splitlines() if line)
 
     def test_old_answer_is_dropped_and_latest_refresh_is_started(self):
         self.assertEqual(self.lines["NACH_ALT"], "[]|false|1|true")
@@ -1014,46 +914,11 @@ class QuickScopeNoteBehaviourTest(unittest.TestCase):
     Zustandsfeldern gesetzt und übersetzt. So ist der sichtbare Satz geprüft
     und nicht nur die Schreibweise im Quelltext."""
 
-    HARNESS = """
-// Von tests/test_swift_guards.py erzeugt — kein Bestandteil der Apps.
-func abbreviateHome(_ path: String) -> String { path }
-
-final class Attrappe {
-    var searching = false
-    var userPickedScope = false
-    var runScopeMismatch: (searched: String, finder: String)?
-%s
-}
-
-let zustand = Attrappe()
-zustand.runScopeMismatch = (searched: "/eins", finder: "/zwei")
-zustand.searching = true
-print("LAEUFT|" + (zustand.runScopeNoteText() ?? "nil"))
-zustand.searching = false
-print("FERTIG|" + (zustand.runScopeNoteText() ?? "nil"))
-zustand.userPickedScope = true
-print("GEWAEHLT|" + (zustand.runScopeNoteText() ?? "nil"))
-zustand.userPickedScope = false
-zustand.runScopeMismatch = nil
-print("OHNE|" + (zustand.runScopeNoteText() ?? "nil"))
-"""
 
     @classmethod
     def setUpClass(cls):
-        body = swift_function(QUICK, "func runScopeNoteText() -> String? {")
-        with tempfile.TemporaryDirectory() as tmp:
-            # Top-Level-Code erlaubt Swift nur in einer Datei namens main.swift.
-            source = Path(tmp) / "main.swift"
-            source.write_text(cls.HARNESS % body, encoding="utf-8")
-            binary = Path(tmp) / "notetest"
-            subprocess.run(["swiftc", "-o", str(binary), str(source)],
-                           check=True, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT)
-            result = subprocess.run([str(binary)], check=True,
-                                    stdout=subprocess.PIPE)
-        cls.lines = dict(
-            line.split("|", 1)
-            for line in result.stdout.decode("utf-8").splitlines() if line)
+        result = run_probe('scope-note')
+        cls.lines = dict(line.split('|', 1) for line in result.stdout.splitlines() if line)
 
     def test_the_note_speaks_in_the_present_only_while_searching(self):
         self.assertEqual(
@@ -1077,13 +942,6 @@ print("OHNE|" + (zustand.runScopeNoteText() ?? "nil"))
         self.assertEqual(self.lines["OHNE"], "nil")
 
 
-
-
-
-
-
-
-
 class PixelFieldValidationGuards(unittest.TestCase):
     def test_both_frontends_gate_search_and_run_field_selftests(self):
         for source in (GUI, QUICK):
@@ -1101,8 +959,8 @@ class PixelFieldValidationGuards(unittest.TestCase):
 
 class ParsePixelLimitBehaviourTest(unittest.TestCase):
     """parsePixelLimit() haengt von nichts ab und laesst sich deshalb wirklich
-    AUSFUEHREN: Die Funktion wird unveraendert aus common/FavenioCore.swift
-    geschnitten, uebersetzt und mit echten Eingaben aufgerufen. Frueher strich
+    AUSFUEHREN: Das gemeinsame Testprogramm ruft die Produktionsfunktion
+    aus common/FavenioCore.swift mit echten Eingaben auf. Frueher strich
     sie schlicht alle Nicht-Ziffern — aus „-1" wurde 1, aus „10.5" wurde 105,
     also eine Suchgrenze, die niemand hingeschrieben hat."""
 
@@ -1112,28 +970,11 @@ class ParsePixelLimitBehaviourTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if shutil.which("swiftc") is None:
-            raise unittest.SkipTest("swiftc nicht gefunden")
-        body = swift_function(COMMON, "func parsePixelLimit(")
-        calls = "\n".join(
-            'print("%d|" + (parsePixelLimit(%s).map(String.init) ?? "nil"))'
-            % (index, _swift_literal(text))
-            for index, text in enumerate(cls.EINGABEN))
-        with tempfile.TemporaryDirectory() as tmp:
-            # Top-Level-Code erlaubt Swift nur in einer Datei namens main.swift.
-            source = Path(tmp) / "main.swift"
-            source.write_text("import Foundation\n" + body + "\n"
-                              + calls + "\n", encoding="utf-8")
-            binary = Path(tmp) / "pixeltest"
-            subprocess.run(["swiftc", "-o", str(binary), str(source)],
-                           check=True, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT)
-            result = subprocess.run([str(binary)], check=True,
-                                    stdout=subprocess.PIPE)
-        answers = dict(line.split("|", 1) for line
-                       in result.stdout.decode("utf-8").splitlines() if line)
-        cls.gelesen = {text: answers[str(index)]
-                       for index, text in enumerate(cls.EINGABEN)}
+        result = run_probe('pixel-limit', input=json.dumps(cls.EINGABEN))
+        answers = json.loads(result.stdout)
+        if len(answers) != len(cls.EINGABEN):
+            raise AssertionError('Swift-Probe hat Eingaben ausgelassen')
+        cls.gelesen = dict(zip(cls.EINGABEN, answers))
 
     def test_plain_and_grouped_numbers_are_read(self):
         for text, expected in (("1000", "1000"), ("1.000", "1000"),
@@ -1248,8 +1089,8 @@ class ParsedHitTypeTest(unittest.TestCase):
 
 class CsvFieldBehaviourTest(unittest.TestCase):
     """csvField() haengt von nichts ab und laesst sich deshalb wirklich
-    AUSFUEHREN: Die Funktion wird unveraendert aus FavenioCore.swift
-    geschnitten, uebersetzt und mit echten Dateinamen aufgerufen.
+    AUSFUEHREN: Das gemeinsame Testprogramm ruft die Produktionsfunktion
+    aus FavenioCore.swift mit echten Dateinamen auf.
 
     macOS erlaubt in einem Dateinamen jedes Zeichen ausser "/" und NUL.
     Beginnt ein Zellwert mit "=", "+", "-", "@" oder einem Tabulator,
@@ -1263,27 +1104,11 @@ class CsvFieldBehaviourTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if shutil.which("swiftc") is None:
-            raise unittest.SkipTest("swiftc nicht gefunden")
-        body = swift_function(COMMON, "func csvField(")
-        calls = "\n".join(
-            'print("%d|" + csvField(%s))' % (index, _swift_literal(text))
-            for index, text in enumerate(cls.EINGABEN))
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "main.swift"
-            source.write_text("import Foundation\n" + body + "\n"
-                              + calls + "\n", encoding="utf-8")
-            binary = Path(tmp) / "csvtest"
-            subprocess.run(["swiftc", "-o", str(binary), str(source)],
-                           check=True, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT)
-            result = subprocess.run([str(binary)], check=True,
-                                    stdout=subprocess.PIPE)
-        antworten = dict(
-            line.split("|", 1) for line
-            in result.stdout.decode("utf-8").split("\n") if line)
-        cls.gelesen = {text: antworten[str(index)]
-                       for index, text in enumerate(cls.EINGABEN)}
+        result = run_probe('csv-field', input=json.dumps(cls.EINGABEN))
+        answers = json.loads(result.stdout)
+        if len(answers) != len(cls.EINGABEN):
+            raise AssertionError('Swift-Probe hat Eingaben ausgelassen')
+        cls.gelesen = dict(zip(cls.EINGABEN, answers))
 
     def test_a_formula_prefix_is_defused(self):
         for text in ("=cmd|'/c calc'!A1.txt", "=1+1", "+42", "-minus.txt",
@@ -1323,40 +1148,13 @@ class TypeDescriptionCacheTest(unittest.TestCase):
                 "gibtsnicht", "TXT"]
 
     def test_the_cache_answers_exactly_like_a_direct_lookup(self):
-        if shutil.which("swiftc") is None:
-            self.skipTest("swiftc nicht gefunden")
-        body = swift_function(COMMON, "final class TypeDescriptionCache {")
-        pruefungen = "\n".join(
-            'print("%d|" + cache.description(for: %s) + "|" + direkt(%s))'
-            % (index, _swift_literal(ext.lower()),
-               _swift_literal(ext.lower()))
-            for index, ext in enumerate(self.ENDUNGEN))
-        programm = (
-            "import Foundation\nimport UniformTypeIdentifiers\n"
-            + body + "\n"
-            "func direkt(_ ext: String) -> String {\n"
-            "    if let t = UTType(filenameExtension: ext),\n"
-            "       let l = t.localizedDescription { return l }\n"
-            "    return ext.uppercased()\n"
-            "}\n"
-            "let cache = TypeDescriptionCache()\n"
-            # Zweimal durchlaufen: Der zweite Lauf trifft den Speicher.
-            + pruefungen + "\n" + pruefungen + "\n")
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "main.swift"
-            source.write_text(programm, encoding="utf-8")
-            binary = Path(tmp) / "typetest"
-            subprocess.run(["swiftc", "-o", str(binary), str(source)],
-                           check=True, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT)
-            result = subprocess.run([str(binary)], check=True,
-                                    stdout=subprocess.PIPE)
-        zeilen = [z for z in result.stdout.decode("utf-8").split("\n") if z]
-        self.assertEqual(len(zeilen), 2 * len(self.ENDUNGEN))
-        for zeile in zeilen:
-            index, aus_cache, direkt = zeile.split("|", 2)
-            with self.subTest(endung=self.ENDUNGEN[int(index)]):
-                self.assertEqual(aus_cache, direkt)
+        result = run_probe('type-description', input=json.dumps(self.ENDUNGEN))
+        answers = json.loads(result.stdout)
+        # Zweimal durchlaufen: Der zweite Lauf trifft den Speicher.
+        self.assertEqual(len(answers), 2 * len(self.ENDUNGEN))
+        for index, (cached, direct) in enumerate(answers):
+            with self.subTest(endung=self.ENDUNGEN[index % len(self.ENDUNGEN)]):
+                self.assertEqual(cached, direct)
 
     def test_the_hit_type_goes_through_the_cache(self):
         # Ohne diese Wache fiele die Sortierung beim nächsten Umbau
@@ -1364,19 +1162,6 @@ class TypeDescriptionCacheTest(unittest.TestCase):
         body = swift_function(COMMON, "    var typeDescription: String {")
         self.assertIn("typeDescriptions.description(for:", body)
         self.assertNotIn("UTType(filenameExtension:", body)
-
-
-def _swift_literal(text):
-    """Ein Swift-String-Literal aus einem Python-Text.
-
-    Steuerzeichen muessen maskiert werden: Swift lehnt einen rohen
-    Tabulator im Quelltext mit „unprintable ASCII character" ab. Und ein
-    Dateiname darf unter macOS jedes Zeichen ausser "/" und NUL
-    enthalten, Tabulatoren und Umbrueche also auch."""
-    escaped = (text.replace("\\", "\\\\").replace('"', '\\"')
-               .replace("\t", "\\t").replace("\n", "\\n")
-               .replace("\r", "\\r"))
-    return '"%s"' % escaped
 
 
 if __name__ == "__main__":

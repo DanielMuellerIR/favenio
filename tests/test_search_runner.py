@@ -1,45 +1,14 @@
 """Echte Unterprozesse prüfen Transport, Abbruch und Reihenfolge ohne GUI-Fokus."""
 import json
 import shutil
-import subprocess
-import tempfile
 import unittest
-from pathlib import Path
-
-REPO = Path(__file__).resolve().parent.parent
-
-
-def build_probe(directory, probe="runner_probe.swift"):
-    source = (REPO / 'common/FavenioCore.swift').read_text()
-    # Sparkle betrifft ausschließlich den Bundle-Einstieg vor dem Hit-Modell.
-    source = ('import AppKit\nimport Darwin\nimport Quartz\n'
-              'import UniformTypeIdentifiers\nlet pythonPath = "/usr/bin/python3"\n'
-              + source[source.index('struct Hit:'):])
-    core = Path(directory) / 'Core.swift'
-    core.write_text(source)
-    binary = Path(directory) / 'RunnerProbe'
-    result = subprocess.run(
-        ['swiftc', '-O', str(core), str(REPO / 'tests' / probe),
-         '-o', str(binary)], capture_output=True, text=True)
-    if result.returncode:
-        raise RuntimeError("Runner-Probe kompiliert nicht:\n" + result.stderr)
-    return binary
+from swift_test_support import run_probe
 
 
 @unittest.skipUnless(shutil.which('swiftc'), 'swiftc fehlt')
 class SearchRunnerTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        cls.binary = build_probe(cls.tmp.name)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
-
     def run_probe(self, mode):
-        result = subprocess.run([str(self.binary), mode], check=True,
-                                capture_output=True, text=True, timeout=20)
+        result = run_probe('runner', mode)
         report = json.loads(result.stdout)
         self.assertTrue(report['on_main'])
         self.assertFalse(report['running'])
@@ -103,8 +72,7 @@ class SearchRunnerTests(unittest.TestCase):
         self.assertGreater(result['peak_bytes'], 500000)
 
     def test_rapid_changes_reject_already_queued_old_hits(self):
-        result = subprocess.run([str(self.binary), 'rapid'], check=True,
-                                capture_output=True, text=True, timeout=20)
+        result = run_probe('runner', 'rapid')
         report = json.loads(result.stdout)
         self.assertEqual(report['completed'], 20)
         self.assertEqual(report['hits'], 1000)

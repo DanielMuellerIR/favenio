@@ -1,6 +1,9 @@
 import Foundation
 
-@main struct ExportProbe {
+#if !FAVENIO_TEST_SUITE
+@main
+#endif
+struct ExportProbe {
     static func wait(_ predicate: () -> Bool) {
         let start = ProcessInfo.processInfo.systemUptime
         while !predicate() && ProcessInfo.processInfo.systemUptime - start < 10 {
