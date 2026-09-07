@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 1554554
+    "tokens_spent": 1604807
   },
   "campaign_history": [
     {
@@ -243,15 +243,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "completed_at": "2026-09-08T01:47:08+02:00",
-        "observed_head": "fddce4c812cfda964b93cef1ea20565d1134559a",
-        "content_sha256": "40d4c5afbc6c2785865d1ca979e36da082b8065dbc9a5b0a8d648bdea6a96eec",
+        "completed_at": "2026-09-08T01:54:41+02:00",
+        "observed_head": "c37a21549c8f2db00d6f9858510729652280c9eb",
+        "content_sha256": "f7de49958bd15468b4a22b6cc597417d6dd266c90e859c8cee13f70d1b50a9a9",
         "file_count": 8,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta seit Bereichsreview: bearbeiteten Reset-Backlog entfernt, Changelog und Kampagnenbericht mit verifiziertem gemeinsamen Trefferersatz aktualisiert.",
+        "summary": "Delta: aktueller Abbruchvertrag in AGENTS, Changelog und QA-Bericht; Quick-/Build-Review dokumentiert. Vorbestehende GUI-Freigabegrenzen unverändert.",
         "tests": [
-          "6 Dokumentationsprüfungen und beide App-Selbsttests bestanden; Diff-Review bestätigt erledigten Backlog-Punkt."
+          "6 Dokumentationstests grün; Callback-Vertrag durch drei Varianten und beide App-Selbsttests belegt."
         ]
       }
     },
@@ -267,15 +267,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "completed_at": "2026-09-08T01:51:23+02:00",
-        "observed_head": "ca37c64f2528ae246b0d437263911c03aa26c681",
-        "content_sha256": "46c4994f2924de174baf13962561bf49e5afa3c084db28d662ab92e8780e1db8",
+        "completed_at": "2026-09-08T01:54:40+02:00",
+        "observed_head": "c37a21549c8f2db00d6f9858510729652280c9eb",
+        "content_sha256": "a36f36a30b30a7d44bbcf5d93d88b075540de392d11c8715e42e6efcd97a5293",
         "file_count": 2,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Quick-Delta und heutige Such-/Finder-/Übergabegrenzen geprüft. Reale Controllerprüfung für zwanzig Treffer ergänzt; kosmetische Pixelwachen, redundante Scope-/hitsRaw-Assertions entfernt; atomare Handoff-Wache präzisiert. Späte Aktions-Abbruchmeldung als Theme zur gezielten Behebung erfasst.",
+        "summary": "Delta seit Quick-Review: clearHits entwertet alte Aktionsmeldungen still; Quelltextwachen folgen der ausdrücklichen API. Escape-Aufrufer unverändert.",
         "tests": [
-          "73 Swift-Wachen in 8.403 s grün; beide App-Selbsttests inklusive echtem Quick-Lauf über 32 Dateien bestanden; Diff-Review abgeschlossen."
+          "87 Materialisierungs-/Swift-Prüfungen und beide App-Selbsttests grün; drei gezielte Callback-Repros bestanden."
         ]
       }
     },
@@ -324,15 +324,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "completed_at": "2026-09-08T01:32:45+02:00",
-        "observed_head": "e7ba08ce5204a44992f96bdc1a46982d89d54435",
-        "content_sha256": "e102ace9b1331a8cc6a6b1fd58b6edebc409285a7ae45714a35908697ac23bea",
+        "completed_at": "2026-09-08T01:54:41+02:00",
+        "observed_head": "c37a21549c8f2db00d6f9858510729652280c9eb",
+        "content_sha256": "93e650dbf6f0b412c5721eea6a9a681f54694d67c0ea75f9f8cddee51540910d",
         "file_count": 12,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta seit vollständigem Bereichsreview: Exportprobe ersetzt Timingannahme durch steuerbaren Workerauftrag; echte Format-, Fehler- und Retryprüfungen bleiben. Keine weiteren Bereichsänderungen.",
+        "summary": "Delta: Controllerprobe prüft alte Aktionsmeldungen mit unabhängigem Anforderer und Freigabedatei. Drei Varianten unterscheiden stillen Wechsel, Escape und deren Abfolge.",
         "tests": [
-          "Exportprobe und 74 Swift-Wachen in 8.907 s bestanden; synchrone Gegenprobe rot; beide App-Selbsttests grün."
+          "Gezielter Repro vorher rot, 87 Materialisierungs-/Swift-Prüfungen danach grün; erwartete Aktionen und Meldungen vollständig geprüft."
         ]
       }
     },
@@ -767,14 +767,18 @@
         "gui/FavenioGUI.swift"
       ],
       "priority": 2,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-08T01:50:42+02:00",
       "campaign_id": "20260908T002533785169+0200",
       "started_at": "2026-09-08T01:51:23+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:51:23+02:00",
-        "observed_head": "ca37c64f2528ae246b0d437263911c03aa26c681"
+        "completed_at": "2026-09-08T01:54:40+02:00",
+        "observed_head": "c37a21549c8f2db00d6f9858510729652280c9eb",
+        "summary": "Stiller Listen-/Vorlagenwechsel entwertet über Generation auch bereits eingereihte Abbruchmeldungen; ausdrückliches Escape meldet weiter. Alle drei stillen Aufrufer angepasst.",
+        "tests": [
+          "Gezielter Controller-Repro vorher rot; stiller Wechsel, Escape und Escape-dann-Wechsel grün; 87 Materialisierungs-/Swift-Prüfungen, 6 Docstests und beide App-Selbsttests bestanden."
+        ]
       }
     }
   ]
