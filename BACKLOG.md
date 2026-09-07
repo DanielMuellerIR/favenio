@@ -23,13 +23,6 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
    Durchlauf am Bildschirm.
 
-6. Zurücksetzen der Trefferlisten prüfen: Brauchen Haupt-App und Quick
-   einen gemeinsamen `HitListController.resetHits()` für Treffer und
-   laufende Auspackvorgänge? Unterschiede zwischen Suchstart, Fortsetzung,
-   geladenen Ergebnissen und Vorlagen erhalten. Die Eingabe-Getter aus
-   demselben Review bleiben lokal: Gemeinsame Konfiguration, Filteransicht
-   und Maßvalidierung tragen bereits die eigentliche Logik; eine weitere
-   Bindungsschicht wurde in `docs/codeqa-2026-09.md` begründet verworfen.
 
 ## Flackernder Test: Ursache weiterhin offen
 

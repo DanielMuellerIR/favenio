@@ -817,6 +817,26 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
     let nested = Hit(path: literal.path, kind: "member", line: nil, size: nil,
         filesystemPath: literal.filesystemPath,
         archiveMembers: ["inner.zip", "x.txt"], isDirectory: false)
+    let replacement = MainController()
+    replacement.tableView.dataSource = replacement
+    for incoming in [[literal, nested], []] {
+        replacement.pending = [literal]
+        replacement.contextRow = 7
+        if !replacement.hits.isEmpty {
+            replacement.tableView.selectRowIndexes([0], byExtendingSelection: false)
+        }
+        replacement.skippedCount = 42
+        replacement.progressPath = "/old"
+        replacement.replaceSearchResults(incoming)
+        guard replacement.hits == incoming, replacement.pending.isEmpty,
+              replacement.seenHitIdentities == Set(incoming.map { $0.identity }),
+              replacement.statistics.count == incoming.count,
+              replacement.skippedCount == 0, replacement.progressPath == nil,
+              replacement.contextRow == -1,
+              replacement.tableView.selectedRowIndexes.isEmpty else {
+            return "Trefferersatz lässt alten Listenstand zurück"
+        }
+    }
     let list = MainController()
     list.tableView.dataSource = list
     list.tableView.allowsMultipleSelection = true
@@ -1402,18 +1422,9 @@ final class MainController: HitListController, NSApplicationDelegate,
             refreshStatus()
             return
         }
-        stopSearch()
-        cancelMaterializations()   // Vorschau/Öffnen der alten Liste
+        replaceSearchResults(loaded)
         exportStatus = nil
-        hits = loaded
-        pending = []
-        seenHitIdentities = Set(loaded.map { $0.identity })
-        trashedPaths = TrashedPaths()
-        statistics = .over(hits)
-        skippedCount = 0
         searchPhase = .handedOver
-        progressPath = nil
-        applyHitsToTable(keepingSelection: [])
         refreshStatus()
     }
 
@@ -2222,28 +2233,30 @@ final class MainController: HitListController, NSApplicationDelegate,
         }
     }
 
-    @objc func startSearch() {
+    /// Ersetzt den Trefferstand für Suchstart und beide Quick-Übergaben.
+    /// Vorlagen benutzen diesen Weg nicht: Sie ändern nur die Suchoptionen.
+    func replaceSearchResults(_ incoming: [Hit]) {
         stopSearch()
-        // Vorschau oder Öffnen aus der ALTEN Liste: abbrechen, sonst zeigte
-        // die Fußzeile „Packe Archivtreffer aus…" über einer leeren Tabelle,
-        // und die fertige Vorschau öffnete einen Treffer, den es nicht mehr gibt.
+        // Vorschau und Öffnen gehören zur alten Liste. Der Abbruch verhindert,
+        // dass ein fertiger Auftrag später einen verschwundenen Treffer öffnet.
         cancelMaterializations()
-        // Frische Suche: Tabelle leeren und von vorn sammeln. Auch das leere
-        // Modell geht über applyHitsToTable — sonst gäbe es doch wieder einen
-        // Weg an der Sortierung vorbei, und genau daran krankten vorher
-        // continueSearch() und loadResults().
-        hits = []
+        hits = incoming
         pending = []
-        seenHitIdentities = []
+        seenHitIdentities = Set(incoming.map { $0.identity })
         trashedPaths = TrashedPaths()
+        statistics = .over(incoming)
+        skippedCount = 0
+        progressPath = nil
+        // Auch die leere Liste geht durch dieselbe Sortier-/Auswahlpflege.
         applyHitsToTable(keepingSelection: [])
+    }
+
+    @objc func startSearch() {
+        replaceSearchResults([])
+        searchPhase = .idle
         guard validatePixelInputs() else { return }
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
-        statistics = HitStatistics()
-        skippedCount = 0
-        searchPhase = .idle
-        progressPath = nil
         // Ohne Muster nur dann suchen, wenn ein Maß- oder Faktenfilter gesetzt ist —
         // „alle Bilder über 1000 px" ist eine vollständige Frage.
         guard !pattern.isEmpty || searchConfiguration.hasPositiveFilter else {
@@ -2349,17 +2362,8 @@ final class MainController: HitListController, NSApplicationDelegate,
             refreshStatus()
             return
         }
-        stopSearch()
-        cancelMaterializations()   // Vorschau/Öffnen der alten Liste
-        hits = seed
-        pending = []
-        seenHitIdentities = Set(seed.map { $0.identity })
-        trashedPaths = TrashedPaths()
-        statistics = .over(hits)
-        skippedCount = 0
+        replaceSearchResults(seed)
         searchPhase = .handedOver
-        progressPath = nil
-        applyHitsToTable(keepingSelection: [])
         guard validatePixelInputs() else { return }
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)

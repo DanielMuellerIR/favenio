@@ -244,30 +244,18 @@
       "risk": "high",
       "priority": 2,
       "reason": "Oeffentliche Nutzerdoku und Projektkanon beschreiben denselben CLI-Vertrag wie favenio.py; Drift fuehrt Nutzer und jede spaetere Session in die Irre",
-      "state": "in_progress",
+      "state": "completed",
       "last_run": {
-        "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:19:36+02:00",
-        "observed_head": "86f71bf3c90ccd251a95f3d875f015a2b5625828",
-        "content_sha256": "f10f1c0f975871e99ffeecc751b4473618ff7b57333983e5682b8b6b038e180c",
-        "file_count": 7,
+        "campaign_id": "20260908T002533785169+0200",
+        "completed_at": "2026-09-08T01:43:21+02:00",
+        "observed_head": "efacaf5e46335c9caa686aff547b0ef7f5aea269",
+        "content_sha256": "72f4c46241633adfbd6540ff7286a99507f37091a7a5bdfa8d6635df21b04206",
+        "file_count": 8,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta = CHANGELOG-Punkt zum Einfachparse",
+        "summary": "Delta und heutige Dokumentationsgrenzen geprüft; redundante Tabellen-/Quelltexttests entfernt, CLI-Optionen per AST robust erfasst, Regex-Erklärung auf Favenios Zeilenvertrag präzisiert, Backlog mit Reviewentscheidungen abgeglichen.",
         "tests": [
-          "python3 -m unittest test_docs_contract: OK"
-        ]
-      },
-      "pending_paths": [
-        "docs/codeqa-2026-09.md"
-      ],
-      "active_run": {
-        "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:41:16+02:00",
-        "required_review": "delta-plus-boundaries",
-        "status_at_start": "changed",
-        "covered_pending_paths": [
-          "docs/codeqa-2026-09.md"
+          "6 Dokumentationstests grün, echte JSONL-Ausgabe für vier Trefferarten; alle 33 CLI-Optionen auch nach AST-Neuformatierung gleich erkannt; Diff-Review ohne weiteren Befund."
         ]
       }
     },
@@ -408,12 +396,12 @@
   ],
   "architecture": {
     "campaign_id": "20260908T002533785169+0200",
-    "recorded_at": "2026-09-08T00:25:35+02:00",
-    "observed_head": "78594f145f91a865ea4f15ab1a45b489ed2dd447",
-    "summary": "Die Suchsemantik bleibt im Python-Kern. Gemeinsame Runner und Materialisierung tragen beide Apps. Die Controller koppeln inzwischen Eingabeauswertung, Konfiguration, Trefferzustand und Darstellung; Suchoptionen werden in beiden Fenstern erneut zusammengesetzt. Der Testaufbau kompiliert dieselben Swift-Quellen mehrfach.",
+    "recorded_at": "2026-09-08T01:46:44+02:00",
+    "observed_head": "efacaf5e46335c9caa686aff547b0ef7f5aea269",
+    "summary": "Suchsemantik bleibt im Python-Kern; Runner, Materialisierung, Trefferidentität und Dateiaktionen sind gemeinsam. Die Haupt-App ersetzt ihren Trefferstand zentral. Swift-Proben werden einmal je Python-Testprozess kompiliert und getrennt ausgeführt. Die großen AppKit-Controller verbinden weiterhin Layout, Eingaben und Ablaufsteuerung; gemeinsame Konfiguration und Filteransicht begrenzen die doppelte Fachlogik.",
     "paradigm": "Schichtenmodell: Python-Suchkern, gemeinsamer Swift-Prozessadapter, ereignisgesteuerte AppKit-Controller",
     "fit": "gespannt",
-    "recommendation": "Kein Paradigmenwechsel. Bestehende gemeinsame Konfiguration und Controllerbasis gezielt erweitern; Eingabeauswertung und Listenwechsel einmal definieren. Testhilfen bündeln und unabhängige Verhaltensprüfungen erhalten. Nach Erreichen des Budgets keinen neuen Bereich beginnen; den laufenden Bereich einschließlich Tests, Abdeckungsstand und sicherem Abschluss fertigstellen."
+    "recommendation": "Kein Paradigmenwechsel. Neue Suchoptionen zuerst in SearchConfiguration und SearchFilterView ergänzen; neue Listenaktionen über HitListController führen. Unterschiedliche UI-Abläufe lokal halten und nur belegte gemeinsame Mechanik extrahieren. Verhaltensprüfungen statt Layout- und Implementierungsdetails festschreiben. Nach Erreichen des Budgets keinen neuen Bereich beginnen; den laufenden Bereich einschließlich Tests, Abdeckungsstand und sicherem Abschluss fertigstellen."
   },
   "themes": [
     {
@@ -760,9 +748,15 @@
         "common/FavenioCore.swift"
       ],
       "priority": 2,
-      "state": "pending",
+      "state": "in_progress",
       "noted_at": "2026-09-08T01:42:25+02:00",
-      "campaign_id": "20260908T002533785169+0200"
+      "campaign_id": "20260908T002533785169+0200",
+      "started_at": "2026-09-08T01:43:32+02:00",
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:43:32+02:00",
+        "observed_head": "efacaf5e46335c9caa686aff547b0ef7f5aea269"
+      }
     }
   ]
 }

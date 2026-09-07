@@ -192,9 +192,11 @@ class SwiftGuardTests(unittest.TestCase):
         als Namensmuster liest. Der Exporttext läuft mit dem Start ab."""
         self.assertIn("func searchRootProblem(_ root: String) -> String?", COMMON)
         for name in ("@objc func startSearch() {", "func continueSearch(from file: URL) {",
-                     "func loadResults(from file: URL) {", "func applyTemplate("):
+                     "func loadResults(from file: URL) {"):
             with self.subTest(function=name):
-                self.assertIn("cancelMaterializations()", swift_function(GUI, name))
+                self.assertIn("replaceSearchResults(", swift_function(GUI, name))
+        self.assertIn("cancelMaterializations()", swift_function(GUI, "func replaceSearchResults("))
+        self.assertIn("cancelMaterializations()", swift_function(GUI, "func applyTemplate("))
         launch = swift_function(GUI, "func launchSearch(pattern: String) {")
         self.assertIn("searchRootProblem(searchRoot.path)", launch)
         self.assertIn("exportStatus = nil", launch)

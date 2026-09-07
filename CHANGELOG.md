@@ -2,6 +2,10 @@
 
 ## 0.34.6 — 2026-09-08
 
+- Suchstart und beide Ergebnisübergaben setzen Treffer, Auswahl,
+  Deduplikation und Statistiken über denselben Pfad zurück. Das Laden
+  einer Suchvorlage behält die bisherige Trefferliste.
+
 - CSV-Exporte verwenden einen Datumsformatter je Export statt je Zeitfeld.
   JSONL gibt temporäre Foundation-Objekte nach jeder Zeile frei; dadurch
   sinkt der Spitzenspeicher großer Exporte erheblich.
