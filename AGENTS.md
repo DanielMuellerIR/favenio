@@ -422,12 +422,19 @@ nebenläufig geleert (`SearchDiagnostics`), sonst hält eine volle Pipe den
 Kern an, während wir auf stdout warten; nach `cleanup()` legt kein noch
 laufender Auftrag eine Datei neu an (`epoch`, ein zu spätes Ergebnis wird
 gelöscht). `cancel()` nimmt nur den eigenen Anforderer vom Auftrag, der
-letzte beendet den Prozess (SIGTERM, nach 1 s SIGKILL). In
+letzte beendet den Prozess (SIGTERM, nach 1 s SIGKILL). Abbruch und
+`cleanup()` gelten bis zum Beginn der Ergebniszustellung: `deliver()` prüft
+für jeden Anforderer dessen Abbruchmarkierung und `epoch` unter demselben
+Lock wie der Manager. Eine vorherige Completion darf den nächsten
+Anforderer abbrechen; keine Completion läuft unter dem Lock. Bereits
+zugestellte Anforderungen melden sich nach erneutem Abbruch nicht wieder.
+In
 `HitListController` arbeitet `withActionSelection` mit der FESTEN Auswahl
 vom Klick, `requestPreview` nimmt für Quick Look nur die ZULETZT
 angeforderte Auswahl (die vorige wird abgebrochen, ein spätes Ergebnis
 verworfen); beide zeigen den Ladezustand über `presentMaterializationState`
-(Haupt-App: Fußzeile, Schnellsuche: Infozeile), und ⎋ ruft in beiden
+(Haupt-App: Fußzeile, Schnellsuche: Infozeile), auch wenn eine neue Vorschau
+sofort aus dem Cache oder Dateisystem bereitsteht. ⎋ ruft in beiden
 Tastaturmonitoren zuerst `cancelMaterializations()`. Drag-and-drop in der
 Haupt-App verlangt im Pasteboard-Callback sofort eine Antwort: Was
 `knownURL` kennt, geht als URL, ein noch nicht ausgepackter Eintrag als

@@ -137,16 +137,9 @@ class SwiftGuardTests(unittest.TestCase):
                               source)
                 self.assertIn("override func presentMaterializationState()",
                               source)
-        manager = COMMON[COMMON.index("final class MaterializationManager"):
-                         COMMON.index("func cleanupMaterializedHits()")]
-        # stderr wird NEBENLAEUFIG geleert, wie beim Suchlauf: Eine volle Pipe
-        # haelt den Kern an, waehrend wir auf stdout warten.
-        self.assertIn("diagnostics.collect(from: errors)", manager)
-        self.assertNotIn("FileHandle.nullDevice", manager)
-        # Gleichzeitige Anforderungen desselben Treffers teilen EINEN Auftrag.
-        self.assertIn("if let job = jobs[hit], !job.cancelled {", manager)
-        # Nach cleanup() legt kein spaeter Auftrag eine Datei neu an.
-        self.assertIn("if job.epoch != epoch {", manager)
+        # stderr-Flut, geteilte Aufträge und Cleanup werden mit wirklichen
+        # Unterprozessen in test_materialization.py geprüft. Ihre konkrete
+        # Schreibweise im Manager ist kein zusätzlicher Vertrag.
         # Die Basisklasse haelt die Aktionen; keine App baut sie nach.
         for signature in ("func withActionSelection(", "func requestPreview(",
                           "func cancelMaterializations()", "func openActionRows()"):
@@ -207,6 +200,7 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("exportStatus = nil", launch)
         self.assertIn("searchRootProblem(root)",
                       swift_function(QUICK, "func startSearch() {"))
+        self.assertIn("cancelMaterializations()", swift_function(QUICK, "func clearHits()"))
         # Die Vorlagentabelle hängt an den ECHTEN Delegate-Namen.
         self.assertIn("func tableView(_ templateTable: NSTableView, viewFor", GUI)
         self.assertNotIn("func templateTable(_ templateTable", GUI)

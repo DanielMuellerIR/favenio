@@ -57,6 +57,11 @@ class MaterializationTests(unittest.TestCase):
         result = run_probe('materialization', *arguments, timeout=timeout)
         report = json.loads(result.stdout)
         self.assertTrue(report['on_main'])
+        root = Path(report['temporary_root'])
+        self.assertTrue(root.name.startswith('favenio-probe-'), report)
+        for outcome in (report, report.get('first', {}), report.get('second', {})):
+            if outcome.get('state') == 'ready':
+                self.assertIn(root, Path(outcome['path']).parents)
         return report
 
     def test_a_member_is_extracted_off_the_main_thread(self):
@@ -66,6 +71,14 @@ class MaterializationTests(unittest.TestCase):
         # Der Aufruf selbst kehrt sofort zurück; Main bleibt frei.
         self.assertLess(report['blocked_seconds'], 0.01)
         self.assertLess(report['max_delay'], 0.05)
+
+    def test_synchronous_preview_replacement_clears_the_loading_state(self):
+        report = self.run_probe('preview-sync', self.archive, 'inner/geheim.txt')
+        self.assertEqual(report['states'], [True, False])
+        self.assertFalse(report['materializing'])
+        self.assertEqual(report['latest_urls'], [str(self.archive)])
+        self.assertEqual(report['stale'], 0)
+        self.assertEqual(report['callbacks'], 1)
 
     def test_open_and_preview_share_one_extracted_file(self):
         report = self.run_probe('same-file', self.archive, 'inner/geheim.txt')
@@ -175,6 +188,35 @@ class MaterializationTests(unittest.TestCase):
         # Auftrag nicht wieder.
         self.assertEqual(report['dirs_after_cleanup'], report['dirs_before'])
         self.assertEqual(report['dirs_end'], report['dirs_before'])
+
+    def test_cancel_and_cleanup_still_apply_before_queued_callbacks_arrive(self):
+        for mode in ('late-selection', 'late-cancel', 'late-cleanup',
+                     'reentrant-cancel', 'reentrant-cleanup'):
+            with self.subTest(mode=mode):
+                release = self.root / (mode + '.release')
+                cli = self.fake_cli(mode, '''
+                    deadline = time.monotonic() + 15
+                    while not os.path.exists(%r):
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError("Freigabe der Probe fehlt")
+                        time.sleep(0.001)
+                    emit()
+                    ''' % str(release))
+                report = self.run_probe(mode, cli, self.archive, 'x.txt', release)
+                if mode == 'late-selection':
+                    self.assertTrue(report['selection_cancelled'], report)
+                    self.assertEqual(report['callbacks'], 1)
+                    continue
+                first = 'cancelled' if mode.startswith('late-') else 'ready'
+                second = 'ready' if mode == 'late-cancel' else 'cancelled'
+                self.assertEqual(report['first']['state'], first, report)
+                self.assertEqual(report['second']['state'], second, report)
+                cleanup = mode.endswith('cleanup')
+                self.assertEqual(report['cached'], not cleanup, report)
+                self.assertEqual(report['file_exists'], not cleanup, report)
+                self.assertEqual(report['callbacks'], 3 if mode == 'late-cancel' else 2)
+                if mode == 'late-cancel':
+                    self.assertTrue(report['cache_synchronous'], report)
 
 
 if __name__ == '__main__':

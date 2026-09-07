@@ -865,13 +865,9 @@ final class QuickController: HitListController, NSApplicationDelegate,
         runScopeMismatch = nil
         skippedCount = 0
         previewURLs = []
-        // Eine noch laufende Vorschau-Anforderung gehört zur alten Anfrage.
-        // Danach den Ladezustand nachziehen: Sonst blieb die gemerkte
-        // Infozeile (`infoBeforeMaterializing`) stehen, und beim nächsten
-        // Auspacken fehlte der Hinweis „Packe Archivtreffer aus…" einmal.
-        previewRequest?.cancel()
-        previewRequest = nil
-        presentMaterializationState()
+        // Vorschau UND Dateiaktionen gehören zur alten Trefferliste. Die
+        // gemeinsame Funktion setzt auch den gemerkten Ladezustand zurück.
+        cancelMaterializations()
         tableView.reloadData()
         showInfo(Self.hint)
         if QLPreviewPanel.sharedPreviewPanelExists(),

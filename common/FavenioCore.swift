@@ -313,7 +313,7 @@ struct MaterializedHitSelection {
     /// Der konkrete Grund je Auspackfehler (nur für Treffer mit
     /// `hasOpenableFile`), in der Reihenfolge von `unavailable`.
     var reasons: [String] = []
-    /// Wurde der Auftrag abgebrochen, bevor alle Treffer fertig waren?
+    /// Wurde der Auftrag vor Zustellung des Gesamtergebnisses abgebrochen?
     /// Dann sind `urls` und `unavailable` unvollständig und keine Grundlage
     /// für eine Aktion.
     var cancelled = false
@@ -360,7 +360,7 @@ func materializeHitSelection(
         var urls: [URL] = []
         var unavailable: [Hit] = []
         var reasons: [String] = []
-        var cancelled = false
+        var cancelled = group.isCancelled
         for (hit, outcome) in zip(selected, outcomes) {
             switch outcome {
             case .ready(let url):
@@ -1930,14 +1930,19 @@ enum MaterializationOutcome: Equatable {
 
 /// Griff auf einen laufenden Auftrag. `cancel()` nimmt nur DIESEN Anforderer
 /// vom Auftrag; der Unterprozess endet erst, wenn niemand mehr wartet. Die
-/// Completion des Anforderers kommt danach genau einmal mit `.cancelled`.
+/// Completion kommt genau einmal. Bis zum Beginn ihrer Zustellung gilt ein
+/// Abbruch auch dann noch, wenn der Worker seine Datei bereits geliefert hat.
 final class MaterializationRequest {
-    fileprivate let id = UUID()
     fileprivate let hit: Hit
+    fileprivate let epoch: Int
+    // Ausschließlich unter MaterializationManager.lock lesen und ändern.
+    fileprivate var cancelled = false
+    fileprivate var delivered = false
     private weak var manager: MaterializationManager?
 
-    fileprivate init(hit: Hit, manager: MaterializationManager) {
+    fileprivate init(hit: Hit, epoch: Int, manager: MaterializationManager) {
         self.hit = hit
+        self.epoch = epoch
         self.manager = manager
     }
 
@@ -1967,12 +1972,13 @@ final class MaterializationRequest {
 final class MaterializationManager {
     static let shared = MaterializationManager()
 
-    /// Haken für Tests: anderer Interpreter, anderer Kern, Zusatzargumente
-    /// (etwa ein winziges `--max-archive-member-bytes`). Die Apps lassen
-    /// alle drei auf ihren Vorgaben.
+    /// Haken für Tests: anderer Interpreter, Kern, Zusatzargumente und eigene
+    /// Temp-Wurzel. Foundation beachtet TMPDIR nicht auf jedem macOS-System.
+    /// Die Apps lassen diese Werte auf ihren Vorgaben.
     var interpreter = pythonPath
     var cliPath: String?
     var extraArguments: [String] = []
+    var temporaryDirectory = FileManager.default.temporaryDirectory
 
     private let lock = NSLock()
     private var cache: [Hit: URL] = [:]
@@ -1987,7 +1993,7 @@ final class MaterializationManager {
     private final class Job {
         let hit: Hit
         let epoch: Int
-        var waiters: [(UUID, (MaterializationOutcome) -> Void)] = []
+        var waiters: [(MaterializationRequest, (MaterializationOutcome) -> Void)] = []
         var process: Process?
         var cancelled = false
         init(hit: Hit, epoch: Int) {
@@ -1999,7 +2005,7 @@ final class MaterializationManager {
     /// Nur mit gehaltenem `lock` aufrufen.
     private func materializationRootLocked() -> URL? {
         if let root { return root }
-        let candidate = FileManager.default.temporaryDirectory
+        let candidate = temporaryDirectory
             .appendingPathComponent("Favenio-\(UUID().uuidString)",
                                     isDirectory: true)
         do {
@@ -2055,17 +2061,17 @@ final class MaterializationManager {
             completion(.failed("Ordner im Archiv — keine Datei zum Öffnen"))
             return nil
         }
-        let request = MaterializationRequest(hit: hit, manager: self)
         lock.lock()
+        let request = MaterializationRequest(hit: hit, epoch: epoch, manager: self)
         // Ein Auftrag, den alle verlassen haben, stirbt gerade; ihm darf
         // sich niemand mehr anschließen — er endete mit `.cancelled`.
         if let job = jobs[hit], !job.cancelled {
-            job.waiters.append((request.id, completion))
+            job.waiters.append((request, completion))
             lock.unlock()
             return request
         }
         let job = Job(hit: hit, epoch: epoch)
-        job.waiters.append((request.id, completion))
+        job.waiters.append((request, completion))
         jobs[hit] = job
         lock.unlock()
         queue.async { [weak self] in
@@ -2078,8 +2084,15 @@ final class MaterializationManager {
     /// Nimmt einen Anforderer vom Auftrag. Der letzte beendet den Prozess.
     fileprivate func cancel(_ request: MaterializationRequest) {
         lock.lock()
+        guard !request.cancelled && !request.delivered else {
+            lock.unlock()
+            return
+        }
+        // finish() kann den Job bereits entfernt haben. Die eingereihte
+        // Completion hält den Request und sieht diese Markierung trotzdem.
+        request.cancelled = true
         guard let job = jobs[request.hit],
-              let index = job.waiters.firstIndex(where: { $0.0 == request.id })
+              let index = job.waiters.firstIndex(where: { $0.0 === request })
         else {
             lock.unlock()
             return
@@ -2087,7 +2100,22 @@ final class MaterializationManager {
         let (_, completion) = job.waiters.remove(at: index)
         if job.waiters.isEmpty { terminateLocked(job) }
         lock.unlock()
-        DispatchQueue.main.async { completion(.cancelled) }
+        DispatchQueue.main.async { self.deliver(request, .cancelled, completion) }
+    }
+
+    /// Auf Main, unmittelbar vor JEDER Completion prüfen: Die vorige darf
+    /// einen weiteren Request abbrechen oder cleanup() auslösen. Den Lock
+    /// vor dem Aufruf freigeben, damit solche Rückrufe nicht blockieren.
+    private func deliver(_ request: MaterializationRequest,
+                         _ outcome: MaterializationOutcome,
+                         _ completion: (MaterializationOutcome) -> Void) {
+        lock.lock()
+        guard !request.delivered else { lock.unlock(); return }
+        let result = request.cancelled || request.epoch != epoch
+            ? .cancelled : outcome
+        request.delivered = true
+        lock.unlock()
+        completion(result)
     }
 
     /// Nur mit gehaltenem `lock` aufrufen. SIGTERM übersetzt der Kern in ein
@@ -2188,15 +2216,12 @@ final class MaterializationManager {
     private func finish(_ job: Job, with result: MaterializationOutcome) {
         var outcome = result
         lock.lock()
-        if case .ready(let url) = outcome {
-            if job.epoch != epoch {
-                // cleanup() lief inzwischen: Die Datei liegt unter einem
-                // Root, den es nicht mehr geben soll.
-                discard(url)
-                outcome = .cancelled
-            } else {
-                cache[job.hit] = url
-            }
+        if job.cancelled || job.epoch != epoch {
+            // Abbruch kann zwischen execute() und diesem Lock eintreffen.
+            if case .ready(let url) = outcome { discard(url) }
+            outcome = .cancelled
+        } else if case .ready(let url) = outcome {
+            cache[job.hit] = url
         }
         if jobs[job.hit] === job { jobs[job.hit] = nil }
         let waiters = job.waiters
@@ -2204,7 +2229,7 @@ final class MaterializationManager {
         lock.unlock()
         guard !waiters.isEmpty else { return }
         DispatchQueue.main.async {
-            waiters.forEach { $0.1(outcome) }
+            waiters.forEach { self.deliver($0.0, outcome, $0.1) }
         }
     }
 
@@ -3485,8 +3510,10 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
             if let request {
                 guard self.previewRequest === request else { return }
                 self.previewRequest = nil
-                self.presentMaterializationState()
             }
+            // Auch eine sofort verfügbare neue Auswahl beendet den
+            // Ladezustand der zuvor abgebrochenen Archivvorschau.
+            self.presentMaterializationState()
             guard !selection.cancelled else { return }
             completion(selection)
         }

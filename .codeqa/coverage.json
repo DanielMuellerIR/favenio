@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 720790
+    "tokens_spent": 928808
   },
   "campaign_history": [
     {
@@ -560,9 +560,15 @@
         "tests/materialization_probe.swift"
       ],
       "priority": 1,
-      "state": "pending",
+      "state": "in_progress",
       "noted_at": "2026-09-08T00:27:57+02:00",
-      "campaign_id": "20260908T002533785169+0200"
+      "campaign_id": "20260908T002533785169+0200",
+      "started_at": "2026-09-08T00:52:38+02:00",
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T00:52:38+02:00",
+        "observed_head": "90c8439bfc191ff9a55bee18c7720787fce3a55c"
+      }
     },
     {
       "id": "structured-hit-identity",
@@ -601,14 +607,21 @@
         "tests/test_search_configuration.py"
       ],
       "priority": 2,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-08T00:27:57+02:00",
       "campaign_id": "20260908T002533785169+0200",
       "started_at": "2026-09-08T00:43:37+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T00:43:37+02:00",
-        "observed_head": "0e9e0af2e1779ae5a05f25933220a0d2f6b72b0f"
+        "completed_at": "2026-09-08T00:52:38+02:00",
+        "observed_head": "90c8439bfc191ff9a55bee18c7720787fce3a55c",
+        "summary": "Ein gemeinsamer Swift-Build mit neun Modi je Python-Testprozess; unveränderte unabhängige Prozesse und Assertions, direkte gemeinsame Funktionen statt drei kleiner Quelltextkopien. Feste cwd/Temp-Wurzeln und begrenzter Starter für alle Prozessgruppen der eigenen Sitzung, einschließlich Foundation-/Compiler-Kindern.",
+        "tests": [
+          "478 PATH-Tests in 50,042 s; ein swiftc-Aufruf 8,899 s statt neun Aufrufen 29,592 s im Ausgangslauf",
+          "479 System-Python-Tests aus /private/tmp in 39,723 s bestanden; finale Cleanup-Probe 2,188 s bestanden",
+          "Alle vier Probes zusätzlich einzeln ohne Suite-Flag kompiliert und ausgeführt; 73/74 Guard-Testkörper AST-identisch, Typcache-Vergleich gleichwertig",
+          "Mutation direkte Gruppe erkennt beide Kind-Lecks; Prozessabfragefehler beendet direkte Gruppe; unabhängiger Abschlussreview ohne Befund"
+        ]
       }
     },
     {
@@ -622,6 +635,19 @@
       "priority": 2,
       "state": "pending",
       "noted_at": "2026-09-08T00:27:57+02:00",
+      "campaign_id": "20260908T002533785169+0200"
+    },
+    {
+      "id": "materialization-cache-race",
+      "summary": "MaterializationManager.request prüft knownURL vor dem Lock für jobs. Veröffentlicht der Worker dazwischen Cache und entfernt den Job, startet dieselbe Anfrage einen zweiten Auspackvorgang und kann eine andere Datei erhalten. Cacheprüfung und Jobwahl für Archivtreffer unter demselben Lock halten; Completion danach außerhalb.",
+      "evidence": [
+        "common/FavenioCore.swift",
+        "tests/materialization_probe.swift",
+        "tests/test_materialization.py"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-09-08T00:58:49+02:00",
       "campaign_id": "20260908T002533785169+0200"
     }
   ]

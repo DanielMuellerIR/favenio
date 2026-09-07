@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.34.5 — 2026-09-08
+
+- Ein Abbruch des Auspackens gilt bis zur Zustellung des Ergebnisses an die
+  Oberfläche. Bereits fertige, aber noch nicht zugestellte Anforderungen
+  öffnen nach Abbruch keine Datei mehr. Auch nach dem Aufräumen werden
+  gelöschte Dateien nicht mehr als bereit gemeldet.
+- Die Schnellsuche bricht beim Wechsel der Trefferliste auch ausstehende
+  Dateiaktionen ab. Gemeinsame Anforderungen behalten ihre eigene
+  Abbruchentscheidung; ein anderer Anforderer kann dieselbe Datei nutzen.
+- Beim Wechsel von einer noch ladenden Archivvorschau zu einer sofort
+  verfügbaren Datei verschwindet der bisherige Ladehinweis.
+- Die Tests übersetzen die Swift-Proben einmal je Testprozess und prüfen
+  ihre Callback-Threads sowie die Aufräumung ihrer Unterprozesse ausdrücklich.
+
 ## 0.34.4 — 2026-09-08
 
 - `--exact` mit weiteren Namensbegriffen erlaubt sich überschneidende
