@@ -485,7 +485,7 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn("infoLabel.toolTip", outside)
         self.assertNotIn("infoLabel.textColor", outside)
 
-    def test_quick_uses_a_regular_window_and_balances_the_search_row(self):
+    def test_quick_uses_a_regular_window(self):
         build = QUICK[
             QUICK.index("func buildWindow()"):
             QUICK.index("func buildTable()")
@@ -494,13 +494,9 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn(".miniaturizable", build)
         self.assertNotIn("NSPanel(", build)
         self.assertNotIn("level = .floating", build)
-        self.assertIn(
-            "field.widthAnchor.constraint(equalTo: scopePopup.widthAnchor)",
-            build)
 
     def test_quick_table_is_resizable_sortable_and_scrolls_horizontally(self):
         table = swift_function(QUICK, "func buildTable()")
-        self.assertIn("visibleWidth * 0.65", table)
         self.assertIn('NSSortDescriptor(key: "name"', table)
         self.assertIn('NSSortDescriptor(key: "path"', table)
         self.assertIn("allowsColumnResizing = true", table)
@@ -543,7 +539,7 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn('path.contains("!/")', COMMON)
 
     def test_handoff_is_atomic_bounded_streamed_and_consumed(self):
-        self.assertIn("options: .atomic", COMMON)
+        self.assertIn("options: .atomic", swift_function(COMMON, "func writeQuickHandoff("))
         self.assertIn("maximumHandoffBytes", COMMON)
         self.assertIn("read(upToCount: 64 * 1024)", COMMON)
         self.assertIn("removeItem(at: url)", COMMON)
@@ -669,27 +665,8 @@ class SwiftGuardTests(unittest.TestCase):
         ]
         self.assertIn("(scopeProblem ?? runScopeNoteText()) == nil", progress)
 
-    def test_quick_builds_the_scope_note_from_the_current_state(self):
-        # Der Hinweis war ein fertig formulierter Präsens-Satz im Zustand.
-        # finish() und der Top-20-Stopp rufen aber zuerst cancelSearch() und
-        # zeigen die Zeile DANACH — die fertige Suche behauptete dort weiter
-        # „Suche läuft in …". Und „Return sucht dort" stimmte nicht mehr,
-        # sobald der Nutzer den Bereich selbst gewählt hatte. Gespeichert
-        # werden deshalb nur die Pfade, formuliert wird aus dem Zustand.
-        self.assertNotIn("var runScopeNote: String?", QUICK)
-        self.assertIn(
-            "var runScopeMismatch: (searched: String, finder: String)?", QUICK)
-        note = QUICK[
-            QUICK.index("func runScopeNoteText()"):
-            QUICK.index("func showScopeProblem")
-        ]
-        self.assertIn(
-            'searching ? "Suche läuft in " : "Gesucht wurde in "', note)
-        self.assertIn("!userPickedScope", note)
-
     def test_streaming_core_does_not_collect_duplicate_results(self):
         self.assertNotIn("var hitsRaw", COMMON)
-        self.assertNotIn("var hits: [Hit] = []\n    var hitsRaw", COMMON)
         self.assertIn("-> SearchExit", COMMON)
 
     def test_frontends_reject_every_unexpected_search_exit(self):

@@ -109,6 +109,35 @@ struct FavenioQuickApp {
                 print("SELFTEST FEHLER: Kontextaktion verliert ihre Zeile")
                 exit(1)
             }
+            // Die Begrenzung am echten Controller prüfen: mehr Eingaben als
+            // Quick anzeigen darf, mit dem gebündelten Suchkern und ohne Fenster.
+            do {
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: root) }
+                for index in 0..<32 {
+                    try Data().write(to: root.appendingPathComponent("match-\(index).txt"))
+                }
+                let limited = QuickController()
+                limited.tableView.dataSource = limited
+                limited.field.stringValue = "match"
+                limited.scopePopup.addItem(withTitle: "Fixture")
+                limited.scopePopup.selectedItem?.representedObject = root.path
+                limited.startSearch()
+                let deadline = ProcessInfo.processInfo.systemUptime + 10
+                while limited.searching && ProcessInfo.processInfo.systemUptime < deadline {
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
+                }
+                guard limited.hits.count == QuickController.maxQuickHits,
+                      limited.pending.isEmpty, !limited.searching,
+                      limited.runningSearch == nil else {
+                    print("SELFTEST FEHLER: Quick stoppt nicht bei zwanzig Treffern")
+                    exit(1)
+                }
+            } catch {
+                print("SELFTEST FEHLER: Quick-Treffergrenze: \(error)")
+                exit(1)
+            }
             if let error = validateSparkleConfiguration(
                 expectedBundleIdentifier: "local.favenio.quick"
             ) {

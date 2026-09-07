@@ -210,24 +210,20 @@
       "risk": "high",
       "priority": 2,
       "reason": "Reproduzierbarer App-Aufbau, gepinnte Updater-Abhängigkeit, Signierung und CI",
-      "state": "pending",
+      "state": "completed",
       "last_run": {
-        "campaign_id": "20260819T173504680851+0200",
-        "completed_at": "2026-08-19T18:12:17+02:00",
-        "observed_head": "2241477c3c60fd0d44494606b64af2190c3bb91f",
-        "content_sha256": "c8bda34b2f84ca22496663cb6a594661e6001fb9b8554ade8b50315eb6c71b6d",
-        "file_count": 8,
+        "campaign_id": "20260908T002533785169+0200",
+        "completed_at": "2026-09-08T01:48:20+02:00",
+        "observed_head": "dcf44eb8c73a73de851f24f7eef193e95e12e114",
+        "content_sha256": "569288f27dc939d263a0b623747df6677d4eab7c801b8df10e34040edb4181e1",
+        "file_count": 9,
         "review": "delta-plus-boundaries",
-        "outcome": "improved",
-        "summary": "Kein Delta: alle 8 Dateien sind byte-identisch mit dem Stand am notierten Referenzcommit — der gespeicherte Hash der Vorkampagne passte nicht dazu, der Faelligkeitsstatus war also ein Buchhaltungsartefakt. Grenzflaechen trotzdem geprueft (Signaturweg, Ad-hoc-Fallback ohne Hardened Runtime, plutil statt XML-Interpolation, Deployment-Target, CI). Gefunden: Der oeffentliche Sparkle-Schluessel aus build-app.sh hat seit dem 2026-08-17 eine dritte, ungepruefte Kopie in notarize-lib.sh, gegen die install.sh und release.sh jedes Bundle pruefen; fuer die Feed-URL gab es diese Wache laengst. Test ergaenzt in tests/test_build_safety.py.",
+        "outcome": "reviewed-clean",
+        "summary": "Kein Inhaltsdelta seit der geprüften Basis 2241477c in den acht bisherigen Dateien. Ergänzte .gitignore vollständig geprüft: ausschließlich Build-/Cache-/Lock-Ausgaben, keine eigenen QA-Quellen ausgeblendet. Heutige Grenzen SwiftPM-Pin, beide Core-Einbettungen, Ad-hoc-Signierung und Headless-CI geprüft.",
         "tests": [
-          "python3 3.14.5 und /usr/bin/python3 3.9.6 -m unittest discover -s tests: je 212 passed",
-          "./build-app.sh in dieser Sitzung mehrfach gelaufen: beide Bundles signiert gebaut, beide Headless-Selbsttests bestanden"
+          "Aktueller build-app.sh-Lauf 0.34.6 baut beide Apps mit FAVENIO_SIGN_ID=- und besteht beide Selbsttests; keine Installation. Git-Diff aller neun Dateien zur Basis leer."
         ]
-      },
-      "pending_paths": [
-        ".gitignore"
-      ]
+      }
     },
     {
       "id": "docs-contracts",
@@ -268,7 +264,7 @@
       "risk": "high",
       "priority": 2,
       "reason": "Finder-naher asynchroner Suchlauf, Bereichsauflösung und Übergabe an die Haupt-App",
-      "state": "completed",
+      "state": "in_progress",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
         "completed_at": "2026-09-03T18:19:48+02:00",
@@ -281,6 +277,13 @@
         "tests": [
           "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed"
         ]
+      },
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:48:20+02:00",
+        "required_review": "delta-plus-boundaries",
+        "status_at_start": "changed",
+        "covered_pending_paths": []
       }
     },
     {
@@ -761,6 +764,19 @@
           "Echter Controller-Selbsttest mit neuer und leerer Liste, Auswahl und altem Fortschritt; beide App-Selbsttests 0.34.6 und 80 Swift-/Dokumentationstests grün."
         ]
       }
+    },
+    {
+      "id": "stale-action-status",
+      "summary": "withActionSelection meldet eine abgebrochene Aktion auch dann später an presentActionIssue, wenn clearHits/replaceSearchResults die Liste schon ersetzt haben. Quick kann dadurch neue Such-/Bereichshinweise durch Auspacken abgebrochen ersetzen. Repro mit echtem Controllerpfad, danach expliziten Escape-Abbruch von stiller Entwertung bei Listenwechsel unterscheiden.",
+      "evidence": [
+        "common/FavenioCore.swift",
+        "quick/FavenioQuick.swift",
+        "gui/FavenioGUI.swift"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-09-08T01:50:42+02:00",
+      "campaign_id": "20260908T002533785169+0200"
     }
   ]
 }
