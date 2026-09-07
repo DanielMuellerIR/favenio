@@ -53,7 +53,7 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.34.3"
+__version__ = "0.34.4"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-09-08"
@@ -1116,8 +1116,8 @@ def restore_termination_handlers(previous):
 
 def positive_float(value):
     parsed = float(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("muss größer als 0 sein")
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("muss endlich und größer als 0 sein")
     return parsed
 
 
@@ -2279,7 +2279,9 @@ class Search:
 
     def search_path(self, root):
         """Durchsucht einen Startpfad rekursiv (Datei ODER Ordner)."""
-        if os.path.isfile(root):
+        if not os.path.isdir(root):
+            # Auch Pipes und Geräte haben einen Namen. Nur ihr Inhalt ist
+            # gesperrt; visit_file prüft das vor jedem Öffnen gesondert.
             self.visit_file(root)
             return
         # followlinks=False: Symlink-Schleifen vermeiden.
@@ -3242,14 +3244,17 @@ def main(argv=None):
             terms.append(term)
     if terms and not args.pattern:
         args.pattern = terms[0]
-    if args.exact and len(terms) > 1 and not args.content and not metadata_mode:
-        # Im Namensmodus muss JEDER Begriff den ganzen Namen treffen — zwei
-        # verschiedene ganze Namen hat eine Datei nicht. Die Suche endete
-        # sonst immer mit „keine Treffer", ohne zu sagen, warum. Im Inhalt
-        # (je Zeile) und in den Metadaten (je Feld) ist die Kombination
-        # dagegen sinnvoll.
-        parser.error("--exact mit mehreren Begriffen kann im Namensmodus "
-                     "nie treffen (jeder Begriff müsste der ganze Name sein)")
+    if (args.exact and len(terms) > 1 and not args.content
+            and not metadata_mode and not args.regex):
+        # Nur widersprüchliche WÖRTLICHE Namen schließen sich sicher aus.
+        # Globs/Regexe können denselben ganzen Namen treffen, und ohne
+        # Groß-/Kleinschreibung sind auch beide.txt und BEIDE.TXT identisch.
+        literal_names = {term if args.case_sensitive else term.lower()
+                         for term in terms if not any(char in term for char in "*?[")}
+        if len(literal_names) > 1:
+            parser.error("--exact mit mehreren Begriffen enthält "
+                         "widersprüchliche wörtliche Namen; --exact "
+                         "weglassen oder --content nutzen")
     if not args.pattern and (args.content or metadata_mode):
         # Ohne Muster läuft die Suche ganz ohne Textkriterium (nur die
         # Maß-/Faktengrenzen zählen). --content und --metadata sagen, WOGEGEN das

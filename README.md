@@ -168,7 +168,7 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `--archive-depth N` | nesting depth (0 = like `--no-archives`, default 1) |
 | `--max-archive-member-bytes BYTES` | maximum uncompressed bytes read per archive member |
 | `--max-archive-total-bytes BYTES` | maximum uncompressed archive bytes read per search |
-| `--max-archive-ratio FACTOR` | maximum ZIP compression ratio |
+| `--max-archive-ratio FACTOR` | maximum ZIP compression ratio (finite and positive) |
 | `--only both\|files\|dirs` | limit hits to files, directories or both (default) |
 | `--hidden` | include hidden (dot) files and directories |
 | `--exclude GLOB` | exclude matching files and subtrees before opening or descending (repeatable; case-sensitive; see below) |
@@ -269,6 +269,10 @@ without a pattern the first `--term` becomes the pattern, and positional
 arguments that all exist as paths are start paths. Cheap first: fixed terms
 are probed in one pass before any line is counted, and the exact pass stops
 when the last term is found; the content is not re-read per term.
+
+In name mode, `--exact` allows overlapping glob or regex patterns, such as
+`'*.txt' --term 'report*'`. Only conflicting literal names are rejected;
+case-insensitive variants of the same literal name remain valid.
 
 Evidence per term: `--json` adds `terms` — `[{"term": "alpha", "line": 1},
 {"term": "beta", "line": 3}]` for content, `[{"term": …, "field": …,

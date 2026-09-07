@@ -172,7 +172,7 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `--archive-depth N` | Verschachtelungstiefe (0 = wie `--no-archives`, Default 1) |
 | `--max-archive-member-bytes BYTES` | maximal gelesene entpackte Bytes pro Archivmitglied |
 | `--max-archive-total-bytes BYTES` | maximal gelesene entpackte Archivbytes pro Suchlauf |
-| `--max-archive-ratio FAKTOR` | maximales ZIP-Kompressionsverhältnis |
+| `--max-archive-ratio FAKTOR` | maximales ZIP-Kompressionsverhältnis (endlich und positiv) |
 | `--only both\|files\|dirs` | Treffer auf Dateien, Ordner oder beides (Default) begrenzen |
 | `--hidden` | unsichtbare (Punkt-)Dateien und -Ordner mitdurchsuchen |
 | `--exclude GLOB` | passende Dateien und Teilbäume vor Öffnen oder Abstieg ausschließen (wiederholbar; Groß-/Kleinschreibung gilt; siehe unten) |
@@ -280,6 +280,10 @@ existieren, sind Startpfade. Billig zuerst: Feste Begriffe werden in einem
 Durchlauf vorgeprüft, bevor eine Zeile gezählt wird, und der genaue Lauf
 endet beim letzten gefundenen Begriff — der Inhalt wird nicht je Begriff
 neu gelesen.
+
+Im Namensmodus erlaubt `--exact` sich überschneidende Glob- oder Regex-Muster,
+etwa `'*.txt' --term 'bericht*'`. Nur widersprüchliche wörtliche Namen werden
+abgelehnt; ohne Groß-/Kleinschreibung gelten Schreibvarianten desselben Namens.
 
 Belege je Begriff: `--json` ergänzt `terms` — `[{"term": "alpha", "line":
 1}, {"term": "beta", "line": 3}]` bei Inhalt, `[{"term": …, "field": …,

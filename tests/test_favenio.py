@@ -731,6 +731,14 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(lines, [])
         self.assertIn("Kompressionsverhältnis", err)
 
+    def test_archive_ratio_requires_a_finite_positive_number(self):
+        for value in ("nan", "inf", "-inf", "1e309", "0", "-1"):
+            with self.subTest(value=value):
+                code, lines, err = run(["--max-archive-ratio=" + value, "*", self.root])
+                self.assertEqual((code, lines), (2, []))
+                self.assertIn("--max-archive-ratio", err)
+        self.assertEqual(favenio.positive_float("0.5"), 0.5)
+
     def test_no_pattern_and_no_extract_exits_2(self):
         code, _, _ = run([])
         self.assertEqual(code, 2)
@@ -2971,6 +2979,29 @@ class RobustTraversalTest(TempTreeTest):
         self.assertEqual(code, 0)
         self.assertEqual(len(lines), 1)
         self.assertEqual(err, "")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "Plattform kennt kein mkfifo")
+    def test_an_explicit_fifo_root_matches_its_parent_search(self):
+        # Eigener Prozess mit Frist: Ein versehentlich blockierendes open
+        # darf nicht die gesamte Testsuite anhalten.
+        for name in ("pipe.txt", "pipe.zip"):
+            pipe = os.path.join(self.root, name)
+            os.mkfifo(pipe)
+            for arguments, expected in ((["--json", "pipe*"], 0),
+                                        (["--content", "needle"], 1),
+                                        (["--min-width", "1"], 1)):
+                with self.subTest(name=name, arguments=arguments):
+                    result = subprocess.run(
+                        [sys.executable, favenio.__file__] + arguments + [pipe],
+                        capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, expected, result.stderr)
+                    if expected == 0:
+                        record = json.loads(result.stdout)
+                        self.assertEqual(record["filesystemPath"], pipe)
+                        self.assertFalse(record["isDirectory"])
+                    else:
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn("keine reguläre Datei", result.stderr)
 
 
 if __name__ == "__main__":

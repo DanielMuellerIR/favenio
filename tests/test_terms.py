@@ -96,9 +96,8 @@ class TermsTest(TempTreeTest):
                               "--term", "BETA hier", self.root])
         self.assertEqual(self.paths(lines), ["beide.txt"])
 
-    def test_exact_with_several_terms_is_refused_in_name_mode(self):
-        """Jeder Begriff müsste der GANZE Name sein — das kann keine Datei.
-        Bis 0.34.0 endete das still mit Exit 1."""
+    def test_exact_refuses_conflicting_literal_names(self):
+        """Verschiedene wörtliche Namen können nicht dieselbe Datei treffen."""
         code, lines, err = run(["--exact", "alpha", "--term", "beta", self.root])
         self.assertEqual((code, lines), (2, []))
         self.assertIn("--exact mit mehreren Begriffen", err)
@@ -108,6 +107,21 @@ class TermsTest(TempTreeTest):
         code, _, err = run(["--content", "--exact", "zweite", "--term", "BETA hier",
                             self.root])
         self.assertEqual(code, 0, err)
+
+    def test_exact_allows_overlapping_name_patterns(self):
+        cases = (([], "*.txt", "bei*"),
+                 (["--regex"], "beide.*", ".*txt"),
+                 ([], "beide.txt", "BEIDE.TXT"),
+                 ([], "beide.txt", "bei*"))
+        for options, first, second in cases:
+            with self.subTest(options=options, first=first, second=second):
+                code, lines, err = run(["--json", "--exact"] + options +
+                                       [first, "--term", second, self.root])
+                self.assertEqual((code, self.paths(lines), err), (0, ["beide.txt"], ""))
+        code, lines, err = run(["--case-sensitive", "--exact", "beide.txt",
+                               "--term", "BEIDE.TXT", self.root])
+        self.assertEqual((code, lines), (2, []))
+        self.assertIn("--exact mit mehreren Begriffen", err)
 
     def test_search_refuses_extra_matchers_without_a_matcher(self):
         with self.assertRaises(ValueError):

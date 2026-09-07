@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.4 — 2026-09-08
+
+- `--exact` mit weiteren Namensbegriffen erlaubt sich überschneidende
+  Glob-/Regex-Muster und gleichwertige Schreibweisen. Nur widersprüchliche
+  wörtliche Namen werden vor der Suche abgelehnt.
+- Eine benannte Pipe als direkter Startpfad erscheint wie beim Durchsuchen
+  ihres Elternordners als Namenstreffer. Inhalt und Maße werden weiterhin
+  ohne blockierendes Öffnen übersprungen.
+- `--max-archive-ratio` verlangt einen endlichen positiven Wert; NaN und
+  Infinity können den Vergleich nicht mehr unwirksam machen.
+
 ## 0.34.3 — 2026-09-08
 
 - Zeitfilter lesen eine bis sechs Nachkommastellen auch mit dem
