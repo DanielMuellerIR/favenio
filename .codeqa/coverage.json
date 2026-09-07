@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 1190317
+    "tokens_spent": 1299612
   },
   "campaign_history": [
     {
@@ -154,19 +154,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "completed_at": "2026-09-08T00:38:10+02:00",
-        "observed_head": "ce71cc6035846908ab0267f0c90d7270815b28b7",
-        "content_sha256": "03c80be73aec08eb1308ca2822e7427d023a6a79591622173ee3008eb4bee545",
+        "completed_at": "2026-09-08T01:21:24+02:00",
+        "observed_head": "87104d115239e78b2da6da75492c263a72545ca6",
+        "content_sha256": "7e050c7b870fd5452b2947ce0eda0053dee11ef39fb156007526da40bc91960d",
         "file_count": 6,
         "review": "delta-plus-boundaries",
-        "outcome": "improved",
-        "summary": "Gesamte heutige Kernmechanismen und neue Facts/Terms/Exclusions/LineReader-Tests geprüft. Sieben bestätigte Randfehler korrigiert; gemeinsame Faktenvalidierung, bedingte bsdtar-Elternheuristik und schlankere Testfixtures. Alle Änderungen unabhängig nachgeprüft; Protokoll docs/codeqa-2026-09.md.",
+        "outcome": "reviewed-clean",
+        "summary": "Seit dem vollständigen Kampagnenreview änderte sich ausschließlich die Versionsnummer von 0.34.4 auf 0.34.6. Suchverhalten und sechs Bereichsdateien ansonsten unverändert; Integration mit beiden Apps geprüft.",
         "tests": [
-          "267 Kerntests: System-Python 3,818 s und Python 3.14.7 3,524 s, alle bestanden",
-          "Beide Apps 0.34.4 gebaut, beide Headless-Selbsttests bestanden",
-          "Neue Bugregressionen vor Fix rot; 6 Katalogtests auch bei fehlenden Werkzeugen bestanden",
-          "10000 identische simulierte bsdtar-Einträge: Ergebnisse exakt gleich, Median 11,944 auf 2,724 ms, Python-Peak 5698691 auf 1170880 Bytes",
-          "Unabhängiger Diff-Review und AST-Vergleich der verschobenen Testkörper ohne Befund"
+          "Beide App-Selbsttests 0.34.6 inklusive realer Suche und Archiv-Extraktion bestanden."
         ]
       }
     },
@@ -547,9 +543,14 @@
         "quick/FavenioQuick.swift"
       ],
       "priority": 2,
-      "state": "pending",
+      "state": "dismissed",
       "noted_at": "2026-09-08T00:27:57+02:00",
-      "campaign_id": "20260908T002533785169+0200"
+      "campaign_id": "20260908T002533785169+0200",
+      "dismissed": {
+        "campaign_id": "20260908T002533785169+0200",
+        "dismissed_at": "2026-09-08T01:22:16+02:00",
+        "reason": "Geprüft: Beide Getter ordnen rohe UI-Werte zu, ohne eigene Suchsemantik. SearchConfiguration vereinheitlicht CLI/URL/Filterzusammenfassung, SearchFilterView Fakten/Begriffe/Ausschlüsse und validatePixelFields die komplette Validierung samt Markierung. Die verbleibenden lokalen Unterschiede (Regex, Groß-/Kleinschreibung, Metadatenfeld und Fehleranzeige) sind beabsichtigt. Eine zusätzliche Bindungsschicht müsste dieselben Controls erneut aufzählen und spart derzeit keine eigenständige Logik. Kein Refactor ohne weiteren konkreten Nutzen."
+      }
     },
     {
       "id": "selection-cancellation",
@@ -610,9 +611,15 @@
         "tests/export_benchmark.swift"
       ],
       "priority": 2,
-      "state": "pending",
+      "state": "in_progress",
       "noted_at": "2026-09-08T00:27:57+02:00",
-      "campaign_id": "20260908T002533785169+0200"
+      "campaign_id": "20260908T002533785169+0200",
+      "started_at": "2026-09-08T01:23:21+02:00",
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:23:21+02:00",
+        "observed_head": "87104d115239e78b2da6da75492c263a72545ca6"
+      }
     },
     {
       "id": "swift-probe-builds",
@@ -651,14 +658,18 @@
         "common/FavenioCore.swift"
       ],
       "priority": 2,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-08T00:27:57+02:00",
       "campaign_id": "20260908T002533785169+0200",
       "started_at": "2026-09-08T01:14:03+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:14:03+02:00",
-        "observed_head": "906695e882df92210b668417a354e9fde2c5b62e"
+        "completed_at": "2026-09-08T01:21:06+02:00",
+        "observed_head": "87104d115239e78b2da6da75492c263a72545ca6",
+        "summary": "Gemeinsame Öffnen-Einstiege unterscheiden Doppelklick und gespeicherte Kontextmenüzeile; Quick verwirft veralteten Klickort.",
+        "tests": [
+          "74 Swift-Wachen in 9.126 s; beide App-Selbsttests 0.34.6 grün; Quick ruft beide Controller-Methoden direkt auf."
+        ]
       }
     },
     {

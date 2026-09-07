@@ -2,6 +2,10 @@
 
 ## 0.34.6 — 2026-09-08
 
+- CSV-Exporte verwenden einen Datumsformatter je Export statt je Zeitfeld.
+  JSONL gibt temporäre Foundation-Objekte nach jeder Zeile frei; dadurch
+  sinkt der Spitzenspeicher großer Exporte erheblich.
+
 - Die Schnellsuche verwirft beim Doppelklick außerhalb der Zeilen eine alte
   Kontextmenüzeile und verwendet die aktuelle Auswahl wie die Haupt-App.
 - Die Trefferlisten unterscheiden Objekte anhand von Dateisystempfad und

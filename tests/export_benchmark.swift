@@ -1,5 +1,5 @@
-// Dieselbe Eingabe und derselbe Serializer für Vorher/Nachher. Nur der
-// Aufrufort wechselt; die Baseline hat keinen ExportWriter.
+// Identische Eingabe für beide Varianten. Die aufrufende Messung prüft
+// die vollständige Datei außerhalb des gemessenen Intervalls.
 import Foundation
 import Darwin
 
@@ -12,8 +12,7 @@ import Darwin
                 archiveMembers: [], isDirectory: false,
                 modified: 1725500000, created: 1725400000)
         }
-        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: output) }
+        let output = URL(fileURLWithPath: CommandLine.arguments[2])
         let start = ProcessInfo.processInfo.systemUptime
         var last = start
         var maxDelay = 0.0

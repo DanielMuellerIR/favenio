@@ -2302,26 +2302,30 @@ func cleanupMaterializedHits() {
 func jsonlData(for hits: [Hit]) -> Data {
     var data = Data()
     for hit in hits {
-        var object: [String: Any] = ["path": hit.path, "type": hit.kind,
-                                     "isDirectory": hit.isDirectory]
-        object["filesystemPath"] = hit.filesystemPath
-        object["archiveMembers"] = hit.archiveMembers
-        if let line = hit.line { object["line"] = line }
-        if let size = hit.size { object["size"] = size }
-        if let field = hit.field, let value = hit.value {
-            object["field"] = field
-            object["value"] = value
-        }
-        if let width = hit.width, let height = hit.height {
-            object["width"] = width
-            object["height"] = height
-        }
-        if let modified = hit.modified { object["modified"] = modified }
-        if let created = hit.created { object["created"] = created }
-        if !hit.terms.isEmpty { object["terms"] = hit.terms.map { $0.json } }
-        if let encoded = try? JSONSerialization.data(withJSONObject: object) {
-            data.append(encoded)
-            data.append(0x0A)
+        // Foundation-Zwischenobjekte nach jeder Zeile freigeben. Die
+        // fertigen UTF-8-Bytes bleiben im gemeinsamen Ausgabepuffer.
+        autoreleasepool {
+            var object: [String: Any] = ["path": hit.path, "type": hit.kind,
+                                         "isDirectory": hit.isDirectory]
+            object["filesystemPath"] = hit.filesystemPath
+            object["archiveMembers"] = hit.archiveMembers
+            if let line = hit.line { object["line"] = line }
+            if let size = hit.size { object["size"] = size }
+            if let field = hit.field, let value = hit.value {
+                object["field"] = field
+                object["value"] = value
+            }
+            if let width = hit.width, let height = hit.height {
+                object["width"] = width
+                object["height"] = height
+            }
+            if let modified = hit.modified { object["modified"] = modified }
+            if let created = hit.created { object["created"] = created }
+            if !hit.terms.isEmpty { object["terms"] = hit.terms.map { $0.json } }
+            if let encoded = try? JSONSerialization.data(withJSONObject: object) {
+                data.append(encoded)
+                data.append(0x0A)
+            }
         }
     }
     return data
@@ -3081,15 +3085,6 @@ enum HitExportFormat: String, CaseIterable {
     }
 }
 
-/// Unix-Zeit als ISO-8601-Zeitstempel in der Zeitzone dieses Rechners,
-/// z. B. `2026-09-04T14:03:00+02:00`.
-func isoTimestamp(_ seconds: Double) -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.timeZone = TimeZone.current
-    formatter.formatOptions = [.withInternetDateTime]
-    return formatter.string(from: Date(timeIntervalSince1970: seconds))
-}
-
 /// Ein CSV-Feld nach RFC 4180: Anführungszeichen nur, wo sie nötig sind, und
 /// ein enthaltenes Anführungszeichen wird verdoppelt.
 func csvField(_ value: String) -> String {
@@ -3129,6 +3124,14 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
     case .jsonl:
         return jsonlData(for: hits)
     case .csv:
+        // Ein Formatter pro Export: Die gleiche lokale Zeitzone für alle
+        // Zeilen, ohne geteilten veränderlichen Zustand zwischen Exporten.
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone.current
+        formatter.formatOptions = [.withInternetDateTime]
+        func isoTimestamp(_ seconds: Double) -> String {
+            formatter.string(from: Date(timeIntervalSince1970: seconds))
+        }
         var text = "path,type,isDirectory,size,line,filesystemPath,"
             + "field,value,width,height,modified,created\n"
         for hit in hits {

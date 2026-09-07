@@ -522,7 +522,9 @@ und im Rechtsklick-Menü der Tabelle, jeweils mit sichtbarem Kürzel:
 
 `ExportWriter` serialisiert und schreibt den unveränderlichen Trefferstand
 im Hintergrund. Start, Einzeljob-Sperre und Completion gehören auf Main;
-`exportData` sowie der atomare Austausch bleiben unverändert. Die GUI erlaubt
+`exportData` erzeugt das Format, der Dateiaustausch ist atomar. CSV benutzt
+einen lokalen Datumsformatter je Export; JSONL begrenzt die Lebensdauer von
+Foundation-Zwischenobjekten auf eine Zeile. Die GUI erlaubt
 höchstens einen Sichern-Dialog oder Exportjob gleichzeitig. Exportstatus wird
 in `refreshStatus` an den AKTUELLEN Suchstatus angehängt, niemals direkt über
 dessen Text geschrieben. Eine neue Suche oder deren Fehler darf auch nach
