@@ -929,7 +929,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         previewURLs = []
         // Vorschau UND Dateiaktionen gehören zur alten Trefferliste. Die
         // gemeinsame Funktion setzt auch den gemerkten Ladezustand zurück.
-        cancelMaterializations()
+        cancelMaterializations(reportCancellation: false)
         tableView.reloadData()
         showInfo(Self.hint)
         if QLPreviewPanel.sharedPreviewPanelExists(),

@@ -441,7 +441,10 @@ vom Klick, `requestPreview` nimmt für Quick Look nur die ZULETZT
 angeforderte Auswahl (die vorige wird abgebrochen, ein spätes Ergebnis
 verworfen); beide zeigen den Ladezustand über `presentMaterializationState`
 (Haupt-App: Fußzeile, Schnellsuche: Infozeile), auch wenn eine neue Vorschau
-sofort aus dem Cache oder Dateisystem bereitsteht. ⎋ ruft in beiden
+sofort aus dem Cache oder Dateisystem bereitsteht. Listen- und Vorlagenwechsel
+brechen mit `reportCancellation: false` ab; `actionGeneration` entwertet
+auch bereits eingereihte Abbruchmeldungen, damit sie keinen neuen Status
+überschreiben. ⎋ ruft in beiden
 Tastaturmonitoren zuerst `cancelMaterializations()`. Drag-and-drop in der
 Haupt-App verlangt im Pasteboard-Callback sofort eine Antwort: Was
 `knownURL` kennt, geht als URL, ein noch nicht ausgepackter Eintrag als

@@ -3380,6 +3380,8 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     /// Laufende Aufträge von Öffnen, „Öffnen mit" und „Im Finder zeigen".
     /// Jeder arbeitet mit der FESTEN Auswahl vom Klick; ⎋ bricht sie ab.
     var actionRequests: [MaterializationSelectionRequest] = []
+    /// Ein Listenwechsel entwertet auch bereits eingereihte Abbruchmeldungen.
+    private var actionGeneration = 0
 
     /// Wird gerade ein Archivtreffer ausgepackt? Die Apps zeigen das an.
     var isMaterializing: Bool {
@@ -3404,12 +3406,13 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     func withActionSelection(
         _ body: @escaping (MaterializedHitSelection) -> Void) {
         let rows = actionRows()
+        let generation = actionGeneration
         var request: MaterializationSelectionRequest?
         var finished = false
         let started = materializeHitSelection(hits, rows: rows) {
             [weak self] selection in
             finished = true
-            guard let self else { return }
+            guard let self, generation == self.actionGeneration else { return }
             if let request {
                 self.actionRequests.removeAll { $0 === request }
                 self.presentMaterializationState()
@@ -3430,9 +3433,13 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
 
     /// Bricht alle laufenden Auspackvorgänge ab (Vorschau und Aktionen).
     /// Liefert, ob es etwas abzubrechen gab — der Tastaturmonitor gibt ⎋
-    /// nur dann nicht weiter.
+    /// nur dann nicht weiter. Listenwechsel unterdrücken Meldungen der alten
+    /// Aktionen; der ausdrückliche Escape-Abbruch meldet sich weiterhin.
     @discardableResult
-    func cancelMaterializations() -> Bool {
+    func cancelMaterializations(reportCancellation: Bool = true) -> Bool {
+        // Vor der Leerprüfung: Ein früherer Escape-Abbruch kann seine
+        // Completion bereits eingereiht und die Auftragsliste geleert haben.
+        if !reportCancellation { actionGeneration += 1 }
         guard isMaterializing else { return false }
         previewRequest?.cancel()
         previewRequest = nil

@@ -2108,7 +2108,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// genannt; der aktuelle Ordner bleibt dann stehen.
     func applyTemplate(_ template: SearchTemplate) {
         stopSearch()
-        cancelMaterializations()
+        cancelMaterializations(reportCancellation: false)
         applyConfiguration(template.configuration)
         searchField.stringValue = template.pattern
         var note = "Vorlage „\(template.name)“ geladen — ↩ startet die Suche."
@@ -2239,7 +2239,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         stopSearch()
         // Vorschau und Öffnen gehören zur alten Liste. Der Abbruch verhindert,
         // dass ein fertiger Auftrag später einen verschwundenen Treffer öffnet.
-        cancelMaterializations()
+        cancelMaterializations(reportCancellation: false)
         hits = incoming
         pending = []
         seenHitIdentities = Set(incoming.map { $0.identity })

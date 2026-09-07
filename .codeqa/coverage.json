@@ -264,26 +264,19 @@
       "risk": "high",
       "priority": 2,
       "reason": "Finder-naher asynchroner Suchlauf, Bereichsauflösung und Übergabe an die Haupt-App",
-      "state": "in_progress",
+      "state": "completed",
       "last_run": {
-        "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:19:48+02:00",
-        "observed_head": "86f71bf3c90ccd251a95f3d875f015a2b5625828",
-        "content_sha256": "6405821d5ac94551934b855d173745043cbc9442f3c6636252b826a5f4ba2c48",
+        "campaign_id": "20260908T002533785169+0200",
+        "completed_at": "2026-09-08T01:51:23+02:00",
+        "observed_head": "ca37c64f2528ae246b0d437263911c03aa26c681",
+        "content_sha256": "46c4994f2924de174baf13962561bf49e5afa3c084db28d662ab92e8780e1db8",
         "file_count": 2,
         "review": "delta-plus-boundaries",
-        "outcome": "reviewed-clean",
-        "summary": "Delta = Wachen in tests/test_swift_guards.py (Einfachparse, Basisklasse); FavenioQuick.swift unveraendert",
+        "outcome": "improved",
+        "summary": "Quick-Delta und heutige Such-/Finder-/Übergabegrenzen geprüft. Reale Controllerprüfung für zwanzig Treffer ergänzt; kosmetische Pixelwachen, redundante Scope-/hitsRaw-Assertions entfernt; atomare Handoff-Wache präzisiert. Späte Aktions-Abbruchmeldung als Theme zur gezielten Behebung erfasst.",
         "tests": [
-          "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed"
+          "73 Swift-Wachen in 8.403 s grün; beide App-Selbsttests inklusive echtem Quick-Lauf über 32 Dateien bestanden; Diff-Review abgeschlossen."
         ]
-      },
-      "active_run": {
-        "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:48:20+02:00",
-        "required_review": "delta-plus-boundaries",
-        "status_at_start": "changed",
-        "covered_pending_paths": []
       }
     },
     {
@@ -774,9 +767,15 @@
         "gui/FavenioGUI.swift"
       ],
       "priority": 2,
-      "state": "pending",
+      "state": "in_progress",
       "noted_at": "2026-09-08T01:50:42+02:00",
-      "campaign_id": "20260908T002533785169+0200"
+      "campaign_id": "20260908T002533785169+0200",
+      "started_at": "2026-09-08T01:51:23+02:00",
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:51:23+02:00",
+        "observed_head": "ca37c64f2528ae246b0d437263911c03aa26c681"
+      }
     }
   ]
 }

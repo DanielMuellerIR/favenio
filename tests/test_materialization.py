@@ -70,6 +70,20 @@ class MaterializationTests(unittest.TestCase):
                 self.assertIn(root, Path(outcome['path']).parents)
         return report
 
+    def test_replacing_results_suppresses_old_action_messages_but_escape_reports_cancel(self):
+        for mode in ('action-reset', 'action-cancel', 'action-cancel-then-reset'):
+            with self.subTest(mode=mode):
+                release = self.root / (mode + '.release')
+                cli = self.fake_cli(mode, '''
+                    wait_for_file(%r)
+                    emit()
+                    ''' % str(release))
+                report = self.run_probe(mode, cli, self.archive, 'x.txt', release)
+                self.assertEqual(report['issues'], ['Auspacken abgebrochen.']
+                                 if mode == 'action-cancel' else [])
+                self.assertFalse(report['performed'])
+                self.assertFalse(report['materializing'])
+
     def test_synchronous_preview_replacement_clears_the_loading_state(self):
         report = self.run_probe('preview-sync', self.archive, 'inner/geheim.txt')
         self.assertEqual(report['states'], [True, False])

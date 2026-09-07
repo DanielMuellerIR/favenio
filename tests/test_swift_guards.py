@@ -142,7 +142,7 @@ class SwiftGuardTests(unittest.TestCase):
         # Schreibweise im Manager ist kein zusätzlicher Vertrag.
         # Die Basisklasse haelt die Aktionen; keine App baut sie nach.
         for signature in ("func withActionSelection(", "func requestPreview(",
-                          "func cancelMaterializations()", "func openActionRows()"):
+                          "func cancelMaterializations(", "func openActionRows()"):
             self.assertIn(signature, COMMON)
             self.assertNotIn(signature, GUI)
             self.assertNotIn(signature, QUICK)
@@ -195,14 +195,14 @@ class SwiftGuardTests(unittest.TestCase):
                      "func loadResults(from file: URL) {"):
             with self.subTest(function=name):
                 self.assertIn("replaceSearchResults(", swift_function(GUI, name))
-        self.assertIn("cancelMaterializations()", swift_function(GUI, "func replaceSearchResults("))
-        self.assertIn("cancelMaterializations()", swift_function(GUI, "func applyTemplate("))
+        self.assertIn("cancelMaterializations(reportCancellation: false)", swift_function(GUI, "func replaceSearchResults("))
+        self.assertIn("cancelMaterializations(reportCancellation: false)", swift_function(GUI, "func applyTemplate("))
         launch = swift_function(GUI, "func launchSearch(pattern: String) {")
         self.assertIn("searchRootProblem(searchRoot.path)", launch)
         self.assertIn("exportStatus = nil", launch)
         self.assertIn("searchRootProblem(root)",
                       swift_function(QUICK, "func startSearch() {"))
-        self.assertIn("cancelMaterializations()", swift_function(QUICK, "func clearHits()"))
+        self.assertIn("cancelMaterializations(reportCancellation: false)", swift_function(QUICK, "func clearHits()"))
         # Die Vorlagentabelle hängt an den ECHTEN Delegate-Namen.
         self.assertIn("func tableView(_ templateTable: NSTableView, viewFor", GUI)
         self.assertNotIn("func templateTable(_ templateTable", GUI)

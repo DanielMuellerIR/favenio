@@ -2,6 +2,10 @@
 
 ## 0.34.6 — 2026-09-08
 
+- Abbruchmeldungen alter Dateiaktionen überschreiben nach einem Listen-
+  oder Vorlagenwechsel nicht mehr den Status der neuen Suche. Ein
+  ausdrücklicher Abbruch per Escape wird weiterhin gemeldet.
+
 - Suchstart und beide Ergebnisübergaben setzen Treffer, Auswahl,
   Deduplikation und Statistiken über denselben Pfad zurück. Das Laden
   einer Suchvorlage behält die bisherige Trefferliste.

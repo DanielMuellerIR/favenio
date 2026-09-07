@@ -10,6 +10,8 @@ import AppKit
 /// Beobachtet den tatsächlichen Controllerzustand ohne Vorschaufenster.
 final class MaterializationControllerProbe: HitListController {
     var states: [Bool] = []
+    var issues: [String] = []
+    override func presentActionIssue(summary: String, detail: String?) { issues.append(summary) }
     override func presentMaterializationState() { states.append(isMaterializing) }
 }
 
@@ -80,6 +82,27 @@ struct MaterializationProbe {
         }
         let start = ProcessInfo.processInfo.systemUptime
         switch mode {
+        case "action-reset", "action-cancel", "action-cancel-then-reset":
+            manager.cliPath = arguments[2]
+            let target = hit(arguments[3], [arguments[4]])
+            let controller = MaterializationControllerProbe()
+            controller.hits = [target]
+            controller.contextRow = 0
+            var performed = false
+            controller.withActionSelection { _ in performed = true }
+            precondition(controller.isMaterializing)
+            // Ein unabhängiger Anforderer hält den Auftrag offen. Seine
+            // Completion belegt, dass auch die alten Callbacks abgearbeitet sind.
+            manager.request(target) { received(); outcome = $0 }
+            controller.cancelMaterializations(reportCancellation: mode != "action-reset")
+            if mode == "action-cancel-then-reset" {
+                controller.cancelMaterializations(reportCancellation: false)
+            }
+            try! Data().write(to: URL(fileURLWithPath: arguments[5]))
+            precondition(spin(until: { outcome != nil }))
+            report["issues"] = controller.issues
+            report["performed"] = performed
+            report["materializing"] = controller.isMaterializing
         case "preview-sync":
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.prohibited)
