@@ -5,7 +5,8 @@
     "id": "20260908T002533785169+0200",
     "token_budget": 6000000,
     "status": "active",
-    "started_at": "2026-09-08T00:25:33+02:00"
+    "started_at": "2026-09-08T00:25:33+02:00",
+    "tokens_spent": 407916
   },
   "campaign_history": [
     {
@@ -119,26 +120,22 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Schreibt nach /Applications; Identitätsprüfung, atomarer Austausch und Rollback schützen Nutzerdaten",
-      "state": "in_progress",
+      "state": "completed",
       "last_run": {
-        "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:09:41+02:00",
-        "observed_head": "67098dcf2f13df4528186f8180bcc0a036de10f4",
-        "content_sha256": "a8f957c208251bbdc721a211452ecad777e136bc06cd1fe0c05e0bd2692a8992",
+        "campaign_id": "20260908T002533785169+0200",
+        "completed_at": "2026-09-08T00:29:23+02:00",
+        "observed_head": "6b1df0105296695a43a823578a091ebb7e425974",
+        "content_sha256": "c3ffee80ec61f185eab26fce84e6814431b7804729353b6229c813edc82044c4",
         "file_count": 3,
         "review": "delta-plus-boundaries",
-        "outcome": "reviewed-clean",
-        "summary": "Delta nur tests/test_build_safety.py: /Applications-Wache ohne Literal-Sperrliste (aus docs-contracts), kein Skriptcode beruehrt",
+        "outcome": "improved",
+        "summary": "Elf vererbte Testduplikate und eine identische Feed-Wache entfernt; testfreie gemeinsame Fixture isoliert Sparkle-Umgebung. Ausführbare Installationslogik und elf ursprüngliche DMG-Testkörper unverändert. Vorbestehenden Umgebungsfehler reproduziert und korrigiert; Diff unabhängig geprüft.",
         "tests": [
-          "python3 + /usr/bin/python3 -m unittest discover -s tests: 360 passed"
+          "Python 3.14.7: 68 Tests in 11,445 s bestanden",
+          "System-Python: 68 Tests in 12,421 s bestanden",
+          "Ausgangslauf: vollständige Suite 485 Tests in 78,053 s; Installation 80 Fälle in 23,533 s",
+          "AST-Vergleich bestätigt alle elf DMG-Testkörper unverändert; Diff-Review ohne Befund"
         ]
-      },
-      "active_run": {
-        "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T00:25:36+02:00",
-        "required_review": "delta-plus-boundaries",
-        "status_at_start": "changed",
-        "covered_pending_paths": []
       }
     },
     {
@@ -154,7 +151,7 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Einzige Suchsemantik; Traversierung, Archive, Extraktion und JSONL-Vertrag",
-      "state": "pending",
+      "state": "in_progress",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
         "completed_at": "2026-09-03T18:09:41+02:00",
@@ -173,7 +170,19 @@
         "tests/test_fact_filters.py",
         "tests/test_terms.py",
         "tests/test_line_reader.py"
-      ]
+      ],
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T00:29:23+02:00",
+        "required_review": "delta-plus-boundaries",
+        "status_at_start": "changed",
+        "covered_pending_paths": [
+          "tests/test_exclusions.py",
+          "tests/test_fact_filters.py",
+          "tests/test_terms.py",
+          "tests/test_line_reader.py"
+        ]
+      }
     },
     {
       "id": "release-appcast",

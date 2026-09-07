@@ -295,10 +295,12 @@ fractional seconds the bound is exact. Use `YYYY-MM-DDTHH:MM[:SS[.ffffff]]` with
 `Z` or an explicit `±HH:MM` offset, for example `2024-01-01T00:00:00Z` or
 `2024-01-01T01:00+01:00`; these two values denote the same instant. Date-only
 values and times without a zone are rejected. Up to six fractional-second
-digits are supported. A lower bound above its upper bound is an error.
+digits are supported, including with the macOS system Python. A lower bound
+above its upper bound is an error.
 
 Requested facts must be known and valid. ZIP and TAR entries provide sizes
 and modification times from their catalogs; they have no creation time.
+Invalid catalog dates are unknown and omitted from JSON results.
 Single-compressed entries and entries read through bsdtar have no size or
 timestamps in the current catalog. They fail a requested fact filter, and
 Favenio does not inflate them just to discover a size. Local creation time

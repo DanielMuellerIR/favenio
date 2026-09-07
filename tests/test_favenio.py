@@ -281,8 +281,11 @@ class FavenioTest(TempTreeTest):
         info = zipfile.ZipInfo("x.txt", date_time=(1980, 1, 1, 0, 0, 0))
         self.assertEqual(favenio.zip_member_mtime(info),
                          time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, -1)))
-        info.date_time = (1970, 1, 1, 0, 0, 0)
-        self.assertIsNone(favenio.zip_member_mtime(info))
+        for fields in ((1970, 1, 1, 0, 0, 0), (1980, 0, 0, 0, 0, 0),
+                       (2024, 2, 31, 0, 0, 0), (2024, 1, 1, 31, 63, 62)):
+            with self.subTest(fields=fields):
+                info.date_time = fields
+                self.assertIsNone(favenio.zip_member_mtime(info))
         self.assertIsNone(favenio.zip_member_mtime(object()))
 
     def test_name_glob(self):

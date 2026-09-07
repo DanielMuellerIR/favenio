@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.34.3 — 2026-09-08
+
+- Zeitfilter lesen eine bis sechs Nachkommastellen auch mit dem
+  macOS-System-Python. Inklusive Sekunden- und Minutengrenzen erhalten
+  außerdem die letzten Zeitwerte vor der nächsten Grenze, auch bei
+  Dateisystemen mit feinerer Auflösung als Mikrosekunden.
+- Ungültige Archivzeiten bleiben unbekannt: ZIP-Kalenderdaten werden nicht
+  mehr still normalisiert, und nicht endliche PAX-Zeiten gelangen nicht
+  mehr als ungültige Zahlen in die JSONL-Ausgabe. Filter und Ausgabe
+  verwenden dieselben bereinigten Dateifakten.
+- Installationstests teilen ihre Vorbereitung ohne elf Fälle doppelt
+  auszuführen. Eine identische Feed-Wache entfällt; Testvariablen werden
+  unabhängig von der aufrufenden Shell gesetzt.
+
 ## 0.34.2 — 2026-09-07
 
 - Beide Apps erhalten Leerzeichen, Tabulatoren und Zeilenumbrüche am Ende

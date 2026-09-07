@@ -3,6 +3,7 @@
 import gzip
 import io
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -49,8 +50,13 @@ class FactFilterTest(TempTreeTest):
         for text in (self.ISO, "2024-01-01T01:00+01:00", "2023-12-31T19:00:00-05:00",
                      "2024-01-01T05:45+05:45"):
             self.assertEqual(favenio.file_timestamp(text), self.STAMP)
-        self.assertEqual(favenio.file_timestamp("2024-01-01T00:00:00.125Z"),
-                         self.STAMP + 0.125)
+        for digits in ("1", "12", "125", "1256", "12567", "125678"):
+            for clock, zone in (("00:00:00", "Z"), ("01:00:00", "+01:00"),
+                                ("00:00:00", "+00:00")):
+                text = "2024-01-01T%s.%s%s" % (clock, digits, zone)
+                with self.subTest(text=text):
+                    self.assertEqual(favenio.file_timestamp(text),
+                                     self.STAMP + float("0." + digits))
 
     def test_invalid_dates_and_missing_zones_are_rejected(self):
         for text in ("2024-01-01", "2024-01-01T00:00:00", "2024-02-30T00:00:00Z",
@@ -84,13 +90,26 @@ class FactFilterTest(TempTreeTest):
                          (1, [], ""))
         self.assertEqual(run(["--modified-to", "2024-01-01T00:00:00.900+00:00", "*", path]),
                          (0, [path], ""))
-        # (Drei Nachkommastellen: das System-Python 3.9 liest nur 3 oder 6.)
         # Die Untergrenze bleibt genau: 00:00:01 liegt hinter 00:00:00,7.
         self.assertEqual(run(["--modified-from", "2024-01-01T00:00:01Z", "*", path]),
                          (1, [], ""))
         with mock.patch.object(favenio.Search, "file_facts",
                                return_value=(7, self.STAMP, self.STAMP + 0.7)):
             self.assertEqual(run(["--created-to", self.ISO, "*", path]), (0, [path], ""))
+
+    def test_upper_time_bounds_keep_the_last_representable_instant(self):
+        path = self.timed_file()
+        for text, duration in ((self.ISO, 1), ("2024-01-01T00:00Z", 60),
+                               ("2024-01-01T01:00+01:00", 60)):
+            following = self.STAMP + duration
+            for stamp, expected in ((math.nextafter(following, -math.inf), 0),
+                                    (following, 1)):
+                for option in ("--modified-to", "--created-to"):
+                    with self.subTest(text=text, stamp=stamp, option=option), \
+                            mock.patch.object(favenio.Search, "file_facts",
+                                              return_value=(7, stamp, stamp)):
+                        self.assertEqual(run([option, text, "*", path]),
+                                         (expected, [path] if expected == 0 else [], ""))
 
     def test_created_bounds_are_inclusive_and_unknown_is_not_zero(self):
         path = self.timed_file()
@@ -273,7 +292,7 @@ class FactFilterTest(TempTreeTest):
         self.assertEqual(run(["--only", "dirs", "--created-from", "1960-01-01T00:00Z", path]),
                          (1, [], ""))
 
-    def test_nonfinite_pax_timestamps_never_pass_requested_date_filters(self):
+    def test_nonfinite_pax_timestamps_are_unknown_in_filters_and_json(self):
         path = os.path.join(self.root, "nonfinite.tar")
         with tarfile.open(path, "w", format=tarfile.PAX_FORMAT) as archive:
             for index, value in enumerate(("nan", "inf", "-inf")):
@@ -285,6 +304,26 @@ class FactFilterTest(TempTreeTest):
             self.assertEqual(run(["--content", "--modified-from", self.ISO, "NEEDLE", path]),
                              (1, [], ""))
             extracted.assert_not_called()
+        code, lines, errors = run(["--json", "*.txt", path])
+        self.assertEqual((code, len(lines), errors), (0, 3, ""))
+        for line in lines:
+            record = json.loads(line, parse_constant=lambda value: self.fail(
+                "Nicht-JSON-Zahl in der Trefferausgabe: " + value))
+            self.assertNotIn("modified", record)
+            self.assertEqual(record["size"], 7)
+
+    def test_invalid_local_facts_are_also_absent_from_json(self):
+        path = self.timed_file()
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value), \
+                    mock.patch.object(favenio.Search, "file_facts",
+                                      return_value=(-1, value, value)) as facts:
+                code, lines, errors = run(["--json", "*", path])
+                self.assertEqual((code, len(lines), errors), (0, 1, ""))
+                record = json.loads(lines[0], parse_constant=lambda value: self.fail(value))
+                for field in ("size", "modified", "created"):
+                    self.assertNotIn(field, record)
+                facts.assert_called_once_with(path)
 
     def test_real_cli_validation_errors_have_the_shared_diagnostics_prefix(self):
         cases = (("--min-size", "1.5MiB"),

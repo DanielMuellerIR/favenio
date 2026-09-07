@@ -308,10 +308,12 @@ ausdrücklichen Sekundenbruchteilen gilt die Grenze genau. Format:
 zum Beispiel `2024-01-01T00:00:00Z` oder `2024-01-01T01:00+01:00`; beide
 Werte bezeichnen denselben Zeitpunkt. Ein Datum ohne Uhrzeit und eine Uhrzeit
 ohne Zone werden abgelehnt. Bis zu sechs Nachkommastellen der Sekunde sind
-erlaubt. Eine Untergrenze über der Obergrenze ist ein Fehler.
+erlaubt, auch mit dem macOS-System-Python. Eine Untergrenze über der
+Obergrenze ist ein Fehler.
 
 Angefragte Fakten müssen bekannt und gültig sein. ZIP- und TAR-Einträge
 liefern Größe und Änderungszeit aus ihrem Katalog, aber keine Erstellungszeit.
+Ungültige Katalogdaten bleiben unbekannt und fehlen in der JSON-Ausgabe.
 Einzeln komprimierte Einträge und über bsdtar gelesene Einträge nennen im
 bisherigen Katalog weder Größe noch Zeitpunkte. Sie erfüllen einen solchen
 Filter nicht; Favenio entpackt sie nicht allein zum Ermitteln einer Größe.

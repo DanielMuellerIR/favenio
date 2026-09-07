@@ -34,12 +34,6 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Auspackvorgänge an genau einer Stelle zurücksetzt — seit 0.34.1 rufen
    `startSearch`/`continueSearch`/`loadResults`/`applyTemplate` und Quicks
    `clearHits()` das getrennt.
-7. Kern, klein: `file_timestamp()` erlaubt 1–6 Nachkommastellen, das
-   System-Python 3.9 (`fromisoformat`) liest aber nur 3 oder 6 —
-   `--modified-to …T00:00:00.5Z` endet dort mit Exit 2 und Formatfehler,
-   unter Python 3.11+ läuft es. Entweder die Stellen vor dem Parsen auf
-   sechs auffüllen oder die Hilfe auf 3/6 Stellen festlegen (aufgefallen
-   2026-09-06 beim Test der inklusiven Obergrenzen).
 
 ## Flackernder Test: Ursache weiterhin offen
 

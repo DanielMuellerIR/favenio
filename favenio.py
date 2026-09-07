@@ -53,10 +53,10 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.34.2"
+__version__ = "0.34.3"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-09-07"
+__date__ = "2026-09-08"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -309,6 +309,9 @@ def zip_member_mtime(info):
     if not date_time or len(date_time) != 6 or date_time[0] < 1980:
         return None
     try:
+        # mktime normalisiert etwa den 31. Februar still zum März. Zuerst
+        # Kalenderfelder prüfen, danach weiterhin die lokale Zone verwenden.
+        datetime.datetime(*date_time)
         return time.mktime(tuple(date_time) + (0, 0, -1))
     except (OverflowError, ValueError):
         return None
@@ -1000,7 +1003,11 @@ def file_timestamp(value):
     try:
         if re.fullmatch(syntax, text) is None:
             raise ValueError("Zeitformat")
-        # Python 3.9 versteht +00:00, aber noch kein abschließendes Z.
+        # Python 3.9 liest nur drei oder sechs Bruchstellen und versteht
+        # +00:00, aber noch kein abschließendes Z. Nach der Syntaxprüfung
+        # sind fehlende Bruchstellen eindeutig Nullen, keine Rundung.
+        text = re.sub(r"\.([0-9]+)",
+                      lambda match: "." + match.group(1).ljust(6, "0"), text)
         parsed = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
         return parsed.timestamp()
     except (ValueError, OverflowError):
@@ -1029,7 +1036,10 @@ def file_timestamp_end(value):
     # dann mit Sekunden drei, ohne zwei. Mit „Z" ist es einer weniger.
     zone_colons = 0 if clock.endswith("Z") else 1
     has_seconds = clock.count(":") - zone_colons >= 2
-    return stamp + (0.999999 if has_seconds else 59.999999)
+    # Dateisysteme können feiner als Mikrosekunden auflösen. Eine feste
+    # .999999-Grenze verlöre deren letzte Werte: genau vor der Folgegrenze
+    # endet stattdessen das inklusive Intervall.
+    return math.nextafter(stamp + (1 if has_seconds else 60), -math.inf)
 
 
 def positive_int(value):
@@ -1595,8 +1605,9 @@ class FileProbe:
         # Archivfakten stehen schon im Katalog, lokale Fakten werden erst
         # bei Bedarf gelesen. Ein Ordner hat keine Dateigröße in diesem
         # Suchvertrag; st_size des Verzeichnisses ist nicht seine Datenmenge.
-        self._facts = ((None if is_dir else size, modified, None)
-                       if in_archive else MISSING)
+        self._facts = MISSING
+        if in_archive:
+            self._set_facts(size, modified, None)
         self.metadata_hit = None              # (Feld, Wert) bei Treffer
         self.metadata_hits = []               # je Begriff (Feld, Wert)
         self.dimension_bytes = 0              # so viele Bytes hat der
@@ -1613,9 +1624,18 @@ class FileProbe:
     def facts(self):
         """(Größe, Änderungszeit, Erstellungszeit), einmal für Filter UND Ausgabe."""
         if self._facts is MISSING:
-            size, modified, created = self.search.file_facts(self.filesystem_path)
-            self._facts = (None if self.is_dir else size, modified, created)
+            self._set_facts(*self.search.file_facts(self.filesystem_path))
         return self._facts
+
+    def _set_facts(self, size, modified, created):
+        """Ungültige Fakten sind unbekannt — gleichermaßen für Filter und JSON."""
+        if self.is_dir or (size is not None and size < 0):
+            size = None
+        # PAX-Zeitfelder erlauben NaN/inf. Sie sind weder Zeitpunkte noch
+        # gültige JSON-Zahlen; nur im Filter zu prüfen verlöre die Treffer
+        # ohne Datumfilter später beim JSON-Parser der Apps.
+        self._facts = tuple(None if isinstance(value, float) and not math.isfinite(value)
+                            else value for value in (size, modified, created))
 
     def dimensions(self):
         """(Breite, Höhe) oder None. Erst der eingebaute Leser, dann — nur
@@ -1689,15 +1709,11 @@ class FileFactsCriterion:
                        (created_from, created_to))
 
     def test(self, probe):
-        for index, (value, (lower, upper)) in enumerate(zip(probe.facts(), self.bounds)):
+        for value, (lower, upper) in zip(probe.facts(), self.bounds):
             if lower is None and upper is None:
                 continue
-            # PAX kann eine Änderungszeit als NaN/inf nennen. Solche Werte
-            # sind kein Zeitpunkt; NaN würde beide Grenzvergleiche umgehen.
-            if value is None or (isinstance(value, float) and not math.isfinite(value)):
+            if value is None:
                 return False
-            if index == 0 and value < 0:
-                return False           # eine negative Größe ist keine Dateigröße
             if lower is not None and value < lower:
                 return False
             if upper is not None and value > upper:
