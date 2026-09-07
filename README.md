@@ -262,9 +262,9 @@ favenio.py --content alpha --term beta --term 2026 ~/Documents
 Every term follows the same rules as the pattern (contains / glob / `-r`
 regex, `-s`, `-e`) and runs against the same target (name, `--content` or
 `--metadata`). The terms are ANDed **across the whole file**: for content
-they may sit on different lines, for metadata in different fields. That is
-what a single regex cannot express (same-line AND is a regex lookahead away;
-whole-file AND is not). Duplicates count once; an empty `--term` is an error;
+they may sit on different lines, for metadata in different fields. Favenio evaluates regex patterns one line at a time: a lookahead can
+require several terms on the same line; use `--term` for terms on different
+lines. Duplicates count once; an empty `--term` is an error;
 without a pattern the first `--term` becomes the pattern, and positional
 arguments that all exist as paths are start paths. Cheap first: fixed terms
 are probed in one pass before any line is counted, and the exact pass stops

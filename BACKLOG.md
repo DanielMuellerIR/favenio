@@ -23,17 +23,13 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
    Durchlauf am Bildschirm.
 
-6. Refactoring aus dem Nacht-Review vom 2026-09-06: Der Getter
-   `searchConfiguration` samt `pixelFields`/`validatePixelInputs` steht in
-   beiden Apps fast wortgleich (`gui/FavenioGUI.swift`,
-   `quick/FavenioQuick.swift`); jede neue Option (zuletzt `--term`) muss
-   zweimal nachgezogen werden. Gemeinsamer Bauer in `FavenioCore`
-   (Checkboxen + `SearchFilterView` + Pixelfelder → `SearchConfiguration`)
-   mit Anzeige-Callback für den Fehlerfall. Ebenso ein
-   `HitListController.resetHits()`, das Trefferliste und laufende
-   Auspackvorgänge an genau einer Stelle zurücksetzt — seit 0.34.1 rufen
-   `startSearch`/`continueSearch`/`loadResults`/`applyTemplate` und Quicks
-   `clearHits()` das getrennt.
+6. Zurücksetzen der Trefferlisten prüfen: Brauchen Haupt-App und Quick
+   einen gemeinsamen `HitListController.resetHits()` für Treffer und
+   laufende Auspackvorgänge? Unterschiede zwischen Suchstart, Fortsetzung,
+   geladenen Ergebnissen und Vorlagen erhalten. Die Eingabe-Getter aus
+   demselben Review bleiben lokal: Gemeinsame Konfiguration, Filteransicht
+   und Maßvalidierung tragen bereits die eigentliche Logik; eine weitere
+   Bindungsschicht wurde in `docs/codeqa-2026-09.md` begründet verworfen.
 
 ## Flackernder Test: Ursache weiterhin offen
 

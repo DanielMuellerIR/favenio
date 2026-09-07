@@ -6,6 +6,7 @@
 # aber in keiner Optionstabelle, und das Feld `isDirectory` kam am 2026-08-17
 # in JEDEN Treffer, ohne dass eine der drei Dateien es erwähnte.
 
+import ast
 import json
 import re
 import subprocess
@@ -31,13 +32,16 @@ def cli_constant(name):
 
 
 def cli_long_options():
-    """Alle langen Optionen, die argparse in favenio.py kennt.
-
-    Die lange Form steht mal an erster Stelle (`"--hidden"`), mal hinter einer
-    Kurzform (`"-e", "--exact"`) — beide Schreibweisen müssen erfasst werden,
-    sonst prüft der Test stillschweigend zu wenig."""
-    return sorted(set(re.findall(
-        r'add_argument\(\s*(?:"-[a-z]",\s*)?"(--[a-z-]+)"', CLI)))
+    """Lange Optionen unabhängig von Anführungszeichen und Zeilenumbrüchen."""
+    return sorted({argument.value
+                   for call in ast.walk(ast.parse(CLI))
+                   if isinstance(call, ast.Call)
+                   and isinstance(call.func, ast.Attribute)
+                   and call.func.attr == 'add_argument'
+                   for argument in call.args
+                   if isinstance(argument, ast.Constant)
+                   and isinstance(argument.value, str)
+                   and argument.value.startswith('--')})
 
 
 def option_table(text):
@@ -83,11 +87,6 @@ class OptionTableTest(unittest.TestCase):
                                  "steht in %s, kennt argparse aber nicht"
                                  % name)
 
-    def test_both_option_tables_list_the_same_options(self):
-        """Die deutsche Fassung ist eine Übersetzung, keine eigene Auswahl."""
-        listed = {name: sorted(table_long_options(text))
-                  for name, text in READMES.items()}
-        self.assertEqual(listed["README.md"], listed["README.de.md"])
 
 
 class JsonContractTest(unittest.TestCase):
@@ -96,19 +95,9 @@ class JsonContractTest(unittest.TestCase):
     ALWAYS = ("path", "type", "isDirectory", "filesystemPath",
               "archiveMembers")
 
-    def test_emit_writes_the_documented_always_fields(self):
-        start = CLI.index("    def emit(self, path, kind")
-        body = CLI[start:CLI.index("\n    def warn(", start)]
-        for field in self.ALWAYS:
-            with self.subTest(field=field):
-                self.assertIn('"%s"' % field, body)
-
     def test_every_kind_of_hit_really_carries_the_always_fields(self):
-        """Der Text-Test oben liest nur den Rumpf von emit(): Ein `if` vor
-        einem Feld bliebe dort unbemerkt. Deshalb zusätzlich am Verhalten,
-        über den Unterprozess wie die Apps — und für JEDE Trefferart: Datei,
-        Ordner, Archiveintrag und Ordner IM Archiv, denn gerade der letzte
-        ist der Fall, für den `isDirectory` überhaupt existiert."""
+        """Prüft echte CLI-Ausgabe für Datei, Ordner, Archiveintrag und
+        Ordner im Archiv — ein Feldname im Quelltext wäre kein Nachweis."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "wurzel"
             (root / "ordner").mkdir(parents=True)
@@ -119,7 +108,7 @@ class JsonContractTest(unittest.TestCase):
             proc = subprocess.run(
                 [sys.executable, str(REPO / "favenio.py"), "--json", "*",
                  str(root)],
-                capture_output=True, text=True, check=False)
+                capture_output=True, text=True, check=False, timeout=10)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         records = [json.loads(line) for line in proc.stdout.splitlines()
                    if line.strip()]

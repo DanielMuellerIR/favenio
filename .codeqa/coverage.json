@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 1380849
+    "tokens_spent": 1498782
   },
   "campaign_history": [
     {
@@ -244,7 +244,7 @@
       "risk": "high",
       "priority": 2,
       "reason": "Oeffentliche Nutzerdoku und Projektkanon beschreiben denselben CLI-Vertrag wie favenio.py; Drift fuehrt Nutzer und jede spaetere Session in die Irre",
-      "state": "pending",
+      "state": "in_progress",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
         "completed_at": "2026-09-03T18:19:36+02:00",
@@ -260,7 +260,16 @@
       },
       "pending_paths": [
         "docs/codeqa-2026-09.md"
-      ]
+      ],
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:41:16+02:00",
+        "required_review": "delta-plus-boundaries",
+        "status_at_start": "changed",
+        "covered_pending_paths": [
+          "docs/codeqa-2026-09.md"
+        ]
+      }
     },
     {
       "id": "quick-app",
@@ -381,13 +390,19 @@
       "risk": "medium",
       "priority": 3,
       "reason": "Reproduzierbare Leistungsmessung, Ergebnisgleichheit und begrenzte Testprozesse",
-      "state": "in_progress",
-      "active_run": {
+      "state": "completed",
+      "last_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:34:16+02:00",
-        "required_review": "full",
-        "status_at_start": "pending",
-        "covered_pending_paths": []
+        "completed_at": "2026-09-08T01:41:16+02:00",
+        "observed_head": "3b2905677bb399099dba9071ecaacb3a6b859f8b",
+        "content_sha256": "fb933f231206e18b2f888ab8b43292dfd8392aec26fca8707d52fcb3e09c4fd9",
+        "file_count": 9,
+        "review": "full",
+        "outcome": "improved",
+        "summary": "Alle neun Mess-/Reproduktionsdateien geprüft. Vollständige Ergebnisprüfung, Hashvergleich der Materialisierung, Exit-/EOF-/Reihenfolgeprüfung, eigene Prozesssitzungen und Temp-Wurzeln, Fristen und wechselnde Reihenfolge. ISO-Repro unterscheidet bekannte Abweichung von Messfehlern.",
+        "tests": [
+          "9 Materialisierungen mit vollständigem SHA-256-Abgleich; 3 Runnerwege mit 100000 geordneten Treffern; 4 Zeilenleserpaare und 4 Exportpaare gleich; 6 kleine Archivläufe und kontrollierter Exit-2-Fehler; echter ISO-Lauf und 4 negative Gegenproben; 8 Docstests grün."
+        ]
       }
     }
   ],
@@ -735,6 +750,19 @@
           "75 Export-/Swift-Prüfungen, 8 Dokumentationsprüfungen und beide App-Selbsttests bestanden; synchrone Mutation scheitert mit Exit -5."
         ]
       }
+    },
+    {
+      "id": "result-reset-duplication",
+      "summary": "Backlog-Punkt 6 verlangt Prüfung eines gemeinsamen HitListController.resetHits für Treffer und Auspackvorgänge. Suchstart, Fortsetzung, Ergebnisladen und Vorlagen haben unterschiedliche Semantik; heutigen Reset-Vertrag prüfen, nur reale gemeinsame Mechanik konsolidieren.",
+      "evidence": [
+        "gui/FavenioGUI.swift",
+        "quick/FavenioQuick.swift",
+        "common/FavenioCore.swift"
+      ],
+      "priority": 2,
+      "state": "pending",
+      "noted_at": "2026-09-08T01:42:25+02:00",
+      "campaign_id": "20260908T002533785169+0200"
     }
   ]
 }

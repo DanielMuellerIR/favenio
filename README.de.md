@@ -272,8 +272,9 @@ Jeder Begriff folgt denselben Regeln wie das Muster („enthält" / Glob / mit
 `-r` Regex, `-s`, `-e`) und läuft gegen dasselbe Ziel (Name, `--content` oder
 `--metadata`). Verknüpft wird mit UND **über die ganze Datei**: Im Inhalt
 dürfen die Begriffe auf verschiedenen Zeilen stehen, in den Metadaten in
-verschiedenen Feldern. Genau das kann ein einzelner Regex nicht (UND in
-derselben Zeile ist ein Lookahead, UND über die Datei nicht). Doppelte
+verschiedenen Feldern. Favenio prüft Regex-Muster zeilenweise: Ein Lookahead kann mehrere Begriffe
+in derselben Zeile verlangen; für Begriffe auf verschiedenen Zeilen dient
+`--term`. Doppelte
 Begriffe zählen einmal; ein leerer `--term` ist ein Fehler; ohne Muster wird
 der erste `--term` zum Muster, und Positionsargumente, die alle als Pfad
 existieren, sind Startpfade. Billig zuerst: Feste Begriffe werden in einem

@@ -216,8 +216,8 @@ Verbindliches CLI-Verhalten:
   `--term` sind Begriffe, die ALLE im selben Objekt zutreffen müssen —
   gleiche Regeln (`build_matcher` je Begriff) und dasselbe Ziel. Vertrag,
   entschieden 2026-09-06: UND über das GANZE Objekt, nicht dieselbe Zeile
-  bzw. derselbe Metadatenwert — das kann kein einzelner Regex, UND in
-  derselben Zeile schon (Lookahead). `Search.matchers` hält alle Begriffe;
+  bzw. derselbe Metadatenwert. Favenio prüft Regex-Muster zeilenweise;
+  ein Lookahead kann deshalb nur UND innerhalb einer Zeile ausdrücken. `Search.matchers` hält alle Begriffe;
   `NameCriterion`, `MetadataCriterion` und `FileProbe.content_lines()` prüfen
   alle, `match_content_all()` in EINEM Durchlauf (bei einem Begriff der
   schlanke Weg `match_content()`), `ContentProbe` nimmt eine Liste fester
