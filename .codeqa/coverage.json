@@ -328,23 +328,18 @@
       "risk": "high",
       "priority": 2,
       "reason": "Headless-Verhaltensprüfungen und wiederholte Swift-Kompilierung; Testabdeckung und Laufzeit gemeinsam verbessern",
-      "state": "in_progress",
-      "pending_paths": [
-        "tests/swift_test_support.py",
-        "tests/test_probe.swift",
-        "tests/quick_scope_probe.swift.in",
-        "tests/test_swift_test_support.py"
-      ],
-      "active_run": {
+      "state": "completed",
+      "last_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:26:57+02:00",
-        "required_review": "full",
-        "status_at_start": "pending",
-        "covered_pending_paths": [
-          "tests/swift_test_support.py",
-          "tests/test_probe.swift",
-          "tests/quick_scope_probe.swift.in",
-          "tests/test_swift_test_support.py"
+        "completed_at": "2026-09-08T01:30:10+02:00",
+        "observed_head": "30a6e54b180ba359e70d1c90d4efbb4fe3929d2c",
+        "content_sha256": "9cf3a4df8b4a2369141c6a012eec205fb1a1e12097d022ae79ac0c14828498e1",
+        "file_count": 12,
+        "review": "full",
+        "outcome": "improved",
+        "summary": "Vollständiger Review aller zwölf Dateien und Grenzen. Gemeinsamer Build und isolierte Prozesse belegt; Runner-Reihenfolge und Main-Callbacks verstärkt, zwei redundante oder timingabhängige Tests entfernt, Materialisierungs-Aufräumung zustandsbasiert und stderr-Fixture verkleinert. Export-Timing-Prüfung als Theme erfasst.",
+        "tests": [
+          "25 ausführbare Swift-Tests in einem Python-Prozess: 13.831 s, ein Build, alle grün; frühere Prozess-Aufräumungs-Mutationen erkennen verwaiste Kinder; beide aktuellen App-Selbsttests grün."
         ]
       }
     },
@@ -720,9 +715,15 @@
         "tests/export_probe.swift"
       ],
       "priority": 2,
-      "state": "pending",
+      "state": "in_progress",
       "noted_at": "2026-09-08T01:29:13+02:00",
-      "campaign_id": "20260908T002533785169+0200"
+      "campaign_id": "20260908T002533785169+0200",
+      "started_at": "2026-09-08T01:30:46+02:00",
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:30:46+02:00",
+        "observed_head": "30a6e54b180ba359e70d1c90d4efbb4fe3929d2c"
+      }
     }
   ]
 }

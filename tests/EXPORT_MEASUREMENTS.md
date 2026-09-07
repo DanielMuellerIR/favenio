@@ -45,9 +45,13 @@ Eine nach Start geänderte Eingabe verändert den Export nicht. Ein zweiter Job
 wird abgelehnt; Completion läuft auf Main und gibt den Writer für einen Retry
 frei. Fehler beim atomaren Austausch lassen sowohl ein bestehendes Verzeichnis
 mit Sentinel als auch eine Datei in einem nicht beschreibbaren Elternordner
-unverändert. Ein 3.000-Treffer-CSV-Export muss in unter 0,2 s gestartet werden;
-Main-Timer-Ereignisse müssen vor Completion eintreffen. So reicht es nicht,
-die Serialisierung synchron auszuführen und bloß Completion später einzureihen.
+unverändert. Seit 2026-09-08 prüft ein steuerbarer Exportauftrag die Ausführung außerhalb
+von Main ohne Last- oder Geschwindigkeitsannahme. Main gibt den Auftrag erst
+nach Rückkehr von `write` frei; der Auftrag prüft seinen Thread und die
+übergebenen Treffer, das Format und das Ziel. Die Completion prüft Main und
+die wieder freigegebene Einzeljob-Sperre. Eine temporär synchronisierte
+ExportWriter-Kopie scheitert an dieser Probe (Exit -5); Produktionscode besteht.
+Die frühere 3.000-Treffer-/0,2-s-/Timer-Prüfung entfällt.
 Der Bundle-Selbsttest prüft zusätzlich, dass eine neue Suche und ihr Fehlerstatus
 neben einem späteren Exportstatus sichtbar bleiben.
 

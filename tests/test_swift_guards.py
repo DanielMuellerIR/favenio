@@ -401,11 +401,8 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn('caseCheckbox.state = configuration.caseSensitive', GUI)
 
     def test_export_job_preserves_current_search_and_prevents_second_job(self):
-        writer = swift_function(COMMON, "func write(_ hits: [Hit], format:")
-        self.assertIn("guard !isWriting else { return false }", writer)
-        self.assertIn("DispatchQueue.global", writer)
-        self.assertIn("DispatchQueue.main.async", writer)
-        self.assertIn("options: .atomic", writer)
+        # Worker, Einzeljob-Sperre, Main-Completion und atomare Fehlerfälle
+        # prüft die ausführbare Exportprobe. Hier bleibt die GUI-Anbindung.
         export = swift_function(GUI, "func runExport(_ selected:")
         self.assertIn("guard !exportIsBusy", export)
         self.assertIn("self.exportWriter.write", export)

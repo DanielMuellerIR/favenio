@@ -78,22 +78,31 @@ struct ExportProbe {
         precondition(original == Data("original".utf8))
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protected.path)
         var retried = false
-        var ticks = 0
-        let timer = Timer.scheduledTimer(withTimeInterval: 0.005, repeats: true) { _ in ticks += 1 }
-        // Genug Zeitstempel für echte Arbeit: Main muss WÄHREND des Exports
-        // reagieren, nicht erst nachdem der Worker fertig geworden ist.
-        let many = Array(repeating: fixture[0], count: 3000)
-        let submitStart = ProcessInfo.processInfo.systemUptime
-        precondition(writer.write(many, format: .csv, to: root.appendingPathComponent("retry.csv")) { result in
+        precondition(writer.write(fixture, format: .csv, to: root.appendingPathComponent("retry.csv")) { result in
             precondition(Thread.isMainThread && !writer.isWriting)
             if case .failure(let error) = result { fatalError(error.localizedDescription) }
-            precondition(ticks > 0)
             retried = true
         })
-        precondition(ProcessInfo.processInfo.systemUptime - submitStart < 0.2,
-                     "Exportstart blockiert Main bereits beim Serialisieren")
         wait { retried }
-        timer.invalidate()
-        print("EXPORT OK: four formats, snapshot, single job, atomic failure, retry, main heartbeat")
+
+        // Main gibt den Auftrag erst NACH Rückkehr von write frei. Damit
+        // hängt der Nachweis weder von Rechnergeschwindigkeit noch CSV-Größe ab.
+        let release = DispatchSemaphore(value: 0)
+        let destination = root.appendingPathComponent("controlled.csv")
+        let controlled = ExportWriter { hits, format, url in
+            precondition(!Thread.isMainThread, "Exportarbeit blockiert Main")
+            precondition(release.wait(timeout: .now() + 5) == .success)
+            precondition(hits == fixture && format == .csv && url == destination)
+        }
+        var completed = false
+        precondition(controlled.write(fixture, format: .csv, to: destination) { result in
+            precondition(Thread.isMainThread && !controlled.isWriting)
+            if case .failure(let error) = result { fatalError(error.localizedDescription) }
+            completed = true
+        })
+        precondition(controlled.isWriting && !completed)
+        release.signal()
+        wait { completed }
+        print("EXPORT OK: four formats, snapshot, single job, atomic failure, retry, worker scheduling")
     }
 }

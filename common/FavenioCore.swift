@@ -3164,6 +3164,15 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
 /// Der unveränderliche Array-Wert hält genau die beim Start gewählten Treffer.
 final class ExportWriter {
     private(set) var isWriting = false
+    private let operation: ([Hit], HitExportFormat, URL) throws -> Void
+
+    /// Der Standardauftrag schreibt die echte Datei. Tests können die Arbeit
+    /// gezielt anhalten, um ihre Ausführung außerhalb von Main zu beweisen.
+    init(operation: @escaping ([Hit], HitExportFormat, URL) throws -> Void = {
+        try exportData(for: $0, format: $1).write(to: $2, options: .atomic)
+    }) {
+        self.operation = operation
+    }
 
     @discardableResult
     func write(_ hits: [Hit], format: HitExportFormat, to destination: URL,
@@ -3174,11 +3183,7 @@ final class ExportWriter {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let result: Result<Void, Error> = Result {
                 try autoreleasepool {
-                    // Der Serializer bleibt unverändert, einschließlich BOM,
-                    // Formelpräfixschutz und JSONL-Verhalten. Die vollständige
-                    // Ausgabe liegt weiterhin als Data im Speicher.
-                    try exportData(for: hits, format: format)
-                        .write(to: destination, options: .atomic)
+                    try operation(hits, format, destination)
                 }
             }
             DispatchQueue.main.async { [self] in
