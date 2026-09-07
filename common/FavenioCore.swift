@@ -2158,8 +2158,10 @@ final class MaterializationManager {
         lock.lock()
         let cancelled = job.cancelled
         lock.unlock()
-        let path = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // print(out_path) hängt genau ein LF-Byte an. Leerraum davor gehört
+        // zum Dateinamen; auch ein CR vor dem LF darf nicht verschwinden.
+        let pathData = data.last == 0x0A ? data.dropLast() : data
+        let path = String(data: pathData, encoding: .utf8) ?? ""
         if cancelled {
             // Der Kern war womöglich schneller als das Signal: Was er
             // schon geschrieben hat, will niemand mehr.
@@ -2170,6 +2172,9 @@ final class MaterializationManager {
             return .failed(diagnostics.errorMessage
                 ?? "Auspacken fehlgeschlagen (Status "
                    + "\(process.terminationStatus))")
+        }
+        guard FileManager.default.fileExists(atPath: path) else {
+            return .failed("Ausgepackte Datei fehlt: " + path)
         }
         return .ready(URL(fileURLWithPath: path))
     }

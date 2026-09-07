@@ -82,6 +82,28 @@ class MaterializationTests(unittest.TestCase):
         self.assertFalse(report['second_deferred'])
         self.assertEqual(report['known'], report['path'])
 
+    def test_trailing_filename_whitespace_survives_extraction_and_cache(self):
+        for suffix in (' ', '\t', '\n', '\r', '\r\n', ' \t\n'):
+            with self.subTest(suffix=repr(suffix)):
+                member = 'inner/note.txt' + suffix
+                archive_path = self.root / 'whitespace.zip'
+                with zipfile.ZipFile(archive_path, 'w') as archive:
+                    archive.writestr(member, b'unchanged bytes')
+                report = self.run_probe('same-file', archive_path, member)
+                self.assertEqual(report['state'], 'ready', report)
+                self.assertEqual(Path(report['path']).name, 'note.txt' + suffix)
+                self.assertEqual(report['bytes'], len(b'unchanged bytes'))
+                self.assertEqual(report['second']['path'], report['path'])
+                self.assertFalse(report['second_deferred'])
+                self.assertEqual(report['known'], report['path'])
+
+    def test_successful_core_cannot_publish_a_missing_path(self):
+        cli = self.fake_cli('missing-path', '''
+            print(os.path.join(root, "missing.txt"))
+            ''')
+        report = self.run_probe('stderr-flood', cli, self.archive, 'x.txt')
+        self.assertEqual(report['state'], 'failed', report)
+
     def test_start_error_names_the_interpreter(self):
         report = self.run_probe('start-error', self.archive, 'inner/geheim.txt')
         self.assertEqual(report['state'], 'failed')

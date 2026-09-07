@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.34.2 — 2026-09-07
+
+- Beide Apps erhalten Leerzeichen, Tabulatoren und Zeilenumbrüche am Ende
+  ausgepackter Dateinamen. Öffnen, Vorschau und der Materialisierungs-Cache
+  verwenden damit den tatsächlichen Pfad; fehlende Dateien werden als Fehler
+  statt als bereit gemeldet.
+
 ## 0.34.1 — 2026-09-06
 
 Nacht-Code-Review vom 2026-09-06 abgearbeitet (29 Funde; siehe Commit).
