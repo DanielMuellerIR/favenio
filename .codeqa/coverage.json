@@ -182,7 +182,7 @@
       "risk": "critical",
       "priority": 1,
       "reason": "Öffentliche Lieferkette, Signatur-, Notarisierungs- und Update-Feed-Tore",
-      "state": "completed",
+      "state": "in_progress",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
         "completed_at": "2026-09-03T17:04:42+02:00",
@@ -198,6 +198,13 @@
           "./build-app.sh inkl. beider Headless-Selbsttests: passed",
           "neue Temp-Wache gegen 70ae4bd: rot"
         ]
+      },
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T00:39:36+02:00",
+        "required_review": "delta-plus-boundaries",
+        "status_at_start": "changed",
+        "covered_pending_paths": []
       }
     },
     {

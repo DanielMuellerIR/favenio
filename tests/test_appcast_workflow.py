@@ -490,7 +490,7 @@ class CheckFeedTest(unittest.TestCase):
                % (signature, length)).encode("utf-8"))
         return feed
 
-    def run_check(self, feed, key=FIXTURE_KEY):
+    def run_check(self, feed, key=FIXTURE_KEY, environment=None):
         script = (
             "set -euo pipefail\n"
             + self.BLOCK
@@ -504,7 +504,7 @@ class CheckFeedTest(unittest.TestCase):
         path = self.tmp / "harness.sh"
         path.write_text(script, encoding="utf-8")
         result = subprocess.run(["bash", str(path), str(feed), key],
-                                cwd=REPO, stdout=subprocess.PIPE,
+                                cwd=REPO, env=environment, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT)
         return result.stdout.decode("utf-8", "replace")
 
@@ -515,15 +515,15 @@ class CheckFeedTest(unittest.TestCase):
         `signed-part.xml` und `verify-ed25519.swift` liegen — im
         CI-Läufer harmlos, in den lokalen Tests dieses Blocks nicht:
         Dort hatten sich Hunderte angesammelt. Geprüft wird über eine
-        mktemp-Attrappe, weil macOS' `mktemp -d` ein gesetztes TMPDIR
-        ignoriert und ein Zählen im Benutzer-Temp fremde Ordner träfe.
+        mktemp-Attrappe, die den tatsächlichen Zielpfad festhält. Ein Zählen
+        im Benutzer-Temp könnte die Ordner anderer Prozesse mitprüfen.
         """
         stubs = self.tmp / "bin"
         stubs.mkdir()
         log = self.tmp / "mktemp.log"
         stub = stubs / "mktemp"
         stub.write_text(
-            '#!/bin/sh\nreal=$(/usr/bin/mktemp "$@") || exit 1\n'
+            '#!/bin/sh\nreal=$(/usr/bin/mktemp -d "$STUB_TEMP_ROOT/work.XXXXXX") || exit 1\n'
             'printf \'%s\\n\' "$real" >> "$STUB_MKTEMP_LOG"\n'
             'printf \'%s\\n\' "$real"\n', encoding="utf-8")
         stub.chmod(0o755)
@@ -532,29 +532,23 @@ class CheckFeedTest(unittest.TestCase):
         environment["PATH"] = "%s%s%s" % (stubs, os.pathsep,
                                           environment["PATH"])
         environment["STUB_MKTEMP_LOG"] = str(log)
+        # Auch ein fehlgeschlagener Test räumt seine eigenen Restordner auf.
+        environment["STUB_TEMP_ROOT"] = str(self.tmp)
 
         # Beide Wege prüfen: bestandene Signatur und ein Fehlerpfad.
-        for label, feed in (("gültig", self.write_feed()),
-                            ("Signatur falsch",
-                             self.write_feed(signature="AAAA"))):
+        for label, signature, expected in (("gültig", FIXTURE_SIGNATURE, 0),
+                                            ("Signatur falsch", "AAAA", 1)):
             with self.subTest(fall=label):
-                script = ("set -euo pipefail\n" + self.BLOCK + "\n"
-                          'favenio_check_feed "$1" "$2" || true\n')
-                path = self.tmp / "leak-harness.sh"
-                path.write_text(script, encoding="utf-8")
-                subprocess.run(["bash", str(path), str(feed), FIXTURE_KEY],
-                               cwd=REPO, env=environment,
-                               stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)
-
-        self.assertTrue(log.exists(), "mktemp-Attrappe wurde nicht benutzt")
-        offen = []
-        for zeile in log.read_text(encoding="utf-8").split("\n"):
-            pfad = zeile.strip()
-            if pfad and os.path.exists(pfad):
-                offen.append(pfad)
-                shutil.rmtree(pfad, ignore_errors=True)
-        self.assertEqual(offen, [])
+                # write_feed schreibt immer denselben Pfad. Erst jetzt
+                # schreiben, sonst überschreibt der Fehlerfall vor der
+                # ersten Prüfung schon die gültige Variante.
+                feed = self.write_feed(signature=signature)
+                log.write_text("", encoding="utf-8")
+                output = self.run_check(feed, environment=environment)
+                self.assertIn("RC=%d" % expected, output)
+                created = log.read_text(encoding="utf-8").splitlines()
+                self.assertEqual(len(created), 1, "mktemp-Attrappe wurde nicht einmal benutzt")
+                self.assertFalse(Path(created[0]).exists(), created[0])
 
     def test_signature_matching_the_bundle_key_passes(self):
         feed = self.write_feed()
