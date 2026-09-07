@@ -2801,20 +2801,6 @@ final class MainController: HitListController, NSApplicationDelegate,
         statusLabel.stringValue = detail.map { summary + " " + $0 } ?? summary
     }
 
-    /// Der Doppelklick-Weg. Hier gilt, worauf geklickt wurde — und wenn
-    /// das NICHTS war, die Auswahl.
-    ///
-    /// `clickedRow` ist -1 bei einem Doppelklick unter der letzten Zeile.
-    /// Vorher blieb dann der `contextRow` eines früheren Rechtsklicks
-    /// stehen und bestimmte die Aktion: Wer Zeile 2 markiert, auf Zeile 7
-    /// rechtsklickt, das Menü mit ⎋ schließt und dann in den leeren Bereich
-    /// doppelklickt, öffnete Datei 7. Dieselbe Regel wie im Hauptmenü
-    /// (`rows(for:)`): Ohne Klickort gilt die Auswahl.
-    @objc func openSelected() {
-        contextRow = tableView.clickedRow
-        openActionRows()
-    }
-
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         contextRow = tableView.clickedRow
@@ -2850,11 +2836,6 @@ final class MainController: HitListController, NSApplicationDelegate,
                 removeFromList: #selector(removeFromResults(_:)),
                 moveToTrash: #selector(trashSelected(_:))))
     }
-
-    /// Aus dem Rechtsklick-Menü: Dort hat `menuNeedsUpdate` den `contextRow`
-    /// gesetzt, und der gilt — deshalb NICHT über `openSelected`, das ihn
-    /// für den Doppelklick-Weg neu bestimmt.
-    @objc func ctxOpen() { openActionRows() }
 
     // ---------- Trefferliste verfeinern, exportieren, löschen ----------
 

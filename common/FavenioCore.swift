@@ -3610,6 +3610,16 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
 
     // ---------- Kontextmenü-Aktionen auf der wirksamen Zeilenmenge ----------
 
+    /// Ein Doppelklick übernimmt auch -1 (unterhalb der letzten Zeile),
+    /// damit dort die Auswahl statt einer alten Kontextmenüzeile zählt.
+    @objc func openSelected() {
+        contextRow = tableView.clickedRow
+        openActionRows()
+    }
+
+    /// Das Kontextmenü behält die Zeile, für die es aufgebaut wurde.
+    @objc func ctxOpen() { openActionRows() }
+
     @objc func ctxOpenWith(_ sender: NSMenuItem) {
         guard let appURL = sender.representedObject as? URL else { return }
         withActionSelection { [weak self] selection in

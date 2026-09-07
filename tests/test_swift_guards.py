@@ -1037,14 +1037,17 @@ class MainAppResultListTest(unittest.TestCase):
         stehen: Zeile 2 markiert, auf Zeile 7 rechtsgeklickt, Menue mit ⎋
         geschlossen, dann in den leeren Bereich doppelgeklickt — geoeffnet
         wurde Datei 7."""
-        body = swift_function(GUI, "@objc func openSelected()")
+        body = swift_function(COMMON, "@objc func openSelected()")
         self.assertIn("contextRow = tableView.clickedRow", body)
         self.assertNotIn("if tableView.clickedRow >= 0", body)
-        # Das Rechtsklick-Menue behaelt seinen contextRow und geht
-        # deshalb NICHT durch openSelected.
-        ctx = swift_function(GUI, "@objc func ctxOpen()")
+        ctx = swift_function(COMMON, "@objc func ctxOpen()")
         self.assertNotIn("openSelected()", ctx)
         self.assertIn("openActionRows()", ctx)
+        for source in (GUI, QUICK):
+            self.assertNotIn("func openSelected()", source)
+            self.assertNotIn("func ctxOpen()", source)
+            menu = swift_function(source, "func menuNeedsUpdate(")
+            self.assertIn("open: #selector(ctxOpen)", menu)
 
 
 class ParsedHitTypeTest(unittest.TestCase):

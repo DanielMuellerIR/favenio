@@ -94,6 +94,21 @@ struct FavenioQuickApp {
                 print("SELFTEST FEHLER: Quick verwechselt gleiche Anzeigepfade")
                 exit(1)
             }
+            // Kein externer Öffnen-Aufruf: Die leere Tabelle liefert keine URL.
+            controller.hits = []
+            controller.reloadKeepingSelection([])
+            controller.contextRow = 7
+            controller.openSelected()
+            guard controller.contextRow == -1 else {
+                print("SELFTEST FEHLER: Doppelklick behält die alte Kontextzeile")
+                exit(1)
+            }
+            controller.contextRow = 7
+            controller.ctxOpen()
+            guard controller.contextRow == 7 else {
+                print("SELFTEST FEHLER: Kontextaktion verliert ihre Zeile")
+                exit(1)
+            }
             if let error = validateSparkleConfiguration(
                 expectedBundleIdentifier: "local.favenio.quick"
             ) {
@@ -1245,11 +1260,6 @@ final class QuickController: HitListController, NSApplicationDelegate,
         showInfo(summary, detail: detail)
     }
 
-    @objc func openSelected() {
-        if tableView.clickedRow >= 0 { contextRow = tableView.clickedRow }
-        openActionRows()
-    }
-
     /// Was showInfo() zuletzt geschrieben hat — die Infozeile wird nur
     /// dort angefasst (Wächter-Test), gelesen wird deshalb hier.
     typealias InfoState = (text: String, detail: String?, color: NSColor,
@@ -1302,7 +1312,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
             menu, applicationHits: applicationHits, target: self,
             selectors: HitContextMenuSelectors(
                 preview: #selector(togglePreview),
-                open: #selector(openSelected),
+                open: #selector(ctxOpen),
                 openWith: #selector(ctxOpenWith(_:)),
                 reveal: #selector(ctxReveal),
                 copyPath: #selector(ctxCopyPath)))

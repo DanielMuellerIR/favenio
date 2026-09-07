@@ -586,14 +586,19 @@
         "quick/FavenioQuick.swift"
       ],
       "priority": 1,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-08T00:27:57+02:00",
       "campaign_id": "20260908T002533785169+0200",
       "started_at": "2026-09-08T01:07:04+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:07:04+02:00",
-        "observed_head": "951d995faa37c7660927c557ce784bcad5e0fc0c"
+        "completed_at": "2026-09-08T01:14:03+02:00",
+        "observed_head": "906695e882df92210b668417a354e9fde2c5b62e",
+        "summary": "Gemeinsame HitIdentity für GUI-Deduplikation, Auswahl beider Apps und Entfernen; Anzeigetext unverändert. Streamannahme als enqueueSearchHits direkt am echten Controller geprüft.",
+        "tests": [
+          "Vorher Haupt-App-Deduplikation/Auswahl/Entfernen und Quick-Auswahl mit identischen Anzeigepfaden rot; danach beide App-Selbsttests grün",
+          "74 Swift-Wachen und acht Dokumentationsprüfungen grün; Diff inklusive Seed-/Load-Merklisten geprüft"
+        ]
       }
     },
     {
@@ -646,9 +651,15 @@
         "common/FavenioCore.swift"
       ],
       "priority": 2,
-      "state": "pending",
+      "state": "in_progress",
       "noted_at": "2026-09-08T00:27:57+02:00",
-      "campaign_id": "20260908T002533785169+0200"
+      "campaign_id": "20260908T002533785169+0200",
+      "started_at": "2026-09-08T01:14:03+02:00",
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:14:03+02:00",
+        "observed_head": "906695e882df92210b668417a354e9fde2c5b62e"
+      }
     },
     {
       "id": "materialization-cache-race",

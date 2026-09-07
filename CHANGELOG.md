@@ -2,6 +2,8 @@
 
 ## 0.34.6 — 2026-09-08
 
+- Die Schnellsuche verwirft beim Doppelklick außerhalb der Zeilen eine alte
+  Kontextmenüzeile und verwendet die aktuelle Auswahl wie die Haupt-App.
 - Die Trefferlisten unterscheiden Objekte anhand von Dateisystempfad und
   Archivstufen. Ein Name mit `!/` kollidiert nicht mehr mit einem
   verschachtelten Archivtreffer: Beide bleiben sichtbar, einzeln ausgewählt
