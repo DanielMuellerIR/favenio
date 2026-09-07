@@ -809,6 +809,37 @@ func runSelfTest() -> Int32 {
 /// Kennzahlen, Export, Auswahl fürs Löschen und den Papierkorb selbst.
 /// Rückgabe: nil bei Erfolg, sonst der Grund.
 func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
+    // Gleiche Anzeige, unterschiedliche Archivstruktur: Beide Treffer
+    // müssen ankommen, einzeln auswählbar und einzeln entfernbar bleiben.
+    let literal = Hit(path: "/fixture/a.zip!/inner.zip!/x.txt", kind: "member",
+        line: nil, size: nil, filesystemPath: "/fixture/a.zip",
+        archiveMembers: ["inner.zip!/x.txt"], isDirectory: false)
+    let nested = Hit(path: literal.path, kind: "member", line: nil, size: nil,
+        filesystemPath: literal.filesystemPath,
+        archiveMembers: ["inner.zip", "x.txt"], isDirectory: false)
+    let list = MainController()
+    list.tableView.dataSource = list
+    list.tableView.allowsMultipleSelection = true
+    list.enqueueSearchHits([literal, nested, literal])
+    var identityFailures: [String] = []
+    if list.pending != [literal, nested] { identityFailures.append("Deduplikation") }
+    list.pending = []
+    list.hits = [literal, nested]
+    list.applyHitsToTable(keepingSelection: [], resort: false)
+    list.tableView.selectRowIndexes([0], byExtendingSelection: false)
+    let selected = list.selectedHitIdentities()
+    list.hits.reverse()
+    list.applyHitsToTable(keepingSelection: selected, resort: false)
+    if list.tableView.selectedRowIndexes != IndexSet(integer: 1) {
+        identityFailures.append("Auswahlerhalt")
+    }
+    list.tableView.selectRowIndexes([0], byExtendingSelection: false)
+    list.removeFromResults(nil)
+    if list.hits != [literal] { identityFailures.append("Entfernen") }
+    if !identityFailures.isEmpty {
+        return "gleiche Anzeigepfade verwechselt: " + identityFailures.joined(separator: ", ")
+    }
+
     let file = Hit(path: "/tmp/ordner-a/gross.bin", kind: "file", line: nil,
                    size: 1000, filesystemPath: "/tmp/ordner-a/gross.bin",
                    archiveMembers: [], isDirectory: false)
@@ -1074,7 +1105,7 @@ final class MainController: HitListController, NSApplicationDelegate,
                                    target: nil, action: nil)
     let statusLabel = NSTextField(labelWithString: "Bereit.")
 
-    var seenPaths = Set<String>()   // schon gezeigte Pfade → keine Doppelten
+    var seenHitIdentities = Set<HitIdentity>()   // bereits gezeigte Objekte
     // Was dieser Lauf in den Papierkorb gelegt hat. Ein noch laufender
     // Suchprozess kennt den Papierkorb nicht und streamt Treffer unter einem
     // verschobenen Ordner oder in einem verschobenen Archiv weiter.
@@ -1376,7 +1407,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         exportStatus = nil
         hits = loaded
         pending = []
-        seenPaths = Set(loaded.map { $0.path })
+        seenHitIdentities = Set(loaded.map { $0.identity })
         trashedPaths = TrashedPaths()
         statistics = .over(hits)
         skippedCount = 0
@@ -2203,7 +2234,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         // continueSearch() und loadResults().
         hits = []
         pending = []
-        seenPaths = []
+        seenHitIdentities = []
         trashedPaths = TrashedPaths()
         applyHitsToTable(keepingSelection: [])
         guard validatePixelInputs() else { return }
@@ -2311,7 +2342,7 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     /// Fertige Treffer der Schnellsuche (≤20) sofort zeigen und die Suche
     /// hier LIVE fortsetzen. Die schon gezeigten Treffer werden über
-    /// `seenPaths` nicht doppelt gelistet.
+    /// `seenHitIdentities` nicht doppelt gelistet.
     func continueSearch(from file: URL) {
         guard let seed = consumeQuickHandoff(file) else {
             searchPhase = .failed("Ungültige oder zu große Ergebnisübergabe.")
@@ -2322,7 +2353,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         cancelMaterializations()   // Vorschau/Öffnen der alten Liste
         hits = seed
         pending = []
-        seenPaths = Set(seed.map { $0.path })
+        seenHitIdentities = Set(seed.map { $0.identity })
         trashedPaths = TrashedPaths()
         statistics = .over(hits)
         skippedCount = 0
@@ -2343,7 +2374,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     }
 
     /// Startet den Suchprozess und streamt Treffer in die (evtl. schon per
-    /// `continueSearch` vorbelegte) Tabelle. Setzt hits/seenPaths NICHT
+    /// `continueSearch` vorbelegte) Tabelle. Setzt hits/seenHitIdentities NICHT
     /// zurück — das machen die Aufrufer je nach Fall.
     func launchSearch(pattern: String) {
         guard validatePixelInputs() else { return }
@@ -2373,9 +2404,7 @@ final class MainController: HitListController, NSApplicationDelegate,
                 self.progressPath = progress
                 self.refreshStatus()
             }
-            for hit in hits where !self.trashedPaths.contains(hit.filesystemPath) {
-                if self.seenPaths.insert(hit.path).inserted { self.pending.append(hit) }
-            }
+            self.enqueueSearchHits(hits)
         }, completion: { [weak self, weak run] exit in
             guard let self, let run, self.activeSearchRun === run else { return }
             self.finishSearchRun(run, exit: exit)
@@ -2439,24 +2468,32 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// `reloadData()` behält die Auswahl nach ZEILENNUMMER. Nach Sortieren,
     /// Entfernen oder einer Übergabe aus der Schnellsuche zeigt dieselbe
     /// Nummer auf einen anderen Treffer; deshalb wird die Auswahl vorher
-    /// geleert und danach ausschließlich pfadbasiert gesetzt — auch bei
-    /// leerer Pfadmenge (Review-Fund 2026-09-02). Die Zwischenschritte lösen
+    /// geleert und danach ausschließlich über die Trefferidentität gesetzt — auch bei
+    /// leerer Auswahlmenge (Review-Fund 2026-09-02). Die Zwischenschritte lösen
     /// keine Auswahl-Benachrichtigung aus, sonst flackerte die Vorschau bei
     /// jedem Nachschub; am Ende wird sie nur nachgeladen, wenn sie jetzt
     /// andere Dateien meint.
-    func applyHitsToTable(keepingSelection selectedPaths: Set<String>,
+    func applyHitsToTable(keepingSelection selectedIdentities: Set<HitIdentity>,
                           resort: Bool = true) {
         if resort { sortHits() }
         isRestoringSelection = true
         tableView.deselectAll(nil)
         tableView.reloadData()
         let rows = IndexSet(hits.indices.filter {
-            selectedPaths.contains(hits[$0].path)
+            selectedIdentities.contains(hits[$0].identity)
         })
         tableView.selectRowIndexes(rows, byExtendingSelection: false)
         isRestoringSelection = false
         contextRow = -1
         reloadPreviewIfSelectionChanged()
+    }
+
+    /// Nimmt neue Treffer des aktuellen Laufs an. Bewusst entfernte oder
+    /// in den Papierkorb gelegte Dateien dürfen nicht erneut erscheinen.
+    func enqueueSearchHits(_ incoming: [Hit]) {
+        for hit in incoming where !trashedPaths.contains(hit.filesystemPath) {
+            if seenHitIdentities.insert(hit.identity).inserted { pending.append(hit) }
+        }
     }
 
     /// Offene Vorschau nachziehen, wenn die Auswahl jetzt andere Dateien
@@ -2474,8 +2511,8 @@ final class MainController: HitListController, NSApplicationDelegate,
         guard !pending.isEmpty else { return }
         // Auswahl über den reloadData hinweg festhalten (sonst verliert man
         // beim Streamen sofort wieder die markierte Zeile — etwa fürs
-        // QuickLook). Wir merken die Pfade und stellen sie danach wieder her.
-        let selectedPaths = selectedHitPaths()
+        // QuickLook). Wir merken die Identitäten und stellen sie danach wieder her.
+        let selectedIdentities = selectedHitIdentities()
         // Kennzahlen FORTSCHREIBEN statt neu aufsummieren: Bei einem langen
         // Lauf wird diese Methode viele Male aufgerufen, und jedes Mal die
         // ganze Liste durchzurechnen kostete quadratisch.
@@ -2488,7 +2525,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         pending = []
         // `resort: false`: Die Liste ist gerade schon in der richtigen
         // Ordnung — entweder eingemischt oder unsortiert angehängt.
-        applyHitsToTable(keepingSelection: selectedPaths, resort: false)
+        applyHitsToTable(keepingSelection: selectedIdentities, resort: false)
         refreshStatus()
     }
 
@@ -2617,7 +2654,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Header-Klick: Trefferliste nach der gewählten Spalte sortieren.
     func tableView(_ tableView: NSTableView,
                    sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-        applyHitsToTable(keepingSelection: selectedHitPaths())
+        applyHitsToTable(keepingSelection: selectedHitIdentities())
     }
 
     /// Sortiert `hits` nach dem aktiven Sortierkriterium (oder lässt die
@@ -2895,12 +2932,12 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// unangetastet — das dient dem schrittweisen Verfeinern der Liste, bis
     /// nur noch übrig ist, was wirklich gemeint war.
     @objc func removeFromResults(_ sender: Any?) {
-        let doomed = Set(hitsAtRows(rows(for: sender)).map { $0.path })
+        let doomed = Set(hitsAtRows(rows(for: sender)).map { $0.identity })
         guard !doomed.isEmpty else {
             statusLabel.stringValue = "Kein Treffer ausgewählt."
             return
         }
-        let removed = removeHits { doomed.contains($0.path) }
+        let removed = removeHits { doomed.contains($0.identity) }
         statusLabel.stringValue = removed == 1
             ? "1 Treffer aus der Liste entfernt — die Datei bleibt."
             : "\(groupedNumber(removed)) Treffer aus der Liste entfernt — "
@@ -2917,7 +2954,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         }
         let before = hits.count
         hits.removeAll(where: shouldRemove)
-        // `seenPaths` bleibt unangetastet: Ein noch laufender Suchlauf soll
+        // `seenHitIdentities` bleibt unangetastet: Ein noch laufender Suchlauf soll
         // einen bewusst entfernten Treffer nicht gleich wieder einfügen.
         statistics = .over(hits)
         applyHitsToTable(keepingSelection: [])

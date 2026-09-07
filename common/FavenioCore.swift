@@ -147,6 +147,12 @@ struct Hit: Hashable {
     /// Feld und Wert bei Metadaten. Leer bei einem Begriff.
     var terms: [TermEvidence] = []
 
+    /// Anzeige und Suchbelege können sich ändern; das gefundene Objekt wird
+    /// allein durch Dateisystempfad und die einzelnen Archivstufen bestimmt.
+    var identity: HitIdentity {
+        HitIdentity(filesystemPath: filesystemPath, archiveMembers: archiveMembers)
+    }
+
     /// Liegt der Treffer INNERHALB eines Archivs?
     var isMember: Bool { !archiveMembers.isEmpty }
 
@@ -277,6 +283,13 @@ final class TypeDescriptionCache {
         byExtension[ext] = result
         return result
     }
+}
+
+/// Stabile Trefferidentität. Ein einzelner Name darf selbst `!/` enthalten;
+/// deshalb niemals die Archivstufen zu einem Identitätstext zusammenfügen.
+struct HitIdentity: Hashable {
+    let filesystemPath: String
+    let archiveMembers: [String]
 }
 
 let typeDescriptions = TypeDescriptionCache()
@@ -3425,11 +3438,11 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     /// Haupt-App in der Fußzeile, die Schnellsuche in der Infozeile.
     func presentMaterializationState() {}
 
-    /// Die ausgewählten Treffer als Pfade — modellbezogen statt über
+    /// Die ausgewählten Treffer als Identitäten — modellbezogen statt über
     /// Zeilennummern, die ein `reloadData()` nicht überlebt.
-    func selectedHitPaths() -> Set<String> {
+    func selectedHitIdentities() -> Set<HitIdentity> {
         Set(tableView.selectedRowIndexes.compactMap {
-            $0 < hits.count ? hits[$0].path : nil
+            $0 < hits.count ? hits[$0].identity : nil
         })
     }
 

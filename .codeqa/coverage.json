@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 1045411
+    "tokens_spent": 1190317
   },
   "campaign_history": [
     {
@@ -586,9 +586,15 @@
         "quick/FavenioQuick.swift"
       ],
       "priority": 1,
-      "state": "pending",
+      "state": "in_progress",
       "noted_at": "2026-09-08T00:27:57+02:00",
-      "campaign_id": "20260908T002533785169+0200"
+      "campaign_id": "20260908T002533785169+0200",
+      "started_at": "2026-09-08T01:07:04+02:00",
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:07:04+02:00",
+        "observed_head": "951d995faa37c7660927c557ce784bcad5e0fc0c"
+      }
     },
     {
       "id": "export-serialization-cost",
@@ -653,14 +659,19 @@
         "tests/test_materialization.py"
       ],
       "priority": 2,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-08T00:58:49+02:00",
       "campaign_id": "20260908T002533785169+0200",
       "started_at": "2026-09-08T01:02:42+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:02:42+02:00",
-        "observed_head": "735eb30e23281997ecbc600fc31918dd3f4bb89c"
+        "completed_at": "2026-09-08T01:07:04+02:00",
+        "observed_head": "951d995faa37c7660927c557ce784bcad5e0fc0c",
+        "summary": "Cacheprüfung und Jobwahl atomar unter einem Lock, gemeinsame knownURLLocked-Hilfe und externe Completions nach unlock. Sharing-Test mit Freigabe statt fester Pause; synchroner Callback fragt Manager erneut ab.",
+        "tests": [
+          "Instrumentierter Altstand735eb30: zwei Python-Starts und zwei unterschiedliche Dateien für denselben Hit; nur Scheduling-Halt eingefügt",
+          "14 System-Materialisierungstests in12,558s, Dokumentationstests und beide App-Selbsttests0.34.6 bestanden; Diff geprüft"
+        ]
       }
     }
   ]

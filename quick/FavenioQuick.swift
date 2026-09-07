@@ -76,6 +76,24 @@ struct FavenioQuickApp {
                 print("SELFTEST FEHLER: Maßfehler ohne Suchtext bleibt unsichtbar")
                 exit(1)
             }
+            let literal = Hit(path: "/fixture/a.zip!/inner.zip!/x.txt", kind: "member",
+                line: nil, size: nil, filesystemPath: "/fixture/a.zip",
+                archiveMembers: ["inner.zip!/x.txt"], isDirectory: false)
+            let nested = Hit(path: literal.path, kind: "member", line: nil, size: nil,
+                filesystemPath: literal.filesystemPath,
+                archiveMembers: ["inner.zip", "x.txt"], isDirectory: false)
+            controller.tableView.dataSource = controller
+            controller.tableView.allowsMultipleSelection = true
+            controller.hits = [literal, nested]
+            controller.reloadKeepingSelection([])
+            controller.tableView.selectRowIndexes([0], byExtendingSelection: false)
+            let selected = controller.selectedHitIdentities()
+            controller.hits.reverse()
+            controller.reloadKeepingSelection(selected)
+            guard controller.tableView.selectedRowIndexes == IndexSet(integer: 1) else {
+                print("SELFTEST FEHLER: Quick verwechselt gleiche Anzeigepfade")
+                exit(1)
+            }
             if let error = validateSparkleConfiguration(
                 expectedBundleIdentifier: "local.favenio.quick"
             ) {
@@ -776,7 +794,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         // deshalb sofort entwertet — nicht erst 0,6 s später in
         // startSearch(). In diesem Fenster hätten ⌘↩ und der Übergabeknopf
         // der Haupt-App sonst die alten Treffer als Startmenge zum bereits
-        // neuen Suchtext übergeben; deren Pfade hätten dort über `seenPaths`
+        // neuen Suchtext übergeben; deren Pfade hätten dort über `seenHitIdentities`
         // sogar richtige Treffer der neuen Suche unterdrückt
         // (Review-Fund 2026-08-20).
         // `clearHits()` setzt die Infozeile bereits auf `Self.hint`; ein
@@ -974,11 +992,11 @@ final class QuickController: HitListController, NSApplicationDelegate,
     /// neu, und die Auswahl verschwand oder zeigte danach auf einen anderen
     /// Treffer — samt einer offenen Vorschau, die beim alten Treffer blieb
     /// (Review-Fund 2026-08-17).
-    func reloadKeepingSelection(_ selectedPaths: Set<String>) {
+    func reloadKeepingSelection(_ selectedIdentities: Set<HitIdentity>) {
         tableView.reloadData()
-        if !selectedPaths.isEmpty {
+        if !selectedIdentities.isEmpty {
             let rows = IndexSet(hits.indices.filter {
-                selectedPaths.contains(hits[$0].path)
+                selectedIdentities.contains(hits[$0].identity)
             })
             tableView.selectRowIndexes(rows, byExtendingSelection: false)
         }
@@ -995,12 +1013,12 @@ final class QuickController: HitListController, NSApplicationDelegate,
     func flushPending() {
         guard !pending.isEmpty else { return }
         // Auswahl über den reloadData hinweg festhalten (fürs QuickLook).
-        let selectedPaths = selectedHitPaths()
+        let selectedIdentities = selectedHitIdentities()
         let room = Self.maxQuickHits - hits.count
         if room > 0 { hits.append(contentsOf: pending.prefix(room)) }
         pending = []
         sortHits()
-        reloadKeepingSelection(selectedPaths)
+        reloadKeepingSelection(selectedIdentities)
         openButton.isEnabled = !hits.isEmpty
         let reachedTop = hits.count >= Self.maxQuickHits
         if reachedTop { cancelSearch() }   // Top 20 erreicht → Suche stoppen
@@ -1207,9 +1225,9 @@ final class QuickController: HitListController, NSApplicationDelegate,
     /// Header-Klick: Trefferliste nach Name oder Pfad sortieren.
     func tableView(_ tableView: NSTableView,
                    sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-        let selectedPaths = selectedHitPaths()
+        let selectedIdentities = selectedHitIdentities()
         sortHits()
-        reloadKeepingSelection(selectedPaths)
+        reloadKeepingSelection(selectedIdentities)
     }
 
     /// Hält die gewählte Sortierung auch beim Streaming neuer Treffer ein.

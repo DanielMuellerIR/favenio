@@ -332,6 +332,10 @@ Verbindliches CLI-Verhalten:
 ## Swift-Frontends
 
 Beide Apps sind programmatische AppKit-Frontends ohne Xcode-Projekt.
+`HitIdentity` besteht aus `filesystemPath` und `archiveMembers`. Deduplikation,
+Auswahlerhalt und Entfernen aus der Trefferliste verwenden diese Identität,
+niemals den menschenlesbaren `Hit.path`: Ein Mitgliedsname darf selbst `!/`
+enthalten. Anzeige und Export behalten ihren bisherigen Pfadtext.
 `common/FavenioCore.swift` enthält das Hit-Modell, JSONL-Parsing,
 Unterprozessaufrufe und den `MaterializationManager`. Änderungen am
 JSONL-Schema zuerst im Kern und in gemeinsamen Tests spezifizieren, dann beide

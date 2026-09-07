@@ -2,6 +2,10 @@
 
 ## 0.34.6 — 2026-09-08
 
+- Die Trefferlisten unterscheiden Objekte anhand von Dateisystempfad und
+  Archivstufen. Ein Name mit `!/` kollidiert nicht mehr mit einem
+  verschachtelten Archivtreffer: Beide bleiben sichtbar, einzeln ausgewählt
+  und einzeln aus der Liste entfernbar.
 - Cacheprüfung und Auftragswahl beim Auspacken laufen unter einem gemeinsamen
   Lock. Ein gerade fertig werdender Auftrag kann keine zweite Extraktion
   desselben Archivtreffers mehr auslösen. Bereits verfügbare Dateien werden
