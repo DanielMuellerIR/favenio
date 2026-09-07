@@ -2025,12 +2025,18 @@ final class MaterializationManager {
     /// Archiv, siehe `Hit.hasOpenableFile`). Drag-and-drop fragt hier, weil
     /// AppKit im Pasteboard-Callback sofort eine Antwort will.
     func knownURL(for hit: Hit) -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        return knownURLLocked(for: hit)
+    }
+
+    /// Nur mit gehaltenem Lock: request() verbindet dieselbe Cacheprüfung
+    /// mit der Auftragswahl. Dazwischen darf finish() keinen Job entfernen.
+    private func knownURLLocked(for hit: Hit) -> URL? {
         if !hit.isMember {
             return URL(fileURLWithPath: hit.filesystemPath)
         }
         if hit.isDirectory { return nil }
-        lock.lock()
-        defer { lock.unlock() }
         if let cached = cache[hit],
            FileManager.default.fileExists(atPath: cached.path) {
             return cached
@@ -2049,7 +2055,9 @@ final class MaterializationManager {
     func request(_ hit: Hit,
                  completion: @escaping (MaterializationOutcome) -> Void)
         -> MaterializationRequest? {
-        if let url = knownURL(for: hit) {
+        lock.lock()
+        if let url = knownURLLocked(for: hit) {
+            lock.unlock()
             completion(.ready(url))
             return nil
         }
@@ -2058,10 +2066,10 @@ final class MaterializationManager {
         // (Review-Fund 2026-08-17). Dateiaktionen gibt es dafür deshalb nicht;
         // sichtbar bleibt der Treffer trotzdem.
         if hit.isDirectory {
+            lock.unlock()
             completion(.failed("Ordner im Archiv — keine Datei zum Öffnen"))
             return nil
         }
-        lock.lock()
         let request = MaterializationRequest(hit: hit, epoch: epoch, manager: self)
         // Ein Auftrag, den alle verlassen haben, stirbt gerade; ihm darf
         // sich niemand mehr anschließen — er endete mit `.cancelled`.

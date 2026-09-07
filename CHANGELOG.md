@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.34.6 — 2026-09-08
+
+- Cacheprüfung und Auftragswahl beim Auspacken laufen unter einem gemeinsamen
+  Lock. Ein gerade fertig werdender Auftrag kann keine zweite Extraktion
+  desselben Archivtreffers mehr auslösen. Bereits verfügbare Dateien werden
+  weiterhin sofort zurückgegeben; deren Callback darf den Manager erneut
+  abfragen.
+
 ## 0.34.5 — 2026-09-08
 
 - Ein Abbruch des Auspackens gilt bis zur Zustellung des Ergebnisses an die

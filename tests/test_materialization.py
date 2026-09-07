@@ -21,6 +21,12 @@ FAKE_CLI_HEAD = textwrap.dedent('''\
     args = sys.argv[1:]
     root = args[args.index("--extract-root") + 1]
     record = json.loads(args[args.index("--extract-json") + 1])
+    def wait_for_file(path):
+        deadline = time.monotonic() + 15
+        while not os.path.exists(path):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Freigabe der Probe fehlt")
+            time.sleep(0.001)
     def emit():
         out_dir = tempfile.mkdtemp(prefix="hit-", dir=root)
         path = os.path.join(out_dir, os.path.basename(record["archiveMembers"][-1]))
@@ -90,6 +96,7 @@ class MaterializationTests(unittest.TestCase):
         self.assertEqual(report['second']['path'], report['path'])
         self.assertFalse(report['second_deferred'])
         self.assertEqual(report['known'], report['path'])
+        self.assertEqual(report['reentrant_known'], report['path'])
 
     def test_trailing_filename_whitespace_survives_extraction_and_cache(self):
         for suffix in (' ', '\t', '\n', '\r', '\r\n', ' \t\n'):
@@ -165,13 +172,14 @@ class MaterializationTests(unittest.TestCase):
 
     def test_concurrent_requests_share_one_extraction(self):
         counter = self.root / 'shared.count'
+        release = self.root / 'shared.release'
         cli = self.fake_cli('counted', '''
             with open(%r, "a") as handle:
                 handle.write("x")
-            time.sleep(0.3)
+            wait_for_file(%r)
             emit()
-            ''' % str(counter))
-        report = self.run_probe('shared', cli, self.archive, 'x.txt')
+            ''' % (str(counter), str(release)))
+        report = self.run_probe('shared', cli, self.archive, 'x.txt', release)
         self.assertEqual(report['first']['state'], 'ready')
         self.assertEqual(report['second']['state'], 'ready')
         self.assertEqual(report['first']['path'], report['second']['path'])
@@ -195,11 +203,7 @@ class MaterializationTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 release = self.root / (mode + '.release')
                 cli = self.fake_cli(mode, '''
-                    deadline = time.monotonic() + 15
-                    while not os.path.exists(%r):
-                        if time.monotonic() >= deadline:
-                            raise RuntimeError("Freigabe der Probe fehlt")
-                        time.sleep(0.001)
+                    wait_for_file(%r)
                     emit()
                     ''' % str(release))
                 report = self.run_probe(mode, cli, self.archive, 'x.txt', release)

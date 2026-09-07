@@ -653,9 +653,15 @@
         "tests/test_materialization.py"
       ],
       "priority": 2,
-      "state": "pending",
+      "state": "in_progress",
       "noted_at": "2026-09-08T00:58:49+02:00",
-      "campaign_id": "20260908T002533785169+0200"
+      "campaign_id": "20260908T002533785169+0200",
+      "started_at": "2026-09-08T01:02:42+02:00",
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T01:02:42+02:00",
+        "observed_head": "735eb30e23281997ecbc600fc31918dd3f4bb89c"
+      }
     }
   ]
 }

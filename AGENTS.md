@@ -428,6 +428,9 @@ für jeden Anforderer dessen Abbruchmarkierung und `epoch` unter demselben
 Lock wie der Manager. Eine vorherige Completion darf den nächsten
 Anforderer abbrechen; keine Completion läuft unter dem Lock. Bereits
 zugestellte Anforderungen melden sich nach erneutem Abbruch nicht wieder.
+Cacheprüfung und Auftragswahl in `request()` stehen unter einem gemeinsamen
+Lock; `knownURLLocked()` liefert dieselbe Entscheidung wie `knownURL()`.
+Ein dazwischen fertig werdender Worker darf keine zweite Extraktion auslösen.
 In
 `HitListController` arbeitet `withActionSelection` mit der FESTEN Auswahl
 vom Klick, `requestPreview` nimmt für Quick Look nur die ZULETZT

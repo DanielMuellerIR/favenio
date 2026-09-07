@@ -136,7 +136,12 @@ struct MaterializationProbe {
             if mode == "same-file" {
                 // Zweite Anforderung: aus dem Cache, sofort und synchron.
                 var second: MaterializationOutcome?
-                let again = manager.request(target) { received(); second = $0 }
+                let again = manager.request(target) {
+                    received(); second = $0
+                    // Eine synchrone Cache-Completion darf den Manager
+                    // erneut fragen; sie darf seinen Lock nicht halten.
+                    report["reentrant_known"] = manager.knownURL(for: target)?.path ?? ""
+                }
                 report["second"] = describe(second)
                 report["second_deferred"] = again != nil
                 report["known"] = manager.knownURL(for: target)?.path ?? ""
@@ -184,6 +189,8 @@ struct MaterializationProbe {
             var second: MaterializationOutcome?
             manager.request(target) { received(); first = $0 }
             manager.request(target) { received(); second = $0 }
+            // Beide Aufträge sind angemeldet, bevor der Kern fertig werden darf.
+            try! Data().write(to: URL(fileURLWithPath: arguments[5]))
             _ = spin(until: { first != nil && second != nil })
             report["first"] = describe(first)
             report["second"] = describe(second)
