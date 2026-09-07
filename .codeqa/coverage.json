@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 928808
+    "tokens_spent": 1045411
   },
   "campaign_history": [
     {
@@ -560,14 +560,21 @@
         "tests/materialization_probe.swift"
       ],
       "priority": 1,
-      "state": "in_progress",
+      "state": "completed",
       "noted_at": "2026-09-08T00:27:57+02:00",
       "campaign_id": "20260908T002533785169+0200",
       "started_at": "2026-09-08T00:52:38+02:00",
-      "active_run": {
+      "completed": {
         "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T00:52:38+02:00",
-        "observed_head": "90c8439bfc191ff9a55bee18c7720787fce3a55c"
+        "completed_at": "2026-09-08T01:01:19+02:00",
+        "observed_head": "5b28eec50be8797b41b77669b3be1756723d952a",
+        "summary": "Request-Abbruch und Cleanup werden je Anforderer unmittelbar vor einmaliger Callback-Zustellung geprüft. Quick bricht bei neuer Liste auch Dateiaktionen ab; synchroner Vorschauersatz beendet den Ladezustand. Materialisierungsproben prüfen alle Callback-Threads und eigene explizite Temp-Wurzeln; vier redundante Quelltextwachen entfernt.",
+        "tests": [
+          "Fünf deterministische Abbruch-/Cleanup-Fälle vorher rot, danach grün; geteilter Cache und genau einmalige Completion erhalten",
+          "Controllerprobe A→synchrone B vorher [true], nachher [true,false], keine veraltete Vorschau",
+          "14 System-Materialisierungstests 12,906 s; 96 PATH-Tests (Materialisierung, Swift-Wachen, Dokumentation) 12,783 s bestanden",
+          "Beide Apps 0.34.5 gebaut, beide Headless-Selbsttests bestanden; unabhängiger Abschlussreview ohne Befund"
+        ]
       }
     },
     {
