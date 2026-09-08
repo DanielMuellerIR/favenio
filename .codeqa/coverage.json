@@ -6,7 +6,7 @@
     "token_budget": 6000000,
     "status": "active",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 1604807
+    "tokens_spent": 1638954
   },
   "campaign_history": [
     {
@@ -287,26 +287,19 @@
       "risk": "high",
       "priority": 2,
       "reason": "Gemeinsame Prozess-, JSONL-, Materialisierungs-, Übergabe- und Finder/TCC-Grenze beider Apps",
-      "state": "in_progress",
+      "state": "completed",
       "last_run": {
-        "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:19:35+02:00",
-        "observed_head": "86f71bf3c90ccd251a95f3d875f015a2b5625828",
-        "content_sha256": "c33d7a719dadb4a30b6e0d92b1147b69904a55da7bc1301fe87a8fcee4e1139c",
+        "campaign_id": "20260908T002533785169+0200",
+        "completed_at": "2026-09-08T02:01:16+02:00",
+        "observed_head": "f28c2b13dee4aace67b4e3f00c46171f76e5c889",
+        "content_sha256": "ea157f3cae3579f62e5a5852292084b18738583e65ba7e925a821d8f3edb4ea8",
         "file_count": 1,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta = parseSearchLine (Theme double-json-parse), verifiziert",
+        "summary": "Alle Änderungen seit 86f71bf mit Ein-/Ausgängen geprüft; widersprüchlichen Parserkommentar entfernt. Runner, Materialisierung, Export, Konfiguration und Modell durch geprüfte Querschnittsthemen gedeckt.",
         "tests": [
-          "./build-app.sh: beide Selbsttests OK"
+          "99 Swift-Prüfungen in 14.772 s erfolgreich; letzte App-Selbsttests bei c37a215 erfolgreich, danach nur Kommentaränderung."
         ]
-      },
-      "active_run": {
-        "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T01:55:13+02:00",
-        "required_review": "delta-plus-boundaries",
-        "status_at_start": "changed",
-        "covered_pending_paths": []
       }
     },
     {
@@ -351,7 +344,7 @@
       "risk": "high",
       "priority": 3,
       "reason": "Streaming-Suchlauf, Auswahlzustand und Dateiaktionen der Haupt-App",
-      "state": "completed",
+      "state": "in_progress",
       "last_run": {
         "campaign_id": "20260903T100457590492+0200",
         "completed_at": "2026-09-03T18:19:36+02:00",
@@ -364,6 +357,13 @@
         "tests": [
           "./build-app.sh: Selbsttest OK"
         ]
+      },
+      "active_run": {
+        "campaign_id": "20260908T002533785169+0200",
+        "started_at": "2026-09-08T02:01:16+02:00",
+        "required_review": "delta-plus-boundaries",
+        "status_at_start": "changed",
+        "covered_pending_paths": []
       }
     },
     {
