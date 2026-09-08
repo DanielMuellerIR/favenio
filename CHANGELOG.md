@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.34.7 — 2026-09-08
+
+- Nach einem leeren Vorlagennamen entfernt erfolgreiches Speichern die
+  vorherige Fehlermeldung. Echte Suchfehler bleiben erhalten. Der
+  Headless-Selbsttest prüft beide Fälle und unveränderte Vorlagendaten
+  nach einem abgelehnten Namen.
+
 ## 0.34.6 — 2026-09-08
 
 - Abbruchmeldungen alter Dateiaktionen überschreiben nach einem Listen-

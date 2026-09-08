@@ -346,6 +346,21 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Auswahl im Vorlagenfenster schaltet die Knöpfe nicht frei")
         return 1
     }
+    // Ein leerer Name darf weder schreiben noch nach erfolgreichem Retry
+    // als Fehler stehen bleiben. Derselbe Pfad läuft nach dem Namensdialog.
+    let beforeEmptyName = try? Data(contentsOf: templateFile)
+    var emptyNameTemplate = validTemplate
+    emptyNameTemplate.name = "  "
+    guard loader.storeTemplate(emptyNameTemplate) != nil,
+          loader.statusLabel.stringValue.contains("kein Name"),
+          (try? Data(contentsOf: templateFile)) == beforeEmptyName,
+          loader.storeTemplate(validTemplate) == nil,
+          !loader.statusLabel.stringValue.contains("kein Name"),
+          loader.statusLabel.stringValue.contains("gesichert"),
+          loader.templateFailure == nil else {
+        print("SELFTEST FEHLER: Leerer Vorlagenname bleibt nach erfolgreichem Sichern als Fehler stehen")
+        return 1
+    }
     // Ein Sichern nimmt nur den EIGENEN Fehler zurück, nicht den der Suche.
     loader.searchPhase = .failed("Kernfehler der letzten Suche")
     guard loader.storeTemplate(validTemplate) == nil,
@@ -2028,11 +2043,6 @@ final class MainController: HitListController, NSApplicationDelegate,
         alert.window.initialFirstResponder = nameField
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else {
-            searchPhase = .failed("Vorlage nicht gesichert: kein Name.")
-            refreshStatus()
-            return
-        }
         storeTemplate(SearchTemplate(name: name, pattern: pattern,
                                      root: searchRoot.path,
                                      configuration: searchConfiguration))
@@ -2043,6 +2053,12 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// die Datei nicht schreibbar war (dann bleibt die Liste unverändert).
     @discardableResult
     func storeTemplate(_ template: SearchTemplate) -> String? {
+        // Der Dialog und der Headless-Test prüfen denselben Speicherpfad.
+        guard !template.name.trimmingCharacters(in: .whitespaces).isEmpty else {
+            let message = "Vorlage nicht gesichert: kein Name."
+            failTemplates(message)
+            return message
+        }
         var updated = templates
         if let index = updated.firstIndex(where: { $0.name == template.name }) {
             updated[index] = template
