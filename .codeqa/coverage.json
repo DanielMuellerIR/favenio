@@ -4,9 +4,11 @@
   "campaign": {
     "id": "20260908T002533785169+0200",
     "token_budget": 6000000,
-    "status": "active",
+    "status": "complete",
     "started_at": "2026-09-08T00:25:33+02:00",
-    "tokens_spent": 1638954
+    "tokens_spent": 1680548,
+    "finished_at": "2026-09-08T02:03:54+02:00",
+    "finish_reason": "all-current"
   },
   "campaign_history": [
     {
@@ -243,15 +245,15 @@
       "state": "completed",
       "last_run": {
         "campaign_id": "20260908T002533785169+0200",
-        "completed_at": "2026-09-08T01:54:41+02:00",
-        "observed_head": "c37a21549c8f2db00d6f9858510729652280c9eb",
-        "content_sha256": "f7de49958bd15468b4a22b6cc597417d6dd266c90e859c8cee13f70d1b50a9a9",
+        "completed_at": "2026-09-08T02:03:24+02:00",
+        "observed_head": "c941443c90a80d146964bc15731935aa8b32a09d",
+        "content_sha256": "3d5bda6c5a06d59a4c1f0b06c856fc909af670392a94f75a06275e326bdac9dc",
         "file_count": 8,
         "review": "delta-plus-boundaries",
         "outcome": "improved",
-        "summary": "Delta: aktueller Abbruchvertrag in AGENTS, Changelog und QA-Bericht; Quick-/Build-Review dokumentiert. Vorbestehende GUI-Freigabegrenzen unverändert.",
+        "summary": "Abschlussbericht mit aktueller Architektur, Common-/Main-Delta-Review und beiden Gesamttestläufen abgeglichen; Messgrenzen und vorbestehende sichtbare Prüfungen ausdrücklich erhalten.",
         "tests": [
-          "6 Dokumentationstests grün; Callback-Vertrag durch drei Varianten und beide App-Selbsttests belegt."
+          "477 Tests je Interpreter inklusive sechs Dokumentationsverträgen grün; Berichtsdiff geprüft, git diff --check grün."
         ]
       }
     },
@@ -344,26 +346,19 @@
       "risk": "high",
       "priority": 3,
       "reason": "Streaming-Suchlauf, Auswahlzustand und Dateiaktionen der Haupt-App",
-      "state": "in_progress",
+      "state": "completed",
       "last_run": {
-        "campaign_id": "20260903T100457590492+0200",
-        "completed_at": "2026-09-03T18:19:36+02:00",
-        "observed_head": "86f71bf3c90ccd251a95f3d875f015a2b5625828",
-        "content_sha256": "72eed1f5055b332ec767e29b6f487b2601ae4dc58209535ac37e7ac1db671ae3",
+        "campaign_id": "20260908T002533785169+0200",
+        "completed_at": "2026-09-08T02:03:24+02:00",
+        "observed_head": "c941443c90a80d146964bc15731935aa8b32a09d",
+        "content_sha256": "a3ec6ab683b3a0bbe7e529dd478561d2cb192c9d21a75e3468c56d32ecb2bcbf",
         "file_count": 1,
         "review": "delta-plus-boundaries",
-        "outcome": "improved",
-        "summary": "Delta = consumeSearchLine liest ueber parseSearchLine (Theme double-json-parse)",
+        "outcome": "reviewed-clean",
+        "summary": "Delta seit 86f71bf mit heutigen Aufrufern vollständig geprüft: Vorlagen, Suchwechsel, Runner, Tabelle, Export und Dateiversprechen. Bestätigte Themen bereits korrigiert; kein zusätzlicher Fehler.",
         "tests": [
-          "./build-app.sh: Selbsttest OK"
+          "477 Tests unter Python 3.9.6 (38.599 s) und 3.14.7 (34.072 s) grün; beide App-Selbsttests bei c37a215 grün, danach kein ausführbarer App-Code verändert."
         ]
-      },
-      "active_run": {
-        "campaign_id": "20260908T002533785169+0200",
-        "started_at": "2026-09-08T02:01:16+02:00",
-        "required_review": "delta-plus-boundaries",
-        "status_at_start": "changed",
-        "covered_pending_paths": []
       }
     },
     {
