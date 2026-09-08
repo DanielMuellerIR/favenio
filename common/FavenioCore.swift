@@ -721,8 +721,6 @@ func parseSearchLine(_ lineData: Data) -> SearchLine? {
         ?? (kind == "member"
             ? Array(path.components(separatedBy: "!/").dropFirst())
             : [])
-    // Ältere Kern-Ausgaben kennen `isDirectory` nicht; dort bleibt der
-    // Rückfall auf den Typ, der wenigstens Dateisystem-Ordner richtig erkennt.
     // KEIN Rückfall auf `kind == "dir"`: Der Vertrag verlangt ausdrücklich,
     // dass die Frontends den Typ nicht erraten. Ein ORDNER im Archiv kommt
     // als `member` an und sähe damit aus wie eine Datei — genau der
