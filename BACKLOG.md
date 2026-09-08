@@ -6,12 +6,12 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 1. Sichtbarer Drag-and-drop-Test am Fenster der Haupt-App: einen noch nicht
    ausgepackten Archiv-Eintrag als Dateiversprechen in den Finder ziehen
    (mehrere Dateien, langsame Extraktion, Abbruch, Fehler). Headless ist der
-   Weg seit 0.32.0 geprüft (`tests/test_materialization.py`); der Test am
-   Fenster braucht Daniels Freigabe.
+   Weg seit 0.32.0 geprüft (`tests/test_materialization.py`); die Prüfung am
+   Fenster steht noch aus.
 2. Sichtbarer Test des Fensters „Suchvorlagen" (Verwalten: Laden,
    Umbenennen in der Zeile, Löschen). Headless ist alles geprüft
    (Selbsttest); das Fenster selbst wurde noch nicht am Bildschirm
-   angesehen — braucht Daniels Freigabe für GUI-Fokus.
+   angesehen.
 3. Sichtbarer Blick auf das neue Feld „Weitere Begriffe" (0.34.0) in beiden
    Fenstern: Es liegt unter der linken Filterspalte und macht die
    Filteransicht rund 60 pt höher; offscreen gerendert sieht es richtig aus
