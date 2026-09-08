@@ -543,7 +543,10 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("maximumHandoffBytes", COMMON)
         self.assertIn("read(upToCount: 64 * 1024)", COMMON)
         self.assertIn("removeItem(at: url)", COMMON)
-        self.assertNotIn("Data(contentsOf:", GUI)
+        # Der Headless-Selbsttest darf seine kleine Vorlagendatei lesen.
+        # Im Controller muss die Ergebnisübergabe weiterhin begrenzt bleiben.
+        controller = GUI[GUI.index("final class MainController"):]
+        self.assertNotIn("Data(contentsOf:", controller)
         self.assertIn('components.scheme?.lowercased() == "favenio"', GUI)
         self.assertIn('components.host?.lowercased() == "results"', GUI)
         handler = GUI[

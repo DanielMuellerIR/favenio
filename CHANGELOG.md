@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.34.8 — 2026-09-08
+
+- Die Testwache für begrenztes Lesen von Ergebnisübergaben prüft den
+  Haupt-Controller und erlaubt das Lesen kleiner Fixtures im Selbsttest.
+  Das Such- und Vorlagenverhalten bleibt gegenüber 0.34.7 unverändert.
+
 ## 0.34.7 — 2026-09-08
 
 - Nach einem leeren Vorlagennamen entfernt erfolgreiches Speichern die
