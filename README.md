@@ -49,7 +49,7 @@ updater, so 0.14.0 must be installed once from the DMG.
 Building from source instead — three scripts, each self-contained:
 
 ```bash
-./build-app.sh      # build and self-test both apps in the repository
+./build.sh          # build and self-test both apps in the repository (wrapper for build-app.sh; no arguments, settings via environment variables such as `FAVENIO_SIGN_ID`)
 ./install.sh        # build, notarize, install into /Applications
 ./release.sh        # build, notarize, build and notarize the DMG (no install)
 ```
@@ -135,7 +135,9 @@ Favenio is deliberately machine-friendly:
   compressed files neither — so treat both as optional.
 - **Exit codes** as with grep: `0` = hits, `1` = no hits,
   `2` = error (invalid regex, missing path, and any unexpected error that
-  cut the run short — an aborted run must never look like an empty result)
+  cut the run short — an aborted run must never look like an empty result).
+  A closed reader (`| head -1`, also `2>&1 | head -1`) is not an error: the
+  run ends quietly with 0 or 1, as grep does.
 - **Warnings** (unreadable files, broken archives) go to stderr;
   the search continues and stdout stays cleanly parseable.
 
@@ -229,6 +231,9 @@ extension promises, its first bytes decide:
   being searched as raw bytes: otherwise a stored (uncompressed) entry inside
   it produced a perfectly ordinary file hit, and nobody learned that the
   archive was broken.
+
+Exception: a `.tar.gz`, `.tar.bz2`, `.tar.xz` or `.tar.zst` that holds no tar
+is read as a single compressed file.
 
 ## Search modes — and how to find only `.md` files
 
@@ -369,10 +374,14 @@ determines the line number. That is roughly **1.4× to 1.9× faster** than
 checking every line of every file, inside archives as well, and produces
 exactly the same hits and line numbers.
 
-Two consequences worth knowing:
+Three consequences worth knowing:
 
 - Content is read as UTF-8 with `errors="replace"`, so hits in partly binary
   files remain possible; other text encodings are not promised.
+- Names that are not valid UTF-8 (e.g. from a Latin-1 tar) are printed as raw
+  bytes in the text output, as grep and find do; warnings escape them with
+  backslashes. With `--json` such a line is then not valid UTF-8, and the apps
+  currently do not show that hit (open issue).
 - Because reading stops at the first hit, the CRC checksum of a ZIP member is
   **not** verified — Python only checks it at the end of the member. A hit is a
   find, not a statement about archive integrity. Use an archive tool if you
@@ -380,8 +389,9 @@ Two consequences worth knowing:
 
 ## GUI (Favenio.app)
 
-In the main app the image dimensions and the following filters sit behind
-the **More filters** disclosure; collapsed, it names how many of them are set.
+In both apps the image dimensions and the following filters sit behind
+the **More filters** disclosure (*Weitere Filter*); collapsed, it names how
+many of them are set. The state persists per app.
 The **Size**, **Modified** and **Created** rows each provide lower and upper
 bounds. All bounds are inclusive. Size accepts whole bytes from 0, optionally
 with B, KiB, MiB, GiB or TiB. Timestamps require ISO 8601 with `Z` or an
@@ -409,7 +419,8 @@ in metadata mode a field menu narrows it to one field. The **Image size** row
 (width and height, each from/to) filters with AND and works on its own without
 a pattern. In both apps, invalid pixel fields turn red and show a concrete
 error in the status line and field tooltip. Search and transfer to the main
-app stay blocked until corrected. Empty fields mean no limit; `1.000 px`
+app stay blocked until corrected. Pixel fields start a search only on Return,
+not when focus leaves them. Empty fields mean no limit; `1.000 px`
 means 1000. Negative, decimal and overflowing numbers, and from > to, are
 rejected. The columns, in order: **Name**, **Size** (bytes), **Path**,
 **Type**, **Modified**, **Created**, **Location**, **Dimensions**. **Path**

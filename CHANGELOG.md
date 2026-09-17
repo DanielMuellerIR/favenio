@@ -1,5 +1,189 @@
 # Changelog
 
+## 0.34.24 — 2026-09-17
+
+- JSONL bleibt bei nicht als UTF-8 kodierten Tar-Eintragsnamen gültiges
+  UTF-8; unlesbare Namensbytes erscheinen sichtbar als Ersatzzeichen und
+  bleiben über eine Base64-Identität eindeutig auspackbar.
+- Namen mit führendem `^` und doppelte Namen in 7z, ISO und tar.zst werden
+  einzeln und wörtlich ausgelesen statt als bsdtar-Muster beziehungsweise
+  zusammengehängter Inhalt.
+- `--archive-depth` ist auf 100 begrenzt, bevor eine extrem tiefe
+  Zip-Verschachtelung den Prozess im C-Stack abbrechen kann.
+- Python-Tar-Archive werden nach 65.536 Katalogeinträgen mit Warnung
+  übersprungen, statt den Arbeitsspeicher unbegrenzt mit TarInfo-Objekten zu
+  füllen.
+- `release.sh` baut das DMG aus einem isolierten Checkout eines sauberen
+  Commits, nennt dessen Hash, prüft den Quellstand nach der Notarisierung
+  erneut und überschreibt kein vorhandenes Artefakt.
+
+## 0.34.23 — 2026-09-17
+
+- Nicht-UTF-8-Eintragsnamen, etwa aus einem Latin-1-Tar, brechen die Suche
+  unter einer UTF-8-Locale nicht mehr mit Exit 2 ab.
+- Eine `.tar.zst` ohne Tar darin wird wie eine `.tar.gz` als einzeln
+  komprimierte Datei durchsucht und ausgepackt.
+- `favenio … | head` und `favenio … 2>&1 | head` enden still mit 0 bzw. 1
+  statt mit Traceback und Status 120.
+- `--extract` auf einen Ordner-Eintrag nennt den Grund — in Zip und Tar wie
+  in 7z, ISO und tar.zst, wo bisher eine leere Datei (bzw. die
+  aneinandergehängten Dateien darunter) mit Exit 0 entstand.
+- Beide Apps: Maßfelder starten die Suche nur mit Return; Fokuswechsel oder
+  Zuklappen der Filter leeren die Trefferliste nicht mehr. Die Schnellsuche
+  zeigt den Fehlertext einer gescheiterten Suche vollständig im Tooltip.
+- `install.sh 2>&1 | head` hängt nicht mehr mitten im Austausch oder beim
+  Aushängen des DMG; `build.sh` lehnt Argumente ab.
+
+
+## 0.34.22 — 2026-09-15
+
+- Die Schnellsuche klappt Bildmaße, Größe, Datum, Ausschlüsse und weitere
+  Begriffe wie die Haupt-App hinter den Schalter „Weitere Filter"; beim
+  ersten Start ist er zugeklappt, der Zustand bleibt erhalten, und
+  zugeklappt nennt er die Zahl gesetzter Filter. Spinner, Infozeile und
+  „Alle in Favenio" stehen in derselben Zeile wie der Schalter.
+- Scheitert ein Suchlauf, ohne dass der Kern selbst einen Grund nennt,
+  zeigen beide Apps die erste fremde stderr-Zeile statt nur „Suche
+  fehlgeschlagen (Status 69)". So heißt es jetzt, wenn `/usr/bin/python3`
+  die Xcode-Lizenz anmahnt und den Kern gar nicht startet.
+
+
+## 0.34.21 — 2026-09-12
+
+- Durchsuche auch Zstandard-Dateien, denen ein gültiger Skippable Frame mit
+  Metadaten vorangestellt ist.
+- Akzeptiere einen App-Selbsttest nur, wenn sein Erfolgsmarker die letzte
+  nichtleere Ausgabezeile ist. Der direkte Build-Sicherheitstest lädt nun alle
+  Testklassen, bevor `unittest` startet.
+
+
+## 0.34.20 — 2026-09-10
+
+- `install.sh | head` zerreißt die Installation nicht mehr. Bei SIGPIPE
+  läuft der Aufräum-Trap in zsh nicht mit; die Fortschrittszeile mitten im
+  Austausch stand auf stdout, und Sperre samt Ablage- und
+  Sicherungsordner blieben liegen — der nächste Lauf brach ab, bis jemand
+  die Sperre von Hand entfernte. Dasselbe für `release.sh`, dort mit dem
+  festen Mountpoint `/Volumes/Favenio`.
+- Liegt am Installationsziel eine gleichnamige Datei statt eines Bundles,
+  meldet `install.sh` jetzt Exit 2 („Stand unverändert") statt Exit 3
+  („Rollback unvollständig").
+- Die Ad-hoc-Kennung `-` gilt nicht mehr als Developer-ID: Der Lauf
+  scheitert vor dem Bauen statt nach einem verbrauchten Notary-Vorgang.
+- Der Sparkle-Signierschlüssel liegt im Appcast-Workflow nur noch in der
+  Umgebung des signierenden Schritts, nicht in der jedes Schritts.
+
+
+## 0.34.19 — 2026-09-10
+
+- Ein geladenes Regex-Muster steht sofort gefärbt im Suchfeld, nicht erst
+  nach dem nächsten Tastendruck.
+- Eine Vorlage zu laden verliert die zuletzt eingetroffenen Treffer der
+  noch laufenden Suche nicht mehr.
+- Meldungen in der Fußzeile setzen jetzt auch den Tooltip; bisher blieb
+  dort die vorherige Kennzahlenzeile stehen.
+
+
+## 0.34.18 — 2026-09-10
+
+- Das Metadatenfeld einer Vorlage oder Übergabe wirkt nur noch im
+  Metadaten-Modus. Zusammen mit „Name" hätte es die Suche stillschweigend
+  auf Metadaten umgestellt, zusammen mit „Inhalt" wäre sie mit einem
+  Fehler geendet; sichtbar war das bisher nicht, weil die Oberfläche das
+  Feld außerhalb des Modus nicht mitgibt.
+- Die Filteransicht ordnet Größen- und Datumsfelder nach ihrer Gruppe
+  statt paarweise nach Position; eine ungerade Zahl von Einträgen hätte
+  beide Fenster beim Aufbau beendet.
+
+
+## 0.34.17 — 2026-09-10
+
+- In der Schnellsuche lösen ⇧⎋ und ⌥⎋ nicht mehr denselben Abbruch aus
+  wie ⎋; dasselbe gilt für die Leertaste mit Zusatztaste. Die Haupt-App
+  hielt das schon so.
+- Rechtsklick-Menü, Zellbau der Trefferliste, das Schließen der Vorschau
+  und die Auswertung der Zusatztasten stehen jetzt einmal in der
+  gemeinsamen Basis statt zweimal in beiden Fenstern. Kein sichtbarer
+  Unterschied — aber eine Korrektur wirkt künftig in beiden Apps.
+
+
+## 0.34.16 — 2026-09-10
+
+- Vorschau, Öffnen oder „Im Finder zeigen" auf einer großen Auswahl von
+  Archiv-Einträgen startet nicht mehr Dutzende Kernprozesse auf einmal.
+  Höchstens vier Einträge werden gleichzeitig ausgepackt. Ohne diesen
+  Deckel bremste das Auspacken eine parallel laufende Suche aus: Ihr
+  erster Treffer kam nach 5,19 s statt 0,02 s.
+
+
+## 0.34.15 — 2026-09-10
+
+- Derselbe Archiv-Eintrag wird nicht mehr zweimal ausgepackt, wenn er in
+  zwei Trefferfassungen vorliegt — etwa einmal aus einer Namenssuche und
+  einmal aus einer Inhaltssuche mit Zeilennummer. Zwischenspeicher und
+  Aufträge des Auspackens gehen jetzt über die Trefferidentität statt
+  über den ganzen Trefferwert.
+
+
+## 0.34.14 — 2026-09-10
+
+- Eine Kompressionshülle ohne Tar darin wird als einzeln komprimierte
+  Datei gelesen statt als beschädigtes Archiv gemeldet.
+  `gzip -c notiz.txt > notiz.tar.gz` ist ein gültiges gzip ohne Tar; die
+  Suche fand den Inhalt bisher nur, wenn die Datei `notiz.gz` hieß. Gilt
+  für `.tar.gz`, `.tar.bz2` und `.tar.xz`, in Suche und `--extract`
+  gleichermaßen. Echte tar.gz-Archive und wirklich beschädigte Hüllen
+  verhalten sich unverändert.
+
+
+## 0.34.13 — 2026-09-10
+
+- In der Haupt-App startet erst Return die Suche, wie ihr Suchfeld es
+  verspricht. Bisher schickte NSSearchField die Suche von selbst, rund
+  0,45 s nach jeder Tipppause: Jeder dieser Läufe leerte die sichtbare
+  Trefferliste und startete für zwei Zeichen einen neuen Kernprozess,
+  bei eingeschalteter Archivsuche mit vollem Archivabstieg.
+
+
+## 0.34.12 — 2026-09-10
+
+- Das Rechtsklick-Menü über einer großen Auswahl lässt das Fenster nicht
+  mehr stehen. „Öffnen mit" bildet die Schnittmenge der Anwendungen jetzt
+  je Endung statt je Treffer; eine Endung, gegen die schon geschnitten
+  wurde, kann nichts mehr wegnehmen. Gemessen über 100 000 gleichartige
+  Treffer: 0,08 s statt 11,9 s, dieselben 31 Anwendungen.
+
+
+## 0.34.11 — 2026-09-10
+
+- Eine Datei, deren Endung ein Archiv verspricht, die aber keines ist,
+  wird jetzt für JEDES Format als ganz normale Datei durchsucht — bisher
+  nur für Zip und Tar. Eine Textdatei namens `notes.7z`, `image.iso`,
+  `blob.zst` oder `notiz.gz` fiel mit Warnung aus der Suche, während
+  dieselbe Datei ohne installiertes bsdtar/zstd ganz normal gefunden
+  wurde. Eine reine Namenssuche zeigte für `notiz.gz` obendrein den
+  Phantom-Eintrag `notiz.gz!/notiz`, den `--extract` nie auflösen kann.
+  Echte, aber beschädigte Archive werden weiterhin gemeldet und
+  übersprungen; das entscheidet die Signatur des jeweiligen Formats.
+
+
+## 0.34.10 — 2026-09-10
+
+- Die Vorschau der Schnellsuche zu schließen beendet nicht mehr die ganze
+  App. Der Controller ist auch Delegat des Quick-Look-Panels, und dessen
+  `orderOut` kommt als `windowWillClose` an; die Fensterprüfung fehlte.
+  Betroffen waren die Leertaste ein zweites Mal, ⎋, das Vorschaufenster
+  selbst — und der nächste Tastendruck im Suchfeld, weil eine neue Suche
+  die Vorschau schließt. Selbsttest und Quelltextwache halten es fest.
+
+## 0.34.9 — 2026-09-09
+
+- Ein Vorlagenfehler steht jetzt neben dem Zustand der Suche statt in ihm.
+  Ein abgelehnter Vorlagenname überschreibt den Fehler der letzten Suche
+  nicht mehr, und das anschließend erfolgreiche Sichern löscht nur die
+  eigene Meldung. Eine laufende Suche bleibt in der Fußzeile sichtbar.
+  Der Headless-Selbsttest prüft beide Abläufe.
+
 ## 0.34.8 — 2026-09-08
 
 - Die Testwache für begrenztes Lesen von Ergebnisübergaben prüft den

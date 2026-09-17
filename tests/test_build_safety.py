@@ -1,5 +1,6 @@
 import os
 import plistlib
+import re
 import signal
 import shutil
 import subprocess
@@ -23,6 +24,57 @@ def applications_touching_lines(source):
         if "/Applications" in code or "pkill" in code or "killall" in code:
             hits.append(line.strip())
     return hits
+
+
+def shell_function(source, name):
+    """Schneidet eine zsh-Funktion samt Rumpf aus einem Skript.
+
+    Gezählt werden die geschweiften Klammern ab der Signatur. Das trägt für
+    die kleinen Funktionen dieses Repos, in denen keine Klammer in einem
+    Text steht — sonst müsste hier ein Parser stehen."""
+    start = source.index(name + "() {")
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError("Funktion %r ist nicht abgeschlossen" % name)
+
+
+def run_into_head(arguments, lines, **options):
+    """Startet `<arguments> 2>&1 | head -n <lines>` und liefert den Status
+    des Skripts (nicht den von `head`) samt allem, was `head` durchließ.
+
+    `head` schließt die Pipe nach <lines> Zeilen; jede weitere Ausgabe des
+    Skripts trifft dann auf SIGPIPE. Genau dabei hingen die Skripte früher
+    endlos. Ein Hänger soll den Test ROT machen, nicht den Testlauf endlos:
+    Nach 60 s wird die ganze Prozessgruppe (Shell, Attrappen, `head`)
+    beendet, und der Status ist `None`."""
+    pipeline = ('"$@" 2>&1 | head -n %d\n'
+                'print -r -- "STATUS=${pipestatus[1]}"' % lines)
+    # Eigene Sitzung = eigene Prozessgruppe: So trifft killpg jeden Prozess
+    # dieses Laufs und keinen des Testrunners.
+    process = subprocess.Popen(["zsh", "-fc", pipeline, "zsh", *arguments],
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT,
+                               start_new_session=True, **options)
+    try:
+        output = process.communicate(timeout=60)[0]
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        output = process.communicate()[0]
+        return None, output.decode("utf-8", "replace")
+    text = output.decode("utf-8", "replace")
+    last = text.rstrip("\n").rsplit("\n", 1)[-1]
+    if not last.startswith("STATUS="):
+        raise AssertionError("Kein Status gemeldet:\n%s" % text)
+    return int(last[len("STATUS="):]), text
 
 
 class BuildSafetyTest(unittest.TestCase):
@@ -49,6 +101,34 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertIn('spctl --assess --type open', source)
         self.assertNotIn(" /Applications/Favenio.app", source)
         self.assertNotIn(" /Applications/FavenioQuick.app", source)
+
+    def test_release_binds_the_artifact_to_a_clean_commit(self):
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
+        self.assertIn("git status --porcelain --untracked-files=normal", source)
+        self.assertGreaterEqual(source.count("git rev-parse --verify HEAD"), 2)
+        self.assertIn('BUILD_COMMIT=$(git rev-parse --verify HEAD)', source)
+        self.assertIn('git worktree add --detach "$ISOLATED_SOURCE"', source)
+        self.assertIn('FAVENIO_RELEASE_ISOLATED=1', source)
+        self.assertIn('commit $BUILD_COMMIT', source)
+
+    def test_release_finishes_privately_and_never_overwrites_an_artifact(self):
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
+        self.assertIn('mktemp -d "$PWD/.build/release.XXXXXX"', source)
+        self.assertIn('ln "$DMG_PATH" "$FINAL_DMG_PATH"', source)
+        self.assertLess(source.index('ln "$DMG_PATH" "$FINAL_DMG_PATH"'),
+                        source.index('ln "$WORK_SHA_PATH" "$FINAL_SHA_PATH"'))
+        self.assertIn('FINAL_LOCK_PATH="$DIST/.Favenio-${VERSION}.release-lock"', source)
+        self.assertIn('FINAL_LOCK_SOURCE="$DIST/.Favenio-${VERSION}.release-lock.$$"', source)
+        self.assertIn('if ! ln "$FINAL_LOCK_SOURCE" "$FINAL_LOCK_PATH"; then', source)
+        self.assertIn('"$FINAL_LOCK_PATH" -ef "$FINAL_LOCK_SOURCE"', source)
+        self.assertLess(source.index('trap favenio_release_unlock EXIT'),
+                        source.index(': > "$FINAL_LOCK_SOURCE"'))
+        self.assertLess(source.index('if ! ln "$FINAL_LOCK_SOURCE" "$FINAL_LOCK_PATH"; then'),
+                        source.index('if [ -e "$FINAL_DMG_PATH" ]'))
+        self.assertIn('rm -f "$FINAL_DMG_PATH"', source)
+        self.assertIn('"$FINAL_DMG_PATH" -ef "$DMG_PATH"', source)
+        self.assertIn('"$FINAL_SHA_PATH" -ef "$WORK_SHA_PATH"', source)
+        self.assertNotIn('rm -f "$DMG_PATH"', source)
 
     def test_release_checks_the_bundles_as_strictly_as_an_install(self):
         # Die Kopie in release.sh prüfte nur Signatur und Ticket und ließ
@@ -183,6 +263,48 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertIn('FAVENIO_SIGN_ID: "-"', workflow)
 
 
+class BuildEntryTest(unittest.TestCase):
+    """`build.sh` ist nur der einheitliche Einstieg vor `build-app.sh`.
+
+    Getestet an einer Kopie neben einer Attrappe für `build-app.sh`: Ein
+    Fehler hier darf keinen echten Bau samt Selbsttest anstoßen."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.started = self.root / "gestartet"
+        shutil.copy2(REPO / "build.sh", self.root / "build.sh")
+        (self.root / "build-app.sh").write_text(
+            '#!/bin/sh\nprintf \'%%s\\n\' "$*" > "%s"\nexit 7\n'
+            % self.started, encoding="utf-8")
+        (self.root / "build-app.sh").chmod(0o755)
+
+    def run_build(self, *arguments):
+        return subprocess.run([str(self.root / "build.sh"), *arguments],
+                              cwd="/", stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE)
+
+    def test_without_arguments_the_build_script_takes_over(self):
+        # `exec` gibt den Status von build-app.sh unverändert zurück.
+        result = self.run_build()
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertTrue(self.started.exists())
+
+    def test_arguments_are_refused_instead_of_silently_building(self):
+        """build-app.sh wertet kein Argument aus. Durchgereicht startete
+        `./build.sh --help` deshalb einen vollständigen Bau samt
+        Selbsttest, statt Hilfe zu zeigen oder abzulehnen."""
+        for arguments in (("--help",), ("-h",), ("a b",)):
+            with self.subTest(arguments=arguments):
+                result = self.run_build(*arguments)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(self.started.exists())
+                self.assertEqual(result.stdout, b"")
+                self.assertIn(arguments[0],
+                              result.stderr.decode("utf-8", "replace"))
+
+
 class InstallTransactionTest(unittest.TestCase):
     """Der Austausch beider Bundles ist EINE Transaktion: Entweder liegen
     danach beide neu am Zielort, oder beide alten Stände sind zurück. Getestet
@@ -244,6 +366,173 @@ class InstallTransactionTest(unittest.TestCase):
     def leftovers(self):
         return sorted(name for name in os.listdir(self.dest)
                       if name.startswith(".favenio-"))
+
+    def test_a_reader_that_closes_stdout_cannot_break_the_transaction(self):
+        """`install.sh | head` darf die Transaktion nicht zerreißen.
+
+        In zsh läuft ein EXIT-Trap bei SIGPIPE NICHT (gemessen 2026-09-10:
+        mit `| head -1` bleibt `cleanup` aus, ohne Pipe läuft es).
+        `favenio_install_bundles` schrieb je Bundle eine Fortschrittszeile
+        nach STDOUT, mitten in der Transaktion — ein Leser, der früh
+        schließt, ließ Sperre, Ablage- und Sicherungsordner im Zielordner
+        liegen, und der nächste Lauf brach mit „Es läuft bereits eine
+        Favenio-Installation" ab, bis jemand die Sperre von Hand entfernte.
+        Fortschritt gehört deshalb nach stderr, und `PIPE` gehört in die
+        Signalliste der beiden Skripte."""
+        # Nur die erste Zeile lesen und dann schließen — wie `head -1`.
+        # Die Klammern sind nötig, weil das Skript mehrzeilig ist.
+        piped = subprocess.run(
+            ["zsh", "-c", "{\n" + self.install_script("    return 0")
+             + "\n} | head -1"],
+            cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.assertEqual(piped.returncode, 0)
+        # Kein Rest im Ziel — sonst blockiert die Sperre jede weitere
+        # Installation.
+        self.assertEqual(self.leftovers(), [])
+        self.assertEqual(self.marker(self.dest, "Favenio.app"), "neu")
+        self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "neu")
+        # Und der Fortschritt steht nicht auf stdout, wo ein Leser ihn
+        # abschneiden könnte.
+        self.assertIn('installiert und geprüft." >&2',
+                      (REPO / "notarize-lib.sh").read_text(encoding="utf-8"))
+
+    def test_a_reader_that_stops_early_on_the_progress_cannot_hang_the_swap(self):
+        """`install.sh 2>&1 | head -n N` darf den Austausch nicht aufhängen.
+
+        Der Test oben liest nur stdout; mit `2>&1` landet der Fortschritt von
+        stderr aber doch in der Pipe. Gemessen am 2026-09-17 mit zsh 5.9:
+        Trifft SIGPIPE ein EINGEBAUTES `echo` innerhalb einer Funktion,
+        während `trap 'exit 2' PIPE` gesetzt ist, läuft dieser Trap endlos
+        (rund 99 % CPU). Mit `head -n 1` stand der Lauf so nach dem
+        zweiten Tausch, aber vor dem Aufräumen — Sperre, Ablageordner und
+        Sicherungsordner mit den alten Bundles im Ziel —, und nur SIGKILL
+        beendete ihn."""
+        install = (REPO / "install.sh").read_text(encoding="utf-8")
+        script = Path(self.tmp.name) / "install-pipe.zsh"
+        # Oberste Ebene wie in install.sh: dessen echter Aufräum-Trap, die
+        # Signalliste samt PIPE und hinter dem Austausch nur noch Ausgabe.
+        # Vor jeder Zeile, die SIGPIPE treffen soll, wartet der Lauf kurz —
+        # bis dahin hat `head` die Pipe sicher geschlossen.
+        script.write_text("""
+set -euo pipefail
+source "%s/notarize-lib.sh"
+MOUNT=""
+INSTALLED=0
+%s
+trap cleanup EXIT
+trap 'exit 2' HUP INT TERM PIPE
+notarize_verify_installed() {
+    case "$1" in
+        */.favenio-install.*) ;;
+        *) sleep 0.3 ;;
+    esac
+    return 0
+}
+favenio_install_bundles "%s" "%s"
+INSTALLED=1
+sleep 0.3
+echo "────────────────────────────────────────────"
+echo "INSTALL OK: test"
+""" % (REPO, shell_function(install, "cleanup"), self.source, self.dest),
+            encoding="utf-8")
+        # Zeile 1 und 2 sind die Fortschrittszeilen beider Bundles. N=1:
+        # SIGPIPE trifft die zweite, also mitten in der Transaktion. N=2:
+        # SIGPIPE trifft die Schlusszeilen nach dem Austausch.
+        for lines in (1, 2):
+            with self.subTest(lines=lines):
+                shutil.rmtree(self.dest)
+                for app in ("Favenio.app", "FavenioQuick.app"):
+                    self.make_bundle(os.path.join(self.dest, app), "alt")
+                status, output = run_into_head(["zsh", str(script)], lines,
+                                               cwd=REPO)
+                self.assertIsNotNone(status, "Lauf hing:\n%s" % output)
+                self.assertEqual(status, 0, output)
+                self.assertEqual(self.leftovers(), [])
+                self.assertEqual(self.marker(self.dest, "Favenio.app"), "neu")
+                self.assertEqual(self.marker(self.dest, "FavenioQuick.app"),
+                                 "neu")
+
+    def test_both_scripts_treat_sigpipe_like_the_other_soft_signals(self):
+        """Ohne `PIPE` endet ein `| head` mit Status 141 und ohne Aufräumen:
+        in `install.sh` blieben DMG und Sperre liegen, in `release.sh` der
+        FESTE Mountpoint `/Volumes/Favenio`, der jeden weiteren Release-Lauf
+        abbrechen lässt."""
+        for name, expected in (("install.sh", "trap 'exit 2' HUP INT TERM PIPE"),
+                               ("release.sh", "trap 'exit 1' HUP INT TERM PIPE")):
+            with self.subTest(script=name):
+                source = (REPO / name).read_text(encoding="utf-8")
+                self.assertIn(expected, source)
+
+    def test_only_child_processes_write_the_output_of_the_scripts(self):
+        """Die Tests mit `| head` laufen über install.sh und notarize_apps;
+        release.sh selbst lässt sich ohne Build und Notarisierung nicht
+        starten. Denselben Schutz bekommt es nur, wenn ZWEI Dinge gelten:
+        Jede Ausgabe läuft über das `echo` aus notarize-lib.sh, also erst
+        NACH dem `source`, und kein eingebautes print/printf schreibt
+        außerhalb von `$(...)`. Sonst träfe SIGPIPE wieder die Shell, und
+        die Aufräumung hinge in `hdiutil detach … 2>/dev/null` — mit
+        /Volumes/Favenio eingehängt."""
+        probe = subprocess.run(
+            ["zsh", "-fc", 'source "$1"; whence -w echo', "zsh",
+             str(REPO / "notarize-lib.sh")],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(probe.stdout.decode("utf-8", "replace").strip(),
+                         "echo: function")
+        names = ("install.sh", "release.sh", "notarize-lib.sh")
+        # Kommentare fallen weg; `$#` und `${#…}` bleiben, weil vor ihrem
+        # `#` kein Leerraum steht.
+        code = {name: [re.sub(r"(^|\s)#.*$", "", line) for line
+                       in (REPO / name).read_text(encoding="utf-8").splitlines()]
+                for name in names}
+        for name in ("install.sh", "release.sh"):
+            with self.subTest(script=name):
+                lines = code[name]
+                first_echo = next(index for index, line in enumerate(lines)
+                                  if re.search(r"\becho\b", line))
+                self.assertLess(lines.index("source ./notarize-lib.sh"),
+                                first_echo)
+        callers = "\n".join("\n".join(lines) for lines in code.values())
+        for name in names:
+            function = None
+            for line in code[name]:
+                header = re.match(r"(\w+)\(\) \{", line)
+                if header:
+                    function = header.group(1)
+                elif line.startswith("}"):
+                    function = None
+                if not re.match(r"\s*(print|printf)\b", line):
+                    continue
+                with self.subTest(script=name, line=line.strip()):
+                    # Erlaubt nur in einer Funktion, die ausschließlich als
+                    # `$(funktion …)` aufgerufen wird.
+                    self.assertIsNotNone(function)
+                    calls = re.findall(r"(\$\()?\b%s\b(?!\(\))"
+                                       % re.escape(function), callers)
+                    self.assertTrue(calls)
+                    self.assertEqual([call for call in calls if not call], [])
+
+    def test_a_blocked_target_path_reports_exit_two_not_three(self):
+        """Exit 3 verspricht einen unvollständigen Rollback und verbleibende
+        Pfade. Liegt am Zielpfad eine gleichnamige DATEI, scheitert `mv` mit
+        „Not a directory" — angefasst wurde dabei nichts, also gehört Exit 2
+        hin. Bis 0.34.19 hielt der Rollback die Datei für ein fremdes Bundle
+        („vermutlich hat eine zweite Installation es ersetzt") und meldete 3,
+        weil der Eintrag vor dem `mv` vorsorglich notiert und nach dessen
+        Fehlschlag nicht wieder herausgenommen wurde."""
+        import shutil
+        shutil.rmtree(os.path.join(self.dest, "Favenio.app"))
+        with open(os.path.join(self.dest, "Favenio.app"), "w",
+                  encoding="utf-8") as handle:
+            handle.write("keine App, nur eine Datei")
+        output = self.run_install("    return 0")
+        self.assertIn("RC=2", output)
+        self.assertNotIn("zweite Installation", output)
+        self.assertEqual(self.leftovers(), [])
+        # Der Fremdkörper bleibt unangetastet, die zweite App unverändert.
+        with open(os.path.join(self.dest, "Favenio.app"),
+                  encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "keine App, nur eine Datei")
+        self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "alt")
 
     def test_both_bundles_are_replaced_on_success(self):
         output = self.run_install("    return 0")
@@ -871,6 +1160,13 @@ class InstallFromDmgFixture:
             # Leeren blieb je Testlauf ein mktemp-Ordner mit beiden
             # Attrappen-Bundles im Benutzer-Temp liegen; auf einem
             # Entwicklungsrechner hatten sich 922 angesammelt.
+            # Auf Wunsch protokolliert die Attrappe jeden Aufruf samt Pfad
+            # und wartet vorher kurz (siehe die Tests mit `| head`).
+            'if [ -n "${STUB_HDIUTIL_LOG:-}" ]; then\n'
+            '  if [ "$1" = "detach" ]; then echo "detach $2"\n'
+            '  else echo "$1 $mount"; fi >> "$STUB_HDIUTIL_LOG"\n'
+            "fi\n"
+            'if [ -n "${STUB_DELAY:-}" ]; then sleep "$STUB_DELAY"; fi\n'
             'if [ "$1" = "detach" ]; then\n'
             '  for app in Favenio.app FavenioQuick.app; do\n'
             '    rm -rf "$2/$app"\n'
@@ -888,6 +1184,7 @@ class InstallFromDmgFixture:
         for name in ("xcrun", "spctl", "codesign"):
             (self.stubs / name).write_text(
                 "#!/bin/sh\n"
+                'if [ -n "${STUB_DELAY:-}" ]; then sleep "$STUB_DELAY"; fi\n'
                 "for last; do :; done\n"
                 'entry=$(basename "$last")\n'
                 'case " ${STUB_FAIL_%s:-} " in *" $entry "*) exit 1 ;; esac\n'
@@ -896,7 +1193,7 @@ class InstallFromDmgFixture:
         for stub in self.stubs.iterdir():
             stub.chmod(0o755)
 
-    def run_install(self, *arguments, environment_overrides=None, **fails):
+    def install_environment(self, environment_overrides=None, **fails):
         # Jeder Fall bestimmt seine Sparkle-Variablen selbst. Sonst könnte
         # eine geerbte Variable die eigentlich geprüfte Ablehnung verdecken.
         environment = {key: value for key, value in os.environ.items()
@@ -908,10 +1205,14 @@ class InstallFromDmgFixture:
         for tool, entries in fails.items():
             environment["STUB_FAIL_%s" % tool.upper()] = entries
         environment.update(environment_overrides or {})
+        return environment
+
+    def run_install(self, *arguments, environment_overrides=None, **fails):
         result = subprocess.run(
             [str(REPO / "install.sh"), "--dmg", str(self.dmg), "--verify-only",
              *arguments],
-            cwd=REPO, env=environment,
+            cwd=REPO, env=self.install_environment(environment_overrides,
+                                                   **fails),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return result.returncode, result.stdout.decode("utf-8", "replace")
 
@@ -924,6 +1225,48 @@ class InstallFromDmgTest(InstallFromDmgFixture, unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertIn("VERIFY OK", output)
         self.assertIn("Ticket angeheftet", output)
+        # Die maschinenlesbare Schlusszeile nennt die QUELLE, und geprueft
+        # heisst nicht installiert: Ohne diese beiden Zusagen koennte ein
+        # Umbau die Zeile umbenennen oder --verify-only doch kopieren
+        # lassen, ohne dass ein Test es merkt.
+        self.assertIn("VERIFY OK: %s" % self.dmg, output)
+        self.assertNotIn("INSTALL OK", output)
+
+    def test_a_reader_that_stops_early_cannot_leave_the_dmg_mounted(self):
+        """`install.sh --dmg … 2>&1 | head -n N` muss enden und aushängen.
+
+        Gemessen am 2026-09-17 mit zsh 5.9: Trifft SIGPIPE ein eingebautes
+        `echo` auf oberster Ebene, führt `trap 'exit 2' PIPE` zwar in den
+        EXIT-Trap — dort aber hängt ein externes Kommando mit Umleitung,
+        hier `hdiutil detach "$MOUNT" -quiet 2>/dev/null`. Der Lauf stand
+        dann dauerhaft, das Abbild blieb eingehängt, `detach` kam nie an.
+        Die Attrappen warten kurz, damit `head` die Pipe vor der nächsten
+        Zeile sicher geschlossen hat."""
+        log = self.root / "hdiutil.log"
+        # Ab Zeile 3 („Schritt 2/3") ist das Abbild eingehängt.
+        for lines in (2, 3, 4):
+            with self.subTest(lines=lines):
+                log.write_text("", encoding="utf-8")
+                environment = self.install_environment(
+                    {"STUB_DELAY": "0.2", "STUB_HDIUTIL_LOG": str(log)})
+                status, output = run_into_head(
+                    [str(REPO / "install.sh"), "--dmg", str(self.dmg),
+                     "--verify-only"], lines, cwd=REPO, env=environment)
+                calls = log.read_text(encoding="utf-8").splitlines()
+                mounts = [call.split(" ", 1)[1] for call in calls
+                          if call.startswith("attach ")]
+                # Ein hängender Lauf hinterlässt seinen Mountpoint samt
+                # Attrappen-Bundles; der Test räumt ihn selbst weg.
+                stranded = [mount for mount in mounts if os.path.exists(mount)]
+                for mount in stranded:
+                    shutil.rmtree(mount, ignore_errors=True)
+                self.assertIsNotNone(status, "Lauf hing: %s\n%s"
+                                     % (calls, output))
+                # Der Leser geht, die Prüfung läuft trotzdem zu Ende.
+                self.assertEqual(status, 0, output)
+                self.assertEqual(len(mounts), 1, calls)
+                self.assertIn("detach %s" % mounts[0], calls)
+                self.assertEqual(stranded, [])
 
     def test_bundle_without_own_ticket_is_rejected(self):
         # Genau der alte Sonderfall: Das DMG selbst ist gestapelt, das Bundle
@@ -1132,9 +1475,9 @@ class InstallSignalAndPromiseTest(unittest.TestCase):
 
     def test_exit_two_keeps_its_promise_after_the_swap(self):
         # Exit 2 verspricht: installierter Stand UNVERÄNDERT. Nach dem
-        # Austausch stimmt das nicht mehr; erreichbar über
-        # `install.sh | head`, wo die letzten echo-Zeilen mit SIGPIPE
-        # enden.
+        # Austausch stimmt das nicht mehr; erreichbar über ein
+        # Abbruchsignal während der letzten echo-Zeilen (früher auch über
+        # `install.sh | head`).
         self.assertIn("INSTALLED=0", self.SCRIPT)
         self.assertIn('[ "$INSTALLED" = "1" ] && exit 0', self.SCRIPT)
         # Die Marke muss NACH dem Austausch gesetzt werden, sonst
@@ -1191,8 +1534,14 @@ class NotarizeStageCleanupTest(unittest.TestCase):
         (self.stubs / "ditto").write_text(
             '#!/bin/sh\n[ -n "${STUB_DITTO_FAILS:-}" ] && exit 1\n'
             'exit 0\n', encoding="utf-8")
+        # Die xcrun-Attrappe schreibt ihre Argumente mit: Nur so laesst
+        # sich pruefen, dass BEIDE Bundles in EINEM Zip zu Apple gehen und
+        # danach EINZELN gestapelt werden.
+        self.xcrun_log = self.root / "xcrun.log"
         (self.stubs / "xcrun").write_text(
-            '#!/bin/sh\n[ -n "${STUB_XCRUN_FAILS:-}" ] && exit 1\n'
+            '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$STUB_XCRUN_LOG"\n'
+            'if [ -n "${STUB_DELAY:-}" ]; then sleep "$STUB_DELAY"; fi\n'
+            '[ -n "${STUB_XCRUN_FAILS:-}" ] && exit 1\n'
             'exit 0\n', encoding="utf-8")
         (self.stubs / "spctl").write_text(
             "#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -1203,12 +1552,17 @@ class NotarizeStageCleanupTest(unittest.TestCase):
         for stub in self.stubs.iterdir():
             stub.chmod(0o755)
 
-    def run_notarize(self, fails=None):
+    def notarize_environment(self):
         environment = dict(os.environ)
         environment["PATH"] = "%s%s%s" % (self.stubs, os.pathsep,
                                           environment["PATH"])
         environment["STUB_MKTEMP_LOG"] = str(self.mktemp_log)
+        environment["STUB_XCRUN_LOG"] = str(self.xcrun_log)
         environment["NOTARY_PROFILE"] = "attrappe"
+        return environment
+
+    def run_notarize(self, fails=None):
+        environment = self.notarize_environment()
         if fails is not None:
             environment["STUB_%s_FAILS" % fails.upper()] = "1"
         script = (
@@ -1240,6 +1594,65 @@ class NotarizeStageCleanupTest(unittest.TestCase):
         code, output = self.run_notarize()
         self.assertEqual(code, 0, output)
         self.assertEqual(self.leftovers(), [], output)
+
+    def test_one_upload_for_both_bundles_and_one_staple_each(self):
+        """`notarytool` nimmt kein nacktes `.app`, deshalb gehen beide
+        Bundles zusammen in EINEM Zip zu Apple — und werden danach EINZELN
+        gestapelt. Nur so tragen auch aus dem DMG gezogene Apps ihr Ticket
+        und starten offline.
+
+        Die Attrappe verwarf ihre Argumente bisher: Ein Umbau auf zwei
+        Einzel-Uploads oder ein vergessenes `stapler staple` fuer das
+        zweite Bundle waere erst bei Apple aufgefallen."""
+        code, output = self.run_notarize()
+        self.assertEqual(code, 0, output)
+        calls = [line for line
+                 in self.xcrun_log.read_text(encoding="utf-8").splitlines()
+                 if line.strip()]
+        submits = [c for c in calls if c.startswith("notarytool submit")]
+        self.assertEqual(len(submits), 1, calls)
+        zips = [word for word in submits[0].split() if word.endswith(".zip")]
+        self.assertEqual(len(zips), 1, submits)
+        self.assertIn("--wait", submits[0])
+        for app in ("Favenio.app", "FavenioQuick.app"):
+            with self.subTest(app=app):
+                self.assertIn("stapler staple %s" % app, calls)
+                self.assertIn("stapler validate %s" % app, calls)
+        self.assertEqual(self.leftovers(), [], output)
+
+    def test_a_reader_that_stops_early_cannot_strand_the_stage(self):
+        """`release.sh 2>&1 | head -n 1` bzw. dasselbe mit `install.sh`.
+
+        Die Schlusszeile „Beide Bundles notarisiert und gestapelt." ist ein
+        eingebautes `echo` in einer Funktion. Hat der Leser da schon
+        geschlossen, stirbt in release.sh — dort ist der PIPE-Trap noch gar
+        nicht gesetzt — die Shell an SIGPIPE, ohne den funktionslokalen
+        EXIT-Trap: Das rund 40 MB große Stage bleibt liegen. In install.sh
+        (`trap 'exit 2' … PIPE`) läuft der Trap dagegen endlos (gemessen
+        2026-09-17 mit zsh 5.9)."""
+        for name, trap_line in (
+                ("release.sh", ""),
+                ("install.sh", "trap 'exit 2' HUP INT TERM PIPE")):
+            with self.subTest(script=name):
+                script = self.root / "notarize-pipe.zsh"
+                script.write_text(
+                    'set -euo pipefail\n'
+                    'source "%s/notarize-lib.sh"\n'
+                    '%s\n'
+                    'cd "%s"\n'
+                    'notarize_apps\n'
+                    'echo "RC=$?"\n' % (REPO, trap_line, self.root),
+                    encoding="utf-8")
+                environment = self.notarize_environment()
+                # Die xcrun-Attrappe wartet: Bis zur Schlusszeile hat `head`
+                # nach der ersten Zeile sicher geschlossen.
+                environment["STUB_DELAY"] = "0.1"
+                status, output = run_into_head(["zsh", str(script)], 1,
+                                               env=environment)
+                stranded = self.leftovers()
+                self.assertIsNotNone(status, "Lauf hing:\n%s" % output)
+                self.assertEqual(status, 0, output)
+                self.assertEqual(stranded, [], output)
 
     def test_the_stage_is_gone_when_copying_the_bundles_fails(self):
         # Genau der Pfad, der vorher liegenblieb: `ditto` steht VOR dem
@@ -1331,6 +1744,84 @@ class InstallExitCodeTest(unittest.TestCase):
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             self.assertEqual(result.returncode, 2,
                              result.stdout.decode("utf-8", "replace"))
+
+
+class SelfTestGateTest(unittest.TestCase):
+    """Das Bau-Tor darf einen abgestürzten Selbsttest nicht durchwinken.
+
+    `NSApp.terminate(nil)` beendet den Prozess mit Status 0. Ein Selbsttest,
+    der unterwegs darüber stirbt, ist am Exit-Status nicht von einem
+    bestandenen zu unterscheiden — am 2026-09-10 lief `build-app.sh` genau
+    so mit Erfolg durch, während der Selbsttest der Schnellsuche mitten im
+    Lauf endete. Erfolgskriterium ist deshalb die Schlusszeile."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.gate = shell_function(
+            (REPO / "build-app.sh").read_text(encoding="utf-8"), "run_selftest")
+
+    def fake_binary(self, body):
+        """Eine Attrappe, die sich wie ein --selftest-Binary verhält."""
+        path = os.path.join(self.tmp.name, "fake-selftest")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/zsh\n" + body + "\n")
+        os.chmod(path, 0o755)
+        return path
+
+    def run_gate(self, body):
+        script = "set -euo pipefail\n%s\nif run_selftest %s; then echo RC=0; else echo RC=$?; fi" % (
+            self.gate, self.fake_binary(body))
+        result = subprocess.run(["zsh", "-c", script], cwd=REPO,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        return result.stdout.decode("utf-8", "replace")
+
+    def test_a_finished_selftest_passes(self):
+        output = self.run_gate('echo "SELFTEST OK — alles gut"')
+        self.assertIn("RC=0", output)
+        self.assertIn("SELFTEST OK", output)
+
+    def test_a_selftest_that_quits_early_with_status_zero_is_rejected(self):
+        # Genau der Fall NSApp.terminate: einiges geprüft, dann Ende mit 0.
+        output = self.run_gate('echo "Pruefung 1 lief"; exit 0')
+        self.assertIn("RC=1", output)
+        self.assertIn("ohne 'SELFTEST OK'", output)
+        # Die Ausgabe des Laufs bleibt sichtbar, sonst sucht niemand die
+        # Stelle, an der er abbrach.
+        self.assertIn("Pruefung 1 lief", output)
+
+    def test_an_early_marker_followed_by_output_is_rejected(self):
+        output = self.run_gate(
+            'echo "SELFTEST OK — zu frueh"; echo "Abbruch danach"; exit 0')
+        self.assertIn("RC=1", output)
+        self.assertIn("Abbruch danach", output)
+
+    def test_a_failing_selftest_is_rejected_with_its_output(self):
+        output = self.run_gate('echo "SELFTEST FEHLER: kaputt"; exit 1')
+        self.assertIn("RC=1", output)
+        self.assertIn("SELFTEST FEHLER: kaputt", output)
+
+    def test_both_bundles_go_through_the_gate(self):
+        source = (REPO / "build-app.sh").read_text(encoding="utf-8")
+        self.assertIn("run_selftest Favenio.app/Contents/MacOS/Favenio",
+                      source)
+        self.assertIn(
+            "run_selftest FavenioQuick.app/Contents/MacOS/FavenioQuick",
+            source)
+        # Kein Weg am Tor vorbei.
+        self.assertNotIn("MacOS/Favenio --selftest", source)
+        self.assertNotIn("MacOS/FavenioQuick --selftest", source)
+
+    def test_each_app_prints_the_expected_line_exactly_once(self):
+        """Das Tor sucht `SELFTEST OK`. Steht die Zeile mehrfach oder gar
+        nicht in der Quelle, prüft es nichts Verlässliches mehr."""
+        for name in ("gui/FavenioGUI.swift", "quick/FavenioQuick.swift"):
+            with self.subTest(app=name):
+                source = (REPO / name).read_text(encoding="utf-8")
+                printed = [line for line in source.splitlines()
+                           if 'print("SELFTEST OK' in line]
+                self.assertEqual(len(printed), 1, printed)
 
 
 if __name__ == "__main__":

@@ -206,7 +206,14 @@ struct MaterializationProbe {
             let pid = Int32((try? String(contentsOfFile: pidFile, encoding: .utf8))?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? -1
             // SIGTERM → normales Ende im Kern; spätestens nach 1 s SIGKILL.
-            let gone = spin(until: { kill(pid, 0) != 0 && errno == ESRCH }, seconds: 3)
+            // Die Frist misst NICHT das Verhalten — der Manager schickt
+            // SIGTERM sofort und SIGKILL nach 1 s —, sondern nur, wie schnell
+            // die Maschine das zustellt. Mit 3 s fiel der Test am 2026-09-10
+            // unter paralleler Baulast einmal durch, isoliert dagegen
+            // dreimal hintereinander gruen. Grosszuegig warten und trotzdem
+            // die Frage beantworten: Ist der Prozess weg?
+            let gone = spin(until: { kill(pid, 0) != 0 && errno == ESRCH },
+                            seconds: 20)
             report["process_gone"] = gone
         case "shared":
             manager.cliPath = arguments[2]
@@ -220,6 +227,55 @@ struct MaterializationProbe {
             _ = spin(until: { first != nil && second != nil })
             report["first"] = describe(first)
             report["second"] = describe(second)
+        case "concurrency":
+            // Viele Auftraege auf einmal, wie eine grosse Auswahl sie
+            // ausloest. Jeder Kern-Aufruf schreibt sein Zeitfenster mit;
+            // der Test rechnet daraus die groesste Ueberlappung aus und
+            // haelt sie gegen den Deckel.
+            manager.cliPath = arguments[2]
+            let count = Int(arguments[4]) ?? 20
+            var finished = 0
+            var readyCount = 0
+            for index in 0..<count {
+                let target = hit(arguments[3], ["member-\(index).txt"])
+                manager.request(target) { outcome in
+                    received()
+                    finished += 1
+                    if case .ready = outcome { readyCount += 1 }
+                }
+            }
+            _ = spin(until: { finished == count }, seconds: 90)
+            report["done"] = finished
+            report["ready"] = readyCount
+            report["cap"] = MaterializationManager.maximumConcurrentExtractions
+        case "shared-variants":
+            // Dieselbe Datei in ZWEI Trefferfassungen: einmal wie aus einer
+            // Namenssuche, einmal wie aus einer Inhaltssuche mit Zeilennummer
+            // und Maßen. Die Identität ist dieselbe, also gehören dazu EIN
+            // Unterprozess und EINE Datei. Bis 0.34.14 war der Cache auf den
+            // ganzen Hit-Wert verschlüsselt und packte zweimal aus.
+            manager.cliPath = arguments[2]
+            let plain = hit(arguments[3], [arguments[4]])
+            let withLine = Hit(path: plain.path, kind: "member", line: 12,
+                               size: nil, filesystemPath: plain.filesystemPath,
+                               archiveMembers: plain.archiveMembers,
+                               isDirectory: false, width: 640, height: 480,
+                               modified: 1_700_000_000)
+            precondition(plain != withLine, "Die beiden Fassungen sind gleich")
+            precondition(plain.identity == withLine.identity,
+                         "Die beiden Fassungen haben verschiedene Identitäten")
+            var firstVariant: MaterializationOutcome?
+            var secondVariant: MaterializationOutcome?
+            manager.request(plain) { received(); firstVariant = $0 }
+            manager.request(withLine) { received(); secondVariant = $0 }
+            // Beide Aufträge sind angemeldet, bevor der Kern fertig werden darf.
+            try! Data().write(to: URL(fileURLWithPath: arguments[5]))
+            _ = spin(until: { firstVariant != nil && secondVariant != nil })
+            report["first"] = describe(firstVariant)
+            report["second"] = describe(secondVariant)
+            // Und danach kennt knownURL BEIDE Fassungen ohne neues Auspacken.
+            report["known_plain"] = manager.knownURL(for: plain)?.path ?? ""
+            report["known_with_line"] = manager.knownURL(for: withLine)?.path ?? ""
         case "cleanup":
             manager.cliPath = arguments[2]
             let before = favenioTempDirectories()
@@ -234,7 +290,14 @@ struct MaterializationProbe {
             manager.cleanup()
             let afterCleanup = favenioTempDirectories()
             _ = spin(until: { outcome != nil })
-            let gone = spin(until: { kill(pid, 0) != 0 && errno == ESRCH }, seconds: 3)
+            // Die Frist misst NICHT das Verhalten — der Manager schickt
+            // SIGTERM sofort und SIGKILL nach 1 s —, sondern nur, wie schnell
+            // die Maschine das zustellt. Mit 3 s fiel der Test am 2026-09-10
+            // unter paralleler Baulast einmal durch, isoliert dagegen
+            // dreimal hintereinander gruen. Grosszuegig warten und trotzdem
+            // die Frage beantworten: Ist der Prozess weg?
+            let gone = spin(until: { kill(pid, 0) != 0 && errno == ESRCH },
+                            seconds: 20)
             report = describe(outcome)
             report["process_gone"] = gone
             report["dirs_before"] = before

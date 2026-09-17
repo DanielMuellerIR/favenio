@@ -147,24 +147,17 @@ func runSelfTest() -> Int32 {
     let collapsedController = MainController()
     collapsedController.buildWindow()   // sonst erst in applicationDidFinishLaunching
     collapsedController.window.orderOut(nil)
-    guard !collapsedController.filtersExpanded, collapsedController.sizeRow.isHidden else {
-        print("SELFTEST FEHLER: Weitere Filter sind beim Start nicht zugeklappt")
+    // Zugeklappt beim Start, Umschalten, Zählung im Titel und Maßfelder ohne
+    // Suche beim Fokusverlust — gemeinsam mit der Schnellsuche geprüft.
+    if let error = filterDisclosureSelfTest(collapsedController.filters) {
+        print("SELFTEST FEHLER: \(error)")
         return 1
     }
-    collapsedController.toggleFilters(nil)
-    guard collapsedController.filtersExpanded, !collapsedController.sizeRow.isHidden,
-          collapsedController.filtersDisclosure.state == .on else {
-        print("SELFTEST FEHLER: Aufklapp-Schalter zeigt die Filter nicht")
-        return 1
-    }
-    collapsedController.toggleFilters(nil)
-    UserDefaults.standard.removeObject(forKey: MainController.filtersExpandedKey)
-    collapsedController.filterView.exclusions = ["node_modules"]
-    collapsedController.filterView.rawFacts = ["min-size": "1 MiB"]
-    collapsedController.minWidthField.stringValue = "100"
-    collapsedController.refreshFiltersTitle()
-    guard collapsedController.filtersTitleButton.title.contains("3 aktiv") else {
-        print("SELFTEST FEHLER: Zugeklappter Schalter nennt aktive Filter nicht")
+    // Return startet die Suche — nicht das Tippen. Ohne diese beiden Werte
+    // schickt NSSearchField die Action nach jeder Tipppause von selbst.
+    guard collapsedController.searchField.sendsWholeSearchString,
+          !collapsedController.searchField.sendsSearchStringImmediately else {
+        print("SELFTEST FEHLER: Das Suchfeld startet die Suche beim Tippen")
         return 1
     }
     guard collapsedController.filterView.exclusionsEditor.placeholder.contains("node_modules") else {
@@ -229,11 +222,35 @@ func runSelfTest() -> Int32 {
           loader.searchField.stringValue == "Rechnung*",
           loader.searchRoot.path == existingRoot,
           loader.searchConfiguration == validTemplate.configuration,
-          loader.filtersExpanded,
+          loader.filters.isExpanded,
           loader.statusLabel.stringValue.contains("„Rechnungen“ geladen") else {
         print("SELFTEST FEHLER: Vorlage befüllt die Oberfläche nicht oder startet eine Suche")
         return 1
     }
+    // Ein geladenes Regex-Muster steht GEFÄRBT im Feld: applyConfiguration
+    // färbt zuletzt, aber noch den alten Text. Ein erneutes Färben darf
+    // deshalb nichts mehr ändern.
+    var regexConfiguration = SearchConfiguration()
+    regexConfiguration.regex = true
+    loader.applyTemplate(SearchTemplate(name: "RegexVorlage",
+                                        pattern: "^(a|b)+$", root: nil,
+                                        configuration: regexConfiguration))
+    let colored = loader.searchField.attributedStringValue
+    var patternColors: Set<NSColor> = []
+    colored.enumerateAttribute(
+        .foregroundColor,
+        in: NSRange(location: 0, length: colored.length)
+    ) { value, _, _ in
+        if let color = value as? NSColor { patternColors.insert(color) }
+    }
+    // Anker, Gruppe und Alternative bekommen verschiedene Farben; ein
+    // ungefärbtes Feld trägt höchstens eine.
+    guard loader.searchField.stringValue == "^(a|b)+$",
+          patternColors.count > 1 else {
+        print("SELFTEST FEHLER: Geladenes Regex-Muster steht ungefärbt im Feld")
+        return 1
+    }
+    loader.applyTemplate(validTemplate)
     // Geladene Vorlage, CLI-Argumente und Quick-Übergabe: dieselbe Suche.
     guard loader.searchConfiguration.arguments(
               pattern: loader.searchField.stringValue, root: loader.searchRoot.path)
@@ -368,7 +385,40 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Vorlage sichern löscht den Fehler der letzten Suche")
         return 1
     }
+    // Derselbe Ablauf MIT einem abgelehnten Namen dazwischen: Suchfehler →
+    // leerer Name → gültiger Name. Bis 0.34.8 überschrieb der Vorlagenfehler
+    // den Suchfehler, und das erfolgreiche Sichern setzte den Zustand auf
+    // `.idle` — der Suchfehler war danach endgültig weg.
+    guard loader.storeTemplate(emptyNameTemplate) != nil,
+          loader.statusLabel.stringValue.contains("kein Name"),
+          loader.statusLabel.stringValue.contains("Kernfehler der letzten Suche"),
+          loader.storeTemplate(validTemplate) == nil,
+          !loader.statusLabel.stringValue.contains("kein Name"),
+          loader.statusLabel.stringValue.contains("Kernfehler der letzten Suche"),
+          loader.templateFailure == nil,
+          case .failed(let keptReason) = loader.searchPhase,
+          keptReason == "Kernfehler der letzten Suche" else {
+        print("SELFTEST FEHLER: Abgelehnter Vorlagenname löscht den Fehler der letzten Suche")
+        return 1
+    }
+    // Und derselbe Ablauf während einer laufenden Suche: Die Laufanzeige
+    // gehört dem Runner, nicht der Vorlagenaktion.
+    loader.searchPhase = .running
+    loader.progressPath = "/laufende-suche-favenio-selftest"
+    loader.refreshStatus()
+    guard loader.storeTemplate(emptyNameTemplate) != nil,
+          loader.statusLabel.stringValue.contains("kein Name"),
+          loader.statusLabel.stringValue.contains("/laufende-suche-favenio-selftest"),
+          loader.storeTemplate(validTemplate) == nil,
+          loader.templateFailure == nil,
+          case .running = loader.searchPhase,
+          !loader.statusLabel.stringValue.contains("kein Name"),
+          loader.statusLabel.stringValue.contains("/laufende-suche-favenio-selftest") else {
+        print("SELFTEST FEHLER: Abgelehnter Vorlagenname verdrängt die laufende Suche")
+        return 1
+    }
     loader.searchPhase = .idle
+    loader.progressPath = nil
 
     // Mehrwortsuche: Begriffe aus der Filteransicht erreichen Argumente,
     // URL und Vorlage; ohne Muster tragen sie die Suche; Belege im Treffer.
@@ -390,7 +440,7 @@ func runSelfTest() -> Int32 {
     termsController.applyConfiguration(SearchConfiguration.fromQueryItems(
         [URLQueryItem(name: "term", value: "gamma")]))
     guard termsController.filterView.terms == ["gamma"],
-          termsController.filtersExpanded else {
+          termsController.filters.isExpanded else {
         print("SELFTEST FEHLER: Übergebene Suchbegriffe füllen die Filteransicht nicht")
         return 1
     }
@@ -1109,12 +1159,15 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Aufklapp-Schalter über den Größen-/Datums- und Ausschlussfeldern.
     /// Diese Filter braucht man selten; zugeklappt kostet die Zeile nur
     /// eine Höhe. Der Zustand überlebt den Neustart (`filtersExpandedKey`).
-    let filtersDisclosure = NSButton()
+    /// Der Titel nennt nicht alles: Auch weitere Suchbegriffe liegen hinter
+    /// dem Schalter und zählen zugeklappt mit (`FilterDisclosure.activeCount`).
+    lazy var filters = FilterDisclosure(
+        defaultsKey: Self.filtersExpandedKey,
+        baseTitle: "Weitere Filter: Bildmaße, Größe, Datum, Ausschlüsse",
+        filterView: filterView, pixelFields: pixelFields)
     /// Die Bildmaße-Zeile; liegt seit 0.31.3 mit hinter dem Schalter.
     var sizeRow = NSStackView()
-    let filtersTitleButton = NSButton()
     static let filtersExpandedKey = "Favenio.filters.expanded"
-    var filtersExpanded: Bool { !filterView.isHidden }
     let minWidthField = NSTextField(string: "")
     let maxWidthField = NSTextField(string: "")
     let minHeightField = NSTextField(string: "")
@@ -1271,12 +1324,7 @@ final class MainController: HitListController, NSApplicationDelegate,
                   event.window === self.window,
                   self.window.isKeyWindow
             else { return event }
-            // Nur die echten Zusatztasten vergleichen. Caps Lock, Zehnerblock
-            // und das Funktionsbit hängen je nach Tastatur mit dran und
-            // dürfen ein Kürzel nicht entwerten.
-            let modifiers = event.modifierFlags
-                .intersection(.deviceIndependentFlagsMask)
-                .subtracting([.capsLock, .numericPad, .function])
+            let modifiers = plainModifiers(of: event)
             // ⎋ bricht ein laufendes Auspacken ab, egal wo der Fokus steht:
             // Der Hinweis „(⎋ bricht ab)" verspricht das ohne Einschränkung,
             // und wer nach „Öffnen" ins Suchfeld klickte, leerte damit bis
@@ -1296,10 +1344,7 @@ final class MainController: HitListController, NSApplicationDelegate,
                 // sich deshalb nicht mehr selbst schließen. Nur abfangen,
                 // wenn sie wirklich offen ist — sonst gehört ⎋ weiter dem
                 // Fenster (Suchfeld leeren, Blatt abbrechen).
-                guard QLPreviewPanel.sharedPreviewPanelExists(),
-                      QLPreviewPanel.shared().isVisible else { return event }
-                QLPreviewPanel.shared().orderOut(nil)
-                return nil
+                return self.closeOpenPreview() ? nil : event
             case 51 where modifiers.isEmpty:               // ⌫
                 self.contextRow = -1
                 self.removeFromResults(nil)
@@ -1458,6 +1503,17 @@ final class MainController: HitListController, NSApplicationDelegate,
             "Suchmuster — Return startet die Suche"
         searchField.target = self
         searchField.action = #selector(startSearch)
+        // Nur Return/Enter (bzw. die Lupe) löst die Action aus — NICHT jeder
+        // Tastendruck. Ohne diese beiden Zeilen schickt NSSearchField die
+        // Action von selbst, rund 0,45 s nach jeder Tipppause: gemessen am
+        // 2026-09-10 feuerte „Rechnung*" mit normalen Denkpausen dreimal.
+        // Jeder dieser Aufrufe leert über `startSearch` die sichtbare
+        // Trefferliste und schießt den laufenden Kernprozess ab, um für zwei
+        // Zeichen einen neuen zu starten — bei eingeschalteter Archivsuche
+        // ein voller Archivabstieg. Der Platzhalter verspricht das Gegenteil,
+        // und eine Entprellung wie in der Schnellsuche gibt es hier nicht.
+        searchField.sendsWholeSearchString = true
+        searchField.sendsSearchStringImmediately = false
         searchField.delegate = self   // controlTextDidChange → Regex-Färbung
         // Ohne das zeigt NSSearchField NUR eine Textfarbe — die Token-Färbung
         // im Regex-Modus wäre unsichtbar.
@@ -1548,6 +1604,11 @@ final class MainController: HitListController, NSApplicationDelegate,
             field.widthAnchor.constraint(equalToConstant: 64).isActive = true
             field.target = self
             field.action = #selector(startSearch)
+            // Nur Return startet die Suche, nicht schon der Fokusverlust:
+            // Sonst suchte ein Klick in die Trefferliste oder das Zuklappen
+            // der Filter neu und leerte die Trefferliste. Eine Änderung hält
+            // `controlTextDidChange` ohnehin als geänderte Kriterien fest.
+            (field.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = false
             field.delegate = self
         }
         sizeRow = NSStackView(views: [
@@ -1564,21 +1625,10 @@ final class MainController: HitListController, NSApplicationDelegate,
 
         filterView.onChange = { [weak self] in
             self?.stopSearchForChangedCriteria()
-            self?.refreshFiltersTitle()
+            self?.filters.refreshTitle()
         }
         // Aufklapp-Zeile: Dreieck plus klickbarer Titel, beide schalten um.
-        filtersDisclosure.setButtonType(.pushOnPushOff)
-        filtersDisclosure.bezelStyle = .disclosure
-        filtersDisclosure.title = ""
-        filtersDisclosure.target = self
-        filtersDisclosure.action = #selector(toggleFilters(_:))
-        filtersDisclosure.setAccessibilityLabel("Weitere Filter ein- oder ausblenden")
-        filtersTitleButton.isBordered = false
-        filtersTitleButton.font = .systemFont(ofSize: 11)
-        filtersTitleButton.alignment = .left
-        filtersTitleButton.target = self
-        filtersTitleButton.action = #selector(toggleFilters(_:))
-        let filtersRow = NSStackView(views: [filtersDisclosure, filtersTitleButton])
+        let filtersRow = NSStackView(views: [filters.disclosureButton, filters.titleButton])
         filtersRow.orientation = .horizontal
         filtersRow.alignment = .centerY
         filtersRow.spacing = 2
@@ -1586,7 +1636,8 @@ final class MainController: HitListController, NSApplicationDelegate,
                                         scroll, statusLabel])
         // Erst NACH dem Einhängen in den Stack verstecken: `NSStackView(views:)`
         // hängt eine schon versteckte Ansicht sichtbar ein.
-        setFiltersExpanded(UserDefaults.standard.bool(forKey: Self.filtersExpandedKey))
+        filters.extraViews = [sizeRow]
+        filters.restoreSavedState()
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -1615,37 +1666,6 @@ final class MainController: HitListController, NSApplicationDelegate,
         window.center()
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(searchField)
-    }
-
-    @objc func toggleFilters(_ sender: Any?) {
-        setFiltersExpanded(!filtersExpanded)
-        UserDefaults.standard.set(filtersExpanded, forKey: Self.filtersExpandedKey)
-    }
-
-    /// Blendet die Filteransicht ein oder aus. Der Stack entfernt eine
-    /// versteckte Ansicht aus dem Layout, die Trefferliste rückt nach.
-    func setFiltersExpanded(_ expanded: Bool) {
-        filterView.isHidden = !expanded
-        sizeRow.isHidden = !expanded
-        filtersDisclosure.state = expanded ? .on : .off
-        refreshFiltersTitle()
-    }
-
-    /// Zugeklappt nennt der Titel, wie viele Filter dort gesetzt sind —
-    /// sonst wirkt ein unsichtbarer Filter wie ein Suchfehler.
-    /// Gesetzte Filter hinter dem Schalter: jedes nichtleere Maßfeld plus
-    /// die Zählung der Filteransicht (Von/Bis-Felder und Ausschlussmuster).
-    var activeFilterCount: Int {
-        pixelFields.filter { !$0.stringValue.isEmpty }.count + filterView.activeFilterCount
-    }
-
-    func refreshFiltersTitle() {
-        let count = activeFilterCount
-        var title = "Weitere Filter: Bildmaße, Größe, Datum, Ausschlüsse"
-        if count > 0 && !filtersExpanded {
-            title += count == 1 ? " (1 aktiv)" : " (\(count) aktiv)"
-        }
-        filtersTitleButton.title = title
     }
 
     /// Die beiden Datumsspalten. Sie laufen in Tabellenziffern, damit die
@@ -1723,7 +1743,20 @@ final class MainController: HitListController, NSApplicationDelegate,
         // Der Export ist unabhängig von der Suche. Ein später Exportabschluss
         // darf weder eine neue Suche noch deren Fehlerstatus überschreiben.
         let search = statusText()
-        let text = exportStatus.map { search + " — " + $0 } ?? search
+        var text = exportStatus.map { search + " — " + $0 } ?? search
+        // Genauso wenig gehört ein Vorlagenfehler zur Suche: Er steht davor
+        // und verdrängt weder einen Suchfehler noch die Laufanzeige.
+        if let templateFailure { text = templateFailure + " — " + text }
+        showStatus(text)
+    }
+
+    /// Der EINZIGE Schreiber der Fußzeile. Text und Tooltip gehören
+    /// zusammen: Das Feld kürzt in der Mitte, der Tooltip zeigt das Ganze —
+    /// bis 0.34.18 setzten `presentActionIssue`, `removeFromResults` und
+    /// `trashSelected` nur den Text, und daneben stand weiter der Tooltip
+    /// der alten Kennzahlenzeile. Die Schnellsuche hat dafür längst
+    /// `showInfo` als einzigen Schreiber samt Wächter.
+    func showStatus(_ text: String) {
         statusLabel.stringValue = text
         statusLabel.toolTip = text
     }
@@ -1955,9 +1988,11 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Sichern schriebe die Datei mit der einen neuen Vorlage — alle
     /// Vorlagen einer neueren Fassung (Formatversion 2) wären weg.
     var templateLoadError: String?
-    /// Die zuletzt von den Vorlagen selbst gesetzte Fehlermeldung — nur die
-    /// nimmt ein gelungenes Sichern zurück, nicht den Fehler der letzten
-    /// Suche („favenio.py nicht gefunden.", Kernfehler).
+    /// Die zuletzt von den Vorlagen selbst gesetzte Fehlermeldung. Sie steht
+    /// NEBEN dem Zustand der Suche, nicht in ihm: Der Fehler der letzten Suche
+    /// („favenio.py nicht gefunden.", Kernfehler) und eine laufende Suche
+    /// bleiben daneben sichtbar. Zurückgenommen wird sie nur von einer
+    /// gelungenen Vorlagenaktion oder vom nächsten Suchstart.
     var templateFailure: String?
 
     /// Liest die Vorlagendatei neu; ein Lesefehler steht in der Fußzeile,
@@ -1975,17 +2010,17 @@ final class MainController: HitListController, NSApplicationDelegate,
         rebuildTemplatesMenu()
     }
 
+    /// Meldet einen Vorlagenfehler, ohne den Zustand der Suche anzufassen.
+    /// Die vorherige Vorlagenmeldung ist damit überholt und fällt weg.
     private func failTemplates(_ message: String) {
         templateFailure = message
-        searchPhase = .failed(message)
+        templateNote = nil
         refreshStatus()
     }
 
+    /// Nimmt NUR den eigenen Vorlagenfehler zurück. Ein Suchfehler und eine
+    /// laufende Suche gehören dem Runner und bleiben unberührt.
     private func clearTemplateFailure() {
-        if let templateFailure, case .failed(let reason) = searchPhase,
-           reason == templateFailure {
-            searchPhase = .idle
-        }
         templateFailure = nil
     }
 
@@ -2123,10 +2158,19 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Ein gespeicherter Ordner, den es nicht mehr gibt, wird konkret
     /// genannt; der aktuelle Ordner bleibt dann stehen.
     func applyTemplate(_ template: SearchTemplate) {
-        stopSearch()
+        // Nicht bloss `stopSearch()`: Das liesse bis zu 150 ms Nachschub
+        // unsichtbar in `pending` liegen, den der naechste Suchstart dann
+        // wegwirft. Anders als bei `replaceSearchResults` ist das hier kein
+        // gewollter Listenwechsel — die Trefferliste bleibt ja stehen.
+        stopSearchForChangedCriteria()
         cancelMaterializations(reportCancellation: false)
         applyConfiguration(template.configuration)
         searchField.stringValue = template.pattern
+        // `applyConfiguration` faerbt zuletzt — aber noch den ALTEN Text.
+        // Ohne diese Zeile stand ein geladenes Regex-Muster ungefaerbt im
+        // Feld, bis der naechste Tastendruck kam. `insertTemplate` und
+        // `handleFavenioURL` setzen den Text schon vor dem Faerben.
+        recolorRegexField()
         var note = "Vorlage „\(template.name)“ geladen — ↩ startet die Suche."
         if let missing = template.missingRootMessage {
             note += " " + missing
@@ -2143,6 +2187,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         }
         searchPhase = .idle
         progressPath = nil
+        // Eine geladene Vorlage ist eine gelungene Vorlagenaktion: Sie nimmt
+        // den vorherigen Vorlagenfehler zurück.
+        clearTemplateFailure()
         templateNote = note
         refreshStatus()
         window?.makeFirstResponder(searchField)
@@ -2203,7 +2250,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             // Die sichtbare Konfiguration gehört ab jetzt zu einem neuen
             // Lauf. Alte Treffer dürfen keinen neuen Fehlerstatus überholen.
             stopSearchForChangedCriteria()
-            refreshFiltersTitle()
+            filters.refreshTitle()
             return
         }
         guard notification.object as? NSSearchField === searchField else { return }
@@ -2294,8 +2341,8 @@ final class MainController: HitListController, NSApplicationDelegate,
         filterView.terms = configuration.terms
         // Übergebene Filter sollen sichtbar sein, sonst wundert man sich
         // über eine kürzere Trefferliste ohne erkennbaren Grund.
-        if activeFilterCount > 0 { setFiltersExpanded(true) }
-        refreshFiltersTitle()
+        if filters.activeCount > 0 { filters.setExpanded(true) }
+        filters.refreshTitle()
         archivesCheckbox.state = configuration.archives ? .on : .off
         hiddenCheckbox.state = configuration.includeHidden ? .on : .off
         regexCheckbox.state = configuration.regex ? .on : .off
@@ -2399,6 +2446,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     func launchSearch(pattern: String) {
         guard validatePixelInputs() else { return }
         templateNote = nil
+        clearTemplateFailure()
         exportStatus = nil
         // Ohne Muster ist der Ordner das einzige Positionsargument; einen
         // verschwundenen Ordner läse der Kern still als Namensmuster und
@@ -2601,72 +2649,48 @@ final class MainController: HitListController, NSApplicationDelegate,
     func tableView(_ tableView: NSTableView,
                    viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
-        // `row < hits.count` ist Pflicht, nicht Vorsicht: applyHitsToTable
-        // verkleinert `hits` VOR dem reloadData(), und dazwischen laufen
-        // noch sortHits() und deselectAll(nil) — NSTableView hält solange
-        // die alte Zeilenzahl. Fragt AppKit in diesem Fenster dann eine
-        // Zelle für eine Zeile jenseits des Endes an, beendete sich die App
-        // mit „Index out of range". Die Schnellsuche hatte die Prüfung an
-        // dieser Stelle immer, die Haupt-App nicht.
-        guard let column = tableColumn, row < hits.count else { return nil }
-        var cell = tableView.makeView(withIdentifier: column.identifier,
-                                      owner: nil) as? NSTableCellView
-        if cell == nil {
-            // Zellen einmal bauen, danach werden sie recycelt.
-            let newCell = NSTableCellView()
-            newCell.identifier = column.identifier
-            let label = NSTextField(labelWithString: "")
-            label.lineBreakMode = .byTruncatingMiddle
-            label.translatesAutoresizingMaskIntoConstraints = false
-            newCell.addSubview(label)
-            newCell.textField = label
-            NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(
-                    equalTo: newCell.leadingAnchor, constant: 2),
-                label.trailingAnchor.constraint(
-                    equalTo: newCell.trailingAnchor, constant: -2),
-                label.centerYAnchor.constraint(
-                    equalTo: newCell.centerYAnchor),
-            ])
-            cell = newCell
-        }
+        // Zellbau samt Bereichsprüfung in der Basisklasse — dort steht
+        // auch, warum `row < hits.count` Pflicht ist.
+        guard let column = tableColumn,
+              let cell = hitCell(tableView, column: column, row: row)
+        else { return nil }
         let hit = hits[row]
         // Zellen werden recycelt → Ausrichtung je Spalte neu setzen.
         let identifier = column.identifier.rawValue
-        cell?.textField?.alignment =
+        cell.textField?.alignment =
             ["size", "dims"].contains(identifier) ? .right : .left
         // Der Pfad wird AM ANFANG gekürzt: Das Ende — der Ordner, in dem
         // die Datei liegt — ist der Teil, der unterscheidet; der Anfang
         // ist bei allen Treffern derselbe Suchordner.
-        cell?.textField?.lineBreakMode =
+        cell.textField?.lineBreakMode =
             identifier == "path" ? .byTruncatingHead : .byTruncatingMiddle
-        cell?.textField?.font = Self.dateColumns.contains(identifier)
+        cell.textField?.font = Self.dateColumns.contains(identifier)
             ? dateFont : NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        cell?.textField?.toolTip = nil
+        cell.textField?.toolTip = nil
         switch identifier {
         case "name":
-            cell?.textField?.stringValue = hit.displayName
+            cell.textField?.stringValue = hit.displayName
         case "type":
-            cell?.textField?.stringValue = hit.typeDescription
+            cell.textField?.stringValue = hit.typeDescription
         case "size":
-            cell?.textField?.stringValue = humanSize(hit.size)
+            cell.textField?.stringValue = humanSize(hit.size)
         case "line":
             // Zeilennummer bei Inhaltstreffern, „Feld: Wert" bei Metadaten.
-            cell?.textField?.stringValue = hit.locationText
+            cell.textField?.stringValue = hit.locationText
         case "dims":
-            cell?.textField?.stringValue = hit.dimensionsText
+            cell.textField?.stringValue = hit.dimensionsText
         case "modified":
-            cell?.textField?.stringValue =
+            cell.textField?.stringValue =
                 formatDateColumn(hit.modified, stage: dateStage(for: column))
         case "created":
-            cell?.textField?.stringValue =
+            cell.textField?.stringValue =
                 formatDateColumn(hit.created, stage: dateStage(for: column))
         default:
             // Nur der Ordner, relativ zum Suchordner — der Dateiname steht
             // schon in der ersten Spalte, der Suchordner im Ordnerknopf.
-            cell?.textField?.stringValue =
+            cell.textField?.stringValue =
                 hit.folderText(relativeTo: searchRoot.path)
-            cell?.textField?.toolTip = hit.folderPath
+            cell.textField?.toolTip = hit.folderPath
         }
         return cell
     }
@@ -2818,26 +2842,11 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// falls außerhalb der Auswahl geklickt wurde — die geklickte Zeile.
     /// Was sich nicht öffnen ließ, steht in der Fußzeile.
     override func presentActionIssue(summary: String, detail: String?) {
-        statusLabel.stringValue = detail.map { summary + " " + $0 } ?? summary
+        showStatus(detail.map { summary + " " + $0 } ?? summary)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        contextRow = tableView.clickedRow
-        guard contextRow >= 0, contextRow < hits.count else { return }
-        // ALLE öffnenbaren Treffer, nicht nur der erste: `ctxOpenWith`
-        // übergibt später sämtliche materialisierten URLs an die gewählte App,
-        // also muss das Menü über dieselbe Menge entscheiden.
-        let applicationHits = actionRows().compactMap {
-            hits.indices.contains($0) ? hits[$0] : nil
-        }.filter { $0.hasOpenableFile }
-        populateHitContextMenu(
-            menu, applicationHits: applicationHits, target: self,
-            selectors: HitContextMenuSelectors(
-                preview: #selector(togglePreview), open: #selector(ctxOpen),
-                openWith: #selector(ctxOpenWith(_:)),
-                reveal: #selector(ctxReveal),
-                copyPath: #selector(ctxCopyPath)))
+        guard populateHitMenu(menu) else { return }
         // Dieselben Listen-Aktionen wie im Ablage-Menü, mit denselben
         // Kürzeln daneben. Sie hängen nicht an einer öffenbaren Datei: Auch
         // ein Ordner im Archiv lässt sich aus der Liste werfen.
@@ -2935,14 +2944,14 @@ final class MainController: HitListController, NSApplicationDelegate,
     @objc func removeFromResults(_ sender: Any?) {
         let doomed = Set(hitsAtRows(rows(for: sender)).map { $0.identity })
         guard !doomed.isEmpty else {
-            statusLabel.stringValue = "Kein Treffer ausgewählt."
+            showStatus("Kein Treffer ausgewählt.")
             return
         }
         let removed = removeHits { doomed.contains($0.identity) }
-        statusLabel.stringValue = removed == 1
+        showStatus(removed == 1
             ? "1 Treffer aus der Liste entfernt — die Datei bleibt."
             : "\(groupedNumber(removed)) Treffer aus der Liste entfernt — "
-                + "die Dateien bleiben."
+                + "die Dateien bleiben.")
     }
 
     /// Entfernt Treffer aus der Liste und stellt Kennzahlen, Sortierung und
@@ -2975,9 +2984,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         let targets = hitsAtRows(rows(for: sender))
         let split = trashableHits(targets)
         guard !split.trashable.isEmpty else {
-            statusLabel.stringValue = targets.isEmpty
+            showStatus(targets.isEmpty
                 ? "Kein Treffer ausgewählt."
-                : "Einträge in einem Archiv lassen sich nicht löschen."
+                : "Einträge in einem Archiv lassen sich nicht löschen.")
             return
         }
         let text = trashConfirmationText(trashable: split.trashable,
@@ -2993,9 +3002,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         trashHits(split.trashable) { [weak self] trashed, error in
             guard let self else { return }
             guard !trashed.isEmpty else {
-                self.statusLabel.stringValue = "Nichts in den Papierkorb "
+                self.showStatus("Nichts in den Papierkorb "
                     + "gelegt: " + (error?.localizedDescription
-                                    ?? "unbekannter Fehler")
+                                    ?? "unbekannter Fehler"))
                 return
             }
             playFinderTrashSound()
@@ -3014,10 +3023,10 @@ final class MainController: HitListController, NSApplicationDelegate,
             let failed = split.trashable.count - trashed.count
             let moved = "\(groupedNumber(trashed.count)) in den Papierkorb "
                 + "gelegt"
-            self.statusLabel.stringValue = failed == 0
+            self.showStatus(failed == 0
                 ? moved + "."
                 : moved + ", \(groupedNumber(failed)) nicht: "
-                    + (error?.localizedDescription ?? "unbekannter Fehler")
+                    + (error?.localizedDescription ?? "unbekannter Fehler"))
         }
     }
 

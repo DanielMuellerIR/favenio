@@ -82,18 +82,28 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("action: openable ? selectors.open : nil", code)
         self.assertIn("action: openable ? selectors.reveal : nil", code)
         self.assertIn("action: selectors.copyPath", code)
+        # Der Menüaufbau steht EINMAL in der Basisklasse. Bis 0.34.16 lief
+        # dieser Wächter in einer Schleife über beide Apps und prüfte
+        # dieselben Zeichenketten zweimal — der Beleg dafür, dass der Block
+        # doppelt stand.
+        menu = swift_function(COMMON, "func populateHitMenu(")
+        self.assertIn("populateHitContextMenu(", menu)
+        # Die wirksame Zeilenmenge entscheidet; bei gemischter Auswahl
+        # genügt ein öffnenbarer Treffer, egal worauf rechtsgeklickt
+        # wurde. Menü und spätere Aktion benutzen actionRows().
+        self.assertIn("actionRows().compactMap", menu)
+        # ALLE öffnenbaren Treffer, nicht nur der erste.
+        self.assertIn("filter { $0.hasOpenableFile }", menu)
+        self.assertIn("applicationHits: applicationHits", menu)
+        self.assertIn("copyPath: #selector(ctxCopyPath)", menu)
+        # Die Bereichsprüfung stand früher nur in der Schnellsuche.
+        self.assertIn("contextRow < hits.count", menu)
         for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
-            menu = swift_function(source, "func menuNeedsUpdate(")
             with self.subTest(app=name):
-                self.assertIn("populateHitContextMenu(", menu)
-                # Die wirksame Zeilenmenge entscheidet; bei gemischter Auswahl
-                # genügt ein öffnenbarer Treffer, egal worauf rechtsgeklickt
-                # wurde. Menü und spätere Aktion benutzen actionRows().
-                self.assertIn("actionRows().compactMap", menu)
-                # ALLE öffnenbaren Treffer, nicht nur der erste.
-                self.assertIn("filter { $0.hasOpenableFile }", menu)
-                self.assertIn("applicationHits: applicationHits", menu)
-                self.assertIn("copyPath: #selector(ctxCopyPath)", menu)
+                body = swift_function(source, "func menuNeedsUpdate(")
+                self.assertIn("populateHitMenu(menu)", body)
+                # Keine neue Kopie neben der Basisklasse.
+                self.assertNotIn("populateHitContextMenu(", body)
         # Und der Headless-Selbsttest prueft die Auskunft gegen die Wirklichkeit.
         self.assertIn("materializeHit(archiveFolder) == nil", GUI)
 
@@ -335,7 +345,17 @@ class SwiftGuardTests(unittest.TestCase):
         handler = swift_function(
             COMMON, "func previewPanel(_ panel: QLPreviewPanel!, handle event:")
         self.assertIn("tableView.keyDown(with: event)", handler)
-        self.assertIn("panel.orderOut(nil)", handler)
+        # Das Schließen steht seit 0.34.16 EINMAL in closeOpenPreview();
+        # dieselbe Stelle nutzen beide Tastaturmonitore.
+        self.assertIn("closeOpenPreview()", handler)
+        closing = swift_function(COMMON, "func closeOpenPreview()")
+        self.assertIn("QLPreviewPanel.shared().orderOut(nil)", closing)
+        self.assertIn("QLPreviewPanel.shared().isVisible", closing)
+        for label, source in (("GUI", GUI), ("Quick", QUICK)):
+            with self.subTest(app=label):
+                self.assertIn("closeOpenPreview()", source)
+                self.assertNotIn("QLPreviewPanel.shared().orderOut(nil)",
+                                 source)
         for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
             with self.subTest(app=name):
                 self.assertIn(": HitListController,", source)
@@ -343,10 +363,26 @@ class SwiftGuardTests(unittest.TestCase):
                 self.assertNotIn("previewItemAt index", source)
                 self.assertNotIn("func ctxCopyPath()", source)
         # ⎋ schliesst die Vorschau vom Hauptfenster aus, weil das Panel sich
-        # als Nicht-Tastaturfenster nicht mehr selbst schliessen kann.
+        # als Nicht-Tastaturfenster nicht mehr selbst schliessen kann. In
+        # BEIDEN Apps geht das ueber closeOpenPreview() und erst nach dem
+        # Abbruch eines laufenden Auspackens.
         self.assertIn("case 53 where modifiers.isEmpty", GUI)
         launch = swift_function(QUICK, "func applicationDidFinishLaunching(")
-        self.assertIn("QLPreviewPanel.shared().orderOut(nil)", launch)
+        self.assertIn("self.closeOpenPreview()", launch)
+        self.assertLess(launch.index("cancelMaterializations()"),
+                        launch.index("closeOpenPreview()"))
+        # Und beide verlangen fuer ⎋ ausdruecklich KEINE Zusatztaste. In der
+        # Schnellsuche loesten bis 0.34.16 auch ⇧⎋ und ⌥⎋ aus.
+        self.assertIn("event.keyCode == 53, modifiers.isEmpty", launch)
+        self.assertIn("plainModifiers(of: event)", launch)
+        self.assertIn("plainModifiers(of: event)", GUI)
+        # Die Normalisierung steht EINMAL im Kern.
+        normalizer = swift_function(COMMON, "func plainModifiers(of event:")
+        self.assertIn(".subtracting([.capsLock, .numericPad, .function])",
+                      normalizer)
+        for label, source in (("GUI", GUI), ("Quick", QUICK)):
+            with self.subTest(app=label):
+                self.assertNotIn(".subtracting([.capsLock", source)
 
     def test_progress_only_batches_refresh_gui_status(self):
         launch = swift_function(GUI, "func launchSearch(pattern: String)")
@@ -452,7 +488,7 @@ class SwiftGuardTests(unittest.TestCase):
         for line in ("hits = []", "openButton.isEnabled = false",
                      "runScopeMismatch = nil", "previewURLs = []",
                      "tableView.reloadData()", "showInfo(Self.hint)",
-                     "orderOut(nil)"):
+                     "closeOpenPreview()"):
             self.assertIn(line, clear)
 
     def test_quick_command_return_hands_off_even_before_the_first_hit(self):
@@ -485,6 +521,85 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn("infoLabel.toolTip", outside)
         self.assertNotIn("infoLabel.textColor", outside)
 
+    def test_pixel_fields_search_only_on_return(self):
+        """Ein NSTextField schickt seine Action per Voreinstellung auch beim
+        Ende des Bearbeitens — also schon, wenn man ohne Änderung in die
+        Trefferliste klickt oder die Filter zuklappt (das versteckte Feld gibt
+        den Fokus ab). Die Suche startete dann neu und löschte die sichtbaren
+        Treffer (Probe 2026-09-17: Fokuswechsel und Verstecken je eine Action,
+        mit `sendsActionOnEndEditing = false` keine, Return weiter eine).
+        Eine Änderung deckt `controlTextDidChange` ab."""
+        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
+            with self.subTest(app=name):
+                build = swift_function(source, "func buildWindow()")
+                self.assertIn(
+                    "(field.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = false",
+                    build)
+
+    def test_quick_failure_text_keeps_a_tooltip(self):
+        """Der Grund eines gescheiterten Laufs ist oft länger als die
+        Infozeile (die fremde Xcode-Lizenzzeile braucht rund 1075 pt bei
+        282 pt Platz). Ohne Tooltip blieb der Rest unsichtbar."""
+        finish = swift_function(QUICK, "func finish(")
+        self.assertIn("showInfo(errorText, detail: errorText)", finish)
+
+    def test_quick_disclosure_selftest_restores_defaults_before_exit(self):
+        """`exit(1)` lässt kein `defer` mehr laufen. Scheiterte eine Prüfung
+        im Block, blieb der gespeicherte Aufklapp-Zustand des Entwicklers
+        gelöscht. Die Prüfung liefert deshalb einen Fehlertext, und erst der
+        Aufrufer beendet den Prozess."""
+        check = swift_function(QUICK, "func quickFilterDisclosureSelfTest()")
+        self.assertIn("defer", check)
+        self.assertNotIn("exit(", check)
+
+    def test_filter_disclosure_exists_once(self):
+        """Aufbau, Umschalten, Zählen und Titel des Schalters „Weitere Filter"
+        standen bis 0.34.22 wörtlich in beiden Controllern; die Zählung von
+        Leerraum in Maßfeldern war deshalb auch zweimal falsch. Neue Kopien
+        in den Apps sind verboten."""
+        self.assertIn("final class FilterDisclosure", COMMON)
+        self.assertIn("PixelLimitInput($0.stringValue) != .empty",
+                      swift_function(COMMON, "var activeCount: Int"))
+        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
+            with self.subTest(app=name):
+                self.assertIn("FilterDisclosure(", source)
+                self.assertIn("filterDisclosureSelfTest(", source)
+                for copy in ("func toggleFilters", "func setFiltersExpanded",
+                             "func refreshFiltersTitle", "var activeFilterCount",
+                             ".bezelStyle = .disclosure"):
+                    self.assertNotIn(copy, source)
+
+    def test_the_main_footer_has_a_single_writer(self):
+        """Text und Tooltip der Fußzeile gehören zusammen: Das Feld kürzt in
+        der Mitte, der Tooltip zeigt das Ganze.
+
+        Bis 0.34.18 setzten `presentActionIssue`, `removeFromResults` und
+        `trashSelected` nur den Text — daneben stand weiter der Tooltip der
+        alten Kennzahlenzeile. Die Schnellsuche hat dafür längst `showInfo`
+        als einzigen Schreiber."""
+        writer = swift_function(GUI, "func showStatus(")
+        self.assertIn("statusLabel.stringValue", writer)
+        self.assertIn("statusLabel.toolTip", writer)
+        # Außerhalb von showStatus() und dem einmaligen Aufbau des Fensters
+        # fasst niemand die Fußzeile an. Der Selbsttest LIEST sie; er steht
+        # vor der Controllerklasse.
+        controller = GUI[GUI.index("final class MainController"):]
+        outside = controller.replace(writer, "")
+        self.assertNotIn("statusLabel.stringValue =", outside)
+        self.assertNotIn("statusLabel.toolTip =", outside)
+
+    def test_loading_a_template_colours_the_pattern_and_keeps_new_hits(self):
+        """`applyConfiguration` färbt zuletzt — aber noch den ALTEN Text.
+
+        Ohne ein erneutes Färben stand ein geladenes Regex-Muster ungefärbt
+        im Feld, bis der nächste Tastendruck kam. Und `stopSearch()` allein
+        ließ bis zu 150 ms Nachschub unsichtbar in `pending` liegen; dafür
+        gibt es `stopSearchForChangedCriteria()`."""
+        body = swift_function(GUI, "func applyTemplate(")
+        self.assertIn("stopSearchForChangedCriteria()", body)
+        self.assertLess(body.index("searchField.stringValue = template.pattern"),
+                        body.index("recolorRegexField()"))
+
     def test_quick_uses_a_regular_window(self):
         build = QUICK[
             QUICK.index("func buildWindow()"):
@@ -494,6 +609,47 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn(".miniaturizable", build)
         self.assertNotIn("NSPanel(", build)
         self.assertNotIn("level = .floating", build)
+
+    def test_only_the_own_window_of_quick_quits_the_app(self):
+        """Der Controller ist auch Delegat des Quick-Look-Panels.
+
+        `HitListController` setzt `panel.delegate = self`, und
+        `QLPreviewPanelDelegate` erbt `NSWindowDelegate`. Ein
+        `QLPreviewPanel` meldet sein `orderOut` als `windowWillClose`
+        (2026-09-10 gegen das echte Panel gemessen; ein gewöhnliches
+        `NSWindow` tut das nicht). Ohne die Prüfung auf das eigene Fenster
+        beendete deshalb jedes Schließen der Vorschau die ganze App — auch
+        der nächste Tastendruck im Suchfeld, weil `clearHits()` die Vorschau
+        schließt. Der Selbsttest prüft das Verhalten; hier steht die
+        Quelltextwache, damit die Zeile nicht beim nächsten Umbau wegfällt.
+        """
+        closing = swift_function(QUICK, "func windowWillClose(")
+        self.assertIn("notification.object as? NSWindow === window", closing)
+        self.assertLess(closing.index("guard notification.object"),
+                        closing.index("NSApp.terminate"))
+        # Und die Vorschau schließt wirklich an mehreren Stellen.
+        self.assertIn("closeOpenPreview()",
+                      swift_function(QUICK, "func clearHits()"))
+
+    def test_neither_search_field_searches_while_typing(self):
+        """NSSearchField schickt seine Action von selbst, rund 0,45 s nach
+        jeder Tipppause — beide Apps schalten das ab.
+
+        Gemessen am 2026-09-10: „Rechnung*" mit normalen Denkpausen
+        getippt feuerte in der Standardeinstellung dreimal, mit diesen
+        beiden Werten kein einziges Mal. In der Haupt-App leert jeder
+        Aufruf die sichtbare Trefferliste und startet einen neuen
+        Kernprozess; ihr Platzhalter verspricht „Return startet die
+        Suche", und eine Entprellung wie in der Schnellsuche gibt es
+        dort nicht."""
+        for name, source, builder in (
+            ("gui", GUI, "func buildWindow()"),
+            ("quick", QUICK, "func buildWindow()"),
+        ):
+            with self.subTest(app=name):
+                build = swift_function(source, builder)
+                self.assertIn("sendsWholeSearchString = true", build)
+                self.assertIn("sendsSearchStringImmediately = false", build)
 
     def test_quick_table_is_resizable_sortable_and_scrolls_horizontally(self):
         table = swift_function(QUICK, "func buildTable()")
@@ -532,7 +688,14 @@ class SwiftGuardTests(unittest.TestCase):
     def test_structured_hits_and_materialization_cache_are_used(self):
         self.assertIn("let filesystemPath: String", COMMON)
         self.assertIn("let archiveMembers: [String]", COMMON)
-        self.assertIn("private var cache: [Hit: URL]", COMMON)
+        # Der Schlüssel ist die IDENTITÄT, nicht der ganze Treffer: Anzeige
+        # und Suchbelege ändern sich mit der Suche, das Objekt dahinter
+        # nicht. Bis 0.34.14 waren derselbe Eintrag aus Namens- und aus
+        # Inhaltssuche zwei Cache-Einträge und zwei Unterprozesse.
+        self.assertIn("private var cache: [HitIdentity: URL]", COMMON)
+        self.assertIn("private var jobs: [HitIdentity: Job]", COMMON)
+        self.assertNotIn("private var cache: [Hit: URL]", COMMON)
+        self.assertNotIn("private var jobs: [Hit: Job]", COMMON)
         self.assertIn('"Favenio-\\(UUID().uuidString)"', COMMON)
         self.assertNotIn('"Favenio-(UUID().uuidString)"', COMMON)
         self.assertIn("func cleanupMaterializedHits()", COMMON)
@@ -979,11 +1142,17 @@ class MainAppResultListTest(unittest.TestCase):
         # NSTableView haelt solange die alte Zeilenzahl. Fragt AppKit dann
         # eine Zelle jenseits des Endes an, endet die App mit
         # "Index out of range". Die Schnellsuche hatte die Pruefung immer.
+        # Seit 0.34.16 steht der Zellbau samt Prüfung EINMAL in der
+        # Basisklasse; beide Apps gehen durch dieselbe Stelle.
+        builder = swift_function(COMMON, "func hitCell(")
+        self.assertIn("guard row < hits.count else { return nil }", builder)
         for label, source in (("GUI", GUI), ("Quick", QUICK)):
             body = swift_function(
                 source, "                   viewFor tableColumn:")
-            self.assertIn("row < hits.count else { return nil }", body,
-                          label)
+            self.assertIn("hitCell(tableView, column: column, row: row)",
+                          body, label)
+            # Keine neue Kopie des Zellbaus neben der Basisklasse.
+            self.assertNotIn("NSTableCellView()", body, label)
 
     def test_the_preview_panel_never_reads_past_the_end(self):
         # Das Panel fragt seinen ALTEN Index auch dann noch ab, wenn die
@@ -1022,11 +1191,15 @@ class MainAppResultListTest(unittest.TestCase):
         ctx = swift_function(COMMON, "@objc func ctxOpen()")
         self.assertNotIn("openSelected()", ctx)
         self.assertIn("openActionRows()", ctx)
+        # Der Menüaufbau steht seit 0.34.16 in der Basisklasse; beide Apps
+        # gehen durch dieselbe Stelle.
+        self.assertIn("open: #selector(ctxOpen)",
+                      swift_function(COMMON, "func populateHitMenu("))
         for source in (GUI, QUICK):
             self.assertNotIn("func openSelected()", source)
             self.assertNotIn("func ctxOpen()", source)
-            menu = swift_function(source, "func menuNeedsUpdate(")
-            self.assertIn("open: #selector(ctxOpen)", menu)
+            self.assertIn("populateHitMenu(menu)",
+                          swift_function(source, "func menuNeedsUpdate("))
 
 
 class ParsedHitTypeTest(unittest.TestCase):
@@ -1138,6 +1311,45 @@ class TypeDescriptionCacheTest(unittest.TestCase):
         body = swift_function(COMMON, "    var typeDescription: String {")
         self.assertIn("typeDescriptions.description(for:", body)
         self.assertNotIn("UTType(filenameExtension:", body)
+
+
+class CommonApplicationsTest(unittest.TestCase):
+    """„Öffnen mit" bietet nur Anwendungen an, die JEDEN Treffer öffnen.
+
+    Die Schnittmenge lief bis 0.34.11 je Treffer, obwohl eine schon
+    geschnittene Endung nichts mehr wegnehmen kann: `common` war damals
+    eine Teilmenge ihrer Anwendungsmenge und ist seither nur kleiner
+    geworden. Bei 100 000 gleichartigen Treffern kostete das 11,9 s statt
+    0,08 s — auf dem Main-Thread beim Öffnen des Rechtsklick-Menüs
+    (gemessen 2026-09-10, swiftc -O).
+
+    Diese Abkürzung ist nur erlaubt, solange beide Fassungen dasselbe
+    liefern. Die Probe führt deshalb die ALTE Fassung mit und vergleicht."""
+
+    EINGABEN = (
+        ["a.txt"],
+        ["a.txt", "b.txt", "c.txt"],
+        ["a.txt", "b.pdf", "c.txt", "d.pdf", "e.txt"],
+        ["a.txt", "ohneendung", "b.txt", "ohneendung2"],
+        ["a.TXT", "b.txt", "c.Txt"],
+        ["bild.png", "text.txt", "film.mov", "bild2.png", "text2.txt"],
+        ["a.gibtsnichtxyz", "b.gibtsnichtxyz"],
+        ["a.txt"] * 200,
+    )
+
+    def test_both_ways_offer_the_same_applications(self):
+        for namen in self.EINGABEN:
+            with self.subTest(eingabe=namen[:4], anzahl=len(namen)):
+                result = run_probe('common-apps', input=json.dumps(namen))
+                report = json.loads(result.stdout)
+                self.assertEqual(report["neu"], report["alt"])
+
+    def test_a_narrowed_extension_is_not_cut_again(self):
+        # Ohne diese Wache fiele der Schnitt beim nächsten Umbau unbemerkt
+        # auf die Kosten je Treffer zurück.
+        body = swift_function(COMMON, "func commonApplicationsFor(")
+        self.assertIn("narrowed.contains(key)", body)
+        self.assertIn("continue", body)
 
 
 if __name__ == "__main__":

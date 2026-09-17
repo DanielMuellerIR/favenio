@@ -138,6 +138,25 @@ struct FavenioQuickApp {
                 print("SELFTEST FEHLER: Quick-Treffergrenze: \(error)")
                 exit(1)
             }
+            if let error = quickFilterDisclosureSelfTest() {
+                print("SELFTEST FEHLER: \(error)")
+                exit(1)
+            }
+            // Die Vorschau zu schließen darf die App NICHT beenden. Der
+            // Controller ist auch Delegat des Quick-Look-Panels, und dessen
+            // `orderOut` kommt als `windowWillClose` an. Feuerte hier
+            // `NSApp.terminate`, endete der Selbsttest ohne die Zeile
+            // „SELFTEST OK" — der Lauf muss also weiterkommen.
+            do {
+                let quitter = QuickController()
+                quitter.buildWindow()
+                quitter.windowWillClose(Notification(
+                    name: NSWindow.willCloseNotification,
+                    object: QLPreviewPanel.shared() as Any))
+                quitter.windowWillClose(Notification(
+                    name: NSWindow.willCloseNotification,
+                    object: NSWindow()))
+            }
             if let error = validateSparkleConfiguration(
                 expectedBundleIdentifier: "local.favenio.quick"
             ) {
@@ -158,6 +177,36 @@ struct FavenioQuickApp {
         app.setActivationPolicy(.accessory)
         app.run()
     }
+}
+
+/// Aufklappen: Ohne gespeicherten Zustand sind die Filter zugeklappt, der
+/// Schalter öffnet sie, und zugeklappt nennt der Titel die gesetzten Filter
+/// (`filterDisclosureSelfTest`). Der gespeicherte Zustand des Entwicklers
+/// wird beiseitegelegt und zurückgeschrieben — jeder Build löschte ihn sonst
+/// (build-app.sh führt den Selbsttest aus). Deshalb liefert die Prüfung einen
+/// Fehlertext, statt selbst `exit(1)` zu rufen: `exit` beendet den Prozess
+/// sofort, und das `defer` unten liefe nie.
+func quickFilterDisclosureSelfTest() -> String? {
+    let key = QuickController.filtersExpandedKey
+    let saved = UserDefaults.standard.object(forKey: key)
+    defer {
+        if let saved {
+            UserDefaults.standard.set(saved, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+    UserDefaults.standard.removeObject(forKey: key)
+    let collapsed = QuickController()
+    collapsed.buildWindow()
+    // Infozeile und Knopf stehen in der Aufklappzeile, nicht in der
+    // zugeklappten Maßzeile. `isHidden` allein sähe das nicht: Eine Ansicht
+    // in einer versteckten Zeile bleibt selbst `isHidden == false`.
+    guard !collapsed.infoLabel.isHiddenOrHasHiddenAncestor,
+          !collapsed.openButton.isHiddenOrHasHiddenAncestor else {
+        return "Infozeile oder Übergabeknopf sind bei zugeklappten Filtern unsichtbar"
+    }
+    return filterDisclosureSelfTest(collapsed.filters)
 }
 
 /// Erbt von HitListController (common/FavenioCore.swift): Trefferliste,
@@ -211,6 +260,15 @@ final class QuickController: HitListController, NSApplicationDelegate,
     let infoLabel = NSTextField(labelWithString: QuickController.hint)
     let spinner = NSProgressIndicator()
     let scrollView = NSScrollView()
+    // Aufklapp-Schalter für die seltener gebrauchten Filter — Bildmaße,
+    // Größe, Datum, Ausschlüsse, weitere Begriffe —, wie „Weitere Filter"
+    // in der Haupt-App. Zugeklappt gewinnt das Panel Trefferzeilen; der
+    // Zustand überlebt den Neustart (`filtersExpandedKey`).
+    lazy var filters = FilterDisclosure(
+        defaultsKey: Self.filtersExpandedKey, baseTitle: "Weitere Filter",
+        filterView: filterView, pixelFields: pixelFields)
+    var sizeRow = NSStackView()
+    static let filtersExpandedKey = "FavenioQuick.filters.expanded"
 
     var searchRoot = NSHomeDirectory()  // Wurzel des laufenden Suchlaufs
     var searching = false
@@ -284,18 +342,15 @@ final class QuickController: HitListController, NSApplicationDelegate,
                   event.window === self.window,
                   self.window.isKeyWindow
             else { return event }
-            if event.keyCode == 53 {                       // 53 = Escape
+            let modifiers = plainModifiers(of: event)
+            if event.keyCode == 53, modifiers.isEmpty {    // 53 = Escape
                 // Zuerst ein laufendes Auspacken abbrechen.
                 if self.cancelMaterializations() { return nil }
                 // Die Vorschau ist nicht das Tastaturfenster (siehe
                 // togglePreview) und kann sich deshalb nicht selbst
                 // schließen: ⎋ schließt zuerst sie, erst ein leeres Suchfeld
                 // beendet die App.
-                if QLPreviewPanel.sharedPreviewPanelExists(),
-                   QLPreviewPanel.shared().isVisible {
-                    QLPreviewPanel.shared().orderOut(nil)
-                    return nil
-                }
+                if self.closeOpenPreview() { return nil }
                 if self.field.stringValue.isEmpty {
                     NSApp.terminate(nil)
                     return nil
@@ -303,7 +358,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
                 return event
             }
             if event.keyCode == 36,                        // 36 = Return
-               event.modifierFlags.contains(.command),
+               modifiers == .command,
                // Wie startSearch() und openInMainApp(): eine reine Maßsuche
                // ist eine vollständige Frage. Auf das Suchfeld allein zu
                // prüfen ließ ⌘↩ dort kommentarlos ins Feld durchfallen.
@@ -315,7 +370,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
                 self.openInMainApp()
                 return nil
             }
-            if event.keyCode == 49,                        // 49 = Leertaste
+            if event.keyCode == 49, modifiers.isEmpty,     // 49 = Leertaste
                self.window.firstResponder === self.tableView {
                 self.contextRow = -1
                 self.togglePreview()
@@ -353,7 +408,19 @@ final class QuickController: HitListController, NSApplicationDelegate,
     }
 
     /// Fenster geschlossen (roter Knopf / Cmd+W) → App beenden.
+    ///
+    /// Die Prüfung auf das eigene Fenster ist Pflicht: Der Controller ist
+    /// AUCH Delegat des Quick-Look-Panels — `HitListController` setzt
+    /// `panel.delegate = self`, und `QLPreviewPanelDelegate` erbt
+    /// `NSWindowDelegate`. Ein `QLPreviewPanel` meldet sein `orderOut` als
+    /// `windowWillClose` (am 2026-09-10 gegen das echte Panel gemessen; ein
+    /// gewöhnliches `NSWindow` tut das nicht). Ohne die Prüfung beendete
+    /// deshalb JEDES Schließen der Vorschau die ganze App: die Leertaste ein
+    /// zweites Mal, ⎋, `previewPanel(_:handle:)` — und schlimmstenfalls der
+    /// nächste Tastendruck im Suchfeld, weil `clearHits()` die Vorschau
+    /// schließt.
     func windowWillClose(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else { return }
         NSApp.terminate(nil)
     }
 
@@ -429,6 +496,11 @@ final class QuickController: HitListController, NSApplicationDelegate,
             field.widthAnchor.constraint(equalToConstant: 48).isActive = true
             field.target = self
             field.action = #selector(optionsChanged)
+            // Nur Return startet die Suche, nicht schon der Fokusverlust:
+            // Sonst suchte ein Klick in die Trefferliste oder das Zuklappen
+            // der Filter neu und löschte die sichtbaren Treffer. Eine
+            // Änderung deckt `controlTextDidChange` mit der Entprellung ab.
+            (field.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = false
             field.delegate = self
         }
 
@@ -480,42 +552,53 @@ final class QuickController: HitListController, NSApplicationDelegate,
         optionsRow.orientation = .horizontal
         optionsRow.spacing = 10
         optionsRow.alignment = .centerY
-        // Schmale Maßzeile: „px  B [min]–[max]  H [min]–[max]", rechts
-        // daneben Spinner, Trefferzeile und der Knopf „Alle in Favenio".
-        // Eine Zeile statt zwei: Die Trefferzeile hatte eine eigene, und
-        // jede Zeile über der Tabelle kostet Trefferzeilen im Panel.
+        // Aufklappzeile: Dreieck plus klickbarer Titel, beide schalten um;
+        // rechts daneben Spinner, Trefferzeile und der Knopf „Alle in
+        // Favenio". Eine Zeile statt zwei: Jede Zeile über der Tabelle
+        // kostet Trefferzeilen im Panel. Bis 0.34.21 standen Spinner, Info
+        // und Knopf in der Maßzeile — die ist jetzt zugeklappt unsichtbar.
+        let filtersRow = NSStackView(views: [filters.disclosureButton, filters.titleButton,
+                                             spinner, infoLabel, openButton])
+        filtersRow.orientation = .horizontal
+        filtersRow.spacing = 6
+        filtersRow.alignment = .centerY
+        filtersRow.setCustomSpacing(2, after: filters.disclosureButton)
+        filtersRow.setCustomSpacing(14, after: filters.titleButton)
+        // Schalter und Knopf behalten ihre Breite; nur die Trefferzeile gibt
+        // nach und wird gekürzt, wenn es eng wird.
+        for view in filtersRow.views where view !== infoLabel {
+            view.setContentCompressionResistancePriority(.required,
+                                                         for: .horizontal)
+        }
+
+        // Schmale Maßzeile: „px  B [min]–[max]  H [min]–[max]".
         func smallLabel(_ text: String) -> NSTextField {
             let label = NSTextField(labelWithString: text)
             label.font = NSFont.systemFont(ofSize: 11)
             label.textColor = .secondaryLabelColor
             return label
         }
-        let sizeRow = NSStackView(views: [
+        sizeRow = NSStackView(views: [
             smallLabel("px"), smallLabel("B"), minWidthField,
             smallLabel("–"), maxWidthField, smallLabel("H"), minHeightField,
             smallLabel("–"), maxHeightField,
-            spinner, infoLabel, openButton,
         ])
         sizeRow.orientation = .horizontal
         sizeRow.spacing = 4
         sizeRow.alignment = .centerY
         sizeRow.setCustomSpacing(12, after: sizeRow.views[0])
         sizeRow.setCustomSpacing(12, after: sizeRow.views[4])
-        sizeRow.setCustomSpacing(14, after: sizeRow.views[8])
-        sizeRow.setCustomSpacing(6, after: spinner)
-        sizeRow.setCustomSpacing(6, after: infoLabel)
-        // Die Maßfelder behalten ihre Breite; nur die Trefferzeile gibt
-        // nach und wird gekürzt, wenn es eng wird.
-        for view in sizeRow.views where view !== infoLabel {
-            view.setContentCompressionResistancePriority(.required,
-                                                         for: .horizontal)
-        }
 
         filterView.onChange = { [weak self] in
             self?.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+            self?.filters.refreshTitle()
         }
-        let outer = NSStackView(views: [searchRow, optionsRow, sizeRow, filterView,
-                                        scrollView])
+        let outer = NSStackView(views: [searchRow, optionsRow, filtersRow, sizeRow,
+                                        filterView, scrollView])
+        // Erst NACH dem Einhängen in den Stack verstecken: `NSStackView(views:)`
+        // hängt eine schon versteckte Ansicht sichtbar ein.
+        filters.extraViews = [sizeRow]
+        filters.restoreSavedState()
         outer.orientation = .vertical
         outer.spacing = 8
         outer.alignment = .leading
@@ -536,6 +619,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
                                           constant: -12),
             searchRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             optionsRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
+            filtersRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             sizeRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             filterView.widthAnchor.constraint(equalTo: outer.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: outer.widthAnchor),
@@ -845,6 +929,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         // zweiter Aufruf schriebe denselben Wert nur noch einmal
         // (Review-Fund 2026-08-21).
         clearHits()
+        filters.refreshTitle()
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard validatePixelInputs() else { return }
         guard !query.isEmpty || searchConfiguration.hasPositiveFilter else { return }
@@ -859,6 +944,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
 
     /// Umschalten einer Suchoption startet dieselbe Suche neu.
     @objc func optionsChanged() {
+        filters.refreshTitle()
         // Auch ein ungültiges Feld ohne Suchtext braucht eine Fehlermeldung.
         startSearch()
     }
@@ -932,10 +1018,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         cancelMaterializations(reportCancellation: false)
         tableView.reloadData()
         showInfo(Self.hint)
-        if QLPreviewPanel.sharedPreviewPanelExists(),
-           QLPreviewPanel.shared().isVisible {
-            QLPreviewPanel.shared().orderOut(nil)
-        }
+        closeOpenPreview()
     }
 
     // ---------- Suche starten (live, im Hintergrund) ----------
@@ -1095,7 +1178,9 @@ final class QuickController: HitListController, NSApplicationDelegate,
         cancelSearch()
         openButton.isEnabled = !hits.isEmpty
         if let errorText {
-            showInfo(errorText)
+            // Der Grund ist oft länger als die Infozeile (etwa die fremde
+            // Xcode-Lizenzzeile); der Tooltip zeigt ihn ganz.
+            showInfo(errorText, detail: errorText)
             return
         }
         // Bei reinen Maß-/Faktenfiltern gibt es keinen Suchbegriff; „für „"" mit
@@ -1229,39 +1314,23 @@ final class QuickController: HitListController, NSApplicationDelegate,
     func tableView(_ tableView: NSTableView,
                    viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
-        guard let column = tableColumn, row < hits.count else { return nil }
-        var cell = tableView.makeView(withIdentifier: column.identifier,
-                                      owner: nil) as? NSTableCellView
-        if cell == nil {
-            let newCell = NSTableCellView()
-            newCell.identifier = column.identifier
-            let label = NSTextField(labelWithString: "")
-            label.lineBreakMode = .byTruncatingMiddle
-            label.translatesAutoresizingMaskIntoConstraints = false
-            newCell.addSubview(label)
-            newCell.textField = label
-            NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(
-                    equalTo: newCell.leadingAnchor, constant: 2),
-                label.trailingAnchor.constraint(
-                    equalTo: newCell.trailingAnchor, constant: -2),
-                label.centerYAnchor.constraint(equalTo: newCell.centerYAnchor),
-            ])
-            cell = newCell
-        }
+        // Zellbau samt Bereichsprüfung in der Basisklasse.
+        guard let column = tableColumn,
+              let cell = hitCell(tableView, column: column, row: row)
+        else { return nil }
         let hit = hits[row]
         if column.identifier.rawValue == "name" {
-            cell?.textField?.lineBreakMode = .byTruncatingMiddle
-            cell?.textField?.stringValue = hit.displayName
-            cell?.textField?.toolTip = nil
+            cell.textField?.lineBreakMode = .byTruncatingMiddle
+            cell.textField?.stringValue = hit.displayName
+            cell.textField?.toolTip = nil
         } else {
             // Nur der Ordner, relativ zum Suchordner, am ANFANG gekürzt:
             // Der Dateiname steht schon links, der Suchordner im Menü —
             // was unterscheidet, ist das Ende des Pfads.
-            cell?.textField?.lineBreakMode = .byTruncatingHead
-            cell?.textField?.stringValue =
+            cell.textField?.lineBreakMode = .byTruncatingHead
+            cell.textField?.stringValue =
                 hit.folderText(relativeTo: searchRoot)
-            cell?.textField?.toolTip = hit.folderPath
+            cell.textField?.toolTip = hit.folderPath
         }
         return cell
     }
@@ -1327,23 +1396,5 @@ final class QuickController: HitListController, NSApplicationDelegate,
 
     // ---------- Rechtsklick-Menü (Öffnen / Öffnen mit / …) ----------
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        contextRow = tableView.clickedRow
-        guard contextRow >= 0, contextRow < hits.count else { return }
-        // ALLE öffnenbaren Treffer, nicht nur der erste: `ctxOpenWith`
-        // übergibt später sämtliche materialisierten URLs an die gewählte App,
-        // also muss das Menü über dieselbe Menge entscheiden.
-        let applicationHits = actionRows().compactMap {
-            hits.indices.contains($0) ? hits[$0] : nil
-        }.filter { $0.hasOpenableFile }
-        populateHitContextMenu(
-            menu, applicationHits: applicationHits, target: self,
-            selectors: HitContextMenuSelectors(
-                preview: #selector(togglePreview),
-                open: #selector(ctxOpen),
-                openWith: #selector(ctxOpenWith(_:)),
-                reveal: #selector(ctxReveal),
-                copyPath: #selector(ctxCopyPath)))
-    }
+    func menuNeedsUpdate(_ menu: NSMenu) { populateHitMenu(menu) }
 }

@@ -224,9 +224,38 @@ embed_sparkle_and_licenses FavenioQuick.app
 codesign "${APP_SIGN[@]}" FavenioQuick.app
 codesign --verify --deep --strict FavenioQuick.app
 
+# Der Exit-Status allein beweist nichts: Ein Selbsttest, der sich unterwegs
+# über NSApp.terminate beendet, endet mit Status 0 — ohne je eine Prüfung
+# fertig gemacht zu haben. Am 2026-09-10 belegt: Mit absichtlich
+# zurückgenommenem windowWillClose-Fix der Schnellsuche lief dieser Bau
+# vollständig durch und meldete Erfolg, obwohl deren Selbsttest mitten im
+# Lauf starb. Deshalb ist die Schlusszeile das Erfolgskriterium.
+run_selftest() {
+    local binary="$1" output last_line
+    if ! output=$("$binary" --selftest 2>&1); then
+        printf '%s\n' "$output"
+        echo "FEHLER: $binary --selftest ist gescheitert." >&2
+        return 1
+    fi
+    printf '%s\n' "$output"
+    last_line=$(printf '%s\n' "$output" | awk 'NF { line = $0 } END { print line }')
+    if [[ "$last_line" != "SELFTEST OK — "* ]]; then
+        echo "FEHLER: $binary --selftest endete ohne 'SELFTEST OK'." >&2
+        echo "Ein Selbsttest, der sich über NSApp.terminate beendet, endet" >&2
+        echo "ebenfalls mit Status 0 — hier zählt nur die Schlusszeile." >&2
+        return 1
+    fi
+}
+
 echo "== Headless-Selbsttest =="
-Favenio.app/Contents/MacOS/Favenio --selftest
-FavenioQuick.app/Contents/MacOS/FavenioQuick --selftest
+run_selftest Favenio.app/Contents/MacOS/Favenio
+run_selftest FavenioQuick.app/Contents/MacOS/FavenioQuick
 
 echo "Fertig: Favenio.app + FavenioQuick.app $VERSION im Projektverzeichnis"
 echo "Keine Installation durchgeführt. Releases nur aus dem notarisierten DMG installieren."
+# Maschinenlesbare Schlusszeile: Aufrufer (./build.sh, Agenten, CI) lesen die
+# Ergebnispfade aus der letzten Zeile statt aus dem Log. $PWD steht bewusst
+# unmaskiert darin und kann Leerzeichen enthalten (Clone unter „…/mit
+# Leerzeichen/"): Leser trennen die Zeile deshalb nicht an Leerzeichen,
+# sondern nehmen zweimal denselben Ordner mit den festen Bundle-Namen.
+echo "BUILD OK: $PWD/Favenio.app $PWD/FavenioQuick.app"

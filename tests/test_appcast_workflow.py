@@ -13,8 +13,10 @@ import os
 import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -163,6 +165,148 @@ class WorkflowShellSyntaxTest(unittest.TestCase):
             build)
         self.assertIn('local expected_feed="%s"' % PRODUCTION_FEED,
                       WORKFLOW.read_text(encoding="utf-8"))
+
+    def test_exactly_one_dmg_per_release(self):
+        """Ein Release mit null oder zwei DMGs darf keinen Feed erzeugen.
+
+        Bisher war der Schritt nur syntaktisch geprüft (`bash -n`). Die
+        `gh`-Attrappe legt jetzt so viele DMGs ab, wie der Fall verlangt."""
+        script = extract_run_block("Download release DMG and notes")
+        for count, expected in ((0, 1), (1, 0), (2, 1)):
+            with self.subTest(dmgs=count):
+                with tempfile.TemporaryDirectory() as directory:
+                    work = Path(directory)
+                    stubs = work / "bin"
+                    stubs.mkdir()
+                    (stubs / "gh").write_text(
+                        '#!/bin/sh\n'
+                        'if [ "$2" = "download" ]; then\n'
+                        '  i=0\n'
+                        '  while [ "$i" -lt "$STUB_DMG_COUNT" ]; do\n'
+                        '    : > "update/Favenio-0.$i.dmg"\n'
+                        '    i=$((i + 1))\n'
+                        '  done\n'
+                        'else\n'
+                        '  echo "Release notes"\n'
+                        'fi\n', encoding="utf-8")
+                    (stubs / "gh").chmod(0o755)
+                    environment = dict(
+                        os.environ,
+                        PATH="%s%s%s" % (stubs, os.pathsep, os.environ["PATH"]),
+                        RELEASE_TAG="v0.34.20",
+                        STUB_DMG_COUNT=str(count))
+                    result = subprocess.run(
+                        ["bash", "-c", script], cwd=work, env=environment,
+                        capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected,
+                                     result.stdout + result.stderr)
+                    if expected:
+                        self.assertIn("exactly one DMG", result.stderr)
+                    else:
+                        # Die Notizen landen neben dem DMG.
+                        self.assertTrue(
+                            (work / "update" / "Favenio-0.0.md").exists())
+
+    def test_the_generated_appcast_carries_what_sparkle_needs(self):
+        """Der Erzeuger war ungeprüft — dabei entscheidet sein Ergebnis, ob
+        Nutzer ein Update überhaupt angeboten bekommen.
+
+        Sparkle vergleicht `sparkle:version` mit der `CFBundleVersion` der
+        laufenden App, lädt die `enclosure`-URL und prüft sie gegen
+        `sparkle:edSignature` und `length`. Stimmt eines davon nicht, bleibt
+        das Update entweder unsichtbar oder wird verworfen."""
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        start = lines.index("          python3 <<'PY'")
+        end = lines.index("          PY", start)
+        block = "\n".join(line[10:] for line in lines[start + 1:end])
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            (work / "site").mkdir()
+            notes = work / "notes.html"
+            notes.write_text("<p>Neue Fassung</p>", encoding="utf-8")
+            environment = dict(
+                os.environ,
+                GITHUB_REPOSITORY="DanielMuellerIR/favenio",
+                RELEASE_TAG="v0.34.20",
+                APPCAST_DMG=str(work / "Favenio-0.34.20.dmg"),
+                APPCAST_VERSION="0.34.20",
+                APPCAST_BUILD="0.34.20",
+                APPCAST_NOTES_HTML=str(notes),
+                APPCAST_PUBLISHED_AT="2026-09-10T08:00:00Z",
+                APPCAST_RELEASE_URL="https://example.invalid/release",
+                APPCAST_SIGNATURE_ATTRIBUTES=(
+                    'sparkle:edSignature="ABC+/def==" length="12345"'),
+            )
+            result = subprocess.run([sys.executable, "-c", block], cwd=work,
+                                    env=environment, capture_output=True,
+                                    text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            feed = (work / "site" / "appcast.xml").read_text(encoding="utf-8")
+        sparkle = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+        item = ET.fromstring(feed).find("channel/item")
+        self.assertIsNotNone(item)
+        self.assertEqual(item.findtext("{%s}version" % sparkle), "0.34.20")
+        self.assertEqual(
+            item.findtext("{%s}shortVersionString" % sparkle), "0.34.20")
+        enclosure = item.find("enclosure")
+        self.assertEqual(
+            enclosure.get("url"),
+            "https://github.com/DanielMuellerIR/favenio/releases/download/"
+            "v0.34.20/Favenio-0.34.20.dmg")
+        self.assertEqual(enclosure.get("{%s}edSignature" % sparkle),
+                         "ABC+/def==")
+        self.assertEqual(enclosure.get("length"), "12345")
+        self.assertEqual(enclosure.get("type"),
+                         "application/x-apple-diskimage")
+        self.assertIn("Neue Fassung", item.findtext("description"))
+
+    def test_a_broken_signature_line_stops_the_generator(self):
+        """`sign_update` liefert die beiden Attribute als eine Zeile. Passt
+        sie nicht, darf kein Feed ohne Signatur entstehen."""
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        start = lines.index("          python3 <<'PY'")
+        end = lines.index("          PY", start)
+        block = "\n".join(line[10:] for line in lines[start + 1:end])
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            (work / "site").mkdir()
+            notes = work / "notes.html"
+            notes.write_text("<p>x</p>", encoding="utf-8")
+            environment = dict(
+                os.environ,
+                GITHUB_REPOSITORY="a/b", RELEASE_TAG="v1",
+                APPCAST_DMG=str(work / "x.dmg"), APPCAST_VERSION="1",
+                APPCAST_BUILD="1", APPCAST_NOTES_HTML=str(notes),
+                APPCAST_PUBLISHED_AT="2026-09-10T08:00:00Z",
+                APPCAST_RELEASE_URL="https://example.invalid/r",
+                APPCAST_SIGNATURE_ATTRIBUTES="kaputt")
+            result = subprocess.run([sys.executable, "-c", block], cwd=work,
+                                    env=environment, capture_output=True,
+                                    text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unexpected sign_update output", result.stderr)
+            self.assertFalse((work / "site" / "appcast.xml").exists())
+
+    def test_the_signing_key_reaches_only_the_step_that_needs_it(self):
+        """Ein `env:` am JOB liegt in der Umgebung jedes Schritts.
+
+        Der Update-Signierschlüssel gehört deshalb an den einen Schritt, der
+        signiert — nicht neben `actions/checkout`, `configure-pages`,
+        `upload-pages-artifact` und `deploy-pages`, die alle auf bewegliche
+        Major-Tags gepinnt sind. Mit dem Schlüssel ließen sich Appcast und
+        DMG beliebig signieren."""
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        job_env = lines.index("    env:")
+        steps = lines.index("    steps:")
+        block = "\n".join(lines[job_env:steps])
+        self.assertNotIn("SPARKLE_PRIVATE_KEY: ${{ secrets", block)
+        # Und genau einmal, am signierenden Schritt.
+        assignments = [line for line in lines
+                       if "SPARKLE_PRIVATE_KEY: ${{ secrets" in line]
+        self.assertEqual(len(assignments), 1, assignments)
+        index = lines.index(assignments[0])
+        preceding = "\n".join(lines[max(0, index - 4):index])
+        self.assertIn("name: Generate signed appcast", preceding)
 
     def test_team_id_comes_from_an_actions_variable(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")

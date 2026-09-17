@@ -17,12 +17,32 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    Filteransicht rund 60 pt höher; offscreen gerendert sieht es richtig aus
    (`tests/configuration_probe.swift` mit Ausgabepfad), am Fenster der
    Schnellsuche (Standardhöhe 520 pt, Tabelle darunter) noch nicht geprüft.
-4. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
-5. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
+4. Sichtbare Nachprüfung der Bedienänderungen aus 0.34.10 bis 0.34.19,
+   alle bisher nur headless belegt: In der Haupt-App startet die Suche erst
+   auf Return statt beim Tippen; ein geladenes Regex-Muster steht sofort
+   gefärbt im Feld; die Fußzeile zeigt Text und Tooltip gleich an; das
+   Rechtsklick-Menü über einer sehr großen Auswahl geht ohne Hänger auf.
+   In der Schnellsuche: Die Vorschau mit Leertaste oder ⎋ zu schließen darf
+   die App nicht beenden, ⇧⎋ und ⌥⎋ dürfen nichts auslösen.
+5. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
+6. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
    heraus auf die aktuelle aktualisieren und den Ablauf am Fenster prüfen.
    Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
    Durchlauf am Bildschirm.
+## Ungetestet: `release.sh` jenseits der frühen Tore
 
+Die Release-Zusagen — ein fremdes Volume bricht ab, der eigene Mount wird
+ausgehängt, Schritt 4 prüft beide Bundles, DMG signieren/notarisieren/
+stapeln in dieser Reihenfolge — hängen an Quelltextprüfungen in
+`tests/test_build_safety.py`. Ein ausführender Trockenlauf mit Attrappen
+für `hdiutil`, `codesign`, `spctl`, `xcrun`, `sips`, `tiffutil`, `swift`
+und `osascript` scheitert heute an zwei Stellen: `release.sh` ruft
+`./build-app.sh` über einen relativen Pfad (der Lauf bräuchte eine Kopie
+des Repos), und `MOUNT_DIR` ist der feste Pfad `/Volumes/Favenio` — ein
+Test darf dort nicht hineinschreiben. Beides ließe sich mit einer Naht
+lösen (`FAVENIO_MOUNT_ROOT`, Standard `/Volumes`); das ist eine Änderung
+am Release-Pfad und braucht eine eigene Entscheidung. Befund der
+CodeQA-Runde vom 2026-09-10.
 
 ## Flackernder Test: Ursache weiterhin offen
 

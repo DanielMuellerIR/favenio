@@ -11,6 +11,27 @@
 # hier ergänzt werden müsste.
 FAVENIO_APPS=("Favenio.app" "FavenioQuick.app")
 
+# Jede Ausgabe beider Skripte schreibt ein KINDPROZESS, nie die Shell selbst.
+# Hat ein Leser die Pipe schon geschlossen (`install.sh 2>&1 | head`), trifft
+# SIGPIPE dann nur dieses kurzlebige /bin/echo; `|| true` schluckt seinen
+# Status, und der Lauf geht normal weiter.
+#
+# Das eingebaute echo bekommt SIGPIPE mitten in stdio (`fflush`), und zsh 5.9
+# führt den Trap dort direkt im Signalhandler aus (gemessen 2026-09-17):
+#   - in einer Funktion lief `trap 'exit 2' PIPE` endlos — install.sh stand
+#     mitten im Austausch mit Sperre, Ablage- und Sicherungsordner im Ziel;
+#   - auf oberster Ebene hing danach im EXIT-Trap ein externes Kommando mit
+#     Umleitung, `hdiutil detach … 2>/dev/null` — das DMG blieb eingehängt;
+#   - ohne PIPE-Trap (release.sh bis zu `trap … PIPE`) starb die Shell mit
+#     141, und das Stage von notarize_apps blieb liegen.
+# `builtin echo … || true` hängt genauso. `trap '' PIPE` ist ebenfalls KEIN
+# Ersatz: Danach lieferten spätere `$(...)` Status 141 mit leerer Ausgabe,
+# und der Austausch endete mit Status 1 statt 0 oder 2. /bin/echo deutet wie
+# hier genutzt nichts um: Kein echo-Text enthält Backslashes oder beginnt mit
+# `-`. print/printf stehen nur in Funktionen, die als `$(...)` laufen, und
+# schreiben also nie in die Pipe eines Lesers (tests/test_build_safety.py).
+echo() { /bin/echo "$@" || true; }
+
 # Sperrverzeichnis des laufenden Austauschs, solange eines gehalten wird (siehe
 # _favenio_install_lock). Der Aufräum-Trap von install.sh liest es, damit ein
 # Abbruch die Sperre nicht im Zielordner liegen lässt.
@@ -67,10 +88,18 @@ notarize_require_credentials() {
             | grep "Developer ID Application" | head -1 \
             | sed -E 's/^[^"]*"([^"]*)".*/\1/' || true)
     fi
-    if [ -z "$SIGN_ID" ]; then
+    # Auch der Bindestrich zählt als „keine Developer-ID": build-app.sh
+    # behandelt genau diesen Wert als Ad-hoc-Signatur und baut dann ohne
+    # Hardened Runtime. Geerbt aus der CI-Umgebung (FAVENIO_SIGN_ID=- in
+    # .github/workflows/ci.yml) kam er bis 0.34.19 durch dieses Tor: Der Lauf
+    # baute, lud rund 40 MB zu Apple und scheiterte erst dort — ein
+    # verbrauchter Notary-Vorgang für einen Fehler, den dieses Tor früh
+    # melden soll.
+    if [ -z "$SIGN_ID" ] || [ "$SIGN_ID" = "-" ]; then
         echo "FEHLER: keine Developer-ID gefunden — ohne echte Signatur ist" >&2
         echo "keine Notarisierung möglich (FAVENIO_SIGN_ID setzen oder" >&2
         echo "Zertifikat installieren)." >&2
+        echo "Der Wert '-' ist die Ad-hoc-Signatur und reicht dafür nicht." >&2
         return 2
     fi
     # Fünf Versuche statt einem: `notarytool history` meldet gelegentlich
@@ -665,6 +694,19 @@ favenio_install_bundles() {
         installed+=("$app|$staged_id")
         if ! mv "$stage/$app" "$dest/$app"; then
             echo "FEHLER: neue $app ließ sich nicht einsetzen." >&2
+            # Das Umbenennen ist atomar: Nach einem Fehlschlag liegt unser
+            # Bundle NICHT am Zielpfad. Den eben vorsorglich notierten
+            # Eintrag deshalb wieder herausnehmen. Sonst hielte der Rollback
+            # das, was dort wirklich liegt — etwa eine gleichnamige DATEI,
+            # an der `mv` mit „Not a directory" scheitert —, für ein fremdes
+            # Bundle, meldete „vermutlich hat eine zweite Installation es
+            # ersetzt" und gäbe Exit 3 zurück. Exit 3 verspricht einen
+            # unvollständigen Rollback und verbleibende Pfade; hier wurde
+            # aber nichts angefasst, also gehört Exit 2 hin
+            # (reproduziert 2026-09-10).
+            if [ "$(_favenio_dir_id "$dest/$app")" != "$staged_id" ]; then
+                installed[-1]=()
+            fi
             _favenio_install_failure "$dest" "$stage" "$backup" "$lock" \
                 "${installed[@]}"
             return $?
@@ -676,7 +718,15 @@ favenio_install_bundles() {
                 "${installed[@]}"
             return $?
         fi
-        echo "  $app installiert und geprüft."
+        # Fortschritt nach STDERR, nicht nach stdout: Diese Zeile steht
+        # MITTEN in der Transaktion, und ein Leser, der stdout früh schließt
+        # (`install.sh | head`), löste hier SIGPIPE aus. In zsh läuft der
+        # EXIT-Trap dabei NICHT — Sperre, Ablage- und Sicherungsordner blieben
+        # im Zielordner liegen, und der nächste Lauf brach mit „Es läuft
+        # bereits eine Favenio-Installation" ab, bis jemand die Sperre von
+        # Hand entfernte (reproduziert 2026-09-10). Auf stderr kann kein
+        # Leser der Ausgabe die Transaktion mehr zerreißen.
+        echo "  $app installiert und geprüft." >&2
     done
 
     # Beide Bundles sind jetzt eingesetzt und am Ziel geprüft: Die Transaktion

@@ -125,6 +125,10 @@ struct Hit: Hashable {
     let size: Int?     // Dateigröße in Bytes; bei Ordnern nil
     let filesystemPath: String
     let archiveMembers: [String]
+    /// Verlustfreie Base64-Namen je Archivstufe. Die sichtbaren Namen können
+    /// bei ungültigem UTF-8 dasselbe Ersatzzeichen tragen; diese Liste hält
+    /// Identität und Materialisierung trotzdem auseinander.
+    var archiveMemberBytes: [String] = []
     /// Ist der Treffer ein Verzeichnis? Der `kind` allein genügt dafür nicht:
     /// Ein Ordner INNERHALB eines Archivs kommt als `member` an und sah damit
     /// aus wie eine Datei (Review-Fund 2026-08-17). Der Kern schickt das
@@ -150,7 +154,9 @@ struct Hit: Hashable {
     /// Anzeige und Suchbelege können sich ändern; das gefundene Objekt wird
     /// allein durch Dateisystempfad und die einzelnen Archivstufen bestimmt.
     var identity: HitIdentity {
-        HitIdentity(filesystemPath: filesystemPath, archiveMembers: archiveMembers)
+        HitIdentity(filesystemPath: filesystemPath,
+                    archiveMembers: archiveMembers,
+                    archiveMemberBytes: archiveMemberBytes)
     }
 
     /// Liegt der Treffer INNERHALB eines Archivs?
@@ -290,6 +296,14 @@ final class TypeDescriptionCache {
 struct HitIdentity: Hashable {
     let filesystemPath: String
     let archiveMembers: [String]
+    let archiveMemberBytes: [String]
+
+    init(filesystemPath: String, archiveMembers: [String],
+         archiveMemberBytes: [String] = []) {
+        self.filesystemPath = filesystemPath
+        self.archiveMembers = archiveMembers
+        self.archiveMemberBytes = archiveMemberBytes
+    }
 }
 
 let typeDescriptions = TypeDescriptionCache()
@@ -478,27 +492,34 @@ func hitActionIssue(_ selection: MaterializedHitSelection)
 /// großen, gleichartigen Auswahl (tausend `.txt`) kostete die Abfrage je
 /// Treffer sichtbar Zeit, obwohl sich der Anwendungssatz für dieselbe Endung
 /// wiederholt (Review-Fund 2026-09-02). Ohne Endung wird je Treffer gefragt.
+///
+/// Ebenso wird je Endung nur EINMAL geschnitten. Eine Endung, gegen die
+/// `common` schon gefiltert wurde, kann nichts mehr wegnehmen: `common` war
+/// damals eine Teilmenge ihrer Anwendungsmenge und ist seither nur kleiner
+/// geworden. Bis 0.34.11 lief der Schnitt trotzdem je Treffer und kostete
+/// bei 100 000 gleichartigen Treffern 11,9 s statt 0,08 s — auf dem
+/// Main-Thread, das Fenster stand bis zum Aufgehen des Menüs (gemessen am
+/// 2026-09-10, Ergebnis beide Male dieselben Anwendungen). Es ist dieselbe
+/// Fehlerklasse, die `TypeDescriptionCache` schon behoben hat: nicht die
+/// Abfrage war teuer, sondern die Arbeit je Treffer drumherum.
 func commonApplicationsFor(_ hits: [Hit]) -> [URL] {
     guard let first = hits.first else { return [] }
     var common = applicationsFor(first)
-    var byExtension: [String: Set<URL>] = [:]
+    // Endungen, gegen die `common` bereits geschnitten wurde. Der erste
+    // Treffer zählt dazu: `common` IST seine Anwendungsmenge.
+    var narrowed: Set<String> = []
     func extensionKey(_ hit: Hit) -> String? {
         let ext = (hit.displayName as NSString).pathExtension.lowercased()
         return ext.isEmpty ? nil : ext
     }
-    if let key = extensionKey(first) {
-        byExtension[key] = Set(common.map { $0.standardizedFileURL })
-    }
+    if let key = extensionKey(first) { narrowed.insert(key) }
     for hit in hits.dropFirst() {
         if common.isEmpty { break }
-        let allowed: Set<URL>
-        if let key = extensionKey(hit), let cached = byExtension[key] {
-            allowed = cached
-        } else {
-            allowed = Set(applicationsFor(hit).map { $0.standardizedFileURL })
-            if let key = extensionKey(hit) { byExtension[key] = allowed }
-        }
+        let key = extensionKey(hit)
+        if let key, narrowed.contains(key) { continue }
+        let allowed = Set(applicationsFor(hit).map { $0.standardizedFileURL })
         common = common.filter { allowed.contains($0.standardizedFileURL) }
+        if let key { narrowed.insert(key) }
     }
     return common
 }
@@ -729,10 +750,16 @@ func parseSearchLine(_ lineData: Data) -> SearchLine? {
     // das Feld immer; eine Zeile ohne es stammt nicht von uns und wird
     // verworfen, statt einen falschen Typ zu behaupten.
     guard let isDirectory = dict["isDirectory"] as? Bool else { return nil }
+    let archiveMemberBytes = dict["archiveMemberBytes"] as? [String] ?? []
+    guard archiveMemberBytes.isEmpty
+            || archiveMemberBytes.count == archiveMembers.count else {
+        return nil
+    }
     return .hit(Hit(path: path, kind: kind, line: dict["line"] as? Int,
                     size: dict["size"] as? Int,
                     filesystemPath: filesystemPath,
                     archiveMembers: archiveMembers,
+                    archiveMemberBytes: archiveMemberBytes,
                     isDirectory: isDirectory,
                     field: dict["field"] as? String,
                     value: dict["value"] as? String,
@@ -1080,8 +1107,20 @@ struct SearchConfiguration: Equatable {
         var args = ["-u", cli, "--json"]
         if hasPattern {
             if mode == .content { args.append("--content") }
-            if mode == .metadata { args.append("--metadata") }
-            if let metadataField, !metadataField.isEmpty { args += ["--metadata-field", metadataField] }
+            if mode == .metadata {
+                args.append("--metadata")
+                // NUR im Metadaten-Modus. Der Kern liest
+                // `metadata_mode = args.metadata or bool(args.metadata_field)`:
+                // Ein gesetztes Feld ohne `--metadata` liess ihn im
+                // Namens-Modus stillschweigend Metadaten durchsuchen, mit
+                // `--content` endete er mit Exit 2. Bis 0.34.17 hing die
+                // Bedingung nur an `hasPattern` — verdeckt allein davon,
+                // dass die Haupt-App ausserhalb des Modus `nil` liefert.
+                // Die Invariante gehoert hierher, nicht in eine der Apps.
+                if let metadataField, !metadataField.isEmpty {
+                    args += ["--metadata-field", metadataField]
+                }
+            }
         }
         args += validation.limits.arguments
         if regex { args.append("--regex") }
@@ -1387,7 +1426,7 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
 
     /// Wie viele Filter dieser Ansicht gerade gesetzt sind: jedes nichtleere
     /// Von/Bis-Feld, jedes Ausschlussmuster und jeder weitere Begriff zählt
-    /// eins. Die Haupt-App zeigt die Zahl am zugeklappten Aufklapp-Schalter.
+    /// eins. Beide Apps zeigen die Zahl am zugeklappten Aufklapp-Schalter.
     var activeFilterCount: Int { rawFacts.count + exclusions.count + terms.count }
 
     init() {
@@ -1401,9 +1440,22 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
         factColumn.orientation = .vertical
         factColumn.alignment = .leading
         factColumn.spacing = 4
-        for index in stride(from: 0, to: FactFilterOption.all.count, by: 2) {
-            let options = Array(FactFilterOption.all[index...index + 1])
-            let label = NSTextField(labelWithString: options[0].group)
+        // Nach der Gruppe zusammenfassen, nicht paarweise nach Index:
+        // `all[index...index + 1]` setzte eine gerade Anzahl voraus, und ein
+        // siebter Eintrag in `FactFilterOption.all` liesse beide Apps beim
+        // Aufbau der Filteransicht abstuerzen. Die Gruppe steht ohnehin
+        // schon in jedem Eintrag.
+        var factGroups: [(name: String, options: [FactFilterOption])] = []
+        for option in FactFilterOption.all {
+            if factGroups.last?.name == option.group {
+                factGroups[factGroups.count - 1].options.append(option)
+            } else {
+                factGroups.append((option.group, [option]))
+            }
+        }
+        for group in factGroups {
+            let options = group.options
+            let label = NSTextField(labelWithString: group.name)
             label.font = .systemFont(ofSize: 11)
             label.widthAnchor.constraint(equalToConstant: 58).isActive = true
             var fields: [NSTextField] = []
@@ -1427,6 +1479,10 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
             let to = NSTextField(labelWithString: "bis")
             from.font = .systemFont(ofSize: 11)
             to.font = .systemFont(ofSize: 11)
+            // „von … bis …" braucht genau zwei Felder je Gruppe; eine
+            // ungerade Gruppe waere ein Fehler in FactFilterOption.all.
+            precondition(fields.count == 2,
+                         "Gruppe \(group.name) hat \(fields.count) Felder statt zwei")
             let row = NSStackView(views: [label, from, fields[0], to, fields[1]])
             row.orientation = .horizontal
             row.alignment = .centerY
@@ -1552,6 +1608,123 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
     }
 }
 
+/// Der Aufklapp-Schalter „Weitere Filter" BEIDER Apps: Dreieck plus
+/// klickbarer Titel, beide schalten um. Bis 0.34.22 stand derselbe Aufbau
+/// samt Umschalten, Zählen und Titel wörtlich in beiden Controllern; nur
+/// Grundtitel, `UserDefaults`-Schlüssel und die mitversteckte Maßzeile
+/// unterscheiden sich, und die kommen als Parameter. Wo der Schalter in der
+/// Zeile steht und welche Abstände er hat, bleibt Sache der App.
+final class FilterDisclosure: NSObject {
+    let disclosureButton = NSButton()
+    let titleButton = NSButton()
+    /// Je App ein eigener Schlüssel; der Zustand überlebt den Neustart.
+    let defaultsKey: String
+    let baseTitle: String
+    let filterView: SearchFilterView
+    let pixelFields: [NSTextField]
+    /// Weitere Ansichten hinter dem Schalter (die Maßzeile). Sie entstehen
+    /// erst beim Fensterbau und werden deshalb nachträglich gesetzt.
+    var extraViews: [NSView] = []
+
+    init(defaultsKey: String, baseTitle: String,
+         filterView: SearchFilterView, pixelFields: [NSTextField]) {
+        self.defaultsKey = defaultsKey
+        self.baseTitle = baseTitle
+        self.filterView = filterView
+        self.pixelFields = pixelFields
+        super.init()
+        disclosureButton.setButtonType(.pushOnPushOff)
+        disclosureButton.bezelStyle = .disclosure
+        disclosureButton.title = ""
+        disclosureButton.target = self
+        disclosureButton.action = #selector(toggle(_:))
+        disclosureButton.setAccessibilityLabel("Weitere Filter ein- oder ausblenden")
+        titleButton.isBordered = false
+        titleButton.font = .systemFont(ofSize: 11)
+        titleButton.alignment = .left
+        titleButton.target = self
+        titleButton.action = #selector(toggle(_:))
+    }
+
+    var isExpanded: Bool { !filterView.isHidden }
+
+    @objc func toggle(_ sender: Any?) {
+        setExpanded(!isExpanded)
+        UserDefaults.standard.set(isExpanded, forKey: defaultsKey)
+    }
+
+    /// Den gespeicherten Zustand anwenden. Erst NACH dem Einhängen in den
+    /// Stack aufrufen: `NSStackView(views:)` hängt eine schon versteckte
+    /// Ansicht sichtbar ein.
+    func restoreSavedState() {
+        setExpanded(UserDefaults.standard.bool(forKey: defaultsKey))
+    }
+
+    /// Blendet Filteransicht und Maßzeile ein oder aus. Der Stack entfernt
+    /// eine versteckte Ansicht aus dem Layout, die Trefferliste rückt nach.
+    func setExpanded(_ expanded: Bool) {
+        filterView.isHidden = !expanded
+        for view in extraViews { view.isHidden = !expanded }
+        disclosureButton.state = expanded ? .on : .off
+        refreshTitle()
+    }
+
+    /// Gesetzte Filter hinter dem Schalter: jedes Maßfeld mit Inhalt plus die
+    /// Zählung der Filteransicht (Von/Bis-Felder, Ausschlussmuster, weitere
+    /// Begriffe). Ein Maßfeld zählt nur, wenn `PixelLimitInput` es nicht als
+    /// leer wertet — ein bloßes Leerzeichen setzt keinen Filter und meldete
+    /// sonst zugeklappt „(1 aktiv)".
+    var activeCount: Int {
+        pixelFields.filter { PixelLimitInput($0.stringValue) != .empty }.count
+            + filterView.activeFilterCount
+    }
+
+    /// Zugeklappt nennt der Titel, wie viele Filter dort gesetzt sind —
+    /// sonst wirkt ein unsichtbarer Filter wie ein Suchfehler.
+    func refreshTitle() {
+        let count = activeCount
+        var title = baseTitle
+        if count > 0 && !isExpanded {
+            title += count == 1 ? " (1 aktiv)" : " (\(count) aktiv)"
+        }
+        titleButton.title = title
+    }
+}
+
+/// Gemeinsamer Selbsttest des Aufklapp-Schalters an einem frisch gebauten
+/// Controller OHNE gespeicherten Zustand. Das Beiseitelegen und
+/// Zurückschreiben des Entwickler-Zustands bleibt beim Aufrufer: Es muss den
+/// Fensterbau umschließen, der den Zustand liest.
+func filterDisclosureSelfTest(_ filters: FilterDisclosure) -> String? {
+    guard !filters.isExpanded, !filters.extraViews.isEmpty,
+          filters.extraViews.allSatisfy({ $0.isHidden }) else {
+        return "Weitere Filter sind beim Start nicht zugeklappt"
+    }
+    filters.toggle(nil)
+    guard filters.isExpanded, filters.extraViews.allSatisfy({ !$0.isHidden }),
+          filters.disclosureButton.state == .on,
+          UserDefaults.standard.bool(forKey: filters.defaultsKey) else {
+        return "Aufklapp-Schalter zeigt die Filter nicht"
+    }
+    filters.toggle(nil)
+    // Nur Return startet eine Suche aus einem Maßfeld. Mit der Voreinstellung
+    // schickt ein NSTextField seine Action auch beim bloßen Fokusverlust —
+    // und beim Zuklappen, weil das versteckte Feld den Fokus abgibt.
+    guard filters.pixelFields.allSatisfy({
+        ($0.cell as? NSTextFieldCell)?.sendsActionOnEndEditing == false }) else {
+        return "Maßfelder suchen schon beim Fokusverlust"
+    }
+    filters.filterView.exclusions = ["node_modules"]
+    filters.filterView.rawFacts = ["min-size": "1 MiB"]
+    filters.pixelFields[0].stringValue = "100"
+    filters.pixelFields[1].stringValue = " "   // leer laut PixelLimitInput
+    filters.refreshTitle()
+    guard filters.titleButton.title.contains("3 aktiv") else {
+        return "Zugeklappter Schalter nennt aktive Filter nicht"
+    }
+    return nil
+}
+
 /// Vollständiges Ende eines Suchprozesses. `status` allein reicht nicht:
 /// Foundation meldet bei einem Signal dessen Nummer, sodass etwa SIGHUP und
 /// der reguläre grep-Status „keine Treffer" beide den Zahlenwert 1 tragen.
@@ -1578,6 +1751,14 @@ final class SearchDiagnostics {
     private var carry = Data()        // angefangene Zeile zwischen Häppchen
     private var warnings = 0
     private var firstError: String?
+    /// Die erste stderr-Zeile OHNE Favenio-Präfix. Sie stammt nicht vom
+    /// Kern, sondern von dem, was vor ihm steht — und das kann der Grund
+    /// eines Fehlschlags sein: `/usr/bin/python3` ist ein Apple-Stummel,
+    /// der ohne akzeptierte Xcode-Lizenz „You have not agreed to the Xcode
+    /// license agreements" schreibt und mit Status 69 endet, ohne den Kern
+    /// je zu starten. Bis 0.34.21 verwarfen beide Apps diese Zeile und
+    /// zeigten nur „Suche fehlgeschlagen (Status 69)" (belegt 2026-09-15).
+    private var firstForeignLine: String?
 
     /// Hängt sich an die stderr-Pipe und leert sie fortlaufend.
     func collect(from pipe: Pipe) {
@@ -1641,14 +1822,23 @@ final class SearchDiagnostics {
                   line.hasPrefix(SearchDiagnostics.errorPrefix) {
             firstError = String(
                 line.dropFirst(SearchDiagnostics.errorPrefix.count))
+        } else if firstForeignLine == nil {
+            // Auch Zeilenenden: Bei CRLF bleibt nach dem Zerlegen am \n ein
+            // „\r" stehen, und eine Leerzeile davor würde sonst selbst zum Grund.
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { firstForeignLine = trimmed }
         }
     }
 
-    /// Die erste Fehlerzeile des Kerns, ohne Präfix — oder nil.
+    /// Die erste Fehlerzeile des Kerns, ohne Präfix. Hat der Kern keine
+    /// genannt, ersatzweise die erste fremde stderr-Zeile (siehe
+    /// `firstForeignLine`) — oder nil. Die Oberflächen zeigen den Text nur
+    /// bei einem gescheiterten Lauf; eine harmlose fremde Zeile eines
+    /// gelungenen Laufs bleibt damit unsichtbar.
     var errorMessage: String? {
         lock.lock()
         defer { lock.unlock() }
-        return firstError
+        return firstError ?? firstForeignLine
     }
 
     /// Wie viele Objekte der Lauf überspringen musste.
@@ -1992,13 +2182,42 @@ final class MaterializationManager {
     var temporaryDirectory = FileManager.default.temporaryDirectory
 
     private let lock = NSLock()
-    private var cache: [Hit: URL] = [:]
-    private var jobs: [Hit: Job] = [:]
+    // Schlüssel ist die IDENTITÄT, nicht der ganze Treffer: Anzeige und
+    // Suchbelege (`line`, `terms`, `width`, `modified`) ändern sich mit der
+    // Suche, das Objekt dahinter nicht. Bis 0.34.14 waren derselbe
+    // Archiv-Eintrag aus einer Namenssuche und aus einer Inhaltssuche zwei
+    // Cache-Einträge und zwei Unterprozesse in zwei Temp-Ordner — gegen die
+    // Zusage, dass gleichzeitige Anforderungen desselben Treffers EINEN
+    // Unterprozess und dieselbe Datei teilen.
+    private var cache: [HitIdentity: URL] = [:]
+    private var jobs: [HitIdentity: Job] = [:]
     private var root: URL?
     private var epoch = 0
-    private let queue = DispatchQueue(label: "favenio.materialize",
-                                      qos: .userInitiated,
-                                      attributes: .concurrent)
+    /// Auspackaufträge laufen nebenläufig, aber GEDECKELT. Eine einzige
+    /// Nutzeraktion — Leertaste, Doppelklick oder „Im Finder zeigen" auf
+    /// einer großen Auswahl — erzeugt einen Auftrag je Archivtreffer, und
+    /// jeder blockiert in `readDataToEndOfFile()` plus `waitUntilExit()`.
+    /// Ohne Deckel wuchs der GCD-Threadpool bis an seine Decke: 200
+    /// Einträge mit einer 3-s-Attrappe waren nach 9,3 s fertig, also rund
+    /// 64 gleichzeitige Aufträge; mit dem echten Kern lief die Spitze auf
+    /// 25 gleichzeitige Python-Prozesse. Der Folgeschaden traf die Suche,
+    /// die denselben globalen Pool nimmt: Ihr erster Treffer kam nach
+    /// 5,19 s statt 0,02 s (alles gemessen am 2026-09-10).
+    ///
+    /// `OperationQueue` statt eines Semaphors: Wartende Aufträge belegen
+    /// dort keinen Thread. Ein Semaphor auf einer nebenläufigen
+    /// `DispatchQueue` würde genau die Threads blockieren, die es sparen
+    /// soll. Ein zu spät startender Auftrag ist unschädlich — `execute()`
+    /// prüft `job.cancelled` und `epoch`, bevor es einen Prozess startet.
+    static let maximumConcurrentExtractions = 4
+    private let queue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "favenio.materialize"
+        queue.qualityOfService = .userInitiated
+        queue.maxConcurrentOperationCount =
+            MaterializationManager.maximumConcurrentExtractions
+        return queue
+    }()
 
     /// Ein laufender Auspackvorgang samt allen, die auf ihn warten.
     private final class Job {
@@ -2048,7 +2267,7 @@ final class MaterializationManager {
             return URL(fileURLWithPath: hit.filesystemPath)
         }
         if hit.isDirectory { return nil }
-        if let cached = cache[hit],
+        if let cached = cache[hit.identity],
            FileManager.default.fileExists(atPath: cached.path) {
             return cached
         }
@@ -2084,16 +2303,16 @@ final class MaterializationManager {
         let request = MaterializationRequest(hit: hit, epoch: epoch, manager: self)
         // Ein Auftrag, den alle verlassen haben, stirbt gerade; ihm darf
         // sich niemand mehr anschließen — er endete mit `.cancelled`.
-        if let job = jobs[hit], !job.cancelled {
+        if let job = jobs[hit.identity], !job.cancelled {
             job.waiters.append((request, completion))
             lock.unlock()
             return request
         }
         let job = Job(hit: hit, epoch: epoch)
         job.waiters.append((request, completion))
-        jobs[hit] = job
+        jobs[hit.identity] = job
         lock.unlock()
-        queue.async { [weak self] in
+        queue.addOperation { [weak self] in
             guard let self else { return }
             self.finish(job, with: self.execute(job))
         }
@@ -2110,7 +2329,7 @@ final class MaterializationManager {
         // finish() kann den Job bereits entfernt haben. Die eingereihte
         // Completion hält den Request und sieht diese Markierung trotzdem.
         request.cancelled = true
-        guard let job = jobs[request.hit],
+        guard let job = jobs[request.hit.identity],
               let index = job.waiters.firstIndex(where: { $0.0 === request })
         else {
             lock.unlock()
@@ -2163,10 +2382,13 @@ final class MaterializationManager {
         guard let cli = cliPath ?? findCLI() else {
             return .failed("favenio.py nicht gefunden")
         }
-        let object: [String: Any] = [
+        var object: [String: Any] = [
             "filesystemPath": job.hit.filesystemPath,
             "archiveMembers": job.hit.archiveMembers,
         ]
+        if !job.hit.archiveMemberBytes.isEmpty {
+            object["archiveMemberBytes"] = job.hit.archiveMemberBytes
+        }
         guard let json = try? JSONSerialization.data(withJSONObject: object),
               let jsonText = String(data: json, encoding: .utf8) else {
             return .failed("Treffer nicht als JSON darstellbar")
@@ -2240,9 +2462,9 @@ final class MaterializationManager {
             if case .ready(let url) = outcome { discard(url) }
             outcome = .cancelled
         } else if case .ready(let url) = outcome {
-            cache[job.hit] = url
+            cache[job.hit.identity] = url
         }
-        if jobs[job.hit] === job { jobs[job.hit] = nil }
+        if jobs[job.hit.identity] === job { jobs[job.hit.identity] = nil }
         let waiters = job.waiters
         job.waiters = []
         lock.unlock()
@@ -2307,6 +2529,9 @@ func jsonlData(for hits: [Hit]) -> Data {
                                          "isDirectory": hit.isDirectory]
             object["filesystemPath"] = hit.filesystemPath
             object["archiveMembers"] = hit.archiveMembers
+            if !hit.archiveMemberBytes.isEmpty {
+                object["archiveMemberBytes"] = hit.archiveMemberBytes
+            }
             if let line = hit.line { object["line"] = line }
             if let size = hit.size { object["size"] = size }
             if let field = hit.field, let value = hit.value {
@@ -2408,6 +2633,18 @@ func consumeQuickHandoff(_ candidate: URL) -> [Hit]? {
     return hits
 }
 
+/// Nur die echten Zusatztasten eines Tastendrucks.
+///
+/// Caps Lock, Zehnerblock und das Funktionsbit hängen je nach Tastatur mit
+/// dran und dürfen ein Kürzel nicht entwerten. Steht EINMAL hier: Die
+/// Haupt-App normalisierte, die Schnellsuche prüfte gar nicht — dort lösten
+/// deshalb auch ⇧⎋ und ⌥⎋ Abbruch beziehungsweise Beenden aus.
+func plainModifiers(of event: NSEvent) -> NSEvent.ModifierFlags {
+    event.modifierFlags
+        .intersection(.deviceIndependentFlagsMask)
+        .subtracting([.capsLock, .numericPad, .function])
+}
+
 /// Apps, die einen Treffer öffnen können — für das „Öffnen mit"-Menü.
 /// Bei normalen Dateien direkt über die URL, bei Archiv-Einträgen über den
 /// Dateityp (Endung), damit fürs bloße Menü noch nichts ausgepackt wird.
@@ -2421,8 +2658,12 @@ func applicationsFor(_ hit: Hit) -> [URL] {
             urls = NSWorkspace.shared.urlsForApplications(toOpen: type)
         }
     } else {
+        // Der Dateipfad, nicht der Anzeigepfad: `path` trägt die
+        // `!/`-Semantik und ist für einen Nicht-Eintrag heute zwar
+        // derselbe Text, aber `filesystemPath` ist das Feld, das die Datei
+        // benennt.
         urls = NSWorkspace.shared.urlsForApplications(
-            toOpen: URL(fileURLWithPath: hit.path))
+            toOpen: URL(fileURLWithPath: hit.filesystemPath))
     }
     var seen = Set<String>()
     return urls
@@ -3614,7 +3855,7 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
             tableView.keyDown(with: event)
             return true
         case 53:                                         // ⎋
-            panel.orderOut(nil)
+            closeOpenPreview()
             return true
         default:
             return false
@@ -3628,6 +3869,90 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     @objc func openSelected() {
         contextRow = tableView.clickedRow
         openActionRows()
+    }
+
+    /// Schließt eine offene Quick-Look-Vorschau. Liefert false, wenn gar
+    /// keine offen war — dann gehört ⎋ weiter dem Fenster (Suchfeld leeren,
+    /// Blatt abbrechen), und in der Schnellsuche beendet erst ein leeres
+    /// Suchfeld die App.
+    ///
+    /// Steht EINMAL hier: Die drei Zeilen standen in beiden
+    /// Tastaturmonitoren und in `previewPanel(_:handle:)`.
+    @discardableResult
+    func closeOpenPreview() -> Bool {
+        guard QLPreviewPanel.sharedPreviewPanelExists(),
+              QLPreviewPanel.shared().isVisible else { return false }
+        QLPreviewPanel.shared().orderOut(nil)
+        return true
+    }
+
+    /// Die recycelte oder frisch gebaute Zelle einer Spalte.
+    ///
+    /// Steht EINMAL hier statt zweimal in den Apps: Bis 0.34.16 waren die
+    /// 19 Zeilen in beiden `tableView(_:viewFor:row:)` wörtlich gleich.
+    /// Die Prüfung `row < hits.count` gehört dazu und ist Pflicht, nicht
+    /// Vorsicht: `applyHitsToTable` verkleinert `hits` VOR dem
+    /// `reloadData()`, und NSTableView hält solange die alte Zeilenzahl.
+    /// Fragt AppKit dann eine Zelle jenseits des Endes an, beendete sich
+    /// die App mit „Index out of range" — die Schnellsuche hatte die
+    /// Prüfung an dieser Stelle immer, die Haupt-App nicht.
+    ///
+    /// nil heißt: nichts anzuzeigen. Das BEFÜLLEN bleibt Sache der App;
+    /// die beiden Spaltensätze haben nichts gemeinsam.
+    func hitCell(_ tableView: NSTableView, column: NSTableColumn,
+                 row: Int) -> NSTableCellView? {
+        guard row < hits.count else { return nil }
+        if let cell = tableView.makeView(withIdentifier: column.identifier,
+                                         owner: nil) as? NSTableCellView {
+            return cell
+        }
+        // Zellen einmal bauen, danach werden sie recycelt.
+        let cell = NSTableCellView()
+        cell.identifier = column.identifier
+        let label = NSTextField(labelWithString: "")
+        label.lineBreakMode = .byTruncatingMiddle
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(label)
+        cell.textField = label
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(
+                equalTo: cell.leadingAnchor, constant: 2),
+            label.trailingAnchor.constraint(
+                equalTo: cell.trailingAnchor, constant: -2),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
+    /// Baut das gemeinsame Datei-Kontextmenü für die geklickte Zeile.
+    ///
+    /// Steht EINMAL hier statt zweimal in den Apps: Bis 0.34.16 waren die
+    /// beiden `menuNeedsUpdate` bis auf die zwei Zeilen der Haupt-App
+    /// wörtlich gleich — samt der Bereichsprüfung `contextRow < hits.count`,
+    /// die vorher nur in der Schnellsuche stand. Was eine App zusätzlich
+    /// anbietet, hängt sie hinter dem `true` selbst an.
+    ///
+    /// Liefert false, wenn der Klick keine Zeile traf; dann bleibt das Menü
+    /// leer, und es darf auch nichts angehängt werden.
+    @discardableResult
+    func populateHitMenu(_ menu: NSMenu) -> Bool {
+        menu.removeAllItems()
+        contextRow = tableView.clickedRow
+        guard contextRow >= 0, contextRow < hits.count else { return false }
+        // ALLE öffnenbaren Treffer, nicht nur der erste: `ctxOpenWith`
+        // übergibt später sämtliche materialisierten URLs an die gewählte App,
+        // also muss das Menü über dieselbe Menge entscheiden.
+        let applicationHits = actionRows().compactMap {
+            hits.indices.contains($0) ? hits[$0] : nil
+        }.filter { $0.hasOpenableFile }
+        populateHitContextMenu(
+            menu, applicationHits: applicationHits, target: self,
+            selectors: HitContextMenuSelectors(
+                preview: #selector(togglePreview), open: #selector(ctxOpen),
+                openWith: #selector(ctxOpenWith(_:)),
+                reveal: #selector(ctxReveal),
+                copyPath: #selector(ctxCopyPath)))
+        return true
     }
 
     /// Das Kontextmenü behält die Zeile, für die es aufgebaut wurde.

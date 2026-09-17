@@ -29,7 +29,8 @@
 #   ./release.sh --no-finder-layout   # ohne AppleScript-Finder-Layout (headless);
 #                                     # das DMG funktioniert, sieht nur schlichter aus
 #
-# Letzte Zeile bei Erfolg (maschinenlesbar): "RELEASE OK: <pfad-zum-dmg>"
+# Letzte Zeile bei Erfolg (maschinenlesbar):
+# "RELEASE OK: <pfad-zum-dmg> (<version>; commit <hash>)"
 set -euo pipefail
 cd "$(dirname "$0")"
 source ./notarize-lib.sh
@@ -71,23 +72,82 @@ done
 notarize_require_credentials
 favenio_require_team_id
 
+# Ein Release muss einem unveränderlichen Quellstand entsprechen. Ohne diese
+# Prüfung könnten ungespeicherte Änderungen in das DMG gelangen, während der
+# spätere Tag nur den letzten Commit bezeichnet.
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+    echo "FEHLER: Der Arbeitsbaum ist nicht sauber — Release abgebrochen." >&2
+    exit 1
+fi
+BUILD_COMMIT=$(git rev-parse --verify HEAD)
+
+# Der eigentliche Bau läuft aus einem abgetrennten Worktree genau dieses
+# Commits. Eine parallele Änderung im aufrufenden Checkout kann dadurch nie
+# in das DMG geraten — auch dann nicht, wenn sie vor der Schlussprüfung wieder
+# verschwindet. Der innere Lauf erhält nur den finalen Ausgabeordner zurück.
+if [ "${FAVENIO_RELEASE_ISOLATED:-0}" != "1" ]; then
+    ORIGINAL_REPO=$PWD
+    mkdir -p "$PWD/.build"
+    ISOLATED_SOURCE=$(mktemp -d "$PWD/.build/release-source.XXXXXX")
+    rmdir "$ISOLATED_SOURCE"
+    git worktree add --detach "$ISOLATED_SOURCE" "$BUILD_COMMIT" >/dev/null
+    favenio_source_cleanup() {
+        git worktree remove --force "$ISOLATED_SOURCE" >/dev/null 2>&1 \
+            || true
+    }
+    trap favenio_source_cleanup EXIT
+    trap 'favenio_source_cleanup; exit 1' HUP INT TERM PIPE
+    if FAVENIO_RELEASE_ISOLATED=1 \
+            FAVENIO_RELEASE_OUTPUT_DIR="$ORIGINAL_REPO/dist" \
+            "$ISOLATED_SOURCE/release.sh" "$@"; then
+        RELEASE_STATUS=0
+    else
+        RELEASE_STATUS=$?
+    fi
+    favenio_source_cleanup
+    trap - EXIT HUP INT TERM PIPE
+    exit "$RELEASE_STATUS"
+fi
+
 # ---------- Schritt 1: Apps bauen (signiert + Selbsttest) ----------
 echo "== Schritt 1/5: Apps bauen =="
-./build-app.sh
+./build.sh
 
 # ---------- Schritt 2: Bundles notarisieren und stapeln ----------
 echo "== Schritt 2/5: Bundles notarisieren =="
 notarize_apps
 
 VERSION=$(/usr/bin/python3 -c "import favenio; print(favenio.__version__)")
-DIST="dist"
-DMG_PATH="$DIST/Favenio-${VERSION}.dmg"
+DIST="${FAVENIO_RELEASE_OUTPUT_DIR:-$PWD/dist}"
+FINAL_DMG_PATH="$DIST/Favenio-${VERSION}.dmg"
+FINAL_SHA_PATH="$FINAL_DMG_PATH.sha256"
+FINAL_LOCK_PATH="$DIST/.Favenio-${VERSION}.release-lock"
+FINAL_LOCK_SOURCE="$DIST/.Favenio-${VERSION}.release-lock.$$"
 mkdir -p "$DIST"
-rm -f "$DMG_PATH"
+favenio_release_unlock() {
+    if [ -e "$FINAL_LOCK_SOURCE" ] && [ -e "$FINAL_LOCK_PATH" ] \
+            && [ "$FINAL_LOCK_PATH" -ef "$FINAL_LOCK_SOURCE" ]; then
+        rm -f "$FINAL_LOCK_PATH"
+    fi
+    rm -f "$FINAL_LOCK_SOURCE"
+}
+trap favenio_release_unlock EXIT
+trap 'exit 1' HUP INT TERM PIPE
+: > "$FINAL_LOCK_SOURCE"
+if ! ln "$FINAL_LOCK_SOURCE" "$FINAL_LOCK_PATH"; then
+    echo "FEHLER: Ein Release für Version $VERSION schreibt bereits nach $DIST." >&2
+    exit 1
+fi
+if [ -e "$FINAL_DMG_PATH" ] || [ -e "$FINAL_SHA_PATH" ]; then
+    echo "FEHLER: Release-Artefakt existiert bereits: $FINAL_DMG_PATH" >&2
+    exit 1
+fi
 
 # ---------- Schritt 3: DMG mit Hintergrundbild bauen ----------
 echo "== Schritt 3/5: DMG bauen =="
-STAGING=$(mktemp -d)
+mkdir -p "$PWD/.build"
+STAGING=$(mktemp -d "$PWD/.build/release.XXXXXX")
+DMG_PATH="$STAGING/Favenio-${VERSION}.dmg"
 RW_DMG="$STAGING/favenio_rw.dmg"
 VOL_NAME="Favenio"
 # Das Arbeits-Image MUSS unter /Volumes/<Volume-Name> hängen. Das Finder-
@@ -106,6 +166,7 @@ MOUNT_DIR="/Volumes/$VOL_NAME"
 BUILD_MOUNTED=0
 VERIFY_MOUNT=""
 VERIFY_MOUNTED=0
+WORK_SHA_PATH=""
 favenio_release_cleanup() {
     if [ "$VERIFY_MOUNTED" = "1" ]; then
         hdiutil detach "$VERIFY_MOUNT" -quiet 2>/dev/null || true
@@ -119,7 +180,27 @@ favenio_release_cleanup() {
     if [ -n "$VERIFY_MOUNT" ]; then
         rmdir "$VERIFY_MOUNT" 2>/dev/null || true
     fi
+    # Ein Signal zwischen den beiden finalen Links darf keinen halben
+    # Veröffentlichungsschritt hinterlassen. Über die Inode-Gleichheit (`-ef`)
+    # löschen wir ausschließlich einen Link auf UNSERE Staging-Datei. Das oben
+    # angelegte Sperrpfad verhindert dabei einen zweiten Release-
+    # Schreiber für dieselbe Version im selben Ausgabeordner.
+    if [ -e "$FINAL_DMG_PATH" ] \
+            && [ "$FINAL_DMG_PATH" -ef "$DMG_PATH" ]; then
+        if [ ! -e "$FINAL_SHA_PATH" ] \
+                || ! [ "$FINAL_SHA_PATH" -ef "$WORK_SHA_PATH" ]; then
+            rm -f "$FINAL_DMG_PATH"
+        fi
+    fi
+    if [ -n "$WORK_SHA_PATH" ] && [ -e "$FINAL_SHA_PATH" ] \
+            && [ "$FINAL_SHA_PATH" -ef "$WORK_SHA_PATH" ]; then
+        if [ ! -e "$FINAL_DMG_PATH" ] \
+                || ! [ "$FINAL_DMG_PATH" -ef "$DMG_PATH" ]; then
+            rm -f "$FINAL_SHA_PATH"
+        fi
+    fi
     rm -rf "$STAGING"
+    favenio_release_unlock
 }
 trap favenio_release_cleanup EXIT
 # Gemessen am 2026-09-03 mit zsh 5.9 (Signal an die ganze Prozessgruppe): Ein
@@ -129,7 +210,14 @@ trap favenio_release_cleanup EXIT
 # absichtlich abbrechen („gehört nicht diesem Lauf"), bis jemand von Hand
 # auswirft. `exit 1` löst den EXIT-Trap aus, sodass die Aufräumung genau
 # einmal läuft.
-trap 'exit 1' HUP INT TERM
+# PIPE aus demselben Grund wie in install.sh: Bei SIGPIPE läuft der
+# EXIT-Trap nicht, und `release.sh | head` ließe /Volumes/Favenio eingehängt
+# zurück — genau der Zustand, der jeden weiteren Release-Lauf abbrechen lässt.
+# Die eigenen Ausgaben schreibt ohnehin ein Kindprozess (`echo` in
+# notarize-lib.sh): Träfe SIGPIPE ein eingebautes echo, hinge sonst genau
+# diese Aufräumung im `hdiutil detach … 2>/dev/null` (am gleichen Muster in
+# install.sh gemessen 2026-09-17).
+trap 'exit 1' HUP INT TERM PIPE
 
 # Hintergrundbild reproduzierbar erzeugen und als HiDPI-TIFF aufbereiten:
 # Retina-scharf zeigt der Finder es nur, wenn das TIFF 1x UND 2x enthält.
@@ -153,9 +241,15 @@ if [ -d "$MOUNT_DIR" ]; then
     exit 1
 fi
 hdiutil create -size 100m -fs HFS+ -volname "$VOL_NAME" -ov -quiet "$RW_DMG"
+# Die Merkvariable VOR dem Attach setzen, wie install.sh es mit MOUNT tut:
+# Zwischen einem gelungenen `attach` und der Zuweisung dahinter liegt sonst
+# ein Fenster, in dem ein Signal die Aufräumung mit BUILD_MOUNTED=0 laufen
+# lässt — und /Volumes/Favenio bliebe eingehängt zurück, was jeden weiteren
+# Release-Lauf absichtlich abbrechen lässt. Ein `detach` auf einen gar nicht
+# eingehängten Pfad ist dagegen folgenlos (`|| true` in der Aufräumung).
+BUILD_MOUNTED=1
 hdiutil attach -readwrite -noverify -noautoopen -quiet \
     -mountpoint "$MOUNT_DIR" "$RW_DMG"
-BUILD_MOUNTED=1
 
 # ditto statt cp -R: erhält erweiterte Attribute und das in Schritt 2
 # angeheftete Notary-Ticket unverändert.
@@ -245,5 +339,23 @@ xcrun stapler validate "$DMG_PATH"
 # installieren; Build und Release selbst verändern /Applications nie.
 spctl --assess --type open --context context:primary-signature -v "$DMG_PATH"
 
+# Zwischen dem festgehaltenen Commit und dem Ende der Notarisierung liegen
+# mehrere Minuten. Ein paralleler Commit oder eine neue Arbeitsbaumänderung
+# würde sonst ein Artefakt mit falscher Herkunft veröffentlichen.
+if [ "$(git rev-parse --verify HEAD)" != "$BUILD_COMMIT" ] \
+        || [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+    echo "FEHLER: Der Quellstand hat sich während des Release-Baus geändert." >&2
+    exit 1
+fi
+
+# Erst das vollständig geprüfte DMG verlässt `.build/`. Harte Links erzeugen
+# beide finalen Namen ohne Überschreiben; DMG und Ziel liegen im selben Repo.
+# Das DMG kommt zuerst. Scheitert oder unterbricht danach die Prüfsumme, räumt
+# der EXIT-Trap genau diesen von uns angelegten Link wieder weg.
+WORK_SHA_PATH="$DMG_PATH.sha256"
+(cd "$STAGING" && shasum -a 256 "${DMG_PATH:t}" > "${WORK_SHA_PATH:t}")
+ln "$DMG_PATH" "$FINAL_DMG_PATH"
+ln "$WORK_SHA_PATH" "$FINAL_SHA_PATH"
+
 echo "────────────────────────────────────────────"
-echo "RELEASE OK: $DMG_PATH"
+echo "RELEASE OK: $FINAL_DMG_PATH ($VERSION; commit $BUILD_COMMIT)"

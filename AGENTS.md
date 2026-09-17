@@ -20,6 +20,11 @@ verarbeiten seinen JSONL-Strom. Suchsemantik nicht in Swift nachbauen.
   Materialisierungslogik der Apps.
 - `gui/FavenioGUI.swift`: Hauptfenster und dessen Headless-Selbsttest.
 - `quick/FavenioQuick.swift`: Finder-nahe Schnellsuche und Übergabe an die App.
+- `build.sh`: einheitlicher Bau-Einstieg (Wrapper auf `build-app.sh`, ohne
+  Argumente, sonst Exit 2; Schlusszeile
+  `BUILD OK: <ordner>/Favenio.app <ordner>/FavenioQuick.app` mit unmaskiertem
+  Ordner, also nicht an Leerzeichen trennen); mit `install.sh` und `release.sh`
+  die drei Wurzelskripte.
 - `build-app.sh`: Bundle-Aufbau und App-Selbsttest (installiert nie).
 - `README.md`: Nutzer- und CLI-Dokumentation.
 - `BACKLOG.md`: noch nicht umgesetzte Arbeit; sofern die Datei fehlt, vor der
@@ -45,6 +50,9 @@ Verbindliches CLI-Verhalten:
 
 - `--json` schreibt JSONL, ein Objekt pro Treffer. Jeder Treffer trägt
   `path`, `type`, `isDirectory`, `filesystemPath` und `archiveMembers`;
+  Archivtreffer zusätzlich `archiveMemberBytes` mit der Base64-Identität jeder
+  Archivstufe; sie bleibt bei nicht als UTF-8 lesbaren Namensbytes eindeutig,
+  während `path` und `archiveMembers` U+FFFD anzeigen;
   Inhaltstreffer zusätzlich `line`, Metadatentreffer `field` und `value`,
   Treffer eines Laufs mit Maßfilter `width` und `height`. `size` ist
   optional: Es steht nur dort,
@@ -80,6 +88,23 @@ Verbindliches CLI-Verhalten:
   beide Apps zeigten eine halbe Trefferliste als vollständiges Ergebnis.
   Erwartete Lesefehler EINZELNER Objekte bleiben davon unberührt; sie sind
   weiter eine Warnung, und die Suche läuft weiter.
+  Ein geschlossener Leser (`| head -1`, auch `2>&1 | head -1`) ist kein
+  Fehler: `write_output()` macht aus `BrokenPipeError` ein `OutputClosed` —
+  bewusst kein OSError, sonst schluckt es `search_archive()` als
+  Archiv-Warnung —, und `main()` endet still mit 0 bzw. 1 wie grep statt mit
+  Traceback und Status 120. Das gilt auch für stderr (`warn()`,
+  Text-Fortschritt gehen durch `write_output()`); `discard_closed_output()`
+  biegt danach BEIDE Ströme auf /dev/null, sonst scheitert ein Restpuffer
+  beim Interpreter-Ende. `--extract` und `--list-metadata-fields` schreiben
+  über `write_result()` und enden dabei mit 0.
+- `main()` stellt stdout auf UTF-8 mit `surrogateescape` und stderr auf
+  UTF-8 mit `backslashreplace` (`use_locale_independent_streams()`), also
+  wie ohne Locale unter launchd. JSONL ersetzt nicht als UTF-8 lesbare
+  Tar-Namensbytes im sichtbaren Namen durch U+FFFD und trägt ihre exakte
+  Base64-Identität parallel in `archiveMemberBytes`; so können zwei
+  verschiedene kaputte Namen weder kollidieren noch beim Auspacken vertauscht
+  werden. Bis 0.34.22 brach derselbe Name unter `LANG=de_DE.UTF-8` den ganzen
+  Lauf mit Exit 2 ab.
 - Glob-Muster matchen den vollständigen Namen. Substring-Suche gilt nur ohne
   Platzhalter. Eine Änderung dieser Semantik wäre ein Breaking Change.
 - `--exclude` ist wiederholbar und arbeitet unabhängig vom Suchmatcher über
@@ -167,15 +192,16 @@ Verbindliches CLI-Verhalten:
   `--archive-depth` nicht mehr öffnet, ist ein ganz normaler Eintrag.
   Ein VIERTER Grund kam mit 0.27.1 dazu: Die Endung ist ein Hinweis, keine
   Zusage. Lässt sich die Datei nicht als das Format öffnen, das ihre Endung
-  verspricht (`FORMAT_MISMATCH_ERRORS`), ist sie ebenfalls eine ganz
+  verspricht, ist sie ebenfalls eine ganz
   normale Datei — ohne Warnung, denn `.key` ist weit häufiger ein
   TLS-Schlüssel als eine Keynote-Datei. `visit_file()` und `visit_member()`
   müssen auch diesen Rückfall gleich behandeln; bis 0.27.0 fiel ein
   `server.key` in einem Zip ab `--archive-depth 2` lautlos aus der Suche,
   während er bei Tiefe 1 gefunden wurde.
   Dieser Rückfall gilt aber NUR ohne Archiv-Signatur (`ARCHIVE_SIGNATURES`,
-  geprüft von `announces_archive_format()` auf den ersten
-  `ARCHIVE_SIGNATURE_BYTES`). Denn `BadZipFile` und `ReadError` sagen nicht,
+  geprüft von `announces_archive_format()`; `archive_head()` liest je Format
+  nur so viel Anfang, wie dessen Signatur braucht — vier Bytes für ein Zip,
+  36 KB für ein ISO). Denn der Öffnungsfehler sagt nicht,
   WARUM sich die Datei nicht öffnen ließ — derselbe Fehler kommt beim
   Klartext mit der Endung `.zip` wie beim echten, aber abgeschnittenen Zip.
   Trägt die Datei die Signatur, ist sie ein BESCHÄDIGTES Archiv: Warnung
@@ -185,6 +211,40 @@ Verbindliches CLI-Verhalten:
   von einem Klartext mit `.zip`-Endung zu unterscheiden, und dass das
   Archiv kaputt ist, erfuhr niemand. Ein sehr altes v7-Tar ohne „ustar"
   kündigt sich nicht an und bleibt beim stillen Rückfall.
+  Für die Tar-Familie gilt eine Zusatzregel (`tar_envelope_kind()`, seit
+  0.34.14): `ARCHIVE_SIGNATURES["tar"]` zählt gzip, bzip2 und xz mit, weil
+  `tarfile` mit „r:*" die Kompression selbst erkennt — diese Bytes kündigen
+  aber nur die HÜLLE an, kein Tar. Scheitert das Öffnen und heißt die Datei
+  auf genau die Hüllen-Endung (`.tar.gz`, `.tar.bz2`, `.tar.xz`, seit
+  2026-09-17 auch `.tar.zst`), wird sie als EINZELKOMPRESSION gelesen:
+  `gzip -c notiz.txt > notiz.tar.gz` ist ein gültiges gzip ohne Tar darin
+  und fiel bis 0.34.13 mit „beschädigtes
+  Archiv" aus der Suche, während dieselben Bytes als `rein.gz` gefunden
+  wurden. Bei `.tar.zst` entscheidet statt `tarfile.open` die
+  gescheiterte `bsdtar -tf`-Auflistung (nicht die zu lange) — in
+  `walk_bsdtar()` und, mit eigener Auflistung, in `extract_result()`.
+  `.tgz`, `.tbz2`, `.txz` und `.tzst` bleiben bei der Warnung, weil
+  `single_member_name()` die Endung abschneidet und `notiz.tgz` mit „.gz"
+  den Eintrag `notiz.t` ergäbe. Scheitert auch das Entpacken, greift wieder
+  die Warnung. `search_archive()` UND `extract_result()` wenden dieselbe
+  Regel an — sonst wäre ein gefundener Treffer nicht auszupacken.
+  Der Rückfall gilt seit 0.34.11 für JEDES Format, nicht mehr nur für Zip
+  und Tar: Bis dahin kannten ihn allein `FORMAT_MISMATCH_ERRORS`
+  (`BadZipFile`, `ReadError`). Eine Textdatei namens `notes.7z`,
+  `image.iso` oder `blob.zst` fiel deshalb mit Warnung aus der Suche,
+  während dieselbe Datei ohne installiertes `bsdtar`/`zstd` ganz normal
+  durchsucht wurde — genau der Zufall, den dieser Absatz ausschließt.
+  Der Schlüssel der Signaturliste ist deshalb das FORMAT, nicht die
+  Öffner-Art: Hinter `kind == "bsdtar"` stecken 7z, ISO und tar.zst mit
+  drei verschiedenen Signaturen, `archive_signature_key()` löst das an der
+  Endung auf. Bei der Einzelkompression (`SINGLE_COMPRESSION_KINDS`)
+  entscheidet die Signatur schon VOR dem Abstieg, denn `walk_single()`
+  baut seinen einen Eintrag allein aus dem Dateinamen und öffnet die Datei
+  bei einer reinen Namenssuche gar nicht: Eine Textdatei `notiz.gz` lieferte
+  sonst den Phantom-Treffer `notiz.gz!/notiz`, den `--extract` nie auflösen
+  kann. Und der Rückfall ist ausgeschlossen, sobald aus dem Archiv schon
+  ein Treffer gemeldet wurde (`Search.emitted`) — sonst käme dieselbe Datei
+  ein zweites Mal, jetzt als Dateitreffer.
   In ein Archiv wird außerdem nur geschaut, wenn der Pfad eine reguläre
   Datei ist: `zipfile` und `tarfile` öffnen ihn selbst, also an
   `open_regular_file()` vorbei — eine benannte Pipe namens `x.zip` ließ
@@ -293,6 +353,11 @@ Verbindliches CLI-Verhalten:
   `--min-width 100 dirA dirB` las `dirA` still als Namensmuster.
 - `--archive-depth` begrenzt Rekursion. Verschachtelte Archive werden im Speicher
   verarbeitet; deshalb Größen- und Tiefengrenzen nicht unbemerkt entfernen.
+  Werte über `MAX_ARCHIVE_DEPTH` = 100 lehnt die CLI ab: Bei ungefähr 330
+  verschachtelten Zips kann CPython auf macOS im C-Stack mit Exit 134 abbrechen,
+  bevor `main()` eine Ausnahme fangen kann. Python-Tars werden direkt iteriert
+  und nach `MAX_TAR_MEMBERS` = 65.536 Einträgen abgebrochen; `getmembers()`
+  würde den unbegrenzten Katalog vollständig als TarInfo-Objekte halten.
   `ArchiveBudget` zählt nur Eintrags-INHALTE; die Namensliste eines
   bsdtar-Formats läuft daran vorbei und braucht ihre eigene Grenze
   (`MAX_ARCHIVE_LISTING_BYTES`, gelesen über `bsdtar_list()`). Bei 7z, ISO
@@ -310,10 +375,18 @@ Verbindliches CLI-Verhalten:
   „Gesamtbudget überschritten", während `--archive-depth 1` ihn fand.
 - `--extract` materialisiert Trefferpfade mit `!/`-Notation in einem temporären
   Ordner. Öffnen, Finder-Anzeige und Drag-and-drop müssen dieselbe Datei sehen.
+  Ein Ordner-Eintrag wirft in JEDEM Format `DirectoryMemberError` und nennt
+  den Grund, statt eines allgemeinen Lesefehlers. Bei 7z, ISO und tar.zst
+  packt `bsdtar -xOnf` aus (`-n`, sonst liefert ein Ordner alle Dateien
+  darunter); erst bei null Bytes fragt `bsdtar_member_is_directory()` die
+  Auflistung, denn ein Ordner endet dort wie eine leere Datei mit Status 0.
 - `bsdtar` liest das Eintrags-Argument als **Suchmuster**, nicht als festen Namen.
   Jeder neue `bsdtar`-Aufruf mit einem echten Eintragsnamen muss deshalb durch
   `bsdtar_escape()` — sonst trifft ein Eintrag `a*.txt` auch `abc.txt` und beide
-  Inhalte kommen aneinandergehängt zurück, also ein falscher Treffer ohne Fehler.
+  Inhalte kommen aneinandergehängt zurück, also ein falscher Treffer ohne Fehler;
+  ein führendes `^` würde als Negation gerade den benannten Eintrag ausschließen.
+  `-q` beendet das Auslesen nach dem ersten Treffer, damit doppelte Namen nicht
+  als zusammengehängte Datei erscheinen.
   Die Auflistung von `bsdtar -tf` liest umgekehrt nur `bsdtar_listing_names()`
   (Maskierung zurücknehmen, dann dekodieren, `./` normalisieren) — Suche und
   `--extract` müssen denselben Eintragsnamen sehen, sonst findet `pick_member()`
@@ -332,10 +405,25 @@ Verbindliches CLI-Verhalten:
 ## Swift-Frontends
 
 Beide Apps sind programmatische AppKit-Frontends ohne Xcode-Projekt.
-`HitIdentity` besteht aus `filesystemPath` und `archiveMembers`. Deduplikation,
-Auswahlerhalt und Entfernen aus der Trefferliste verwenden diese Identität,
+`NSStackView(views:)` kann eine Ansicht beim Einhängen wieder sichtbar machen,
+obwohl ihr `isHidden` vorher gesetzt wurde. Den anfänglichen Sichtbarkeitszustand
+deshalb erst nach dem Einfügen in den Stack setzen und im App-Selbsttest prüfen.
+Ein umbrechendes Label in einem Popover braucht außerdem eine feste Breite oder
+eine gleichwertige Layout-Constraint; ohne sie kann AppKit den Inhalt als schmalen
+Balken anordnen.
+`HitIdentity` besteht aus `filesystemPath`, `archiveMembers` und
+`archiveMemberBytes`. Deduplikation,
+Auswahlerhalt, Entfernen aus der Trefferliste und die Schlüssel von
+Auspack-Zwischenspeicher und -Aufträgen (`MaterializationManager`) verwenden
+diese Identität,
 niemals den menschenlesbaren `Hit.path`: Ein Mitgliedsname darf selbst `!/`
-enthalten. Anzeige und Export behalten ihren bisherigen Pfadtext.
+enthalten. Und niemals den ganzen `Hit`-Wert: Anzeige und Suchbelege
+(`line`, `terms`, `width`, `modified`) ändern sich mit der Suche, das
+Objekt dahinter nicht. Bis 0.34.14 waren derselbe Archiv-Eintrag aus einer
+Namenssuche und aus einer Inhaltssuche zwei Cache-Einträge, zwei
+Unterprozesse und zwei Temp-Ordner — gegen die Zusage, dass gleichzeitige
+Anforderungen desselben Treffers EINEN Unterprozess und dieselbe Datei
+teilen. Anzeige und Export behalten ihren bisherigen Pfadtext.
 `common/FavenioCore.swift` enthält das Hit-Modell, JSONL-Parsing,
 Unterprozessaufrufe und den `MaterializationManager`. Änderungen am
 JSONL-Schema zuerst im Kern und in gemeinsamen Tests spezifizieren, dann beide
@@ -347,11 +435,38 @@ zeigen" und „Pfad kopieren" gibt es genau einmal. Was eine App anders macht
 (wohin eine Meldung geht: `presentActionIssue`), überschreibt sie. Eine
 Korrektur an einem dieser Mechanismen gehört in die Basisklasse — bis 0.28.1
 liefen die beiden Kopien auseinander, ein Wächter-Test verbietet neue Kopien.
+Seit 0.34.17 gehören dazu auch der Aufbau des Rechtsklick-Menüs
+(`populateHitMenu`, die Haupt-App hängt ihre Listen-Aktionen dahinter an),
+der Zellbau samt Bereichsprüfung (`hitCell`), das Schließen einer offenen
+Vorschau (`closeOpenPreview`, genutzt von beiden Tastaturmonitoren, von
+`previewPanel(_:handle:)` und von `clearHits`) und die Normalisierung der
+Zusatztasten (`plainModifiers(of:)`). Die letzte Kopie war schon
+auseinandergelaufen: Die Haupt-App verlangte für ⎋ und die Leertaste
+ausdrücklich keine Zusatztaste, die Schnellsuche prüfte gar nicht — dort
+lösten deshalb auch ⇧⎋ und ⌥⎋ aus.
+„Öffnen mit" bietet nur Anwendungen an, die JEDEN Treffer der wirksamen
+Zeilenmenge öffnen (`commonApplicationsFor`). Diese Schnittmenge läuft je
+ENDUNG, nicht je Treffer — beides: die LaunchServices-Abfrage und das
+Schneiden selbst. Eine Endung, gegen die schon geschnitten wurde, kann
+nichts mehr wegnehmen, denn die Menge ist seither nur kleiner geworden.
+Bis 0.34.11 schnitt jeder Treffer erneut: bei 100 000 gleichartigen
+Treffern 11,9 s statt 0,08 s, auf dem Main-Thread beim Öffnen des
+Rechtsklick-Menüs (gemessen 2026-09-10, Ergebnis beide Male dieselben 31
+Anwendungen). Dieselbe Fehlerklasse wie beim `TypeDescriptionCache`: nicht
+die Abfrage war teuer, sondern die Arbeit je Treffer drumherum.
+`tests/test_swift_guards.py::CommonApplicationsTest` führt die alte Fassung
+mit und vergleicht die Anwendungslisten.
 
 Beide Apps LESEN stderr des Kerns mit, statt ihn zu verwerfen
 (`SearchDiagnostics`). Dort steht, WAS schiefging — „--metadata braucht
 exiftool", „ungültiger regulärer Ausdruck" —, und jede Warnung über ein
-übersprungenes Objekt. Bis 0.27.1 hing die Pipe auf `nullDevice`: Die
+übersprungenes Objekt. Nennt der Kern keinen Grund, gilt bei einem
+gescheiterten Lauf ersatzweise die erste stderr-Zeile OHNE Favenio-Präfix
+(seit 0.34.22): `/usr/bin/python3` ist ein Apple-Stummel, der ohne
+akzeptierte Xcode-Lizenz „You have not agreed to the Xcode license
+agreements" schreibt und mit Status 69 endet, ohne den Kern zu starten —
+beide Apps zeigten dafür nur „Suche fehlgeschlagen (Status 69)"
+(belegt 2026-09-15; Abhilfe `sudo xcodebuild -license accept`). Bis 0.27.1 hing die Pipe auf `nullDevice`: Die
 Haupt-App zeigte nur „Suche fehlgeschlagen.", die Schnellsuche riet zu einer
 Neuinstallation, die nichts half. Drei Eigenschaften sind dabei Pflicht und
 je durch eine Wache festgehalten:
@@ -377,13 +492,39 @@ eine `version`; eine höhere wird mit Nummer abgelehnt, unbekannte Felder
 derselben Version werden überlesen. In der Haupt-App gibt es genau EINE
 Stelle, die eine Konfiguration in die Oberfläche schreibt
 (`applyConfiguration`); Quick-Übergabe und `applyTemplate` gehen beide
-hindurch. Laden startet keine Suche und behält bei fehlendem Ordner den
-aktuellen (`missingRootMessage` in der Fußzeile). `RegexTemplate` bleibt
+hindurch. `applyTemplate` färbt danach ausdrücklich nach
+(`recolorRegexField`), denn `applyConfiguration` färbt zuletzt — aber noch
+den ALTEN Feldinhalt; ein geladenes Regex-Muster stand sonst bis zum
+nächsten Tastendruck ungefärbt da. Und es stoppt über
+`stopSearchForChangedCriteria()`, nicht über `stopSearch()`: Das ließe bis
+zu 150 ms Nachschub unsichtbar in `pending` liegen, obwohl die Trefferliste
+stehen bleibt. Laden startet keine Suche und behält bei fehlendem Ordner den
+aktuellen (`missingRootMessage` in der Fußzeile). Ein Vorlagenfehler
+(`templateFailure`) steht NEBEN dem Zustand der Suche, nicht in ihm:
+`refreshStatus` stellt ihn dem Suchtext voran, statt `searchPhase` auf
+`.failed` zu setzen. Bis 0.34.8 tat er genau das — ein abgelehnter
+Vorlagenname überschrieb damit den Fehler der letzten Suche, und das
+anschließend gelungene Sichern setzte den Zustand auf `.idle`: Der
+Suchfehler war endgültig weg, und eine laufende Suche verschwand aus der
+Fußzeile. Zurückgenommen wird die Meldung nur von einer gelungenen
+Vorlagenaktion oder vom nächsten Suchstart. Die Namensprüfung sitzt
+deshalb in `storeTemplate()` und nicht im Dialog: Dialog und
+Headless-Selbsttest prüfen denselben Speicherpfad. `RegexTemplate` bleibt
 davon getrennt eine Einfügehilfe fürs Suchfeld. Pixeltexte bleiben bis zur Validierung unverändert:
 Ein URL-Wert `10.5` darf niemals still zu einer leeren Grenze werden.
 `FactFilterOption.all` beschreibt die sechs Größen-/Datumseingaben EINMAL
 für UI, CLI-Argumente, URL und Zusammenfassung. Werte bleiben rohe Texte;
-ausschließlich Python validiert Bytes und Zeitpunkte. `hasPositiveFilter`
+ausschließlich Python validiert Bytes und Zeitpunkte. `SearchFilterView`
+fasst die Einträge nach ihrer `group` zusammen, nicht paarweise nach Index:
+`all[index...index + 1]` setzte eine gerade Anzahl voraus, und ein siebter
+Eintrag ließe beide Apps beim Aufbau der Filteransicht abstürzen.
+`--metadata-field` geht nur im Metadaten-Modus mit; der Kern liest
+`metadata_mode = args.metadata or bool(args.metadata_field)`, ein Feld ohne
+`--metadata` ließe ihn im Namens-Modus stillschweigend Metadaten
+durchsuchen und mit `--content` mit Exit 2 enden. Bis 0.34.17 hing das nur
+an `hasPattern` und war allein davon verdeckt, dass die Haupt-App außerhalb
+des Modus `nil` liefert — die Invariante gehört in die gemeinsame Quelle,
+nicht in eine der Apps. `hasPositiveFilter`
 zählt Maße, nichtleere Faktenfilter oder weitere Suchbegriffe, niemals
 Ausschlüsse allein.
 `SearchFilterView` enthält die sechs Felder, das mehrzeilige Feld „Weitere
@@ -391,10 +532,18 @@ Begriffe" (`termsEditor`, einer je Zeile → `SearchConfiguration.terms`,
 CLI `--term=`, URL `term`) und das mehrzeilige Ausschlussfeld
 beider Apps — zweispaltig: links die drei Von/Bis-Zeilen mit fester
 Feldbreite, rechts das Ausschlussfeld (Platzhalter aus `PlaceholderTextView`,
-?-Knopf mit Popover aus `exclusionHelpText`). Die Haupt-App zeigt die ganze
+?-Knopf mit Popover aus `exclusionHelpText`). BEIDE Apps zeigen die ganze
 Ansicht und die Bildmaße-Zeile erst nach dem Aufklapp-Schalter „Weitere Filter"
-(`setFiltersExpanded`, Zustand in `UserDefaults`); zugeklappt nennt der
-Titel die Zahl gesetzter Filter, eine Übergabe mit Filtern klappt auf. Leere
+(`FilterDisclosure` im Kern, Zustand in `UserDefaults`, je App ein eigener
+Schlüssel; die Schnellsuche seit 0.34.22); zugeklappt nennt der
+Titel die Zahl gesetzter Filter (ein Maßfeld nur, wenn `PixelLimitInput` es
+nicht als leer wertet), eine Übergabe mit Filtern klappt in der
+Haupt-App auf. Die Maßfelder starten eine Suche nur mit Return, nicht beim
+Fokusverlust (`sendsActionOnEndEditing = false`): Sonst suchte schon ein
+Klick in die Trefferliste oder das Zuklappen neu und leerte die Liste.
+In der Schnellsuche teilen sich Schalter, Spinner, Infozeile
+und „Alle in Favenio" EINE Zeile — jede Zeile über der Tabelle kostet
+Trefferzeilen im Panel. Leere
 Zeilen entfallen, Leerraum bleibt Musterbestandteil; die URL trägt wiederholte
 `exclude`-Parameter. Der direkte Start-Fallback übergibt dieselbe URL.
 
@@ -411,7 +560,18 @@ Temporaries werden je JSONL-Zeile freigegeben. Nur der synchrone Headless-
 Adapter `runSearchStreaming` wartet; die Frontends tun das nie.
 
 Dasselbe gilt fürs Auspacken von Archivtreffern (`MaterializationManager`,
-seit 0.32.0): `request(hit)` startet den Kern im Hintergrund und liefert
+seit 0.32.0). Auch die MENGE gleichzeitiger Aufträge ist begrenzt
+(`maximumConcurrentExtractions`, eine `OperationQueue` mit
+`maxConcurrentOperationCount`): Eine einzige Nutzeraktion auf einer großen
+Auswahl erzeugt einen Auftrag je Archivtreffer, und jeder blockiert in
+`readDataToEndOfFile()` plus `waitUntilExit()`. Ohne Deckel wuchs der
+GCD-Threadpool bis an seine Decke — 200 Einträge mit einer 3-s-Attrappe
+waren nach 9,3 s fertig, also rund 64 gleichzeitig, und mit dem echten
+Kern lief die Spitze auf 25 Python-Prozesse. Getroffen hat es die Suche,
+die denselben globalen Pool nimmt: erster Treffer nach 5,19 s statt
+0,02 s (gemessen 2026-09-10). Ein Semaphor auf einer nebenläufigen
+`DispatchQueue` wäre der falsche Weg — er blockierte genau die Threads,
+die er sparen soll. `request(hit)` startet den Kern im Hintergrund und liefert
 `ready(URL)`, `failed(Grund)` oder `cancelled` auf der Main-Queue — sofort
 und synchron nur, wenn die Datei ohne Auspacken feststeht (`knownURL`:
 normale Datei, schon ausgepackter Eintrag). Bis 0.31.4 las `materialize()`
@@ -455,6 +615,18 @@ sichtbare Drag-and-drop-Test am Fenster steht noch aus (eigene Freigabe).
 Die Haupt-App streamt Treffer, erhält die Auswahl bei neuen Ergebnissen und
 bietet Öffnen, Öffnen mit, Finder-Anzeige, Pfadkopie, Quick Look und Drag-and-
 drop. Der `--selftest`-Pfad ist die automatische Grenze zwischen GUI und Kern.
+
+In BEIDEN Apps startet erst Return die Suche, nicht das Tippen: Das
+Suchfeld setzt `sendsWholeSearchString = true` und
+`sendsSearchStringImmediately = false`. Ohne diese beiden Werte schickt
+`NSSearchField` seine Action von selbst, rund 0,45 s nach jeder
+Tipppause — „Rechnung*" mit normalen Denkpausen getippt feuerte dreimal
+(gemessen 2026-09-10). In der Haupt-App leert jeder dieser Aufrufe über
+`startSearch` die sichtbare Trefferliste und schießt den laufenden
+Kernprozess ab, um für zwei Zeichen einen neuen zu starten; ihr
+Platzhalter verspricht das Gegenteil, und die Entprellung der
+Schnellsuche (0,6 s) gibt es dort nicht. Bis 0.34.12 fehlten die Zeilen
+in der Haupt-App.
 
 Beide Apps tragen den Umschalter **Name | Inhalt | Metadaten**
 (`SearchTextMode`, `modeControl`) und vier Maßfelder (Breite/Höhe je
@@ -530,7 +702,12 @@ einen lokalen Datumsformatter je Export; JSONL begrenzt die Lebensdauer von
 Foundation-Zwischenobjekten auf eine Zeile. Die GUI erlaubt
 höchstens einen Sichern-Dialog oder Exportjob gleichzeitig. Exportstatus wird
 in `refreshStatus` an den AKTUELLEN Suchstatus angehängt, niemals direkt über
-dessen Text geschrieben. Eine neue Suche oder deren Fehler darf auch nach
+dessen Text geschrieben. Die Fußzeile selbst hat GENAU EINEN Schreiber
+(`showStatus`, seit 0.34.19): Text und Tooltip gehören zusammen, weil das
+Feld in der Mitte kürzt und der Tooltip das Ganze zeigt — vorher setzten
+`presentActionIssue`, `removeFromResults` und `trashSelected` nur den Text,
+und daneben stand weiter der Tooltip der alten Kennzahlenzeile. Die
+Schnellsuche hat dafür längst `showInfo`. Eine neue Suche oder deren Fehler darf auch nach
 einem späten Exportabschluss sichtbar bleiben. Die komplette Ausgabe wird
 weiterhin als `Data` aufgebaut; dies ist kein speicherbegrenzter Streamingexport.
 
@@ -624,6 +801,16 @@ Interpreter, dessen Verhalten vom Python der Login-Shell abweichen kann.
 Icons, signiert je nach verfügbarer Identität und führt die Headless-Selbsttests
 aus. Eine Installation ersetzt weder einen Test noch einen Commit.
 
+Erfolgskriterium der beiden Selbsttests ist ihre Schlusszeile `SELFTEST OK`,
+nicht ihr Exit-Status (`run_selftest` in `build-app.sh`). `NSApp.terminate(nil)`
+beendet den Prozess nämlich mit Status 0: Ein Selbsttest, der unterwegs
+darüber stirbt, ist am Status nicht von einem bestandenen zu unterscheiden.
+Am 2026-09-10 belegt — mit zurückgenommenem `windowWillClose`-Fix der
+Schnellsuche meldete `build-app.sh` Erfolg, während deren Selbsttest mitten
+im Lauf endete. Deshalb darf jede App ihre OK-Zeile genau einmal und als
+letzte Handlung ausgeben; `tests/test_build_safety.py::SelfTestGateTest`
+hält beides fest.
+
 Die drei Skripte sind bewusst getrennt und dürfen nicht zusammenwachsen:
 
 | Skript | Aufgabe | Fasst `/Applications` an |
@@ -665,6 +852,27 @@ abgelehnt (entschieden 2026-08-03). Exit 2 heißt in jedem Fall: installierter
 Stand unverändert — auch dann, wenn ein Werkzeug mit einem anderen Status
 abbricht. Exit 3 heißt: Der Rollback blieb unvollständig; stderr nennt die
 verbleibenden Pfade und den Zustand, der manuell geklärt werden muss.
+Zu „in jedem Fall" gehört auch SIGPIPE: In zsh läuft der EXIT-Trap dabei
+so wenig mit wie bei SIGTERM (gemessen 2026-09-10), deshalb steht `PIPE` in
+der Signalliste beider Skripte. Und der Fortschritt der Transaktion geht
+nach stderr, nicht nach stdout — `install.sh | head` löste sonst mitten im
+Austausch SIGPIPE aus und ließ Sperre, Ablage- und Sicherungsordner im
+Zielordner liegen, bis jemand sie von Hand entfernte. Beides allein reichte
+nicht für `2>&1 | head`: Trifft SIGPIPE ein EINGEBAUTES `echo`, führt zsh 5.9
+den Trap mitten in stdio aus — in einer Funktion lief er endlos, im EXIT-Trap
+hing ein externes Kommando mit Umleitung (`hdiutil detach … 2>/dev/null`;
+gemessen 2026-09-17). Deshalb ist `echo` in `notarize-lib.sh` auf `/bin/echo`
+umgelenkt: Jede Ausgabe schreibt ein Kindprozess, die Shell bekommt kein
+SIGPIPE. `print`/`printf` nur innerhalb von `$(...)`; `trap '' PIPE` ist kein
+Ersatz (danach lieferten spätere `$(...)` Status 141). Ein gescheitertes
+`mv` bedeutet, dass das Bundle NICHT am Zielpfad liegt: Der vorsorglich
+notierte Eintrag wird dann wieder herausgenommen, sonst hielte der Rollback
+einen gleichnamigen Fremdkörper für ein fremdes Bundle und meldete 3 statt
+2. `notarize_require_credentials` lehnt außerdem die Ad-hoc-Kennung `-`
+ab — sie ist genau der Wert, den `build-app.sh` als „keine Developer-ID"
+liest, und geerbt aus der CI-Umgebung kam sie bis 0.34.19 durch das Tor und
+verbrauchte einen Notary-Vorgang für einen Fehler, den das Tor früh melden
+soll.
 
 `install.sh` und `release.sh` lehnen geerbte `SPARKLE_FEED_URL` und
 `FAVENIO_SPARKLE_TEST_VERSION` gleich zu Beginn ab — VOR dem Bauen

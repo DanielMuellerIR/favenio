@@ -39,6 +39,19 @@ struct ConfigurationProbe {
         precondition(args.filter { $0.hasPrefix("--exclude=") }
             .map { String($0.dropFirst("--exclude=".count)) } == original.exclusions)
         precondition(args.contains("1000") && args.contains("--metadata"))
+        precondition(args.contains("--metadata-field") && args.contains("Title"))
+        // Das Feld gehoert NUR in den Metadaten-Modus. Der Kern liest
+        // `metadata_mode = args.metadata or bool(args.metadata_field)`: Ein
+        // Feld ohne `--metadata` liesse ihn im Namens-Modus stillschweigend
+        // Metadaten durchsuchen, mit `--content` endete er mit Exit 2.
+        for other in [SearchTextMode.name, .content] {
+            var strayField = decoded
+            strayField.mode = other
+            let strayArgs = strayField.arguments(pattern: "Winter", root: "/fixture")!
+            precondition(!strayArgs.contains("--metadata-field"),
+                         "Metadatenfeld erreicht den Kern im Modus \(other)")
+            precondition(!strayArgs.contains("--metadata"))
+        }
         precondition(args.filter { $0.hasPrefix("--term=") }
             .map { String($0.dropFirst("--term=".count)) } == original.terms)
         // Mehrwortsuche gegen den echten Kern: beide Begriffe in EINER Datei

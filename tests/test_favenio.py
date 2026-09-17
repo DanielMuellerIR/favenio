@@ -409,6 +409,14 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(code, 2)
         self.assertIn("negativ", err)
 
+    def test_archive_depth_rejects_a_stack_unsafe_value(self):
+        # Bei ungefähr 330 verschachtelten Zips brach CPython auf macOS im
+        # C-Stack mit Exit 134 ab, bevor main() den Fehler fangen konnte.
+        code, _, err = run(["GEHEIMNIS", self.root, "--archive-depth",
+                            str(favenio.MAX_ARCHIVE_DEPTH + 1)])
+        self.assertEqual(code, 2)
+        self.assertIn("höchstens %d" % favenio.MAX_ARCHIVE_DEPTH, err)
+
     def test_archive_depth_zero_still_means_no_archives(self):
         # 0 bleibt ausdrücklich erlaubt und muss genau wirken wie
         # --no-archives: Treffer in normalen Dateien ja, in Archiven nein.
@@ -425,6 +433,45 @@ class FavenioTest(TempTreeTest):
         self.assertEqual(full_code, 0)
         self.assertTrue([line for line in full_lines if "!/" in line],
                         full_lines)
+
+    def test_an_oversized_python_tar_catalog_is_stopped(self):
+        # ArchiveBudget zählt Eintragsinhalte, nicht die TarInfo-Objekte des
+        # Katalogs. Die kleine Testgrenze belegt den frühen Abbruch, ohne ein
+        # Archiv mit zehntausenden Einträgen bauen zu müssen.
+        archive_path = os.path.join(self.root, "katalog.tar.gz")
+        with tarfile.open(archive_path, "w:gz") as archive:
+            for index in range(3):
+                data = (b"KATALOG_LIMIT\n" if index == 2 else b"leer\n")
+                info = tarfile.TarInfo("datei-%d.txt" % index)
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        plain = self.write("danach-katalog.txt", "KATALOG_LIMIT\n")
+
+        previous = favenio.MAX_TAR_MEMBERS
+        favenio.MAX_TAR_MEMBERS = 2
+        try:
+            code, lines, err = run(["--content", "KATALOG_LIMIT",
+                                    self.root])
+        finally:
+            favenio.MAX_TAR_MEMBERS = previous
+        self.assertEqual(code, 0, err)
+        self.assertEqual(lines, [plain + ":1"])
+        self.assertIn("mehr als 2 Tar-Einträge", err)
+
+        # Derselbe Katalogwächter gilt beim Materialisieren. getmember()
+        # würde den vollständigen Tar-Katalog sonst erneut unbegrenzt laden.
+        previous = favenio.MAX_TAR_MEMBERS
+        favenio.MAX_TAR_MEMBERS = 2
+        try:
+            code, lines, err = run(["--extract-json", json.dumps({
+                "filesystemPath": archive_path,
+                "archiveMembers": ["datei-0.txt"],
+            })])
+        finally:
+            favenio.MAX_TAR_MEMBERS = previous
+        self.assertEqual(code, 2)
+        self.assertEqual(lines, [])
+        self.assertIn("mehr als 2 Tar-Einträge", err)
 
     # ---------- Inhaltssuche ----------
 
@@ -1148,6 +1195,36 @@ class SingleCompressionTest(TempTreeTest):
         paths = [json.loads(line)["path"] for line in with_flag[1]]
         self.assertTrue(any(p.endswith("daten.zst") for p in paths), paths)
 
+    def test_a_wrong_format_matches_no_archives_for_every_extension(self):
+        """Die vierte Fassung derselben Regel, jetzt für ALLE Formate.
+
+        Bis 0.34.9 kannten nur `BadZipFile` und `ReadError` den Rückfall
+        auf „ganz normale Datei" — also nur Zip und Tar. Eine Textdatei
+        namens `notes.7z`, `image.iso`, `blob.zst` oder `notiz.gz` fiel
+        deshalb mit Warnung aus der Suche, während dieselbe Datei ohne
+        installiertes bsdtar/zstd ganz normal durchsucht wurde. Genau der
+        Zufall der installierten Werkzeuge, den der Vertrag ausschließt."""
+        names = ("notiz.gz", "sicherung.bz2", "log.xz", "blob.zst",
+                 "notes.7z", "image.iso", "backup.tar.zst", "paket.zip",
+                 "band.tar", "archiv.tar.gz", "server.key", "buch.epub")
+        for name in names:
+            self.write_bytes(name, b"kein archiv, nur MERKMAL im Klartext\n")
+        # Ohne bsdtar/zstd zählen 7z, ISO und tar.zst gar nicht erst als
+        # Archiv; der Test ist dann nur noch die Gegenprobe. Diese Zusage
+        # hält fest, dass er auf einer ausgestatteten Maschine wirklich den
+        # neuen Rückfall prüft.
+        if have_bsdtar():
+            self.assertEqual(favenio.classify_archive("notes.7z"), "bsdtar")
+        mit = run(["--json", "--content", "MERKMAL", self.root])
+        ohne = run(["--json", "--no-archives", "--content", "MERKMAL",
+                    self.root])
+        self.assertEqual(mit[0], 0, mit[2])
+        self.assertEqual(mit[2].strip(), "")     # keine einzige Warnung
+        self.assertEqual(sorted(mit[1]), sorted(ohne[1]))
+        found = sorted(os.path.basename(json.loads(line)["path"])
+                       for line in mit[1])
+        self.assertEqual(found, sorted(names))
+
     def test_gz_inside_zip_needs_depth_2(self):
         archive = os.path.join(self.root, "paket.zip")
         with zipfile.ZipFile(archive, "w") as zf:
@@ -1228,14 +1305,85 @@ class SingleCompressionTest(TempTreeTest):
         self.assertEqual(code, 2)
         self.assertIn("fehler", err)
 
-    def test_corrupt_gz_warns_and_search_continues(self):
-        self.write_bytes("kaputt.gz", b"das ist kein gzip")
-        self.write("klartext.txt", "hier NADEL im Klartext\n")
-        code, lines, err = run(["--json", "--content", "NADEL", self.root])
-        self.assertEqual(code, 0)   # der Klartext-Treffer bleibt
-        self.assertIn("kaputt.gz", err)
-        paths = [json.loads(line)["path"] for line in lines]
-        self.assertFalse(any("kaputt" in p for p in paths))
+    def test_text_with_a_gz_name_is_an_ordinary_file(self):
+        """Die Endung ist ein Hinweis, keine Zusage.
+
+        Ohne gzip-Hülle am Anfang ist die Datei gar kein Archiv, sondern
+        eine ganz normale Datei — genau wie mit `--no-archives`. Bis
+        0.34.9 kam stattdessen eine Warnung, die Datei fiel aus der Suche,
+        und eine reine Namenssuche zeigte obendrein den Phantom-Eintrag
+        `notiz.gz!/notiz`, den `--extract` nie auflösen kann."""
+        path = self.write_bytes("notiz.gz", b"hier NADEL im Klartext\n")
+        code, lines, err = run(["--json", "--content", "NADEL", path])
+        self.assertEqual(code, 0)
+        self.assertEqual(err.strip(), "")
+        records = [json.loads(line) for line in lines]
+        self.assertEqual([record["path"] for record in records], [path])
+        self.assertEqual(records[0]["type"], "file")
+        # Kein Phantom-Mitglied in der Namenssuche.
+        code, lines, err = run(["notiz*", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(lines, [path])
+        # Und dasselbe Ergebnis wie ohne Archivabstieg.
+        code, ohne, _ = run(["--no-archives", "--content", "NADEL", path])
+        self.assertEqual(code, 0)
+        self.assertEqual(ohne, [path + ":1"])
+
+    def test_an_envelope_without_a_tar_is_read_as_single_compression(self):
+        """`gzip -c notiz.txt > notiz.tar.gz` ist ein gueltiges gzip ohne
+        Tar darin — ein verbreiteter Benennungsfehler.
+
+        Bis 0.34.13 fiel die Datei mit der Warnung „beschädigtes Archiv"
+        aus der Suche: `ARCHIVE_SIGNATURES["tar"]` zählt die Hüllen gzip,
+        bzip2 und xz mit, weil `tarfile` die Kompression selbst erkennt —
+        diese Bytes kündigen aber nur die HÜLLE an, kein Tar. Als
+        `rein.gz` benannt fand favenio denselben Inhalt.
+
+        Suche und `--extract` müssen dabei denselben Eintragsnamen
+        sehen, sonst ist ein gefundener Treffer nicht auszupacken."""
+        text = "erste Zeile\nzweite Zeile mit NADEL\n"
+        for name, member, pack in (
+            ("notiz.tar.gz", "notiz.tar", gzip.compress),
+            ("bericht.tar.bz2", "bericht.tar", bz2.compress),
+            ("log.tar.xz", "log.tar", lzma.compress),
+        ):
+            with self.subTest(datei=name):
+                path = self.write_bytes(name, pack(text.encode("utf-8")))
+                code, lines, err = run(["--json", "--content", "NADEL", path])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(err.strip(), "")
+                record = json.loads(lines[0])
+                self.assertEqual(record["path"], path + "!/" + member)
+                self.assertEqual(record["line"], 2)
+                code, lines, err = run(["--extract", path + "!/" + member])
+                self.assertEqual(code, 0, err)
+                with open(lines[0], encoding="utf-8") as handle:
+                    self.assertEqual(handle.read(), text)
+                os.unlink(path)
+
+    def test_a_real_tar_gz_and_a_tgz_keep_their_behaviour(self):
+        """Die Gegenproben: Ein echtes tar.gz wird weiter als Tar gelesen,
+        und `.tgz` bleibt bei der Warnung — `single_member_name()` schneidet
+        die Endung ab, `notiz.tgz` ergäbe mit „.gz" den Eintrag `notiz.t`."""
+        text = "erste Zeile\nzweite Zeile mit NADEL\n"
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            data = text.encode("utf-8")
+            info = tarfile.TarInfo("ordner/brief.txt")
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+        echt = self.write_bytes("echt.tar.gz", buffer.getvalue())
+        code, lines, err = run(["--json", "--content", "NADEL", echt])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(lines[0])["path"],
+                         echt + "!/ordner/brief.txt")
+        os.unlink(echt)
+        tgz = self.write_bytes("alt.tgz", gzip.compress(text.encode("utf-8")))
+        code, lines, err = run(["--content", "NADEL", tgz])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("beschädigtes Archiv", err)
+        os.unlink(tgz)
 
     def test_truncated_gz_warns_without_traceback(self):
         blob = gzip.compress(("NADEL " + "x" * 4096).encode("utf-8"))
@@ -1554,6 +1702,17 @@ class BsdtarFormatsTest(TempTreeTest):
         with open(lines[0], encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "x\n")
 
+    def test_a_leading_caret_in_member_name_stays_literal(self):
+        # libarchive behandelt ein führendes ^ als Negation des Musters.
+        archive = self.make_archive("caret.7z", "7zip",
+                                    {"^bericht.txt": "richtig\n",
+                                     "anderer.txt": "falsch\n"})
+        code, lines, err = run(["--extract",
+                                archive + "!/^bericht.txt"])
+        self.assertEqual(code, 0, err)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "richtig\n")
+
     def test_extract_finds_a_member_with_control_character_and_bang(self):
         # Suche und --extract müssen die Auflistung von `bsdtar -tf` gleich
         # lesen. Der Eintragsname trägt hier beides: ein maskiertes
@@ -1641,15 +1800,37 @@ class BsdtarFormatsTest(TempTreeTest):
         with open(lines[0], encoding="utf-8") as handle:
             self.assertEqual(handle.read(), self.CONTENT)
 
-    def test_corrupt_7z_warns_and_search_continues(self):
-        with open(os.path.join(self.root, "kaputt.7z"), "wb") as handle:
-            handle.write(b"das ist kein 7z")
-        self.write("klartext.txt", "hier NADEL im Klartext\n")
+    def test_text_with_a_7z_name_is_an_ordinary_file(self):
+        """Ohne 7z-Signatur ist die Datei kein Archiv, sondern eine ganz
+        normale Datei — dasselbe Ergebnis wie auf einem Rechner ohne
+        bsdtar. Bis 0.34.9 entschied genau hier der Zufall der
+        installierten Werkzeuge darüber, ob die Datei überhaupt angefasst
+        wurde."""
+        with open(os.path.join(self.root, "notiz.7z"), "wb") as handle:
+            handle.write(b"hier NADEL im Klartext\n")
         code, lines, err = run(["--json", "--content", "NADEL", self.root])
         self.assertEqual(code, 0)
+        self.assertEqual(err.strip(), "")
+        self.assertEqual([json.loads(line)["path"] for line in lines],
+                         [os.path.join(self.root, "notiz.7z")])
+
+    def test_a_truncated_7z_warns_and_search_continues(self):
+        """Mit Signatur IST es ein 7z — dann ist ein Öffnungsfehler ein
+        beschädigtes Archiv und eine Warnung wert, kein stiller Rückfall
+        auf die Rohbytes."""
+        archive = self.make_archive("ganz.7z", "7zip",
+                                    {"docs/brief.txt": self.CONTENT})
+        with open(archive, "rb") as handle:
+            blob = handle.read()
+        with open(os.path.join(self.root, "kaputt.7z"), "wb") as handle:
+            handle.write(blob[:len(blob) // 3])
+        os.unlink(archive)
+        self.write("klartext.txt", "hier NADEL im Klartext\n")
+        code, lines, err = run(["--json", "--content", "NADEL", self.root])
+        self.assertEqual(code, 0)   # der Klartext-Treffer bleibt
         self.assertIn("kaputt.7z", err)
         paths = [json.loads(line)["path"] for line in lines]
-        self.assertFalse(any("kaputt" in p for p in paths))
+        self.assertFalse(any("kaputt" in path for path in paths))
 
     def test_member_budget_applies_to_7z(self):
         archive = self.make_archive("arch.7z", "7zip",
@@ -1697,6 +1878,33 @@ class ZstdFormatsTest(TempTreeTest):
         self.assertTrue(record["path"].endswith(
             "backup.tar.zst!/sicherung/alt.txt"))
         self.assertEqual(record["line"], 2)
+        # Ein echtes Tar in der Hülle bleibt auch beim Auspacken ein Tar
+        # (die Hüllenregel darf nur greifen, wenn bsdtar es nicht liest).
+        code, lines, err = run(["--extract", record["path"]])
+        self.assertEqual(code, 0, err)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+
+    def test_duplicate_tar_zst_names_use_only_the_first_entry(self):
+        # bsdtar schreibt ohne -q ALLE gleichnamigen Einträge hintereinander.
+        # Die Trefferidentität kann diese Duplikate nicht unterscheiden;
+        # Suche und Extraktion verwenden deshalb konsistent den ersten.
+        tar_bytes = io.BytesIO()
+        with tarfile.open(fileobj=tar_bytes, mode="w") as archive:
+            for data in (b"ERSTER\n", b"ZWEITER MIT NADEL\n"):
+                info = tarfile.TarInfo("doppelt.txt")
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        packed = self.compress(tar_bytes.getvalue(), "doppelt.tar.zst")
+
+        code, lines, err = run(["--content", "NADEL", packed])
+        self.assertEqual(code, 1, err)
+        self.assertEqual(lines, [])
+        code, lines, err = run(["--extract",
+                                packed + "!/doppelt.txt"])
+        self.assertEqual(code, 0, err)
+        with open(lines[0], "rb") as handle:
+            self.assertEqual(handle.read(), b"ERSTER\n")
 
     def test_single_zst_content_hit_and_extract(self):
         archive = self.compress(self.CONTENT.encode("utf-8"), "log.txt.zst")
@@ -1710,14 +1918,90 @@ class ZstdFormatsTest(TempTreeTest):
         with open(lines[0], encoding="utf-8") as handle:
             self.assertEqual(handle.read(), self.CONTENT)
 
-    def test_corrupt_zst_warns_without_traceback(self):
-        with open(os.path.join(self.root, "kaputt.txt.zst"), "wb") as handle:
-            handle.write(b"kein zstd")
-        code, lines, err = run(["--content", "NADEL",
-                                os.path.join(self.root, "kaputt.txt.zst")])
+    def test_single_zst_with_skippable_frame_content_hit(self):
+        archive = self.compress(self.CONTENT.encode("utf-8"), "metadata.txt.zst")
+        with open(archive, "rb") as handle:
+            compressed = handle.read()
+        metadata = b"Favenio-Test"
+        skippable = b"\x5f\x2a\x4d\x18" + struct.pack("<I", len(metadata)) + metadata
+        with open(archive, "wb") as handle:
+            handle.write(skippable + compressed)
+
+        code, lines, err = run(["--json", "--content", "--regex", "NADEL", archive])
+        self.assertEqual(code, 0, err)
+        record = json.loads(lines[0])
+        self.assertTrue(record["path"].endswith("metadata.txt.zst!/metadata.txt"))
+        self.assertEqual(record["line"], 2)
+
+    def test_text_with_a_zst_name_is_an_ordinary_file(self):
+        """Ohne Zstandard-Hülle ist die Datei kein Archiv. Sie wird als
+        ganz normale Datei durchsucht, ohne Warnung und ohne den
+        Phantom-Eintrag `notiz.txt.zst!/notiz.txt`."""
+        path = os.path.join(self.root, "notiz.txt.zst")
+        with open(path, "wb") as handle:
+            handle.write(b"hier NADEL im Klartext\n")
+        code, lines, err = run(["--json", "--content", "NADEL", path])
+        self.assertEqual(code, 0)
+        self.assertEqual(err.strip(), "")
+        self.assertEqual([json.loads(line)["path"] for line in lines], [path])
+
+    def test_a_truncated_zst_warns_without_traceback(self):
+        """Mit Hülle IST es ein Zstandard-Strom: abgeschnitten also ein
+        beschädigtes Archiv, das gemeldet und übersprungen wird."""
+        blob = ("NADEL " + "x" * 8192).encode("utf-8")
+        archive = self.compress(blob, "halb.txt.zst")
+        with open(archive, "rb") as handle:
+            packed = handle.read()
+        with open(archive, "wb") as handle:
+            handle.write(packed[:max(8, len(packed) // 2)])
+        code, lines, err = run(["--content", "NADEL", archive])
         self.assertEqual(code, 1)
         self.assertEqual(lines, [])
-        self.assertIn("kaputt.txt.zst", err)
+        self.assertIn("halb.txt.zst", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_a_zst_envelope_without_a_tar_is_read_as_single_compression(self):
+        """Die Hüllenregel aus test_an_envelope_without_a_tar_is_read_as_\
+        single_compression gilt auch für `.tar.zst`: `zstd -c notiz.txt >
+        notiz.tar.zst` fiel bis 0.34.22 mit „bsdtar: …" aus der Suche,
+        während dieselben Bytes als `notiz.tar.gz` gefunden wurden. Suche
+        und `--extract` müssen denselben Eintragsnamen sehen."""
+        path = self.compress(self.CONTENT.encode("utf-8"), "notiz.tar.zst")
+        code, lines, err = run(["--json", "--content", "NADEL", path])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(err.strip(), "")
+        record = json.loads(lines[0])
+        self.assertEqual(record["path"], path + "!/notiz.tar")
+        self.assertEqual(record["line"], 2)
+        code, lines, err = run(["--extract", path + "!/notiz.tar"])
+        self.assertEqual(code, 0, err)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+        # Auch als Archiv im Archiv (Temp-Datei-Weg von bsdtar).
+        with open(path, "rb") as handle:
+            packed = handle.read()
+        outer = os.path.join(self.root, "aussen.zip")
+        with zipfile.ZipFile(outer, "w") as zf:
+            zf.writestr("innen.tar.zst", packed)
+        os.unlink(path)
+        code, lines, err = run(["--json", "--archive-depth", "2",
+                                "--content", "NADEL", outer])
+        self.assertEqual(code, 0, err)
+        member = outer + "!/innen.tar.zst!/innen.tar"
+        self.assertEqual(json.loads(lines[0])["path"], member)
+        code, lines, err = run(["--extract", member])
+        self.assertEqual(code, 0, err)
+        with open(lines[0], encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), self.CONTENT)
+
+    def test_a_tzst_envelope_without_a_tar_keeps_the_warning(self):
+        """Gegenprobe wie bei `.tgz`: `single_member_name()` ergäbe mit
+        „.zst" aus `notiz.tzst` den Eintrag `notiz.t`."""
+        path = self.compress(self.CONTENT.encode("utf-8"), "notiz.tzst")
+        code, lines, err = run(["--content", "NADEL", path])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines, [])
+        self.assertIn("notiz.tzst", err)
 
 
 class ArchiveDirectoryFlagTest(TempTreeTest):
@@ -1757,6 +2041,89 @@ class ArchiveDirectoryFlagTest(TempTreeTest):
         self.assertEqual(code, 0)
         self.assertTrue(records)
         self.assertTrue(all(r.get("isDirectory") for r in records), records)
+
+    def test_extracting_a_directory_entry_names_the_reason(self):
+        """Fund 2026-09-17: `--extract 'paket.zip!/nadel'` — genau der
+        ausgegebene Ordnertreffer — endete mit „There is no item named
+        'nadel' in the archive", obwohl der Eintrag existiert (`nadel/`).
+        Ein Tar meldete nur `'nadel'`. Beide sagen jetzt, dass es ein
+        Ordner-Eintrag ist, und enden weiter mit Exit 2."""
+        tar_path = os.path.join(self.root, "paket.tar")
+        with tarfile.open(tar_path, "w") as archive:
+            info = tarfile.TarInfo("nadel")
+            info.type = tarfile.DIRTYPE
+            archive.addfile(info)
+        for archive in (self.archive, tar_path):
+            member = archive + "!/nadel"
+            with self.subTest(archive=os.path.basename(archive)):
+                code, lines, err = run(["--extract", member])
+                self.assertEqual(code, 2)
+                self.assertEqual(lines, [])
+                self.assertIn("Ordner-Eintrag", err)
+                code, lines, err = run(["--extract-json", json.dumps({
+                    "filesystemPath": archive,
+                    "archiveMembers": ["nadel"]})])
+                self.assertEqual(code, 2)
+                self.assertIn("Ordner-Eintrag", err)
+
+    def bsdtar_archives(self):
+        """Derselbe Baum als 7z, ISO und — mit zstd — als tar.zst:
+        ein Ordner mit Datei, ein leerer Ordner, eine leere Datei."""
+        bsdtar, zstd, _ = favenio.external_archive_tools()
+        staging = os.path.join(self.root, "baum")
+        os.makedirs(os.path.join(staging, "nadel", "leer"))
+        with open(os.path.join(staging, "nadel", "datei.txt"), "w") as out:
+            out.write("inhalt\n")
+        open(os.path.join(staging, "leer.txt"), "w").close()
+        archives = []
+        for name, fmt in (("baum.7z", "7zip"), ("baum.iso", "iso9660")):
+            path = os.path.join(self.root, name)
+            subprocess.run([bsdtar, "-cf", path, "--format", fmt, "-C",
+                            staging, "."], check=True)
+            archives.append(path)
+        if zstd is not None:
+            tar_path = os.path.join(self.root, "baum.tar")
+            subprocess.run([bsdtar, "-cf", tar_path, "--format", "ustar",
+                            "-C", staging, "."], check=True)
+            path = tar_path + ".zst"
+            subprocess.run([zstd, "-q", "--rm", "-o", path, tar_path],
+                           check=True)
+            archives.append(path)
+        return archives
+
+    @unittest.skipUnless(have_bsdtar(), "bsdtar nicht gefunden")
+    def test_extracting_a_bsdtar_directory_entry_names_the_reason(self):
+        """Review-Fund 2026-09-17: In 7z, ISO und tar.zst endete
+        `--extract` auf einen Ordnertreffer mit Exit 0. `bsdtar -xOf`
+        liest den Namen als Muster und schreibt für einen leeren Ordner
+        nichts — materialisiert wurde eine leere Datei —, für einen
+        nicht leeren Ordner sogar alle Dateien darunter aneinander."""
+        for archive in self.bsdtar_archives():
+            for member in ("nadel", "nadel/leer"):
+                with self.subTest(archive=os.path.basename(archive),
+                                  member=member):
+                    code, lines, err = run(["--extract",
+                                            archive + "!/" + member])
+                    self.assertEqual(code, 2, lines)
+                    self.assertEqual(lines, [])
+                    self.assertIn("Ordner-Eintrag", err)
+
+    @unittest.skipUnless(have_bsdtar(), "bsdtar nicht gefunden")
+    def test_an_empty_bsdtar_file_is_still_materialized(self):
+        """Gegenprobe: Eine leere DATEI liefert dieselben null Bytes wie
+        ein Ordner und muss weiter als leere Datei herauskommen."""
+        for archive in self.bsdtar_archives():
+            with self.subTest(archive=os.path.basename(archive)):
+                code, lines, err = run(["--extract",
+                                        archive + "!/leer.txt"])
+                self.assertEqual(code, 0, err)
+                self.assertTrue(os.path.isfile(lines[0]))
+                self.assertEqual(os.path.getsize(lines[0]), 0)
+                code, lines, err = run(["--extract",
+                                        archive + "!/nadel/datei.txt"])
+                self.assertEqual(code, 0, err)
+                with open(lines[0]) as handle:
+                    self.assertEqual(handle.read(), "inhalt\n")
 
     def test_filesystem_directory_is_marked_too(self):
         os.makedirs(os.path.join(self.root, "nadelordner"))

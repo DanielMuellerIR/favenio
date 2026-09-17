@@ -28,6 +28,7 @@ Nur Python-Standardbibliothek, keine Abhängigkeiten.
 """
 
 import argparse
+import base64
 import bz2
 import codecs
 import collections
@@ -53,10 +54,10 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.34.8"
+__version__ = "0.34.24"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-09-08"
+__date__ = "2026-09-17"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -101,6 +102,13 @@ BSDTAR_ZSTD_TAR_EXTENSIONS = (".tar.zst", ".tzst")
 # denn bsdtar erkennt einen rohen zst-Strom nicht als Archiv.
 ZSTD_SINGLE_EXTENSION = ".zst"
 
+# Alle Endungen, die für EINE Datei im Kompressionsmantel stehen. Ihr
+# Eintragsname entsteht allein aus dem Dateinamen, ohne die Datei zu
+# öffnen; deshalb entscheidet bei ihnen die Signatur schon VOR dem
+# Abstieg, ob überhaupt ein Archiv vorliegt (search_archive).
+SINGLE_COMPRESSION_KINDS = tuple(SINGLE_COMPRESSION_OPENERS) \
+    + (ZSTD_SINGLE_EXTENSION,)
+
 # Orte, an denen zstd liegen kann, wenn es nicht im PATH steht (die Apps
 # starten mit dem knappen launchd-PATH ohne Homebrew).
 ZSTD_FALLBACK_CANDIDATES = (
@@ -144,7 +152,12 @@ def bsdtar_escape(member):
     unescaptes „a*.txt" würde auch „abc.txt" treffen und beide
     Inhalte aneinanderhängen. Ein Backslash macht das Zeichen wörtlich
     (verifiziert am 2026-07-29 mit bsdtar 3.5.3)."""
-    return re.sub(r"([\\*?\[\]])", r"\\\1", member)
+    escaped = re.sub(r"([\\*?\[\]])", r"\\\1", member)
+    # libarchive deutet ein Caret nur am Musteranfang als Negation. Ohne
+    # Maskierung findet `^bericht.txt` deshalb gerade NICHT diesen Eintrag.
+    if escaped.startswith("^"):
+        escaped = "\\" + escaped
+    return escaped
 
 
 # Kurzformen, die bsdtar beim AUFLISTEN für Steuerzeichen ausgibt (libarchive
@@ -382,6 +395,125 @@ class ArchiveLimitError(ArchiveReadError):
     """Ein Archivmitglied überschreitet eine konfigurierte Sicherheitsgrenze."""
 
 
+class DirectoryMemberError(ArchiveReadError):
+    """`--extract` zielt auf einen Ordner-Eintrag eines Archivs.
+
+    Die Suche gibt Ordner im Archiv als Treffer aus (`isDirectory: true`);
+    materialisiert wird aber nur eine Datei. Die Apps prüfen das vorher
+    selbst, die CLI nennt den Grund statt eines nackten `KeyError`."""
+
+    def __init__(self, member):
+        super().__init__("Ordner-Eintrag, wird nicht materialisiert: %s"
+                         % member)
+
+
+class OutputClosed(Exception):
+    """Der Leser von stdout oder stderr ist weg (`favenio … | head -1`,
+    `favenio … 2>&1 | head -1`).
+
+    Absichtlich KEIN OSError: `BrokenPipeError` ist einer, und
+    `search_archive()` fängt OSError als Lesefehler eines Archivs ab. Ein
+    geschlossener Leser innerhalb eines Archivs wurde deshalb als Warnung
+    je Archiv gemeldet, und die Suche lief bis zum Ende weiter, ohne dass
+    jemand zuhörte (belegt 2026-09-17). Diese Ausnahme läuft an allen
+    Lesefehler-Fängen vorbei bis zu `main()`."""
+
+
+def write_output(text, flush=False, file=None):
+    """Schreibt eine Zeile nach stdout (mit `file=sys.stderr` nach stderr);
+    ein geschlossener Leser wird zu OutputClosed (siehe dort).
+
+    Auch stderr braucht das: Bei `2>&1 | head -1` trifft die nächste
+    Warnung den geschlossenen Leser, und ein nackter BrokenPipeError aus
+    `warn()` innerhalb eines Archivs wäre wieder ein OSError, den ein
+    Lesefehler-Fang als Warnung behandeln will."""
+    try:
+        print(text, file=file, flush=flush)
+    except BrokenPipeError:
+        raise OutputClosed() from None
+
+
+def discard_closed_output():
+    """Biegt stdout UND stderr auf /dev/null um, nachdem ein Leser weg ist.
+
+    Python leert beim Interpreter-Ende beide Puffer. Steckt in einem noch
+    Text für die geschlossene Pipe, scheitert das erneut — mit „Exception
+    ignored" und Status 120 statt 0/1. Bis 2026-09-17 wurde nur stdout
+    umgebogen; `favenio … 2>&1 | head -1` mit Warnungen endete deshalb
+    weiter mit 120. Ein Strom ohne Dateideskriptor (StringIO in den Tests)
+    bleibt, wie er ist."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+    except OSError:
+        return
+    try:
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                os.dup2(devnull, stream.fileno())
+            except (OSError, ValueError):
+                pass
+    finally:
+        os.close(devnull)
+
+
+def write_result(lines):
+    """Gibt das Ergebnis eines Aufrufs ohne Suchlauf aus (`--extract`,
+    `--list-metadata-fields`). Ein geschlossener Leser ist dort kein
+    Fehler — die Arbeit ist schon getan —, darf aber auch nicht erst beim
+    Interpreter-Ende mit Status 120 auffallen: Deshalb wird hier geleert."""
+    try:
+        for line in lines:
+            write_output(line)
+        sys.stdout.flush()
+    except (OutputClosed, BrokenPipeError):
+        discard_closed_output()
+
+
+def json_safe_text(text):
+    """Ersetzt alleinstehende Surrogatzeichen für gültiges UTF-8-JSON.
+
+    Dateinamenbytes bleiben getrennt als Base64-Identität erhalten; diese
+    Darstellung ist nur für Anzeige und die bisherigen Textfelder."""
+    return re.sub(r"[\ud800-\udfff]", "\ufffd", text)
+
+
+def archive_member_bytes(member):
+    """Kodiert einen internen Archivnamen verlustfrei für JSON und Swift."""
+    raw = member.encode("utf-8", "surrogateescape")
+    return base64.b64encode(raw).decode("ascii")
+
+
+def decode_archive_member(encoded):
+    """Stellt einen Archivnamen aus seiner Base64-Identität wieder her."""
+    raw = base64.b64decode(encoded.encode("ascii"), validate=True)
+    return raw.decode("utf-8", "surrogateescape")
+
+
+def use_locale_independent_streams():
+    """stdout und stderr so einstellen, wie Python sie ohne jede Locale
+    hätte (UTF-8-Modus, so starten die Apps über launchd).
+
+    Ein Dateisystemname mit nicht als UTF-8 lesbaren Bytes kann als
+    Surrogatzeichen ankommen. Unter einer strikten UTF-8-Locale warf
+    `print()` daran `UnicodeEncodeError`, und der GESAMTE Lauf endete mit
+    Exit 2. `surrogateescape` auf stdout hält die Textausgabe robust.
+    Tar-Eintragsnamen bleiben intern per `surrogateescape` verlustfrei;
+    `emit()` trennt für JSONL die UTF-8-sichere Anzeige von der Base64-
+    Identität. So bleibt der Strom gültig und die Extraktion eindeutig.
+    stderr behält Pythons eigene Voreinstellung `backslashreplace` — dort
+    genügt eine lesbare Diagnose —, bekommt aber wie stdout
+    UTF-8 statt der Kodierung einer Nicht-UTF-8-Locale.
+
+    Ein Strom ohne `reconfigure()` (StringIO in den Tests) oder ein schon
+    geschlossener bleibt, wie er ist."""
+    for stream, errors in ((sys.stdout, "surrogateescape"),
+                           (sys.stderr, "backslashreplace")):
+        try:
+            stream.reconfigure(encoding="utf-8", errors=errors)
+        except (AttributeError, ValueError):
+            pass
+
+
 class ArchiveBudget:
     """Begrenzt entpackte Einzel- und Gesamtbytes eines Suchlaufs."""
 
@@ -477,6 +609,14 @@ FORMAT_MISMATCH_ERRORS = (zipfile.BadZipFile, tarfile.ReadError)
 # (Position, Bytefolge). Die Endung ist nur ein Hinweis — `.key` ist weit
 # häufiger ein TLS-Schlüssel als eine Keynote-Datei —, die Signatur dagegen
 # ist eine Zusage.
+# Zstandard erlaubt vor dem eigentlichen Daten-Frame beliebige überspringbare
+# Frames. Deren Magic-Wert reicht in Little-Endian von 50 2a 4d 18 bis
+# 5f 2a 4d 18; nur den normalen Daten-Magic zu prüfen verliert gültige Dateien.
+ZSTANDARD_SIGNATURES = ((0, b"\x28\xb5\x2f\xfd"),) + tuple(
+    (0, bytes((value, 0x2a, 0x4d, 0x18))) for value in range(0x50, 0x60)
+)
+
+
 ARCHIVE_SIGNATURES = {
     # Lokaler Eintrag, leeres Archiv, gespanntes Archiv.
     "zip": ((0, b"PK\x03\x04"), (0, b"PK\x05\x06"), (0, b"PK\x07\x08")),
@@ -486,20 +626,97 @@ ARCHIVE_SIGNATURES = {
     # Signatur und bleibt deshalb beim stillen Rückfall auf „normale Datei".
     "tar": ((0, b"\x1f\x8b"), (0, b"BZh"), (0, b"\xfd7zXZ\x00"),
             (257, b"ustar")),
+    # Einzelkompression: die Hülle selbst, immer am Anfang.
+    ".gz": ((0, b"\x1f\x8b"),),
+    ".bz2": ((0, b"BZh"),),
+    ".xz": ((0, b"\xfd7zXZ\x00"),),
+    ".zst": ZSTANDARD_SIGNATURES,
+    # Die Formate, die nur bsdtar liest. tar.zst trägt die Zstandard-Hülle.
+    ".7z": ((0, b"7z\xbc\xaf\x27\x1c"),),
+    ".tar.zst": ZSTANDARD_SIGNATURES,
+    # ISO 9660 schreibt seine Kennung erst ab Sektor 16 (0x8001); weitere
+    # Volume Descriptors folgen sektorweise. Das kostet 36 KB Kopf — die
+    # liest nur, wessen Endung ein ISO verspricht UND dessen Öffnen
+    # scheiterte, also kein normaler Suchlauf.
+    ".iso": ((0x8001, b"CD001"), (0x8801, b"CD001"), (0x9001, b"CD001")),
 }
 
-# So viel Anfang braucht die Prüfung: 257 + 5 für das „ustar" eines Tars.
-ARCHIVE_SIGNATURE_BYTES = 512
+
+def signature_head_bytes(key):
+    """So viel Anfang braucht die Signaturprüfung dieses Formats.
+
+    Für Zip sind es vier Bytes, für ein Tar 262 (257 + „ustar"), für ein
+    ISO 36 870. Je Format nur so viel zu lesen ist der Unterschied
+    zwischen einem billigen Blick und 36 KB für jede Datei."""
+    return max((start + len(magic)
+                for start, magic in ARCHIVE_SIGNATURES.get(key, ())),
+               default=0)
 
 
-def announces_archive_format(kind, head):
+def archive_signature_key(kind, name):
+    """Welche Signaturliste gilt für diese Datei?
+
+    `kind` aus classify_archive() sagt, WER das Archiv öffnet, nicht
+    welches Format es ist: Hinter "bsdtar" stecken 7z, ISO und tar.zst mit
+    drei verschiedenen Signaturen. Für alle anderen Arten ist `kind`
+    selbst schon der Schlüssel ("zip", "tar", ".gz", ".bz2", ".xz",
+    ".zst")."""
+    if kind != "bsdtar":
+        return kind
+    lowered = name.lower()
+    if lowered.endswith(BSDTAR_ZSTD_TAR_EXTENSIONS):
+        return ".tar.zst"
+    for extension in BSDTAR_NATIVE_EXTENSIONS:
+        if lowered.endswith(extension):
+            return extension
+    return kind
+
+
+def tar_envelope_kind(name, head):
+    """Die Endung sagt „Tar in einer Hülle" — aber steckt wirklich ein Tar
+    darin?
+
+    `ARCHIVE_SIGNATURES["tar"]` zählt gzip, bzip2 und xz mit, weil
+    `tarfile` mit "r:*" die Kompression selbst erkennt. Diese Bytes
+    kündigen aber nur die HÜLLE an, kein Tar. Ein
+    `gzip -c notiz.txt > notiz.tar.gz` — ein verbreiteter
+    Benennungsfehler — ist ein gültiges gzip ohne Tar darin: `tarfile`
+    scheitert, die Signatur sagt trotzdem „ist ein Tar", und die Datei
+    fiel bis 0.34.13 mit der Warnung „beschädigtes Archiv" aus der Suche.
+    Als `rein.gz` benannt fand favenio denselben Inhalt.
+
+    Liefert die Endung der Einzelkompression, wenn der Dateiname auf
+    genau sie endet UND der Anfang ihre Hülle ankündigt; sonst None.
+    Der Name muss passen, weil `single_member_name()` die Endung
+    abschneidet: `notiz.tgz` ergäbe mit ".gz" den Eintrag `notiz.t`.
+    Für `.tgz`, `.tbz2`, `.txz` und `.tzst` bleibt es deshalb bei der
+    Warnung. Nur „ustar" ab Position 257 beweist ein Tar unmittelbar.
+
+    Dieselbe Regel gilt für `.tar.zst` (seit 2026-09-17), das bsdtar statt
+    `tarfile` öffnet: `zstd -c notiz.txt > notiz.tar.zst` scheiterte an
+    „bsdtar: Unrecognized archive format", während dieselben Bytes als
+    `notiz.tar.gz` gefunden wurden. Deshalb über alle Einzelkompressionen,
+    `.zst` eingeschlossen."""
+    lowered = name.lower()
+    for extension in SINGLE_COMPRESSION_KINDS:
+        if lowered.endswith(extension) \
+                and announces_archive_format(extension, head):
+            return extension
+    return None
+
+
+def announces_archive_format(key, head):
     """Sagen die ersten Bytes selbst, dass das ein Archiv dieses Formats ist?
 
-    Nur dann ist ein Öffnungsfehler ein BESCHÄDIGTES Archiv und damit eine
-    Warnung wert. Ohne Signatur war die Endung schlicht mehrdeutig, und die
-    Datei ist eine ganz normale Datei."""
+    `key` ist der Formatschlüssel aus archive_signature_key(), nicht die
+    Öffner-Art aus classify_archive(): "bsdtar" hat selbst keine Signatur,
+    seine drei Formate haben je eine eigene.
+
+    Nur mit Signatur ist ein Öffnungsfehler ein BESCHÄDIGTES Archiv und
+    damit eine Warnung wert. Ohne Signatur war die Endung schlicht
+    mehrdeutig, und die Datei ist eine ganz normale Datei."""
     return any(head[start:start + len(magic)] == magic
-               for start, magic in ARCHIVE_SIGNATURES.get(kind, ()))
+               for start, magic in ARCHIVE_SIGNATURES.get(key, ()))
 
 
 # Obergrenze für die Namensliste EINES Archivs, das nur bsdtar lesen kann.
@@ -511,6 +728,36 @@ def announces_archive_format(kind, head):
 # Dieselbe Bauart im zweistelligen MB-Bereich reichte für den GB-Bereich.
 # Mit Grenze sind es 58 MB, und das Archiv wird mit Meldung übersprungen.
 MAX_ARCHIVE_LISTING_BYTES = 32 * 1024 * 1024
+
+# Python hält beim Durchlaufen eines Tar-Archivs jedes TarInfo-Objekt im
+# Katalog. Ein stark komprimiertes tar.gz mit hunderttausenden leeren
+# Einträgen kann deshalb viel mehr Arbeitsspeicher belegen als seine Datei
+# vermuten lässt. Die Inhaltsbudgets greifen hier nicht: Sie zählen nur
+# gelesene Eintragsdaten. 65 536 Einträge lassen große reale Archive zu,
+# deckeln aber den Katalog, bevor er in den dreistelligen MB-Bereich wächst.
+MAX_TAR_MEMBERS = 65_536
+
+# `search_archive()` ruft sich für Archive in Archiven rekursiv auf. Bei etwa
+# 330 verschachtelten Zips kann der C-Stack schon vor einer auffangbaren
+# RecursionError-Grenze abbrechen. Die CLI lehnt solche Werte deshalb ab.
+MAX_ARCHIVE_DEPTH = 100
+
+
+def bounded_tar_members(archive):
+    """Liest den Tar-Katalog vollständig, aber nie über die feste Grenze.
+
+    Suche UND Extraktion müssen denselben Wächter verwenden. Erst der
+    vollständige Katalog darf Ergebnisse freigeben: Ein abgeschnittenes Tar
+    liefert sonst Treffer aus seinem lesbaren Anfang und erst danach eine
+    Warnung."""
+    members = []
+    for index, member in enumerate(archive):
+        if index >= MAX_TAR_MEMBERS:
+            raise ArchiveLimitError(
+                "mehr als %d Tar-Einträge — Archiv übersprungen"
+                % MAX_TAR_MEMBERS)
+        members.append(member)
+    return members
 
 
 def bsdtar_list(bsdtar, path, env, limit=None, verbose=False):
@@ -585,6 +832,39 @@ def bsdtar_listing_names(raw_stdout):
             continue
         names.append(raw)
     return names
+
+
+def bsdtar_member_is_directory(bsdtar, path, env, member):
+    """Ob `member` in einem bsdtar-Archiv (7z, ISO, tar.zst) ein Ordner ist.
+
+    Für `extract_result()`, und nur dann, wenn das Auspacken null Bytes
+    lieferte: Die zwei Auflistungen kosten je einen bsdtar-Prozess samt
+    Entpacken des Katalogs. Typ wie in walk_bsdtar() über
+    bsdtar_listing_entries(); passen die Auflistungen nicht zusammen,
+    gilt dieselbe Heuristik (Schrägstrich am Ende oder Einträge darunter).
+    Ist nicht einmal `-tf` lesbar, bleibt es beim bisherigen Ergebnis —
+    einer leeren Datei —, denn das Auspacken selbst war ja erfolgreich."""
+    try:
+        raw, _, status = bsdtar_list(bsdtar, path, env)
+    except ArchiveReadError:
+        return False
+    if status != 0:
+        return False
+    try:
+        verbose, _, verbose_status = bsdtar_list(bsdtar, path, env,
+                                                 verbose=True)
+    except ArchiveReadError:
+        verbose, verbose_status = None, 1
+    below = member + "/"
+    for name, is_dir in bsdtar_listing_entries(
+            raw, verbose if verbose_status == 0 else None):
+        clean = name.rstrip("/")
+        if is_dir is not None:
+            if clean == member:
+                return is_dir
+        elif name == below or clean.startswith(below):
+            return True
+    return False
 
 
 def bsdtar_listing_entries(raw_stdout, raw_verbose):
@@ -1131,6 +1411,15 @@ def nonnegative_int(value):
     parsed = int(value)
     if parsed < 0:
         raise argparse.ArgumentTypeError("darf nicht negativ sein")
+    return parsed
+
+
+def parse_archive_depth(value):
+    """Begrenzt die rekursive Archivtiefe auf einen C-Stack-sicheren Wert."""
+    parsed = nonnegative_int(value)
+    if parsed > MAX_ARCHIVE_DEPTH:
+        raise argparse.ArgumentTypeError(
+            "darf höchstens %d sein" % MAX_ARCHIVE_DEPTH)
     return parsed
 
 
@@ -1956,6 +2245,11 @@ class Search:
         self.as_json = as_json                # Ausgabeformat JSONL statt Text
         self.progress = progress              # laufend melden, wo wir suchen
         self.found_any = False                # für den Exit-Code (0 vs. 1)
+        # Zahl der bisher gemeldeten Treffer. search_archive() liest sie,
+        # um den Rückfall auf „ganz normale Datei" auszuschließen, sobald
+        # aus dem Archiv schon etwas gemeldet wurde — sonst käme dieselbe
+        # Datei ein zweites Mal, jetzt als Dateitreffer.
+        self.emitted = 0
         self.archive_budget = ArchiveBudget(
             max_archive_member_bytes,
             max_archive_total_bytes,
@@ -2016,13 +2310,23 @@ class Search:
         Metadaten — `field` und `value`. `line`/`field`/`value` nennen
         weiter den ERSTEN Begriff, damit ältere Leser nichts verlieren."""
         self.found_any = True
+        self.emitted += 1
         directory = kind == "dir" if is_dir is None else bool(is_dir)
         if self.as_json:
-            record = {"path": path, "type": kind, "isDirectory": directory}
-            record["filesystemPath"] = (filesystem_path
-                                        if filesystem_path is not None
-                                        else path)
-            record["archiveMembers"] = list(archive_members or ())
+            members = list(archive_members or ())
+            record = {"path": json_safe_text(path), "type": kind,
+                      "isDirectory": directory}
+            raw_filesystem_path = (filesystem_path
+                                   if filesystem_path is not None else path)
+            record["filesystemPath"] = json_safe_text(raw_filesystem_path)
+            record["archiveMembers"] = [json_safe_text(item)
+                                        for item in members]
+            if members:
+                # Die sichtbaren Namen dürfen bei ungültigem UTF-8 dasselbe
+                # Ersatzzeichen tragen. Diese parallele Liste hält die echte
+                # Identität auseinander und macht --extract-json verlustfrei.
+                record["archiveMemberBytes"] = [archive_member_bytes(item)
+                                                for item in members]
             if line is not None:
                 record["line"] = line
             if size is not None:
@@ -2051,12 +2355,12 @@ class Search:
             text = path + (":%d" % line if line is not None else "")
             if field is not None:
                 text += ":%s: %s" % (field, value)
-        print(text)
+        write_output(text)
 
     def warn(self, message):
         """Nicht-fatale Probleme (z. B. kaputtes Archiv, keine Leserechte)
         landen auf stderr, die Suche läuft weiter."""
-        print("favenio: warnung: %s" % message, file=sys.stderr)
+        write_output("favenio: warnung: %s" % message, file=sys.stderr)
 
     def report_progress(self, path):
         """Meldet (mit --progress) laufend, welcher Ordner bzw. welches
@@ -2076,10 +2380,11 @@ class Search:
             return
         self._last_progress = now
         if self.as_json:
-            print(json.dumps({"type": "progress", "path": path},
-                             ensure_ascii=False), flush=True)
+            write_output(json.dumps({"type": "progress",
+                                     "path": json_safe_text(path)},
+                                    ensure_ascii=False), flush=True)
         else:
-            print("… durchsuche: %s" % path, file=sys.stderr)
+            write_output("… durchsuche: %s" % path, file=sys.stderr)
 
     # ---------- exiftool ----------
 
@@ -2347,14 +2652,6 @@ class Search:
         return relative.count(os.sep) + 1
 
     @staticmethod
-    def file_size(path):
-        """Dateigröße in Bytes oder None, falls nicht ermittelbar."""
-        try:
-            return os.path.getsize(path)
-        except OSError:
-            return None
-
-    @staticmethod
     def file_facts(path):
         """(Größe, Änderungszeit, Erstellungszeit) einer Datei oder eines
         Ordners aus EINER stat-Abfrage; jeder Wert ist None, wenn er sich
@@ -2436,6 +2733,22 @@ class Search:
         self.report_progress(display)
         if archive_path is None:
             archive_path = fs_path
+        key = archive_signature_key(
+            kind, os.path.basename(display.rstrip("/")))
+        # Einzelkompression VORAB prüfen, nicht erst am Fehler: walk_single
+        # baut den einen Eintrag allein aus dem Dateinamen und öffnet die
+        # Datei bei einer reinen Namenssuche gar nicht. Eine Textdatei
+        # namens `notiz.gz` lieferte deshalb den Phantom-Treffer
+        # `notiz.gz!/notiz`, den `--extract` nie auflösen kann. Bei diesen
+        # Formaten steht die Hülle immer am Anfang, die Prüfung ist also
+        # eindeutig — anders als bei einem ISO, das sich nicht immer
+        # ankündigt und dessen Rückfall deshalb erst nach dem Fehlversuch
+        # entschieden wird.
+        if kind in SINGLE_COMPRESSION_KINDS \
+                and not announces_archive_format(
+                    key, self.archive_head(key, fs_path, fileobj)):
+            return False
+        emitted_before = self.emitted
         try:
             if kind == "zip":
                 source = fileobj if fileobj is not None else fs_path
@@ -2444,20 +2757,37 @@ class Search:
                                   archive_members)
             elif kind == "tar":
                 # tarfile erkennt die Kompression selbst ("r:*").
-                if fileobj is not None:
-                    archive = tarfile.open(fileobj=fileobj, mode="r:*")
+                try:
+                    if fileobj is not None:
+                        archive = tarfile.open(fileobj=fileobj, mode="r:*")
+                    else:
+                        archive = tarfile.open(fs_path, mode="r:*")
+                except tarfile.ReadError:
+                    # Kein Tar in der Hülle? Dann ist es eine einzeln
+                    # komprimierte Datei — siehe tar_envelope_kind().
+                    # Scheitert auch das Entpacken, greift unten die
+                    # normale Behandlung: Die Hüllen-Signatur macht die
+                    # Datei zum beschädigten Archiv mit Warnung.
+                    envelope = tar_envelope_kind(
+                        os.path.basename(display.rstrip("/")),
+                        self.archive_head("tar", fs_path, fileobj))
+                    if envelope is None:
+                        raise
+                    if fileobj is not None:
+                        fileobj.seek(0)
+                    self.walk_single(envelope, fs_path, fileobj, display,
+                                     depth, archive_path, archive_members)
                 else:
-                    archive = tarfile.open(fs_path, mode="r:*")
-                with archive:
-                    self.walk_tar(archive, display, depth, archive_path,
-                                  archive_members)
+                    with archive:
+                        self.walk_tar(archive, display, depth, archive_path,
+                                      archive_members)
             elif kind == "bsdtar":
                 self.walk_bsdtar(fs_path, fileobj, display, depth,
                                  archive_path, archive_members)
             else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
                 self.walk_single(kind, fs_path, fileobj, display, depth,
                                  archive_path, archive_members)
-        except FORMAT_MISMATCH_ERRORS as err:
+        except EXPECTED_ARCHIVE_ERRORS as err:
             # Die Endung versprach ein Archiv. Ob der Inhalt dasselbe
             # verspricht, entscheidet erst die Signatur — hinter demselben
             # Fehler stecken zwei sehr verschiedene Fälle:
@@ -2474,28 +2804,47 @@ class Search:
             #    Unsinn — ein ungepackter Eintrag eines abgeschnittenen
             #    Zips kam als ganz gewöhnlicher Dateitreffer heraus, und
             #    dass das Archiv kaputt ist, erfuhr niemand.
-            if announces_archive_format(kind,
-                                        self.archive_head(fs_path, fileobj)):
+            #
+            # Das gilt für JEDES Format, nicht nur für Zip und Tar. Bis
+            # 0.34.10 kannte nur deren Öffnungsfehler diesen Rückfall;
+            # eine Textdatei namens `notes.7z` oder `image.iso` fiel
+            # deshalb mit Warnung aus der Suche, während dieselbe Datei
+            # ohne installiertes bsdtar ganz normal durchsucht wurde. Genau
+            # das darf nicht sein: Der Zufall der installierten Werkzeuge
+            # darf nicht entscheiden, ob eine Datei angefasst wird.
+            #
+            # Hat der Lauf aus diesem Archiv schon Treffer gemeldet, ist
+            # der Rückfall ausgeschlossen — sonst käme dieselbe Datei ein
+            # zweites Mal, jetzt als Dateitreffer.
+            if self.emitted == emitted_before \
+                    and not announces_archive_format(
+                        key, self.archive_head(key, fs_path, fileobj)):
+                return False
+            if isinstance(err, FORMAT_MISMATCH_ERRORS):
                 self.warn("%s: beschädigtes Archiv: %s" % (display, err))
-                return True
-            return False
-        except EXPECTED_ARCHIVE_ERRORS as err:
-            self.warn("%s: %s" % (display, err))
+            else:
+                self.warn("%s: %s" % (display, err))
         return True
 
     @staticmethod
-    def archive_head(fs_path, fileobj):
+    def archive_head(key, fs_path, fileobj):
         """Der Anfang des Archivs für die Signaturprüfung.
 
-        Lässt er sich nicht lesen, gilt die Datei als nicht angekündigt und
-        wird wie bisher als ganz normale Datei behandelt — der stille
+        Gelesen wird nur, was das Format `key` wirklich braucht — vier
+        Bytes für ein Zip, 36 KB für ein ISO.
+
+        Lässt der Anfang sich nicht lesen, gilt die Datei als nicht
+        angekündigt und wird als ganz normale Datei behandelt — der stille
         Rückfall ist der schonendere der beiden Wege."""
+        length = signature_head_bytes(key)
+        if not length:
+            return b""
         try:
             if fileobj is not None:
                 fileobj.seek(0)
-                return fileobj.read(ARCHIVE_SIGNATURE_BYTES)
+                return fileobj.read(length)
             with open_regular_file(fs_path) as handle:
-                return handle.read(ARCHIVE_SIGNATURE_BYTES)
+                return handle.read(length)
         except EXPECTED_ARCHIVE_ERRORS:
             return b""
 
@@ -2657,7 +3006,12 @@ class Search:
         es schlicht nicht. Gegen eine Entpack-Bombe schützen bei Tar deshalb
         allein die Byte-Budgets (Einzel- und Gesamtgrenze), die beim Lesen
         greifen. Das ist kein Versehen, sondern die Grenze des Formats."""
-        for member in archive.getmembers():
+        # Direkt iterieren statt getmembers(): So können wir abbrechen,
+        # bevor tarfile den vollständigen, unbegrenzten Katalog aufgebaut
+        # hat. Erst NACH dem vollständigen, begrenzten Katalog Einträge
+        # besuchen: Ein abgeschnittenes Tar darf keinen Treffer aus seinem
+        # lesbaren Anfang ausgeben und danach nur eine Warnung melden.
+        for member in bounded_tar_members(archive):
             def open_member(member=member):
                 extracted = archive.extractfile(member)
                 if extracted is None:
@@ -2690,18 +3044,14 @@ class Search:
             # Für den zweiten Lesedurchlauf (Vortest + Zeilennummer) braucht
             # open_member() jedes Mal einen frischen Datenstrom.
             data = fileobj.getvalue()
-            compressed_size = len(data)
 
             def open_member():
                 return opener(io.BytesIO(data), "rb")
         else:
-            compressed_size = self.file_size(fs_path)
-
             def open_member():
                 return opener(fs_path, "rb")
         self.visit_member(member_name, False, open_member, display, depth,
-                          archive_path, archive_members,
-                          size=None, compressed_size=compressed_size)
+                          archive_path, archive_members, size=None)
 
     def walk_bsdtar(self, fs_path, fileobj, display, depth, archive_path,
                     archive_members):
@@ -2735,6 +3085,18 @@ class Search:
                 path = temp_path
             raw, errors, status = bsdtar_list(bsdtar, path, env)
             if status != 0:
+                # Kein Tar in der Zstandard-Hülle eines `.tar.zst`? Dann ist
+                # es eine einzeln komprimierte Datei — siehe
+                # tar_envelope_kind(). Nur bei gescheiterter Auflistung,
+                # nicht bei einer zu langen: Die beweist ein echtes Archiv.
+                name = os.path.basename(display.rstrip("/"))
+                if name.lower().endswith(ZSTD_SINGLE_EXTENSION):
+                    envelope = tar_envelope_kind(name, self.archive_head(
+                        ZSTD_SINGLE_EXTENSION, fs_path, fileobj))
+                    if envelope is not None:
+                        self.walk_single(envelope, fs_path, fileobj, display,
+                                         depth, archive_path, archive_members)
+                        return
                 raise ArchiveReadError(
                     errors.decode("utf-8", "replace").strip()
                     or "bsdtar konnte das Archiv nicht lesen")
@@ -2774,7 +3136,11 @@ class Search:
 
                 def open_member(member=clean):
                     proc = subprocess.Popen(
-                        [bsdtar, "-xOf", path, "--", bsdtar_escape(member)],
+                        # `-q` beendet die Extraktion nach dem ersten
+                        # passenden Eintrag. Ohne das wurden doppelte Namen
+                        # aneinandergehängt und als eine Datei durchsucht.
+                        [bsdtar, "-xqOf", path, "--",
+                         bsdtar_escape(member)],
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                         env=env)
                     return ToolStream(proc, display + "!/" + member)
@@ -2810,6 +3176,7 @@ def pick_member(remaining, names):
 
 
 def extract_result(result_path=None, filesystem_path=None, archive_members=None,
+                   archive_member_bytes=None,
                    max_archive_member_bytes=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
                    max_archive_total_bytes=DEFAULT_MAX_ARCHIVE_TOTAL_BYTES,
                    max_archive_ratio=DEFAULT_MAX_ARCHIVE_RATIO,
@@ -2841,6 +3208,18 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
             ambiguous = len(archive_members) > 1
     fs_path = filesystem_path
     members = list(archive_members or [])
+    if archive_member_bytes is not None:
+        if len(archive_member_bytes) != len(members):
+            print("favenio: fehler: archiveMemberBytes passt nicht zu "
+                  "archiveMembers", file=sys.stderr)
+            return 2
+        try:
+            members = [decode_archive_member(item)
+                       for item in archive_member_bytes]
+        except (UnicodeEncodeError, UnicodeDecodeError, ValueError) as err:
+            print("favenio: fehler: ungültige archiveMemberBytes: %s" % err,
+                  file=sys.stderr)
+            return 2
     display_path = result_path or fs_path + "".join(
         "!/" + member for member in members)
     if not os.path.exists(fs_path):
@@ -2849,7 +3228,7 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
         return 2
     if not members:
         # Kein Archiv-Eintrag, nur eine normale Datei: nichts auszupacken.
-        print(os.path.abspath(fs_path))
+        write_result([os.path.abspath(fs_path)])
         return 0
 
     kind = classify_archive(fs_path)
@@ -2877,25 +3256,58 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                 with zipfile.ZipFile(source) as archive:
                     names = archive.namelist() if ambiguous else None
                     member, used = pick_member(remaining, names)
-                    info = archive.getinfo(member)
+                    try:
+                        info = archive.getinfo(member)
+                    except KeyError:
+                        # Ein Ordner steht im Zip-Katalog MIT Schrägstrich,
+                        # im Treffer ohne. Ohne diese Prüfung meldete
+                        # `--extract 'paket.zip!/ordner'` „There is no item
+                        # named 'ordner'", obwohl der Eintrag existiert.
+                        if (member + "/") in archive.namelist():
+                            raise DirectoryMemberError(member) from None
+                        raise
                     with archive.open(info, "r") as handle:
                         data = budget.read_all(
                             handle, display_path, info.file_size,
                             info.compress_size)
             elif kind == "tar":
-                if data is not None:
-                    archive = tarfile.open(fileobj=io.BytesIO(data),
-                                           mode="r:*")
-                else:
-                    archive = tarfile.open(fs_path, mode="r:*")
+                try:
+                    if data is not None:
+                        archive = tarfile.open(fileobj=io.BytesIO(data),
+                                               mode="r:*")
+                    else:
+                        archive = tarfile.open(fs_path, mode="r:*")
+                except tarfile.ReadError:
+                    # Dieselbe Regel wie in search_archive(): Steckt in der
+                    # Hülle kein Tar, ist es eine einzeln komprimierte
+                    # Datei. Suche und --extract MÜSSEN denselben
+                    # Eintragsnamen sehen, sonst findet pick_member() einen
+                    # gefundenen Eintrag nicht wieder.
+                    head = data[:signature_head_bytes("tar")] \
+                        if data is not None \
+                        else Search.archive_head("tar", fs_path, None)
+                    envelope = tar_envelope_kind(container_name, head)
+                    if envelope is None:
+                        raise
+                    kind = envelope
+                    continue
                 with archive:
-                    names = archive.getnames() if ambiguous else None
+                    tar_members = bounded_tar_members(archive)
+                    names = ([item.name for item in tar_members]
+                             if ambiguous else None)
                     member, used = pick_member(remaining, names)
+                    tar_member = next((item for item in reversed(tar_members)
+                                       if item.name == member), None)
+                    if tar_member is None:
+                        raise KeyError(member)
+                    if tar_member.isdir():
+                        # Sonst lieferte extractfile() None, und die
+                        # Meldung bestand nur aus dem nackten Namen.
+                        raise DirectoryMemberError(member)
                     handle = archive.extractfile(member)
                     if handle is None:
                         raise KeyError(member)
                     with handle:
-                        tar_member = archive.getmember(member)
                         data = budget.read_all(
                             handle, display_path, tar_member.size)
             elif kind == "bsdtar":
@@ -2913,6 +3325,24 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                         temp_path = temp_handle.name
                         path = temp_path
                     names = None
+                    # Bei `.tar.zst` entscheidet wie in walk_bsdtar() eine
+                    # GESCHEITERTE Auflistung, ob in der Zstandard-Hülle
+                    # überhaupt ein Tar steckt — dieselbe Regel, sonst wäre
+                    # ein gefundener Treffer `notiz.tar.zst!/notiz.tar`
+                    # nicht auszupacken. Gefragt wird erst, wenn bsdtar
+                    # gescheitert ist: Ein echtes tar.zst soll nicht für
+                    # eine vorsorgliche Auflistung ein zweites Mal
+                    # entpackt werden.
+                    def zst_envelope():
+                        if not container_name.lower().endswith(
+                                ZSTD_SINGLE_EXTENSION):
+                            return None
+                        head = data[:signature_head_bytes(
+                            ZSTD_SINGLE_EXTENSION)] if data is not None \
+                            else Search.archive_head(
+                                ZSTD_SINGLE_EXTENSION, fs_path, None)
+                        return tar_envelope_kind(container_name, head)
+
                     if ambiguous:
                         # Eintragsliste nur im mehrdeutigen Fall erfragen —
                         # sie kostet einen eigenen bsdtar-Prozess.
@@ -2926,6 +3356,10 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                         # das unlesbare Archiv.
                         raw, errors, status = bsdtar_list(bsdtar, path, env)
                         if status != 0:
+                            envelope = zst_envelope()
+                            if envelope is not None:
+                                kind = envelope
+                                continue
                             raise ArchiveReadError(
                                 errors.decode("utf-8", "replace").strip()
                                 or "bsdtar konnte das Archiv nicht lesen")
@@ -2935,12 +3369,45 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                         names = [name.rstrip("/") for name
                                  in bsdtar_listing_names(raw)]
                     member, used = pick_member(remaining, names)
-                    proc = subprocess.Popen(
-                        [bsdtar, "-xOf", path, "--", bsdtar_escape(member)],
-                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                        env=env)
-                    with ToolStream(proc, display_path) as handle:
-                        data = budget.read_all(handle, display_path)
+                    try:
+                        # `-n`: Das Muster trifft nur den Eintrag selbst.
+                        # Ohne es liefert ein Ordner-Eintrag alle Dateien
+                        # darunter aneinandergehängt (belegt 2026-09-17
+                        # mit 7z, ISO und tar.zst), und die Prüfung auf
+                        # null Bytes unten sähe ihn nie.
+                        proc = subprocess.Popen(
+                            [bsdtar, "-xqOnf", path, "--",
+                             bsdtar_escape(member)],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, env=env)
+                        # Erst nach dem Schließen übernehmen: ToolStream
+                        # meldet den Fehlerstatus erst in close(), und
+                        # zst_envelope() braucht dann noch die alten Bytes.
+                        with ToolStream(proc, display_path) as handle:
+                            extracted = budget.read_all(handle, display_path)
+                        data = extracted
+                    except ArchiveReadError:
+                        # Nur bei `.tar.zst` und nur, wenn auch die
+                        # Auflistung scheitert (sonst ist es ein echtes
+                        # Archiv mit einem anderen Fehler).
+                        envelope = None if ambiguous else zst_envelope()
+                        if envelope is None:
+                            raise
+                        _, _, status = bsdtar_list(bsdtar, path, env)
+                        if status == 0:
+                            raise
+                        kind = envelope
+                        continue
+                    # Ein Ordner-Eintrag schreibt nichts und endet mit
+                    # Status 0 — genau wie eine leere Datei. Nur in diesem
+                    # Sonderfall wird der Typ über die Auflistung erfragt;
+                    # sonst entstand still eine leere Datei mit Exit 0,
+                    # während Zip und Tar den Ordner schon benannten.
+                    # Außerhalb des `try`: DirectoryMemberError ist ein
+                    # ArchiveReadError und gehört nicht in den Hüllenzweig.
+                    if not data and bsdtar_member_is_directory(
+                            bsdtar, path, env, member):
+                        raise DirectoryMemberError(member)
                 finally:
                     if temp_path is not None:
                         try:
@@ -2976,8 +3443,11 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
     out_dir = None
     try:
         out_dir = tempfile.mkdtemp(prefix="hit-", dir=materialization_root)
-        out_path = os.path.join(out_dir,
-                                os.path.basename(member.rstrip("/")))
+        # APFS/Python lehnt einen neuen Pfad mit Surrogatzeichen ab. Der
+        # eindeutige Temp-Ordner trennt kollidierende Anzeigenamen bereits;
+        # der materialisierte Blattname darf deshalb U+FFFD verwenden.
+        out_path = os.path.join(
+            out_dir, json_safe_text(os.path.basename(member.rstrip("/"))))
         with open(out_path, "wb") as handle:
             handle.write(data)
     except OSError as err:
@@ -2986,11 +3456,12 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
         print("favenio: fehler: Materialisierung fehlgeschlagen: %s" % err,
               file=sys.stderr)
         return 2
-    print(out_path)
+    write_result([out_path])
     return 0
 
 
 def main(argv=None):
+    use_locale_independent_streams()
     parser = FavenioArgumentParser(
         prog="favenio",
         description="Favenio — facile invenio. Dateisuche ohne Index, "
@@ -3082,11 +3553,12 @@ def main(argv=None):
                         help="nur N Ordnerebenen tief suchen (1 = nur direkt "
                              "im Startpfad, wie find -maxdepth); Default: "
                              "unbegrenzt")
-    parser.add_argument("--archive-depth", type=nonnegative_int, default=1,
+    parser.add_argument("--archive-depth", type=parse_archive_depth, default=1,
                         metavar="N",
                         help="wie tief in verschachtelte Archive schauen "
                              "(0 = gar nicht, wie --no-archives; 1 = Archive, "
-                             "2 = Archive in Archiven, …; Default: 1)")
+                             "2 = Archive in Archiven, …; höchstens 100; "
+                             "Default: 1)")
     parser.add_argument("--max-archive-member-bytes", type=positive_int,
                         default=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
                         metavar="BYTES",
@@ -3156,10 +3628,15 @@ def main(argv=None):
             record = json.loads(args.extract_json)
             filesystem_path = record["filesystemPath"]
             archive_members = record.get("archiveMembers", [])
+            archive_member_bytes = record.get("archiveMemberBytes")
             if not isinstance(filesystem_path, str) \
                     or not isinstance(archive_members, list) \
                     or not all(isinstance(item, str)
-                               for item in archive_members):
+                               for item in archive_members) \
+                    or (archive_member_bytes is not None
+                        and (not isinstance(archive_member_bytes, list)
+                             or not all(isinstance(item, str)
+                                        for item in archive_member_bytes))):
                 raise ValueError("ungültige Feldtypen")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as err:
             print("favenio: fehler: ungültiger strukturierter Treffer: %s"
@@ -3167,11 +3644,11 @@ def main(argv=None):
             return 2
         return extract_result(filesystem_path=filesystem_path,
                               archive_members=archive_members,
+                              archive_member_bytes=archive_member_bytes,
                               **extract_options)
 
     if args.list_metadata_fields:
-        for field in METADATA_TEXT_FIELDS:
-            print(field)
+        write_result(METADATA_TEXT_FIELDS)
         return 0
 
     dimension_limits = {
@@ -3326,6 +3803,17 @@ def main(argv=None):
     try:
         for path in paths:
             search.search_path(path)
+        # Innerhalb des try leeren: Steckt der letzte Treffer noch im
+        # Puffer, scheiterte sonst erst das Leeren beim Interpreter-Ende —
+        # mit „Exception ignored" auf stderr und Status 120.
+        sys.stdout.flush()
+    except (OutputClosed, BrokenPipeError):
+        # Der Leser hat genug (`| head -1`, auch `2>&1 | head -1`). Wie
+        # grep: kein Fehler, der Status sagt weiter, ob es Treffer gab.
+        # stdout und stderr zeigen ab jetzt ins Leere, damit das Leeren der
+        # Restpuffer beim Interpreter-Ende nicht noch einmal scheitert.
+        discard_closed_output()
+        return 0 if search.found_any else 1
     except Exception as err:            # noqa: BLE001 — siehe Kommentar
         # Ein unerwarteter Fehler MUSS als Fehler enden. Python beendet
         # sich sonst mit Status 1 — genau dem Status, den der Vertrag für

@@ -17,8 +17,79 @@ import UniformTypeIdentifiers
         case "scope-note": QuickScopeNoteHarness.run()
         case "pixel-limit", "csv-field", "type-description":
             try values(command[1])
+        case "common-apps": try commonApps()
         default: exit(2)
         }
+    }
+
+    /// Die ALTE Fassung von `commonApplicationsFor`: schneidet je TREFFER.
+    ///
+    /// Sie bleibt hier als unabhängiger Vergleich stehen. Die neue Fassung
+    /// überspringt Endungen, gegen die `common` schon geschnitten wurde —
+    /// das ist nur dann erlaubt, wenn beide Fassungen für dieselbe Eingabe
+    /// dieselbe Anwendungsliste liefern.
+    static func commonApplicationsPerHit(_ hits: [Hit]) -> [URL] {
+        guard let first = hits.first else { return [] }
+        var common = applicationsFor(first)
+        var byExtension: [String: Set<URL>] = [:]
+        func extensionKey(_ hit: Hit) -> String? {
+            let ext = (hit.displayName as NSString).pathExtension.lowercased()
+            return ext.isEmpty ? nil : ext
+        }
+        if let key = extensionKey(first) {
+            byExtension[key] = Set(common.map { $0.standardizedFileURL })
+        }
+        for hit in hits.dropFirst() {
+            if common.isEmpty { break }
+            let allowed: Set<URL>
+            if let key = extensionKey(hit), let cached = byExtension[key] {
+                allowed = cached
+            } else {
+                allowed = Set(applicationsFor(hit).map { $0.standardizedFileURL })
+                if let key = extensionKey(hit) { byExtension[key] = allowed }
+            }
+            common = common.filter { allowed.contains($0.standardizedFileURL) }
+        }
+        return common
+    }
+
+    /// Liest eine Liste von Dateinamen (je Zeile ein Treffer) und
+    /// vergleicht beide Fassungen: gleiche Anwendungsliste, und wie lange
+    /// jede gebraucht hat.
+    static func commonApps() throws {
+        let input = FileHandle.standardInput.readDataToEndOfFile()
+        let names = try JSONDecoder().decode([String].self, from: input)
+        // ECHTE Dateien: `urlsForApplications(toOpen: URL)` liefert für
+        // einen erfundenen Pfad gar nichts, und die Schnittmenge wäre nach
+        // dem ersten Treffer leer — der Vergleich prüfte dann nichts.
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("favenio-common-apps-" + UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var hits: [Hit] = []
+        var written = Set<String>()
+        for name in names {
+            let url = root.appendingPathComponent(name)
+            if written.insert(name).inserted {
+                FileManager.default.createFile(atPath: url.path, contents: Data())
+            }
+            hits.append(Hit(path: url.path, kind: "file", line: nil, size: nil,
+                            filesystemPath: url.path, archiveMembers: [],
+                            isDirectory: false))
+        }
+        var start = Date()
+        let neu = commonApplicationsFor(hits).map { $0.path }
+        let neuDauer = Date().timeIntervalSince(start)
+        start = Date()
+        let alt = commonApplicationsPerHit(hits).map { $0.path }
+        let altDauer = Date().timeIntervalSince(start)
+        let report: [String: [String]] = [
+            "neu": neu, "alt": alt,
+            "dauer": [String(format: "%.4f", neuDauer),
+                      String(format: "%.4f", altDauer)],
+        ]
+        FileHandle.standardOutput.write(try JSONEncoder().encode(report))
     }
 
     static func values(_ mode: String) throws {

@@ -2,7 +2,7 @@
 # Favenio — Installation nach /Applications.
 #
 # Die drei Skripte des Projekts trennen bewusst:
-#   ./build-app.sh   baut und testet beide Apps IM Projektverzeichnis
+#   ./build.sh       baut und testet beide Apps IM Projektverzeichnis (Unterbau: build-app.sh)
 #   ./install.sh     baut, notarisiert und installiert nach /Applications
 #   ./release.sh     baut, notarisiert und packt das Release-DMG (installiert nie)
 #
@@ -17,7 +17,10 @@
 #                                   # installieren (z. B. exakt dem Release-Stand);
 #                                   # beide Bundles darin brauchen ein eigenes
 #                                   # angeheftetes Ticket
-#   ./install.sh --verify-only      # nur prüfen, nichts installieren
+#   ./install.sh --verify-only      # prüfen, nichts installieren. OHNE --dmg
+#                                   # wird dafür erst gebaut und notarisiert
+#                                   # (ein echter Notary-Vorgang, 1-10 Min);
+#                                   # mit --dmg ist es die reine Prüfung.
 #
 # Exit-Codes: 0 = installiert (bzw. Prüfung bestanden),
 #             2 = Fehler ohne Änderung am installierten Stand,
@@ -80,10 +83,12 @@ cleanup() {
         *)
             # Exit 2 verspricht: installierter Stand UNVERÄNDERT. Nach dem
             # Austausch stimmt das nicht mehr. Erreichbar ist der Fall über
-            # `install.sh | head`: Die abschließenden echo-Zeilen enden dann
-            # mit SIGPIPE, und der Lauf meldete fälschlich, nichts geändert
-            # zu haben. Hinter dem Austausch steht deshalb nur noch Ausgabe;
-            # ein neuer Schritt, der scheitern kann, gehört DAVOR.
+            # ein Abbruchsignal während der abschließenden Ausgabe; früher
+            # auch über `install.sh | head`, als diese echo-Zeilen noch mit
+            # SIGPIPE endeten (heute schreibt sie ein Kindprozess, siehe
+            # notarize-lib.sh). Der Lauf meldete sonst fälschlich, nichts
+            # geändert zu haben. Hinter dem Austausch steht deshalb nur noch
+            # Ausgabe; ein neuer Schritt, der scheitern kann, gehört DAVOR.
             [ "$INSTALLED" = "1" ] && exit 0
             exit 2 ;;
     esac
@@ -95,7 +100,17 @@ trap cleanup EXIT
 # cleanup genau einmal läuft. Der Austausch selbst hat eigene, feinere
 # Handler (notarize-lib.sh) und wird davon nicht berührt: Sie sind lokal und
 # gelten, solange favenio_install_bundles läuft.
-trap 'exit 2' HUP INT TERM
+# PIPE gehört dazu: Bei SIGPIPE läuft der EXIT-Trap in zsh ebenfalls NICHT
+# (gemessen 2026-09-10). Ohne diesen Eintrag beendete `install.sh | head` das
+# Skript mit Status 141, ohne cleanup — das eingehängte DMG und die
+# Installationssperre blieben liegen. Der Fall steht im Kommentar oben schon
+# als der, den `[ "$INSTALLED" = "1" ] && exit 0` abfangen soll; ohne PIPE
+# kam diese Zeile nie zum Zug.
+# Der Trap allein reichte aber nicht: Traf SIGPIPE ein EINGEBAUTES echo, hing
+# der Lauf (gemessen 2026-09-17). Deshalb schreibt jede Ausgabe ein
+# Kindprozess (`echo` in notarize-lib.sh), und die Shell selbst bekommt kein
+# SIGPIPE mehr; der Trap bleibt für alles andere, was es ihr schickt.
+trap 'exit 2' HUP INT TERM PIPE
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -145,7 +160,7 @@ else
     # ---------- Quelle B (Default): frisch bauen und notarisieren ----------
     notarize_require_credentials
     echo "== Schritt 1/3: bauen und notarisieren =="
-    ./build-app.sh
+    ./build.sh
     notarize_apps
     SOURCE_DIR="."
     SOURCE_LABEL="frischer Build"

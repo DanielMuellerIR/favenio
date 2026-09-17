@@ -63,6 +63,12 @@ struct RunnerProbe {
         case "progress": script += "print(json.dumps({'type':'progress','path':'/only-progress'}))"
         case "tail": script += "sys.stdout.write(json.dumps({'path':'/tail','type':'file','isDirectory':False,'filesystemPath':'/tail','archiveMembers':[]}))"
         case "stderr": script += "[print('favenio: warnung: '+str(i),file=sys.stderr) for i in range(10000)];hit(0)"
+        // Fremde stderr-Zeile ohne Favenio-Präfix, dann Status 69 — wie der
+        // Apple-Stummel /usr/bin/python3 ohne akzeptierte Xcode-Lizenz.
+        case "foreign-stderr": script += "print('You have not agreed to the Xcode license agreements.',file=sys.stderr);sys.exit(69)"
+        // Dieselbe Lage mit CRLF-Zeilenenden und einer Leerzeile davor: Das
+        // übrig bleibende „\r" darf nicht selbst zum Grund werden.
+        case "foreign-crlf": script += "sys.stderr.write('\\r\\nxcrun: error: invalid active developer path\\r\\n');sys.exit(69)"
         case "eof-first": script += "hit(0);os.close(1);time.sleep(.1)"
         case "exit-first": script += "hit(0)\nif os.fork()==0:\n time.sleep(.1);os._exit(0)\nos._exit(0)"
         case "oversize": script += "sys.stdout.write('x'*1100000);sys.stdout.flush();time.sleep(5)"

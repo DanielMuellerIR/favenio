@@ -43,6 +43,20 @@ class SearchRunnerTests(unittest.TestCase):
         self.assertEqual(result['status'], 2)
         self.assertTrue(result['error'])
 
+    def test_foreign_stderr_line_names_the_failure(self):
+        # /usr/bin/python3 ohne akzeptierte Xcode-Lizenz schreibt eine Zeile
+        # ohne Favenio-Präfix und endet mit 69; die Zeile muss ankommen.
+        result = self.run_probe('foreign-stderr')
+        self.assertEqual(result['status'], 69)
+        self.assertIn('Xcode license', result['error'])
+
+    def test_foreign_stderr_line_with_crlf_is_trimmed(self):
+        # Eine Leerzeile aus „\r\n" vor dem eigentlichen Text: gespeichert
+        # wurde sonst „\r" als Grund, und die echte Zeile ging verloren.
+        result = self.run_probe('foreign-crlf')
+        self.assertEqual(result['status'], 69)
+        self.assertEqual(result['error'], 'xcrun: error: invalid active developer path')
+
     def test_cancel_including_full_queue_and_before_start(self):
         for mode in ('cancel', 'backpressure', 'cancel-before'):
             with self.subTest(mode=mode):

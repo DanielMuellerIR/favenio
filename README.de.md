@@ -48,7 +48,7 @@ keinen Updater; 0.14.0 muss deshalb einmalig über das DMG installiert werden.
 Alternativ selbst bauen — drei Skripte, jedes für sich vollständig:
 
 ```bash
-./build-app.sh      # beide Apps im Repository bauen und selbst testen
+./build.sh          # beide Apps im Repository bauen und selbst testen (Wrapper auf build-app.sh; ohne Argumente, Einstellungen über Umgebungsvariablen wie `FAVENIO_SIGN_ID`)
 ./install.sh        # bauen, notarisieren, nach /Applications installieren
 ./release.sh        # bauen, notarisieren, DMG bauen und notarisieren
 ```
@@ -139,7 +139,9 @@ Favenio ist bewusst maschinenfreundlich gebaut:
 - **Exit-Codes** wie bei grep: `0` = Treffer, `1` = keine Treffer,
   `2` = Fehler (ungültiger Regex, Pfad fehlt, und jeder unerwartete Fehler,
   der den Lauf abgebrochen hat — ein abgebrochener Lauf darf nie wie ein
-  leeres Ergebnis aussehen)
+  leeres Ergebnis aussehen). Ein geschlossener Leser (`| head -1`, auch
+  `2>&1 | head -1`) ist kein Fehler: Der Lauf endet still mit 0 bzw. 1 wie
+  bei grep.
 - **Warnungen** (unlesbare Dateien, kaputte Archive) gehen nach stderr;
   die Suche läuft weiter, und stdout bleibt sauber parsebar.
 
@@ -238,6 +240,9 @@ Format öffnen, das ihre Endung verspricht, entscheiden ihre ersten Bytes:
   übersprungen, statt als Rohbytes durchsucht zu werden: Ein unkomprimiert
   abgelegter Eintrag darin ergab sonst einen ganz gewöhnlichen Dateitreffer,
   und dass das Archiv kaputt ist, erfuhr niemand.
+
+Ausnahme: Eine `.tar.gz`, `.tar.bz2`, `.tar.xz` oder `.tar.zst` ohne Tar darin
+wird als einzeln komprimierte Datei gelesen.
 
 ## Suchmodi — und wie man z. B. nur `.md`-Dateien findet
 
@@ -385,11 +390,15 @@ einem echten Treffer ein zweiter Durchlauf für die Zeilennummer. Das ist rund
 innerhalb von Archiven — und liefert genau dieselben Treffer und
 Zeilennummern.
 
-Zwei Punkte, die man dazu wissen sollte:
+Drei Punkte, die man dazu wissen sollte:
 
 - Inhalt wird als UTF-8 mit `errors="replace"` gelesen. Deshalb bleiben
   Treffer in teilweise binären Dateien möglich; andere Textkodierungen werden
   nicht versprochen.
+- Nicht-UTF-8-Namen (etwa aus einem Latin-1-Tar) erscheinen in der
+  Textausgabe als rohe Bytes wie bei grep/find; Warnungen maskieren sie mit
+  Backslash. Mit `--json` ist die Zeile dann kein gültiges UTF-8, und die Apps
+  zeigen diesen Treffer derzeit nicht an (offener Punkt).
 - Weil das Lesen beim ersten Treffer endet, wird die CRC-Prüfsumme eines
   ZIP-Eintrags **nicht** geprüft — Python prüft sie erst am Ende des Eintrags.
   Ein Treffer ist ein Fund, keine Aussage über die Unversehrtheit des Archivs.
@@ -397,9 +406,9 @@ Zwei Punkte, die man dazu wissen sollte:
 
 ## GUI (Favenio.app)
 
-In der Haupt-App stehen die Bildmaße und die folgenden Filter hinter dem
+In beiden Apps stehen die Bildmaße und die folgenden Filter hinter dem
 Aufklapp-Schalter **Weitere Filter**; zugeklappt nennt er die Zahl der
-gesetzten Filter.
+gesetzten Filter. Der Zustand bleibt je App erhalten.
 Die Zeilen **Größe**, **Geändert** und **Erstellt** bieten jeweils eine Von-
 und Bis-Grenze. Alle Grenzen sind inklusive. Größe akzeptiert ganze Bytes ab
 0, optional mit B, KiB, MiB, GiB oder TiB; Zeitpunkte brauchen ISO 8601 mit
@@ -427,7 +436,8 @@ im Metadaten-Modus grenzt ein Feldmenü auf ein Feld ein. Die Zeile
 **Bildmaße** (Breite und Höhe je von/bis) filtert per UND und funktioniert auch
 allein ohne Muster. In beiden Apps werden ungültige Maßfelder rot markiert;
 Statuszeile und Feldhinweis nennen den Fehler. Suche und Übergabe an die
-Haupt-App bleiben bis zur Korrektur gesperrt. Leer heißt keine Grenze,
+Haupt-App bleiben bis zur Korrektur gesperrt. Maßfelder starten die Suche nur
+mit Return, nicht beim Verlassen des Felds. Leer heißt keine Grenze,
 `1.000 px` heißt 1000. Negative Zahlen, Dezimalzahlen, Zahlenüberlauf und
 von > bis werden abgelehnt. Die Spalten in ihrer Reihenfolge: **Name**, **Größe**
 (Bytes), **Pfad**, **Typ**, **Änderungsdatum**, **Erstellungsdatum**,

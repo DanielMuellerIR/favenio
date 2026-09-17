@@ -192,6 +192,73 @@ class MaterializationTests(unittest.TestCase):
         self.assertEqual(report['first']['path'], report['second']['path'])
         self.assertEqual(counter.read_text(), 'x')
 
+    def test_extractions_run_concurrently_but_capped(self):
+        """Eine grosse Auswahl darf nicht Dutzende Kernprozesse starten.
+
+        Jeder Auftrag blockiert in `readDataToEndOfFile()` plus
+        `waitUntilExit()`. Ohne Deckel wuchs der GCD-Threadpool bis an
+        seine Decke: 200 Eintraege mit einer 3-s-Attrappe waren nach 9,3 s
+        fertig (rund 64 gleichzeitig), mit dem echten Kern lief die Spitze
+        auf 25 Python-Prozesse. Die Suche nimmt denselben Pool und lieferte
+        unter dieser Last ihren ersten Treffer nach 5,19 s statt 0,02 s
+        (gemessen 2026-09-10).
+
+        Die Attrappe schreibt je Aufruf EINE Zeile mit Anfang und Ende;
+        daraus rechnet der Test die groesste Ueberlappung aus."""
+        log = self.root / 'concurrency.log'
+        cli = self.fake_cli('concurrency', '''
+            begin = time.time()
+            time.sleep(0.3)
+            with open(%r, "a") as handle:
+                handle.write("%%.6f %%.6f\\n" %% (begin, time.time()))
+            emit()
+            ''' % str(log))
+        report = self.run_probe('concurrency', cli, self.archive, '20',
+                                timeout=120)
+        self.assertEqual(report['done'], 20)
+        self.assertEqual(report['ready'], 20)
+        spans = [tuple(float(value) for value in line.split())
+                 for line in log.read_text().splitlines() if line.strip()]
+        self.assertEqual(len(spans), 20)
+        # Groesste Zahl gleichzeitig offener Zeitfenster.
+        events = sorted([(begin, 1) for begin, _ in spans]
+                        + [(end, -1) for _, end in spans])
+        running = peak = 0
+        for _, delta in events:
+            running += delta
+            peak = max(peak, running)
+        self.assertLessEqual(peak, report['cap'], spans)
+        # Und die Nebenlaeufigkeit ist nicht versehentlich ganz weg:
+        # 20 Aufrufe zu je 0,3 s in Blöcken von hoechstens `cap`.
+        self.assertGreater(peak, 1, spans)
+
+    def test_two_hit_versions_of_the_same_file_share_one_extraction(self):
+        """Anzeige und Suchbelege ändern sich, das Objekt dahinter nicht.
+
+        Derselbe Archiv-Eintrag aus einer Namenssuche (`line: nil`) und aus
+        einer Inhaltssuche (`line: 12`, dazu Maße und Änderungszeit) ist
+        dieselbe Datei. Bis 0.34.14 war der Cache auf den ganzen Hit-Wert
+        verschlüsselt: zwei Einträge, zwei Unterprozesse, zwei Temp-Ordner —
+        gegen die Zusage, dass gleichzeitige Anforderungen desselben
+        Treffers EINEN Unterprozess und dieselbe Datei teilen."""
+        counter = self.root / 'variants.count'
+        release = self.root / 'variants.release'
+        cli = self.fake_cli('counted_variants', '''
+            with open(%r, "a") as handle:
+                handle.write("x")
+            wait_for_file(%r)
+            emit()
+            ''' % (str(counter), str(release)))
+        report = self.run_probe('shared-variants', cli, self.archive, 'x.txt',
+                                release)
+        self.assertEqual(report['first']['state'], 'ready')
+        self.assertEqual(report['second']['state'], 'ready')
+        self.assertEqual(report['first']['path'], report['second']['path'])
+        self.assertEqual(counter.read_text(), 'x')
+        # Und der Zwischenspeicher antwortet danach beiden Fassungen.
+        self.assertEqual(report['known_plain'], report['first']['path'])
+        self.assertEqual(report['known_with_line'], report['first']['path'])
+
     def test_cleanup_stops_running_jobs_and_creates_nothing_afterwards(self):
         pid_file = self.root / 'cleanup.pid'
         cli = self.fake_cli('late', '''
