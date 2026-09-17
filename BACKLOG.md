@@ -29,21 +29,6 @@ oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
    heraus auf die aktuelle aktualisieren und den Ablauf am Fenster prüfen.
    Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
    Durchlauf am Bildschirm.
-## Ungetestet: `release.sh` jenseits der frühen Tore
-
-Die Release-Zusagen — ein fremdes Volume bricht ab, der eigene Mount wird
-ausgehängt, Schritt 4 prüft beide Bundles, DMG signieren/notarisieren/
-stapeln in dieser Reihenfolge — hängen an Quelltextprüfungen in
-`tests/test_build_safety.py`. Ein ausführender Trockenlauf mit Attrappen
-für `hdiutil`, `codesign`, `spctl`, `xcrun`, `sips`, `tiffutil`, `swift`
-und `osascript` scheitert heute an zwei Stellen: `release.sh` ruft
-`./build-app.sh` über einen relativen Pfad (der Lauf bräuchte eine Kopie
-des Repos), und `MOUNT_DIR` ist der feste Pfad `/Volumes/Favenio` — ein
-Test darf dort nicht hineinschreiben. Beides ließe sich mit einer Naht
-lösen (`FAVENIO_MOUNT_ROOT`, Standard `/Volumes`); das ist eine Änderung
-am Release-Pfad und braucht eine eigene Entscheidung. Befund der
-CodeQA-Runde vom 2026-09-10.
-
 ## Flackernder Test: Ursache weiterhin offen
 
 `test_sigterm_during_the_swap_restores_both_bundles`
