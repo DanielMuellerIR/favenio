@@ -55,6 +55,10 @@ Building from source instead — three scripts, each self-contained:
 ```
 
 Source builds may be ad-hoc signed and are never installed automatically.
+For tests that require notarization before any app starts, use
+`FAVENIO_DEFER_SELFTEST=1 ./install.sh`. This defers the build's app self-tests;
+after installation, run each installed app binary with `--selftest` and check
+that its final output line begins with `SELFTEST OK`.
 Whatever lands in `/Applications` carries a stapled notarization ticket:
 `install.sh` notarizes the bundles itself, verifies them before and after
 copying (`codesign`, `spctl`, `stapler validate`), and exits with code 2 without

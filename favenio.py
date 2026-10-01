@@ -54,10 +54,10 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.34.24"
+__version__ = "0.34.25"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-09-17"
+__date__ = "2026-10-01"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -3266,6 +3266,12 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                         if (member + "/") in archive.namelist():
                             raise DirectoryMemberError(member) from None
                         raise
+                    if info.is_dir():
+                        # Mit Schrägstrich (`paket.zip!/ordner/`) findet
+                        # getinfo() den Ordner direkt; ohne diese Prüfung
+                        # entstand eine leere Datei mit Exit 0
+                        # (Code-Review 2026-09-18).
+                        raise DirectoryMemberError(member)
                     with archive.open(info, "r") as handle:
                         data = budget.read_all(
                             handle, display_path, info.file_size,
@@ -3293,11 +3299,17 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                     continue
                 with archive:
                     tar_members = bounded_tar_members(archive)
-                    names = ([item.name for item in tar_members]
+                    names = ([name for item in tar_members
+                              for name in ((item.name, item.name.rstrip("/") + "/")
+                                           if item.isdir() else (item.name,))]
                              if ambiguous else None)
                     member, used = pick_member(remaining, names)
+                    # tarfile speichert Ordnernamen ohne Schrägstrich; ein
+                    # Aufruf mit `paket.tar!/ordner/` endete deshalb mit
+                    # einem nackten KeyError (Code-Review 2026-09-18).
+                    wanted = (member, member.rstrip("/"))
                     tar_member = next((item for item in reversed(tar_members)
-                                       if item.name == member), None)
+                                       if item.name in wanted), None)
                     if tar_member is None:
                         raise KeyError(member)
                     if tar_member.isdir():

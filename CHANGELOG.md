@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.34.25 — 2026-10-01
+
+- `--extract` auf einen Ordner-Eintrag mit abschließendem Schrägstrich
+  (`paket.zip!/ordner/`, `paket.tar!/ordner/`) meldet den Ordner-Eintrag mit
+  Exit 2; vorher entstand im Zip eine leere Datei mit Exit 0, im Tar ein
+  nackter Schlüsselfehler. Das gilt auch für Tar-Ordnernamen mit `!/`.
+
 ## 0.34.24 — 2026-09-17
 
 - JSONL bleibt bei nicht als UTF-8 kodierten Tar-Eintragsnamen gültiges

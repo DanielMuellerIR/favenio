@@ -1813,6 +1813,27 @@ class SelfTestGateTest(unittest.TestCase):
         self.assertNotIn("MacOS/Favenio --selftest", source)
         self.assertNotIn("MacOS/FavenioQuick --selftest", source)
 
+    def test_deferred_build_does_not_start_an_app(self):
+        gate = shell_function(
+            (REPO / "build-app.sh").read_text(encoding="utf-8"),
+            "run_build_selftests")
+        for deferred in ("0", "1"):
+            with self.subTest(deferred=deferred):
+                script = ('set -euo pipefail\n'
+                          'run_selftest() { echo "START=$1"; }\n'
+                          + gate + '\nrun_build_selftests\n')
+                environment = dict(os.environ,
+                                   FAVENIO_DEFER_SELFTEST=deferred)
+                result = subprocess.run(
+                    ["zsh", "-c", script], env=environment,
+                    capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                starts = [line for line in result.stdout.splitlines()
+                          if line.startswith("START=")]
+                self.assertEqual(starts, [] if deferred == "1" else [
+                    "START=Favenio.app/Contents/MacOS/Favenio",
+                    "START=FavenioQuick.app/Contents/MacOS/FavenioQuick"])
+
     def test_each_app_prints_the_expected_line_exactly_once(self):
         """Das Tor sucht `SELFTEST OK`. Steht die Zeile mehrfach oder gar
         nicht in der Quelle, prüft es nichts Verlässliches mehr."""

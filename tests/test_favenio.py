@@ -2053,17 +2053,34 @@ class ArchiveDirectoryFlagTest(TempTreeTest):
             info = tarfile.TarInfo("nadel")
             info.type = tarfile.DIRTYPE
             archive.addfile(info)
-        for archive in (self.archive, tar_path):
-            member = archive + "!/nadel"
-            with self.subTest(archive=os.path.basename(archive)):
+        for archive, suffix in ((self.archive, ""), (tar_path, ""),
+                                (self.archive, "/"), (tar_path, "/")):
+            # Mit Schrägstrich entstand im Zip eine leere Datei (Exit 0),
+            # im Tar ein nackter KeyError (Code-Review 2026-09-18).
+            member = archive + "!/nadel" + suffix
+            with self.subTest(archive=os.path.basename(archive),
+                              suffix=suffix):
                 code, lines, err = run(["--extract", member])
                 self.assertEqual(code, 2)
                 self.assertEqual(lines, [])
                 self.assertIn("Ordner-Eintrag", err)
                 code, lines, err = run(["--extract-json", json.dumps({
                     "filesystemPath": archive,
-                    "archiveMembers": ["nadel"]})])
+                    "archiveMembers": ["nadel" + suffix]})])
                 self.assertEqual(code, 2)
+                self.assertIn("Ordner-Eintrag", err)
+
+    def test_tar_directory_with_archive_separator_and_trailing_slash(self):
+        tar_path = os.path.join(self.root, "odd.tar")
+        with tarfile.open(tar_path, "w") as archive:
+            info = tarfile.TarInfo("odd!/folder")
+            info.type = tarfile.DIRTYPE
+            archive.addfile(info)
+        for suffix in ("", "/"):
+            with self.subTest(suffix=suffix):
+                code, lines, err = run(["--extract", tar_path + "!/odd!/folder" + suffix])
+                self.assertEqual(code, 2)
+                self.assertEqual(lines, [])
                 self.assertIn("Ordner-Eintrag", err)
 
     def bsdtar_archives(self):

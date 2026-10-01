@@ -339,9 +339,11 @@ xcrun stapler validate "$DMG_PATH"
 # installieren; Build und Release selbst verändern /Applications nie.
 spctl --assess --type open --context context:primary-signature -v "$DMG_PATH"
 
-# Zwischen dem festgehaltenen Commit und dem Ende der Notarisierung liegen
-# mehrere Minuten. Ein paralleler Commit oder eine neue Arbeitsbaumänderung
-# würde sonst ein Artefakt mit falscher Herkunft veröffentlichen.
+# Dieser Teil läuft im isolierten Worktree auf $BUILD_COMMIT (s. oben);
+# Änderungen im aufrufenden Checkout erreichen ihn nicht. Die Prüfung stellt
+# deshalb sicher, dass der Bau selbst keine getrackte Datei verändert oder
+# eine ungetrackte, nicht ignorierte Datei hinterlassen hat — sonst stimmte
+# die Herkunftsangabe des Artefakts nicht mehr.
 if [ "$(git rev-parse --verify HEAD)" != "$BUILD_COMMIT" ] \
         || [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
     echo "FEHLER: Der Quellstand hat sich während des Release-Baus geändert." >&2

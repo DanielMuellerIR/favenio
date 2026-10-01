@@ -247,9 +247,19 @@ run_selftest() {
     fi
 }
 
-echo "== Headless-Selbsttest =="
-run_selftest Favenio.app/Contents/MacOS/Favenio
-run_selftest FavenioQuick.app/Contents/MacOS/FavenioQuick
+run_build_selftests() {
+    # App-Abnahmen können ein Notary-Ticket schon vor dem ersten Start
+    # verlangen. Dann werden die Selbsttests nach der Notarisierung am
+    # geprüften Bundle nachgeholt; der Build allein belegt sie nicht.
+    if [[ "${FAVENIO_DEFER_SELFTEST:-0}" == "1" ]]; then
+        echo "App-Selbsttests aufgeschoben — nach Notarisierung separat ausführen."
+        return 0
+    fi
+    echo "== Headless-Selbsttest =="
+    run_selftest Favenio.app/Contents/MacOS/Favenio
+    run_selftest FavenioQuick.app/Contents/MacOS/FavenioQuick
+}
+run_build_selftests
 
 echo "Fertig: Favenio.app + FavenioQuick.app $VERSION im Projektverzeichnis"
 echo "Keine Installation durchgeführt. Releases nur aus dem notarisierten DMG installieren."

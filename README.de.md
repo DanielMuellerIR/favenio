@@ -54,7 +54,12 @@ Alternativ selbst bauen — drei Skripte, jedes für sich vollständig:
 ```
 
 Quell-Builds können nur ad hoc signiert sein und werden nie automatisch
-installiert. Was in `/Applications` landet, trägt ein angeheftetes
+installiert. Für Tests, die schon vor dem ersten App-Start eine Notarisierung
+verlangen, dient `FAVENIO_DEFER_SELFTEST=1 ./install.sh`. Damit werden die
+App-Selbsttests des Builds aufgeschoben. Nach der Installation beide
+installierten App-Binaries mit `--selftest` starten und prüfen, dass die
+letzte Ausgabezeile mit `SELFTEST OK` beginnt.
+Was in `/Applications` landet, trägt ein angeheftetes
 Notary-Ticket: `install.sh` notarisiert die Bundles selbst, prüft sie vor und
 nach dem Kopieren (`codesign`, `spctl`, `stapler validate`) und endet bei jedem
 Fehler mit Exit-Code 2, ohne `/Applications` anzufassen. Eine gültige Signatur
