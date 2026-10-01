@@ -22,6 +22,17 @@ Der Suchkern ist pures Python 3 (nur Standardbibliothek), eine Datei, keine
 Installation. Darauf aufbauend gibt es zwei native macOS-Apps: ein großes
 Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
 
+## Screenshots
+
+Die Haupt-App durchsucht Dateiinhalte und Archive. Das Beispiel verwendet
+`Archiv*Suche` mit dem zusätzlichen Begriff `Demo` und zeigt die optionalen Filter.
+
+![Favenio 0.35.0: Hauptfenster mit drei Treffern, darunter ein Archiv-Eintrag](assets/screenshots/main-window.png)
+
+Die Finder-Schnellsuche verwendet denselben Suchkern und dieselben Filter.
+
+![Favenio 0.35.0: Schnellsuche mit weiteren Begriffen und dem Schalter für wörtliche Sterne](assets/screenshots/quick-search.png)
+
 ## Voraussetzungen
 
 - **CLI (`favenio.py`)**: Python 3.9 oder neuer, keine Zusatzpakete.
@@ -174,6 +185,7 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `-r`, `--regex` | Muster als regulären Ausdruck interpretieren |
 | `-s`, `--case-sensitive` | Groß-/Kleinschreibung beachten |
 | `-e`, `--exact` | Muster muss dem GANZEN Namen entsprechen (mit `-r`: fullmatch; mit `-c` je Zeile) |
+| `--literal-wildcards` | Platzhalter wörtlich suchen; Regex und Ausschlüsse bleiben unverändert |
 | `--max-depth N` | nur N Ordnerebenen tief suchen (1 = nur direkt im Startpfad, wie `find -maxdepth`) |
 | `--no-archives` | nicht in Archive hineinschauen; sie bleiben normale Dateien (siehe unten) |
 | `--archive-depth N` | Verschachtelungstiefe (0 = wie `--no-archives`, Default 1) |
@@ -265,6 +277,16 @@ Deshalb findet die Eingabe `.md` auch `.mdi`, `.mdx` oder `readme.md` —
 suchen.** Das `*` schaltet auf Glob-Matching um, das den **ganzen** Namen
 prüft. (Endet ein *Ordner* auf `.md`, zusätzlich `--only files` bzw. in der
 GUI „Nur Dateien" wählen.) Exakt gleichwertig wäre der Regex `\.md$`.
+
+Bei Inhalt und Metadaten steht `*` wie in fastra für **mindestens ein
+Zeichen innerhalb derselben Zeile**: `bla*blubb` findet auch
+`vor bla dazwischen blubb nach`, aber weder `blablubb` noch Begriffe auf
+verschiedenen Zeilen. Andere Zeichen wie `?` und `[` sind hier wörtlich.
+`--exact` verlangt die ganze Zeile bzw. den ganzen Metadatenwert.
+Unter „Weitere Filter“ in beiden Apps unterdrückt **„* wörtlich“** alle
+Platzhalter (CLI: `--literal-wildcards`), auch in weiteren Suchbegriffen.
+Mehrere Sterne wirken wie einer; es gibt keine mehrzeilige `**`-Suche.
+Regex und Ausschlussmuster bleiben unverändert.
 
 Ordner können eine Namenssuche und bekannte Datumsfakten erfüllen;
 Dateigrößen-, Maß-, Metadaten- und Inhaltsfilter erfüllen sie nicht.

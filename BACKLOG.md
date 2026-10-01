@@ -3,32 +3,6 @@
 Vor jedem Punkt gegen Code und Git verifizieren. Erledigte Punkte in Changelog
 oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
-1. Sichtbarer Drag-and-drop-Test am Fenster der Haupt-App: einen noch nicht
-   ausgepackten Archiv-Eintrag als Dateiversprechen in den Finder ziehen
-   (mehrere Dateien, langsame Extraktion, Abbruch, Fehler). Headless ist der
-   Weg seit 0.32.0 geprüft (`tests/test_materialization.py`); die Prüfung am
-   Fenster steht noch aus.
-2. Sichtbarer Test des Fensters „Suchvorlagen" (Verwalten: Laden,
-   Umbenennen in der Zeile, Löschen). Headless ist alles geprüft
-   (Selbsttest); das Fenster selbst wurde noch nicht am Bildschirm
-   angesehen.
-3. Sichtbarer Blick auf das neue Feld „Weitere Begriffe" (0.34.0) in beiden
-   Fenstern: Es liegt unter der linken Filterspalte und macht die
-   Filteransicht rund 60 pt höher; offscreen gerendert sieht es richtig aus
-   (`tests/configuration_probe.swift` mit Ausgabepfad), am Fenster der
-   Schnellsuche (Standardhöhe 520 pt, Tabelle darunter) noch nicht geprüft.
-4. Sichtbare Nachprüfung der Bedienänderungen aus 0.34.10 bis 0.34.19,
-   alle bisher nur headless belegt: In der Haupt-App startet die Suche erst
-   auf Return statt beim Tippen; ein geladenes Regex-Muster steht sofort
-   gefärbt im Feld; die Fußzeile zeigt Text und Tooltip gleich an; das
-   Rechtsklick-Menü über einer sehr großen Auswahl geht ohne Hänger auf.
-   In der Schnellsuche: Die Vorschau mit Leertaste oder ⎋ zu schließen darf
-   die App nicht beenden, ⇧⎋ und ⌥⎋ dürfen nichts auslösen.
-5. Screenshots (GUI + Schnellsuche) für die öffentlichen READMEs ergänzen.
-6. Sichtbarer Sparkle-Update-Test: aus einer älteren notarisierten Fassung
-   heraus auf die aktuelle aktualisieren und den Ablauf am Fenster prüfen.
-   Der Appcast-Weg selbst ist gebaut und läuft in CI; was fehlt, ist der
-   Durchlauf am Bildschirm.
 ## Flackernder Test: Ursache weiterhin offen
 
 `test_sigterm_during_the_swap_restores_both_bundles`

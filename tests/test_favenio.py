@@ -24,6 +24,7 @@ from unittest import mock
 import zipfile
 import zlib
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 # favenio.py liegt eine Ebene über tests/ — Pfad dafür ergänzen.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -3410,3 +3411,104 @@ class RobustTraversalTest(TempTreeTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TextWildcardTest(TempTreeTest):
+    def test_order_gap_and_line_boundaries(self):
+        self.write("yes.txt", "Vorspann bla dazwischen blubb Nachspann\n")
+        self.write("empty.txt", "blablubb\n")
+        self.write("reverse.txt", "blubb bla\n")
+        self.write("separate.txt", "bla\nblubb\n")
+        code, lines, err = run(["--content", "bla*blubb", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual([Path(line.rsplit(":", 1)[0]).name for line in lines], ["yes.txt"])
+        self.assertEqual(err, "")
+
+    def test_literal_and_regex_precedence(self):
+        self.write("literal.txt", "vor bla*blubb nach\n")
+        self.write("gap.txt", "bla xyz blubb\n")
+        code, lines, err = run(["--content", "--literal-wildcards", "bla*blubb", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("literal.txt:1", lines[0])
+        self.assertEqual(err, "")
+        matcher = favenio.build_matcher("bla.*blubb", True, False,
+                                       literal_wildcards=True, text_wildcards=True)
+        self.assertTrue(matcher("bla xyz blubb"))
+
+    def test_exact_case_and_literal_special_characters(self):
+        matcher = favenio.build_matcher("Bla*?[x]", False, False, text_wildcards=True)
+        self.assertTrue(matcher("vor bla da ?[x] nach"))
+        self.assertFalse(matcher("bla da ax"))
+        exact = favenio.build_matcher("bla*blubb", False, True, exact=True, text_wildcards=True)
+        self.assertTrue(exact("bla x blubb"))
+        self.assertFalse(exact("vor bla x blubb"))
+        self.assertFalse(exact("Bla x blubb"))
+
+    def test_literal_name_and_content_probe(self):
+        self.write("a*.txt", "bla*blubb\n")
+        self.write("abc.txt", "anderer Text\n")
+        code, lines, err = run(["--literal-wildcards", "a*.txt", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].endswith("a*.txt"))
+        self.assertIsNotNone(favenio.build_content_probe("bla*blubb", False, False, True))
+        self.assertIsNone(favenio.build_content_probe("bla*blubb", False, False))
+
+    def test_archive_and_additional_terms_use_same_wildcards(self):
+        archive = os.path.join(self.root, "bundle.zip")
+        with zipfile.ZipFile(archive, "w") as z:
+            z.writestr("yes.txt", "vor bla x blubb nach\nalpha und omega\n")
+            z.writestr("no.txt", "bla x blubb\nalphaomega\n")
+        code, lines, err = run(["--json", "--content", "bla*blubb", "--term=alpha*omega", archive])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        hit = json.loads(lines[0])
+        self.assertEqual(hit["archiveMembers"], ["yes.txt"])
+        self.assertEqual([term["line"] for term in hit["terms"]], [1, 2])
+        self.assertEqual(err, "")
+
+    def test_metadata_star_does_not_cross_line_separators(self):
+        matcher = favenio.build_matcher("bla*blubb", False, False, text_wildcards=True)
+        for separator in ["\n", "\r", "\r\n", "\x85", "\u2028", "\u2029"]:
+            self.assertFalse(matcher("bla" + separator + "blubb"))
+
+    def test_literal_option_preserves_exclusions(self):
+        self.write("keep*.txt", "ok")
+        self.write("skip*.txt", "ok")
+        code, lines, err = run(["--literal-wildcards", "*.txt", "--exclude=skip*", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].endswith("keep*.txt"))
+        self.assertEqual(err, "")
+
+    def test_multiple_stars_stay_within_one_line(self):
+        matcher = favenio.build_matcher("bla**blubb", False, False, text_wildcards=True)
+        self.assertTrue(matcher("bla x blubb"))
+        self.assertFalse(matcher("bla\nblubb"))
+        self.assertFalse(matcher("blablubb"))
+
+    def test_wildcard_probe_preserves_unicode_and_results(self):
+        self.write("unicode.txt", "vor ΟΣ dazwischen ende\n")
+        self.write("absent.txt", "kein Ende des gesuchten Textes\n")
+        arguments = ["--json", "--content", "ΟΣ*ende", self.root]
+        fast = run(arguments)
+        with mock.patch.object(favenio, "build_content_probe", return_value=None):
+            slow = run(arguments)
+        self.assertEqual(fast, slow)
+        self.assertEqual(fast[0], 0)
+        probe = favenio.build_content_probe("bla*blubb", False, False, text_wildcards=True)
+        self.assertEqual(probe.needles, ["bla", "blubb"])
+
+    def test_ordered_matching_against_star_expression(self):
+        import random
+        import re
+        rng = random.Random(7)
+        for _ in range(1000):
+            pattern = "".join(rng.choice("ab?[*") for _ in range(rng.randrange(1, 10))) + "*"
+            text = "".join(rng.choice("ab?[ \n\r") for _ in range(rng.randrange(25)))
+            expression = "[^\n\r]+".join(re.escape(p) for p in re.split(r"\*+", pattern))
+            for exact in [False, True]:
+                expected = (re.fullmatch(expression, text) if exact else re.search(expression, text)) is not None
+                matcher = favenio.build_matcher(pattern, False, True, exact=exact, text_wildcards=True)
+                self.assertEqual(matcher(text), expected, (pattern, text, exact))

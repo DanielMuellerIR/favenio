@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-01",
+  "python": "3.9.6",
+  "matcher_case": {
+    "description": "64 KiB of a, pattern a*z, no match; ordered literal matcher versus equivalent naive regex, median of 3",
+    "results": {
+      "ordered_literals": {
+        "median_seconds": 2.9874999999998653e-05,
+        "samples_seconds": [
+          2.8916999999999832e-05,
+          2.9874999999998653e-05,
+          3.441699999999839e-05
+        ]
+      },
+      "regex_backtracking": {
+        "median_seconds": 13.282203916999999,
+        "samples_seconds": [
+          12.93798675,
+          13.282203916999999,
+          13.458146833000004
+        ]
+      }
+    }
+  },
+  "file_cases": {
+    "absent": {
+      "bytes": 32768000,
+      "exit_code": 1,
+      "seconds": 0.026430791999999998,
+      "peak_rss_bytes": 15024128
+    },
+    "last_line": {
+      "bytes": 32768019,
+      "exit_code": 0,
+      "seconds": 0.270909958,
+      "peak_rss_bytes": 15171584
+    }
+  },
+  "notes": [
+    "File cases use the fast probe and real CLI core.",
+    "Single observation per file case; no universal speed claim.",
+    "No multiline search; reader and archive budgets remain unchanged."
+  ]
+}

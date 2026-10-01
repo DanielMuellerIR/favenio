@@ -30,6 +30,8 @@ struct FavenioQuickApp {
                 print("SELFTEST FEHLER: \(error)")
                 exit(1)
             }
+            controller.filterView.literalWildcards = true
+            precondition(controller.searchConfiguration.literalWildcards)
             controller.filterView.exclusions = ["node_modules", " keep spaces "]
             controller.filterView.rawFacts = ["min-size": "0"]
             guard controller.searchConfiguration.hasPositiveFilter,
@@ -955,6 +957,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         configuration.archives = archivesCheckbox.state == .on
         configuration.includeHidden = hiddenCheckbox.state == .on
         configuration.exact = exactCheckbox.state == .on
+        configuration.literalWildcards = filterView.literalWildcards
         configuration.pixelTexts = pixelFields.map { $0.stringValue }
         configuration.exclusions = filterView.exclusions
         configuration.rawFacts = filterView.rawFacts

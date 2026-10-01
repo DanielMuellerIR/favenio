@@ -18,6 +18,7 @@ struct ConfigurationProbe {
         original.archives = true
         original.includeHidden = true
         original.exact = true
+        original.literalWildcards = true
         original.only = "files"
         original.metadataField = "Title"
         original.pixelTexts = ["1.000 px", "2000", "", ""]
@@ -38,6 +39,7 @@ struct ConfigurationProbe {
         let args = decoded.arguments(pattern: "Winter", root: "/fixture")!
         precondition(args.filter { $0.hasPrefix("--exclude=") }
             .map { String($0.dropFirst("--exclude=".count)) } == original.exclusions)
+        precondition(args.contains("--literal-wildcards"))
         precondition(args.contains("1000") && args.contains("--metadata"))
         precondition(args.contains("--metadata-field") && args.contains("Title"))
         // Das Feld gehoert NUR in den Metadaten-Modus. Der Kern liest
@@ -146,6 +148,9 @@ struct ConfigurationProbe {
         let missing = try SearchTemplateStore(fileURL: templateFile.appendingPathExtension("fehlt")).load()
         precondition(missing.isEmpty)
         let view = SearchFilterView()
+        view.literalWildcards = true
+        precondition(view.literalWildcardsCheckbox.title == "* wörtlich")
+        precondition(view.literalWildcards && view.activeFilterCount == 1)
         view.rawFacts = original.rawFacts
         precondition(view.rawFacts == original.rawFacts)
         view.exclusions = original.exclusions
@@ -156,6 +161,8 @@ struct ConfigurationProbe {
         view.onChange = { changes += 1 }
         view.textDidChange(Notification(name: NSText.didChangeNotification))
         precondition(changes == 1)
+        view.literalWildcardsCheckbox.performClick(nil)
+        precondition(!view.literalWildcards && changes == 2)
         if arguments.count > 1 {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 240),
                                   styleMask: [.borderless], backing: .buffered, defer: false)

@@ -105,8 +105,11 @@ Verbindliches CLI-Verhalten:
   verschiedene kaputte Namen weder kollidieren noch beim Auspacken vertauscht
   werden. Bis 0.34.22 brach derselbe Name unter `LANG=de_DE.UTF-8` den ganzen
   Lauf mit Exit 2 ab.
-- Glob-Muster matchen den vollständigen Namen. Substring-Suche gilt nur ohne
-  Platzhalter. Eine Änderung dieser Semantik wäre ein Breaking Change.
+- Namens-Glob-Muster matchen den vollständigen Namen. Inhalt und Metadaten
+  verwenden `*` für mindestens ein Zeichen innerhalb derselben Zeile, mit
+  beliebigem Text davor/danach; andere Zeichen sind dort wörtlich.
+  `--literal-wildcards` unterdrückt Platzhalter in beiden Modi, nicht Regex
+  oder Ausschlüsse. `--exact` verlangt weiterhin das ganze Ziel.
 - `--exclude` ist wiederholbar und arbeitet unabhängig vom Suchmatcher über
   `Exclusions` mit `fnmatchcase`: ohne `/` je ganze Pfadkomponente, mit `/`
   gegen den ganzen relativen Pfad und dessen Eltern. `*` darf `/` überqueren.

@@ -54,7 +54,7 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.34.25"
+__version__ = "0.35.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
 __date__ = "2026-10-01"
@@ -1177,13 +1177,15 @@ class ContentProbe:
         return False
 
 
-def build_content_probe(pattern, use_regex, case_sensitive):
+def build_content_probe(pattern, use_regex, case_sensitive, literal_wildcards=False,
+                        text_wildcards=False):
     """Baut den Vortest für die Inhaltssuche — oder None, wenn keiner möglich
     ist.
 
-    Möglich ist er nur, wenn wir einen festen Suchtext kennen. Bei --regex und
-    bei Glob-Mustern (* ? [) steckt kein solcher Text im Muster, den ein
-    Treffer garantiert enthalten müsste; dort bleibt es beim genauen Lauf.
+    Möglich ist er nur, wenn wir einen festen Suchtext kennen. --regex und
+    Namens-Globs bleiben beim genauen Lauf. Bei Text-Sternmustern können
+    dagegen alle festen Teile geprobt werden; Reihenfolge und Zeilengrenzen
+    prüft weiterhin der genaue Lauf.
     `--exact` ist dagegen unkritisch: Dort muss die ganze Zeile dem Muster
     entsprechen, der Suchtext kommt also erst recht vor.
 
@@ -1191,26 +1193,27 @@ def build_content_probe(pattern, use_regex, case_sensitive):
     Begriffe OHNE Platzhalter; schon einer, der fehlt, ist ein sicheres
     Nein. Begriffe mit Platzhaltern bleiben dem genauen Lauf überlassen."""
     patterns = [pattern] if isinstance(pattern, str) else list(pattern)
-    fixed = [text for text in patterns
-             if not any(char in text for char in "*?[")]
+    if text_wildcards and not literal_wildcards:
+        # Jeder feste Teil muss vorkommen; Reihenfolge und Zeilengrenzen
+        # prüft erst der genaue Lauf. Leere Teile stellen keine Bedingung.
+        fixed = list(dict.fromkeys(part for text in patterns
+                                   for part in re.split(r"\*+", text) if part))
+    else:
+        fixed = [text for text in patterns
+                 if literal_wildcards or not any(char in text for char in "*?[")]
     if use_regex or not fixed:
         return None
     return ContentProbe(fixed, case_sensitive)
 
 
-def build_matcher(pattern, use_regex, case_sensitive, exact=False):
-    """Baut aus dem Suchmuster eine Funktion  text -> True/False .
+def build_matcher(pattern, use_regex, case_sensitive, exact=False,
+                  literal_wildcards=False, text_wildcards=False):
+    """Baut den Matcher: Regex, Namens-Glob oder Text mit Sternplatzhaltern.
 
-    Drei Fälle:
-    1. --regex:            Muster ist ein regulärer Ausdruck (re.search).
-    2. Muster mit * ? [ :  Glob-Matching auf den GANZEN Namen (wie die Shell).
-    3. sonst:              einfacher „enthält"-Test (wie EasyFind-Default).
-
-    `exact` verlangt in allen Fällen den GANZEN Namen: aus dem „enthält"-Test
-    wird Gleichheit, aus `re.search` wird `re.fullmatch`. Ein Glob-Muster
-    matcht ohnehin schon den ganzen Namen und bleibt deshalb unverändert.
-    Genau dafür gibt es die Option: `release.sh` ohne Platzhalter ist sonst ein
-    Teilstring und findet auch `test-github-release.sh`.
+    Inhalt und Metadaten suchen * wie fastra innerhalb einer Zeile
+    (mindestens ein Zeichen); andere Sonderzeichen sind wörtlich.
+    Namen behalten Ganznamen-Globs. --literal-wildcards unterdrückt beide
+    Platzhalterarten. --exact verlangt immer das gesamte Ziel.
     """
     flags = 0 if case_sensitive else re.IGNORECASE
 
@@ -1221,7 +1224,43 @@ def build_matcher(pattern, use_regex, case_sensitive, exact=False):
             return lambda text: compiled.fullmatch(text) is not None
         return lambda text: compiled.search(text) is not None
 
-    if any(char in pattern for char in "*?["):
+    if text_wildcards and not literal_wildcards and "*" in pattern:
+        parts = re.split(r"\*+", pattern if case_sensitive else pattern.lower())
+
+        def matches_line(text):
+            # Früheste feste Teile lassen für alle folgenden Teile den
+            # größten Rest frei. str.find läuft in C; kein Regex-Backtracking
+            # bei langen Abständen oder einem fehlenden letzten Teil.
+            if exact:
+                if not text.startswith(parts[0]):
+                    return False
+                position = len(parts[0])
+            else:
+                start = text.find(parts[0])
+                if start < 0:
+                    return False
+                position = start + len(parts[0])
+            for index, part in enumerate(parts[1:], 1):
+                if exact and index == len(parts) - 1:
+                    start = len(text) - len(part)
+                    return start >= position + 1 and text.endswith(part)
+                start = text.find(part, position + 1)
+                if start < 0:
+                    return False
+                position = start + len(part)
+            return True
+
+        def wildcard_matcher(text):
+            if not case_sensitive:
+                text = text.lower()
+            if exact:
+                return (not text or (len(text.splitlines()) == 1
+                                     and text[-1] not in LINE_BREAKS)) and matches_line(text)
+            return any(matches_line(line) for line in text.splitlines())
+
+        return wildcard_matcher
+
+    if not literal_wildcards and not text_wildcards and any(char in pattern for char in "*?["):
         # fnmatch.translate macht aus dem Glob-Muster einen Regex,
         # der den kompletten String matchen muss.
         compiled = re.compile(fnmatch.translate(pattern), flags)
@@ -3542,6 +3581,9 @@ def main(argv=None):
                         help="Muster muss dem GANZEN Namen entsprechen statt "
                              "nur enthalten zu sein (mit --regex: fullmatch; "
                              "mit --content gilt es je Zeile)")
+    parser.add_argument("--literal-wildcards", action="store_true",
+                        help="Platzhalter im Suchmuster wörtlich suchen; "
+                             "ohne Wirkung mit --regex oder auf --exclude")
     parser.add_argument("--no-archives", action="store_true",
                         help="nicht in Archive hineinschauen")
     parser.add_argument("--only", choices=["both", "files", "dirs"],
@@ -3741,7 +3783,8 @@ def main(argv=None):
         # Globs/Regexe können denselben ganzen Namen treffen, und ohne
         # Groß-/Kleinschreibung sind auch beide.txt und BEIDE.TXT identisch.
         literal_names = {term if args.case_sensitive else term.lower()
-                         for term in terms if not any(char in term for char in "*?[")}
+                         for term in terms if args.literal_wildcards
+                         or not any(char in term for char in "*?[")}
         if len(literal_names) > 1:
             parser.error("--exact mit mehreren Begriffen enthält "
                          "widersprüchliche wörtliche Namen; --exact "
@@ -3773,7 +3816,9 @@ def main(argv=None):
             matchers = []
             for term in terms:
                 built = build_matcher(term, args.regex, args.case_sensitive,
-                                      exact=args.exact)
+                                      exact=args.exact,
+                                      literal_wildcards=args.literal_wildcards,
+                                      text_wildcards=args.content or metadata_mode)
                 built.term = term      # Klartext für die Belege
                 matchers.append(built)
             matcher, extra_matchers = matchers[0], matchers[1:]
@@ -3787,7 +3832,9 @@ def main(argv=None):
     content_probe = None
     if args.content:
         content_probe = build_content_probe(terms, args.regex,
-                                            args.case_sensitive)
+                                            args.case_sensitive,
+                                            args.literal_wildcards,
+                                            text_wildcards=True)
 
     archive_depth = 0 if args.no_archives else args.archive_depth
     search = Search(matcher, args.content, archive_depth, args.json,

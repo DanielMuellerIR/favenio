@@ -23,6 +23,17 @@ The search core is pure Python 3 (standard library only), a single file, no
 installation. Two native macOS apps are built on top of it: a full search
 window and a small quick-search panel for the Finder toolbar.
 
+## Screenshots
+
+The main app searches file contents and archives. This example uses
+`Archiv*Suche` with the additional term `Demo` and shows the optional filters.
+
+![Favenio 0.35.0 main window with three results, including an archive entry](assets/screenshots/main-window.png)
+
+The Finder quick-search panel uses the same search core and filters.
+
+![Favenio 0.35.0 quick search with additional terms and the literal-star option](assets/screenshots/quick-search.png)
+
 ## Requirements
 
 - **CLI (`favenio.py`)**: Python 3.9 or newer, no third-party packages.
@@ -169,6 +180,7 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `-r`, `--regex` | interpret the pattern as a regular expression |
 | `-s`, `--case-sensitive` | match case-sensitively |
 | `-e`, `--exact` | pattern must match the WHOLE name (with `-r`: fullmatch; with `-c` per line) |
+| `--literal-wildcards` | search wildcard characters literally; regex and exclusions are unaffected |
 | `--max-depth N` | search only N directory levels deep (1 = directly in the start path, like `find -maxdepth`) |
 | `--no-archives` | do not look inside archives; they stay ordinary files (see below) |
 | `--archive-depth N` | nesting depth (0 = like `--no-archives`, default 1) |
@@ -255,6 +267,16 @@ does occur *somewhere* in those names. **To find only real `.md` files, search
 for `*.md`.** The `*` switches to glob matching, which checks the **whole**
 name. (If a *directory* ends in `.md`, additionally use `--only files` or
 "Files only" in the GUI.) The regex `\.md$` is exactly equivalent.
+
+In content and metadata searches, `*` works like fastra: **at least one
+character within the same line**. `bla*blubb` also finds
+`before bla between blubb after`, but neither `blablubb` nor terms on
+separate lines. Other characters such as `?` and `[` are literal here.
+`--exact` requires the whole line or metadata value.
+In both apps, **“* wörtlich”** under “Weitere Filter” disables all
+wildcards (CLI: `--literal-wildcards`), including additional search terms.
+Repeated stars work like one star; there is no multiline `**` search.
+Regex and exclusion patterns are unaffected.
 
 Directories can match a name search and known date facts; file-size,
 dimension, metadata and content filters cannot match directories.

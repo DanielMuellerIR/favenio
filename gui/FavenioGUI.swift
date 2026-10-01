@@ -188,6 +188,7 @@ func runSelfTest() -> Int32 {
     saver.templateStore = SearchTemplateStore(fileURL: templateFile)
     saver.searchField.stringValue = "Rechnung*"
     saver.regexCheckbox.state = .on
+    saver.filterView.literalWildcards = true
     saver.minWidthField.stringValue = "1.000 px"
     saver.filterView.exclusions = ["node_modules", " keep spaces "]
     saver.filterView.rawFacts = ["min-size": "1 KiB"]
@@ -2339,6 +2340,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         filterView.exclusions = configuration.exclusions
         filterView.rawFacts = configuration.rawFacts
         filterView.terms = configuration.terms
+        filterView.literalWildcards = configuration.literalWildcards
         // Übergebene Filter sollen sichtbar sein, sonst wundert man sich
         // über eine kürzere Trefferliste ohne erkennbaren Grund.
         if filters.activeCount > 0 { filters.setExpanded(true) }
@@ -2358,6 +2360,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         configuration.archives = archivesCheckbox.state == .on
         configuration.includeHidden = hiddenCheckbox.state == .on
         configuration.exact = exactCheckbox.state == .on
+        configuration.literalWildcards = filterView.literalWildcards
         configuration.pixelTexts = pixelFields.map { $0.stringValue }
         configuration.exclusions = filterView.exclusions
         configuration.rawFacts = filterView.rawFacts

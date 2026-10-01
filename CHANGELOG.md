@@ -1,7 +1,24 @@
 # Changelog
 
+## 0.35.0 — 2026-10-01
+
+- Beide READMEs zeigen aktuelle Aufnahmen der Haupt-App und der Schnellsuche
+  mit Sternsuche, zusätzlichem Begriff und Archiv-Treffer.
+- Inhalt und Metadaten unterstützen Sternsuche wie in fastra: `bla*blubb`
+  findet beide Texte in derselben Zeile mit mindestens einem Zeichen dazwischen.
+- Beide Apps bieten unter „Weitere Filter“ den Schalter „* wörtlich“ mit
+  Erklärung im Tooltip; Vorlagen und App-Übergabe erhalten die Option.
+  CLI: `--literal-wildcards`. Namens-Globs bleiben unverändert.
+- Sternmuster verwenden schnelle Teilstring-Suchen statt Regex-Backtracking;
+  der Inhaltsvortest prüft ihre festen Teile. Der bestehende begrenzte Leser
+  bleibt erhalten; mehrere Sterne wirken wie ein einzelner Stern.
+- Bestehende UI und Sparkle-Updatefunktion sind manuell als einwandfrei bestätigt.
+
 ## 0.34.25 — 2026-10-01
 
+- Suchvorlagenverwaltung am laufenden Fenster geprüft: Laden ohne
+  automatischen Suchstart, Umbenennen in der Zeile, Abbrechen und Bestätigen
+  des Löschens sowie der leere Zustand mit deaktivierten Aktionen.
 - `--extract` auf einen Ordner-Eintrag mit abschließendem Schrägstrich
   (`paket.zip!/ordner/`, `paket.tar!/ordner/`) meldet den Ordner-Eintrag mit
   Exit 2; vorher entstand im Zip eine leere Datei mit Exit 0, im Tar ein

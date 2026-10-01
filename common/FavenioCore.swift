@@ -1015,6 +1015,7 @@ struct SearchConfiguration: Equatable {
     var archives = false
     var includeHidden = false
     var exact = false
+    var literalWildcards = false
     var only = "both"
     var metadataField: String? = nil
     var pixelTexts = ["", "", "", ""]
@@ -1062,6 +1063,7 @@ struct SearchConfiguration: Equatable {
         result.archives = value("archives") == "1"
         result.includeHidden = value("hidden") == "1"
         result.exact = value("exact") == "1"
+        result.literalWildcards = value("literal-wildcards") == "1"
         result.only = ["both", "files", "dirs"].contains(value("only") ?? "")
             ? value("only")! : "both"
         result.metadataField = value("field")
@@ -1080,7 +1082,7 @@ struct SearchConfiguration: Equatable {
             URLQueryItem(name: "only", value: only)]
         for (key, enabled) in [("regex", regex), ("case", caseSensitive),
                                ("archives", archives), ("hidden", includeHidden),
-                               ("exact", exact)] {
+                               ("exact", exact), ("literal-wildcards", literalWildcards)] {
             items.append(URLQueryItem(name: key, value: enabled ? "1" : "0"))
         }
         if let metadataField { items.append(URLQueryItem(name: "field", value: metadataField)) }
@@ -1126,6 +1128,7 @@ struct SearchConfiguration: Equatable {
         if regex { args.append("--regex") }
         if caseSensitive { args.append("--case-sensitive") }
         if exact { args.append("--exact") }
+        if literalWildcards { args.append("--literal-wildcards") }
         if !archives { args.append("--no-archives") }
         if only != "both" { args += ["--only", only] }
         if includeHidden { args.append("--hidden") }
@@ -1389,6 +1392,11 @@ eine neue Zeile.
 /// Inhalt — die Von/Bis-Felder dehnten sich über die ganze Fensterbreite,
 /// das Ausschlussfeld auch, obwohl ein Muster selten länger als 30 Zeichen ist.
 final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelegate {
+    let literalWildcardsCheckbox = NSButton(checkboxWithTitle: "* wörtlich", target: nil, action: nil)
+    var literalWildcards: Bool {
+        get { literalWildcardsCheckbox.state == .on }
+        set { literalWildcardsCheckbox.state = newValue ? .on : .off }
+    }
     let exclusionsEditor = PlaceholderTextView()
     /// Weitere Suchbegriffe, einer je Zeile — alle müssen zusätzlich zum
     /// Suchfeld zutreffen (Mehrwortsuche, `--term`).
@@ -1426,8 +1434,11 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
 
     /// Wie viele Filter dieser Ansicht gerade gesetzt sind: jedes nichtleere
     /// Von/Bis-Feld, jedes Ausschlussmuster und jeder weitere Begriff zählt
-    /// eins. Beide Apps zeigen die Zahl am zugeklappten Aufklapp-Schalter.
-    var activeFilterCount: Int { rawFacts.count + exclusions.count + terms.count }
+    /// eins; wörtliche Platzhalter zählen ebenfalls. Beide Apps zeigen die
+    /// Zahl am zugeklappten Aufklapp-Schalter.
+    var activeFilterCount: Int { rawFacts.count + exclusions.count + terms.count + (literalWildcards ? 1 : 0) }
+
+    @objc private func literalWildcardsChanged() { onChange?() }
 
     init() {
         super.init(frame: .zero)
@@ -1440,6 +1451,11 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
         factColumn.orientation = .vertical
         factColumn.alignment = .leading
         factColumn.spacing = 4
+        literalWildcardsCheckbox.font = .systemFont(ofSize: 11)
+        literalWildcardsCheckbox.target = self
+        literalWildcardsCheckbox.action = #selector(literalWildcardsChanged)
+        literalWildcardsCheckbox.toolTip = "Aus: Im Inhalt und in Metadaten steht * für mindestens ein Zeichen in derselben Zeile (bla*blubb); Text davor und danach ist erlaubt; mehrere Sterne wirken wie einer, nie über Zeilenumbrüche. Namen verwenden * ? [abc] für den ganzen Namen. An: Alle Platzhalter werden wörtlich gesucht. Regex und Ausschlüsse bleiben unverändert."
+        factColumn.addArrangedSubview(literalWildcardsCheckbox)
         // Nach der Gruppe zusammenfassen, nicht paarweise nach Index:
         // `all[index...index + 1]` setzte eine gerade Anzahl voraus, und ein
         // siebter Eintrag in `FactFilterOption.all` liesse beide Apps beim
