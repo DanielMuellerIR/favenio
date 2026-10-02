@@ -142,7 +142,10 @@ notarize_apps() {
     # `local`, und wenn der EXIT-Trap läuft, ist die Funktion schon
     # verlassen — unter `set -u` scheiterte er dann an „parameter not set"
     # und riss den ganzen Lauf mit. `${(q)…}` maskiert den Pfad zsh-sicher.
-    trap "rm -rf ${(q)stage}" EXIT HUP INT TERM
+    trap "rm -rf ${(q)stage}" EXIT
+    # Ein Signal muss den Aufrufer ebenfalls stoppen; bloßes Aufräumen
+    # würde danach Installation oder Release fortsetzen lassen.
+    trap 'exit 2' HUP INT TERM PIPE
     mkdir "$stage/Favenio"
     for app in "${FAVENIO_APPS[@]}"; do
         [ -d "$app" ] || { echo "FEHLER: $app fehlt — zuerst bauen." >&2

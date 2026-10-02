@@ -124,6 +124,10 @@ outer.zip!/inner.zip!/deep/hidden.txt
 
 For content search, `:N` appends the line number of the first match.
 
+If an entry name occurs more than once in a ZIP or TAR archive (including
+gzip/bzip2/xz-compressed TARs), search and extraction use its last occurrence.
+Formats read through `bsdtar`, including TAR.ZST, use the first occurrence.
+
 ## Use by scripts and AI agents (headless)
 
 Favenio is deliberately machine-friendly:

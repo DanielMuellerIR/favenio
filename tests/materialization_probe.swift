@@ -196,15 +196,23 @@ struct MaterializationProbe {
             manager.cliPath = arguments[2]
             let pidFile = arguments[5]
             let request = manager.request(hit(arguments[3], [arguments[4]])) { received(); outcome = $0 }
-            // Erst abbrechen, wenn der Kern wirklich läuft (er schreibt seine PID).
-            _ = spin(until: { FileManager.default.fileExists(atPath: pidFile) }, seconds: 5)
+            // Die Datei kann bereits existieren, bevor die PID geschrieben ist.
+            // Erst mit gültiger PID abbrechen; kill(-1, 0) prüfte sonst fremde
+            // Prozesse und meldete einen erfolgreichen Abbruch als Fehlschlag.
+            var pid: Int32 = 0
+            let started = spin(until: {
+                guard let text = try? String(contentsOfFile: pidFile, encoding: .utf8),
+                      let candidate = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+                      candidate > 0 else { return false }
+                pid = candidate
+                return true
+            }, seconds: 5)
             let cancelStart = ProcessInfo.processInfo.systemUptime
             request?.cancel()
             _ = spin(until: { outcome != nil })
             report = describe(outcome)
             report["cancel_seconds"] = ProcessInfo.processInfo.systemUptime - cancelStart
-            let pid = Int32((try? String(contentsOfFile: pidFile, encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? -1
+            report["started"] = started
             // SIGTERM → normales Ende im Kern; spätestens nach 1 s SIGKILL.
             // Die Frist misst NICHT das Verhalten — der Manager schickt
             // SIGTERM sofort und SIGKILL nach 1 s —, sondern nur, wie schnell
@@ -212,7 +220,7 @@ struct MaterializationProbe {
             // unter paralleler Baulast einmal durch, isoliert dagegen
             // dreimal hintereinander gruen. Grosszuegig warten und trotzdem
             // die Frage beantworten: Ist der Prozess weg?
-            let gone = spin(until: { kill(pid, 0) != 0 && errno == ESRCH },
+            let gone = started && spin(until: { kill(pid, 0) != 0 && errno == ESRCH },
                             seconds: 20)
             report["process_gone"] = gone
         case "shared":

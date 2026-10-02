@@ -15,6 +15,8 @@ final class QuickScopeRefreshHarness {
     var runScopeMismatch: (searched: String, finder: String)?
     var scopeDenied = false
     var searching = false
+    var hasSearched = false
+    var searchOutcomeText: String?
     var userPickedScope = false
     var searchRoot = "/ersatz"
     var queuedQuery = false
@@ -25,7 +27,7 @@ final class QuickScopeRefreshHarness {
 
     func rebuildScopePopup() { rebuilds += 1 }
     func showScopeProblem(_ text: String) { shownProblems.append(text) }
-    func runScopeNoteText() -> String? { nil }
+    func runScopeNoteText() -> String? { runScopeMismatch == nil ? nil : "Bereichshinweis" }
     func maybeReportDeniedAutomation() { deniedReports += 1 }
     func startSearch() {}
 
@@ -48,6 +50,20 @@ final class QuickScopeRefreshHarness {
         print("NACH_DENIED|\(state.scopeFinderFolders)|\(state.scopeResolved)|"
               + "\(state.scopeDenied)|\(state.rebuilds)|\(state.deniedReports)|"
               + "\(state.shownProblems.count)|\(state.refreshingScope)")
+        for searched in [false, true] {
+            let finished = QuickScopeRefreshHarness()
+            finished.hasSearched = searched
+            finished.applyScopeOutcome(.folders(["/finder"]))
+            print("SPAET_\(searched)|\(finished.runScopeMismatch?.searched ?? "nil")|"
+                  + "\(finished.runScopeMismatch?.finder ?? "nil")")
+        }
+        for outcome in ["Keine Treffer. — 1 Objekt übersprungen.", "Suche fehlgeschlagen."] {
+            let finished = QuickScopeRefreshHarness()
+            finished.hasSearched = true
+            finished.searchOutcomeText = outcome
+            finished.applyScopeOutcome(.folders(["/finder"]))
+            print("STATUS_\(outcome)|\(finished.shownProblems.last ?? "nil")")
+        }
     }
 }
 final class QuickScopeNoteHarness {

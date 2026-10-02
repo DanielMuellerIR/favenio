@@ -500,7 +500,7 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn("!self.hits.isEmpty", launch)
         self.assertIn("!self.field.stringValue.trimmingCharacters", launch)
         handoff = swift_function(QUICK, "@objc func openInMainApp()")
-        self.assertIn("if !hits.isEmpty || searching", handoff)
+        self.assertIn("if hasSearched", handoff)
         self.assertIn("scopePopup.selectedItem?.representedObject", handoff)
         self.assertIn("Finder-Ordner wird noch ermittelt", handoff)
 
@@ -1041,6 +1041,14 @@ class QuickScopeRefreshBehaviourTest(unittest.TestCase):
         self.assertEqual(
             self.lines["NACH_DENIED"], "[]|true|true|1|1|1|false")
 
+    def test_late_finder_answer_preserves_the_scope_of_a_finished_search(self):
+        self.assertEqual(self.lines["SPAET_true"], "/ersatz|/finder")
+        self.assertEqual(self.lines["SPAET_false"], "nil|nil")
+
+    def test_late_finder_answer_keeps_warnings_and_search_errors_visible(self):
+        for outcome in ("Keine Treffer. — 1 Objekt übersprungen.", "Suche fehlgeschlagen."):
+            self.assertEqual(self.lines["STATUS_" + outcome], outcome + " Bereichshinweis")
+
 
 @unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")
 class QuickScopeNoteBehaviourTest(unittest.TestCase):
@@ -1350,6 +1358,13 @@ class CommonApplicationsTest(unittest.TestCase):
         body = swift_function(COMMON, "func commonApplicationsFor(")
         self.assertIn("narrowed.contains(key)", body)
         self.assertIn("continue", body)
+
+    def test_directories_and_files_with_the_same_extension_are_intersected(self):
+        for names in (["folder.txt/", "file.txt"], ["file.txt", "folder.txt/"],
+                      ["one.app/", "two.app/", "file.app"]):
+            with self.subTest(names=names):
+                report = json.loads(run_probe('common-apps', input=json.dumps(names)).stdout)
+                self.assertEqual(report["neu"], report["direct"])
 
 
 if __name__ == "__main__":

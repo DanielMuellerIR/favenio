@@ -54,10 +54,10 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.35.0"
+__version__ = "0.35.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-10-01"
+__date__ = "2026-10-02"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -3022,6 +3022,10 @@ class Search:
                  archive_members):
         """Geht alle Einträge eines Zip-Archivs durch."""
         for info in archive.infolist():
+            # getinfo() wählt beim Auspacken den letzten gleichnamigen
+            # Eintrag. Nur dieser darf auch Suchtreffer liefern.
+            if archive.getinfo(info.filename) is not info:
+                continue
             self.visit_member(
                 info.filename.rstrip("/"),
                 info.is_dir(),
@@ -3050,7 +3054,12 @@ class Search:
         # hat. Erst NACH dem vollständigen, begrenzten Katalog Einträge
         # besuchen: Ein abgeschnittenes Tar darf keinen Treffer aus seinem
         # lesbaren Anfang ausgeben und danach nur eine Warnung melden.
-        for member in bounded_tar_members(archive):
+        # Wie bei der Extraktion gewinnt der letzte gleichnamige Eintrag.
+        # Der vollständige Katalog bleibt in archive erhalten: Hardlinks
+        # dürfen weiterhin auf frühere Einträge zeigen.
+        members_by_name = {member.name: member
+                           for member in bounded_tar_members(archive)}
+        for member in members_by_name.values():
             def open_member(member=member):
                 extracted = archive.extractfile(member)
                 if extracted is None:

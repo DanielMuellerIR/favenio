@@ -1443,8 +1443,8 @@ final class MainController: HitListController, NSApplicationDelegate,
         }
         guard let filePath = value("file"),
               validatedQuickHandoff(URL(fileURLWithPath: filePath)) != nil,
-              (value("q")?.utf8.count ?? 0) <= 4096,
-              (value("root")?.utf8.count ?? 0) <= 4096 else { return }
+              quickHandoffInputProblem(query: value("q") ?? "",
+                                       root: value("root") ?? "") == nil else { return }
         if let query = value("q") { searchField.stringValue = query }
         if let root = value("root") {
             setSearchRoot(URL(fileURLWithPath: root))

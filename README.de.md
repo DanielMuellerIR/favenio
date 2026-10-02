@@ -126,6 +126,11 @@ aussen.zip!/innen.zip!/tief/verstecktes.txt
 
 Bei Inhaltssuche hängt `:N` die Zeilennummer des ersten Treffers an.
 
+Kommt ein Eintragsname mehrfach in einem ZIP- oder TAR-Archiv vor
+(einschließlich gzip/bzip2/xz-komprimierter TARs), verwenden Suche und
+Extraktion den letzten Eintrag. Bei über `bsdtar` gelesenen Formaten,
+einschließlich TAR.ZST, gilt der erste Eintrag.
+
 ## Nutzung durch Skripte und AI-Agenten (headless)
 
 Favenio ist bewusst maschinenfreundlich gebaut:

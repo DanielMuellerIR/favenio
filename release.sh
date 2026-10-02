@@ -304,8 +304,8 @@ echo "DMG gebaut: $DMG_PATH"
 # ---------- Schritt 4: Signaturen im DMG verifizieren ----------
 echo "== Schritt 4/5: Signaturen verifizieren =="
 VERIFY_MOUNT=$(mktemp -d)
-hdiutil attach "$DMG_PATH" -mountpoint "$VERIFY_MOUNT" -quiet -nobrowse
 VERIFY_MOUNTED=1
+hdiutil attach "$DMG_PATH" -mountpoint "$VERIFY_MOUNT" -quiet -nobrowse
 for app in "${FAVENIO_APPS[@]}"; do
     # Dieselbe Funktion wie in install.sh: Signatur, Gatekeeper-Urteil und
     # das angeheftete Ticket aus Schritt 2, das die DMG-Erstellung überlebt

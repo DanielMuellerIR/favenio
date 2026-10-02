@@ -20,6 +20,7 @@ import tarfile
 import tempfile
 import time
 import unittest
+import warnings
 from unittest import mock
 import zipfile
 import zlib
@@ -84,6 +85,73 @@ class TempTreeTest(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(text)
         return path
+
+
+class DuplicateArchiveMemberTest(TempTreeTest):
+    def archive_bytes(self, kind, entries):
+        output = io.BytesIO()
+        if kind == "zip":
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with zipfile.ZipFile(output, "w") as archive:
+                    for name, data in entries:
+                        archive.writestr(name, data)
+        else:
+            with tarfile.open(fileobj=output, mode="w") as archive:
+                for name, data in entries:
+                    member = tarfile.TarInfo(name)
+                    member.size = len(data)
+                    archive.addfile(member, io.BytesIO(data))
+        return output.getvalue()
+
+    def test_search_and_extraction_use_last_duplicate(self):
+        for kind in ("zip", "tar"):
+            with self.subTest(kind=kind):
+                archive_path = Path(self.root, "duplicate." + kind)
+                archive_path.write_bytes(self.archive_bytes(kind, [
+                    ("same.txt", b"oldneedle"),
+                    ("same.txt", b"newneedle with different size"),
+                ]))
+                code, lines, err = run([
+                    "--content", "--archive-depth", "2", "oldneedle", str(archive_path)])
+                self.assertEqual((code, lines, err), (1, [], ""))
+                code, lines, err = run([
+                    "--json", "same.txt", str(archive_path)])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(len(lines), 1)
+                hit = json.loads(lines[0])
+                self.assertEqual(hit["size"], len(b"newneedle with different size"))
+                code, extracted, err = run(["--extract-json", json.dumps(hit)])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(Path(extracted[0]).read_bytes(),
+                                 b"newneedle with different size")
+                code, lines, err = run([
+                    "--content", "newneedle", str(archive_path)])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(len(lines), 1)
+
+    def test_nested_duplicate_archive_uses_last_payload(self):
+        for kind in ("zip", "tar"):
+            with self.subTest(kind=kind):
+                inner_name = "inner." + kind
+                old = self.archive_bytes(kind, [("old.txt", b"oldneedle")])
+                new = self.archive_bytes(kind, [("new.txt", b"newneedle")])
+                archive_path = Path(self.root, "outer." + kind)
+                archive_path.write_bytes(self.archive_bytes(kind, [
+                    (inner_name, old), (inner_name, new),
+                ]))
+                code, lines, err = run([
+                    "--content", "--archive-depth", "2", "oldneedle", str(archive_path)])
+                self.assertEqual((code, lines, err), (1, [], ""))
+                code, lines, err = run([
+                    "--content", "--archive-depth", "2", "--json", "newneedle", str(archive_path)])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(len(lines), 1)
+                hit = json.loads(lines[0])
+                self.assertEqual(hit["archiveMembers"], [inner_name, "new.txt"])
+                code, extracted, err = run(["--extract-json", json.dumps(hit)])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(Path(extracted[0]).read_bytes(), b"newneedle")
 
 
 class FavenioTest(TempTreeTest):
@@ -3409,8 +3477,6 @@ class RobustTraversalTest(TempTreeTest):
                         self.assertIn("keine reguläre Datei", result.stderr)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TextWildcardTest(TempTreeTest):
@@ -3512,3 +3578,7 @@ class TextWildcardTest(TempTreeTest):
                 expected = (re.fullmatch(expression, text) if exact else re.search(expression, text)) is not None
                 matcher = favenio.build_matcher(pattern, False, True, exact=exact, text_wildcards=True)
                 self.assertEqual(matcher(text), expected, (pattern, text, exact))
+
+
+if __name__ == "__main__":
+    unittest.main()

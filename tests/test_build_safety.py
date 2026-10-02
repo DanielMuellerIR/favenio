@@ -154,6 +154,33 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertIn("trap 'exit 1' HUP INT TERM", source)
         self.assertIn('MOUNT_DIR="/Volumes/$VOL_NAME"', source)
 
+    def test_signal_at_verify_attach_still_detaches_the_image(self):
+        source = (REPO / "release.sh").read_text(encoding="utf-8")
+        attach = source[source.index('VERIFY_MOUNT=$(mktemp -d)'):]
+        attach = attach[:attach.index('for app in')]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = (
+                'set -euo pipefail\n'
+                'STAGING="$1/stage"; mkdir "$STAGING"\n'
+                'DMG_PATH="$STAGING/image"; WORK_SHA_PATH=""\n'
+                'FINAL_DMG_PATH="$1/final"; FINAL_SHA_PATH="$1/final.sha"\n'
+                'FINAL_LOCK_PATH="$1/lock"; FINAL_LOCK_SOURCE="$1/lock-source"\n'
+                'VERIFY_MOUNT=""; VERIFY_MOUNTED=0; BUILD_MOUNTED=0\n'
+                'DETACH_LOG="$1/detach.log"\n'
+                'hdiutil() {\n'
+                '  if [ "$1" = attach ]; then kill -TERM $$;\n'
+                '  else print -r -- "$2" >> "$DETACH_LOG"; fi\n'
+                '}\n'
+                + shell_function(source, 'favenio_release_unlock') + '\n'
+                + shell_function(source, 'favenio_release_cleanup') + '\n'
+                + "trap favenio_release_cleanup EXIT\ntrap 'exit 1' TERM\n"
+                + attach)
+            result = subprocess.run(['zsh', '-c', script, 'probe', str(root)],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertTrue((root / 'detach.log').exists(), result.stderr)
+
     def test_release_mounts_where_the_finder_can_address_the_disk(self):
         """Das Finder-Layout spricht die Platte als `disk "$VOL_NAME"` an.
         Der Finder führt ein Volume aber unter dem ORDNERNAMEN seines
@@ -1540,6 +1567,9 @@ class NotarizeStageCleanupTest(unittest.TestCase):
         self.xcrun_log = self.root / "xcrun.log"
         (self.stubs / "xcrun").write_text(
             '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$STUB_XCRUN_LOG"\n'
+            'if [ -n "${STUB_SIGNAL:-}" ] && [ "$1" = notarytool ]; then\n'
+            '  kill -"$STUB_SIGNAL" "$PPID"; exit 0\n'
+            'fi\n'
             'if [ -n "${STUB_DELAY:-}" ]; then sleep "$STUB_DELAY"; fi\n'
             '[ -n "${STUB_XCRUN_FAILS:-}" ] && exit 1\n'
             'exit 0\n', encoding="utf-8")
@@ -1561,8 +1591,10 @@ class NotarizeStageCleanupTest(unittest.TestCase):
         environment["NOTARY_PROFILE"] = "attrappe"
         return environment
 
-    def run_notarize(self, fails=None):
+    def run_notarize(self, fails=None, signal_name=None):
         environment = self.notarize_environment()
+        if signal_name is not None:
+            environment["STUB_SIGNAL"] = signal_name
         if fails is not None:
             environment["STUB_%s_FAILS" % fails.upper()] = "1"
         script = (
@@ -1594,6 +1626,17 @@ class NotarizeStageCleanupTest(unittest.TestCase):
         code, output = self.run_notarize()
         self.assertEqual(code, 0, output)
         self.assertEqual(self.leftovers(), [], output)
+
+    def test_soft_signals_stop_notarization_after_cleaning_the_stage(self):
+        for signal_name in ("HUP", "INT", "TERM"):
+            with self.subTest(signal=signal_name):
+                self.xcrun_log.write_text("", encoding="utf-8")
+                code, output = self.run_notarize(signal_name=signal_name)
+                leftovers = self.leftovers()
+                self.assertEqual(code, 2, output)
+                self.assertNotIn("RC=", output)
+                self.assertNotIn("stapler", self.xcrun_log.read_text(encoding="utf-8"))
+                self.assertEqual(leftovers, [], output)
 
     def test_one_upload_for_both_bundles_and_one_staple_each(self):
         """`notarytool` nimmt kein nacktes `.app`, deshalb gehen beide

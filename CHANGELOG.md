@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.35.1 — 2026-10-02
+
+- Suche und Extraktion verwenden bei doppelten ZIP-/TAR-Eintragsnamen
+  denselben letzten Eintrag, auch bei verschachtelten Archiven.
+- Die Schnellsuche behält Warnungen beim Stopp nach 20 Treffern und erkennt
+  den gezielten Prozessabbruch als normalen Abschluss.
+- Verspätete Finder-Antworten zeigen den tatsächlich durchsuchten Ordner
+  auch nach Suchende; Ergebnis- und Fehlermeldungen bleiben dabei erhalten.
+- „Öffnen mit“ berücksichtigt Ordner und Dateien mit gleicher Endung getrennt.
+- Quick Look verarbeitet Escape mit Zusatztasten wie die beiden App-Fenster.
+- Zu lange Suchtexte werden vor der Übergabe an die Haupt-App sichtbar
+  abgelehnt; die Schnellsuche bleibt geöffnet.
+- Abbruchsignale während der Notarisierung stoppen den Ablauf nach der
+  Aufräumung. Das Prüf-DMG wird auch bei einem Signal während des Einhängens
+  wieder ausgehängt.
+
 ## 0.35.0 — 2026-10-01
 
 - Beide READMEs zeigen aktuelle Aufnahmen der Haupt-App und der Schnellsuche

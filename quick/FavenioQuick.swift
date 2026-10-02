@@ -78,6 +78,29 @@ struct FavenioQuickApp {
                 print("SELFTEST FEHLER: Maßfehler ohne Suchtext bleibt unsichtbar")
                 exit(1)
             }
+            let oversized = QuickController()
+            oversized.field.stringValue = String(repeating: "🙂", count: 1025)
+            oversized.scopePopup.addItem(withTitle: "Fixture")
+            oversized.scopePopup.selectedItem?.representedObject = "/fixture"
+            oversized.openInMainApp()
+            guard oversized.infoLabel.stringValue == quickHandoffInputProblem(
+                query: oversized.field.stringValue, root: "/fixture"),
+                  quickHandoffInputProblem(query: String(repeating: "🙂", count: 1024),
+                                           root: "/fixture") == nil,
+                  quickHandoffInputProblem(query: "x", root: String(repeating: "x", count: 4097)) != nil else {
+                print("SELFTEST FEHLER: Zu lange Übergabe wird nicht vor dem Öffnen erkannt")
+                exit(1)
+            }
+            for flags: NSEvent.ModifierFlags in [[], .shift, .option, .command] {
+                let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                    modifierFlags: flags, timestamp: 0, windowNumber: 0,
+                    context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                    isARepeat: false, keyCode: 53)!
+                guard controller.previewPanel(nil, handle: event) == flags.isEmpty else {
+                    print("SELFTEST FEHLER: Quick Look verarbeitet Escape mit Zusatztaste")
+                    exit(1)
+                }
+            }
             let literal = Hit(path: "/fixture/a.zip!/inner.zip!/x.txt", kind: "member",
                 line: nil, size: nil, filesystemPath: "/fixture/a.zip",
                 archiveMembers: ["inner.zip!/x.txt"], isDirectory: false)
@@ -117,23 +140,44 @@ struct FavenioQuickApp {
                 let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
                 defer { try? FileManager.default.removeItem(at: root) }
+                // os.walk liest die FIFO vor dem Abstieg in den Trefferordner.
+                // Ihre Warnung muss auch den gezielten Top-20-Abbruch überleben.
+                precondition(mkfifo(root.appendingPathComponent("warn.pipe").path, 0o600) == 0)
+                let matches = root.appendingPathComponent("matches")
+                try FileManager.default.createDirectory(at: matches, withIntermediateDirectories: true)
                 for index in 0..<32 {
-                    try Data().write(to: root.appendingPathComponent("match-\(index).txt"))
+                    try Data("NEEDLE\n".utf8).write(to: matches.appendingPathComponent("match-\(index).txt"))
                 }
+                // Eine Sparse-Datei nach den Treffern hält den Kern bis zum
+                // echten SIGTERM-Abbruch beschäftigt, ohne 8 GiB zu belegen.
+                let slow = matches.appendingPathComponent("slow")
+                try FileManager.default.createDirectory(at: slow, withIntermediateDirectories: true)
+                let sparse = slow.appendingPathComponent("zeros.txt")
+                FileManager.default.createFile(atPath: sparse.path, contents: Data())
+                let sparseHandle = try FileHandle(forWritingTo: sparse)
+                try sparseHandle.truncate(atOffset: 8 * 1024 * 1024 * 1024)
+                try sparseHandle.close()
                 let limited = QuickController()
                 limited.tableView.dataSource = limited
-                limited.field.stringValue = "match"
+                limited.field.stringValue = "NEEDLE"
+                limited.modeControl.selectedSegment = 1
                 limited.scopePopup.addItem(withTitle: "Fixture")
                 limited.scopePopup.selectedItem?.representedObject = root.path
                 limited.startSearch()
                 let deadline = ProcessInfo.processInfo.systemUptime + 10
-                while limited.searching && ProcessInfo.processInfo.systemUptime < deadline {
+                while limited.runningSearch != nil && ProcessInfo.processInfo.systemUptime < deadline {
                     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
                 }
                 guard limited.hits.count == QuickController.maxQuickHits,
                       limited.pending.isEmpty, !limited.searching,
                       limited.runningSearch == nil else {
                     print("SELFTEST FEHLER: Quick stoppt nicht bei zwanzig Treffern")
+                    exit(1)
+                }
+                guard limited.skippedCount == 1,
+                      limited.infoLabel.stringValue.contains(skippedNote(1)),
+                      !limited.infoLabel.stringValue.contains("fehlgeschlagen") else {
+                    print("SELFTEST FEHLER: Top-20-Abbruch verliert Warnungen")
                     exit(1)
                 }
             } catch {
@@ -289,7 +333,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     // Ordner, ohne es zu sagen).
     var scopeResolved = false
     var scopeProblem: String?               // warum kein Finder-Ordner da ist
-    /// Hinweis zum LAUFENDEN Suchlauf: Der Finder hat sich gemeldet, nachdem
+    /// Hinweis zum letzten Suchlauf: Der Finder hat sich gemeldet, nachdem
     /// die Suche schon im Ersatzordner lief. `scopeProblem` ist dann nil (es
     /// gibt ja kein Problem mehr), der Hinweis muss trotzdem stehen bleiben —
     /// sonst überschreibt ihn das nächste Trefferpaket und man sieht nie, dass
@@ -316,6 +360,9 @@ final class QuickController: HitListController, NSApplicationDelegate,
     var flushTimer: Timer?
     var runningSearch: SearchRunner?
     var searchGeneration = 0
+    var hasSearched = false
+    var quickLimitReached = false
+    var searchOutcomeText: String?
 
 
     // ---------- App-Lebenszyklus ----------
@@ -802,18 +849,21 @@ final class QuickController: HitListController, NSApplicationDelegate,
         scopeFinderFolders = outcome.folders
         rebuildScopePopup()
 
+        let outcomePrefix = !searching && !(searchOutcomeText ?? "").isEmpty
+            ? searchOutcomeText! + " " : ""
         if let problem = scopeProblem, !searching {
-            showScopeProblem(problem)
+            showScopeProblem(outcomePrefix + problem)
         }
         // Kam die Finder-Antwort erst, nachdem eine Suche im Ersatzordner
-        // angelaufen ist: sagen, wo der Finder steht. Die laufende Suche wird
+        // angelaufen ist: sagen, wo der Finder steht, auch nach Suchende.
+        // Die laufende Suche wird
         // NICHT hinter dem Rücken des Nutzers umgehängt.
-        if scopeProblem == nil, searching, !userPickedScope,
+        if scopeProblem == nil, hasSearched, !userPickedScope,
            let front = scopeFinderFolders.first, front != searchRoot {
             // Merken, nicht nur anzeigen: flushPending() und finish() setzen
             // die Info-Zeile neu und hätten den Hinweis sonst weggewischt.
             runScopeMismatch = (searched: searchRoot, finder: front)
-            if let note = runScopeNoteText() { showScopeProblem(note) }
+            if let note = runScopeNoteText() { showScopeProblem(outcomePrefix + note) }
         }
         if scopeDenied { maybeReportDeniedAutomation() }
 
@@ -1015,6 +1065,9 @@ final class QuickController: HitListController, NSApplicationDelegate,
         openButton.isEnabled = false
         runScopeMismatch = nil
         skippedCount = 0
+        hasSearched = false
+        quickLimitReached = false
+        searchOutcomeText = nil
         previewURLs = []
         // Vorschau UND Dateiaktionen gehören zur alten Trefferliste. Die
         // gemeinsame Funktion setzt auch den gemerkten Ladezustand zurück.
@@ -1081,6 +1134,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         else { finish(query: query, errorText: "favenio.py nicht gefunden."); return }
         let run = SearchRunner()
         runningSearch = run
+        hasSearched = true
         run.start(arguments: arguments, onBatch: { [weak self, weak run] hits, progress in
             guard let self, let run, self.runningSearch === run,
                   generation == self.searchGeneration else { return }
@@ -1096,7 +1150,11 @@ final class QuickController: HitListController, NSApplicationDelegate,
             guard let self, let run, self.runningSearch === run,
                   generation == self.searchGeneration else { return }
             self.runningSearch = nil
-            let errorText = searchExitIsError(exit.status, reason: exit.reason)
+            // Der Kern räumt nach SIGTERM auf und endet regulär mit 143.
+            let expectedStop = self.quickLimitReached && (
+                (exit.reason == .uncaughtSignal && (exit.status == SIGTERM || exit.status == SIGKILL))
+                || (exit.reason == .exit && exit.status == 128 + SIGTERM))
+            let errorText = !expectedStop && searchExitIsError(exit.status, reason: exit.reason)
                 ? searchFailureText(exit) : nil
             self.skippedCount = exit.warningCount
             self.finish(query: query, errorText: errorText)
@@ -1151,10 +1209,17 @@ final class QuickController: HitListController, NSApplicationDelegate,
         reloadKeepingSelection(selectedIdentities)
         openButton.isEnabled = !hits.isEmpty
         let reachedTop = hits.count >= Self.maxQuickHits
-        if reachedTop { cancelSearch() }   // Top 20 erreicht → Suche stoppen
+        if reachedTop {
+            // Der Abschluss liefert noch die bereits gelesenen Warnungen.
+            // Nur neue Kriterien dürfen seine Laufidentität entwerten.
+            quickLimitReached = true
+            flushTimer?.invalidate(); flushTimer = nil
+            runningSearch?.cancel()
+            searching = false
+            spinner.stopAnimation(nil)
+        }
         // Ein unbestätigter Suchbereich bleibt sichtbar: Sonst verschwände die
-        // Warnung beim ersten Trefferpaket — und beim Top-20-Stopp für immer,
-        // weil danach kein finish() mehr kommt, das sie wieder anzeigt.
+        // Warnung beim ersten Trefferpaket und während des Top-20-Abbruchs.
         if let problem = scopeProblem ?? runScopeNoteText() {
             let summary = reachedTop
                 ? "" : "\(hits.count) Treffer — Suche läuft… "
@@ -1175,12 +1240,13 @@ final class QuickController: HitListController, NSApplicationDelegate,
     /// alles gelesen hat.
     var skippedCount = 0
 
-    /// Suche natürlich fertig (weniger als 20 Treffer): Endstand zeigen.
+    /// Suche beendet: Endstand einschließlich der gesammelten Warnungen zeigen.
     func finish(query: String, errorText: String?) {
         flushPending()
         cancelSearch()
         openButton.isEnabled = !hits.isEmpty
         if let errorText {
+            searchOutcomeText = errorText
             // Der Grund ist oft länger als die Infozeile (etwa die fremde
             // Xcode-Lizenzzeile); der Tooltip zeigt ihn ganz.
             showInfo(errorText, detail: errorText)
@@ -1192,14 +1258,15 @@ final class QuickController: HitListController, NSApplicationDelegate,
         let criterion = query.isEmpty
             ? (searchConfiguration.filterSummary.isEmpty ? "" : " (\(searchConfiguration.filterSummary))")
             : " für „\(query)“"
-        let summary = (hits.isEmpty
+        let summary = quickLimitReached && skippedCount == 0 ? "" : (hits.isEmpty
             ? "Keine Treffer\(criterion) in \(abbreviateHome(searchRoot))."
             : "\(hits.count) Treffer\(criterion).")
             + skippedNote(skippedCount)
+        searchOutcomeText = summary
         // Gerade wenn NICHTS gefunden wurde, muss ein unklarer Suchbereich
         // dabeistehen — sonst sucht man den Fehler beim Suchbegriff.
         if let problem = scopeProblem ?? runScopeNoteText() {
-            showScopeProblem(summary + " " + problem)
+            showScopeProblem(summary.isEmpty ? problem : summary + " " + problem)
         } else {
             showInfo(summary, detail: summary + "\n" + searchRoot)
         }
@@ -1218,7 +1285,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         // aktive Knopf „Alle in Favenio" und ⌘↩ dort wirkungslos.
         guard !query.isEmpty || searchConfiguration.hasPositiveFilter else { return }
         let root: String
-        if !hits.isEmpty || searching {
+        if hasSearched {
             // Vorhandene Treffer gehören genau zu diesem laufenden/letzten
             // Suchpfad, auch wenn der Finder sich inzwischen gemeldet hat.
             root = searchRoot
@@ -1231,6 +1298,10 @@ final class QuickController: HitListController, NSApplicationDelegate,
             // Der Finder-Bereich ist noch unbekannt. Keinen Ersatzordner raten;
             // der Nutzer kann nach der Auflösung erneut übergeben.
             showInfo("Finder-Ordner wird noch ermittelt…")
+            return
+        }
+        if let problem = quickHandoffInputProblem(query: query, root: root) {
+            showInfo(problem, detail: problem)
             return
         }
         let resultsFile: URL

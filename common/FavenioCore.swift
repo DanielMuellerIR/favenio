@@ -509,6 +509,9 @@ func commonApplicationsFor(_ hits: [Hit]) -> [URL] {
     // Treffer zählt dazu: `common` IST seine Anwendungsmenge.
     var narrowed: Set<String> = []
     func extensionKey(_ hit: Hit) -> String? {
+        // Ein Ordner namens „Fotos.txt“ hat andere öffnende Apps als eine
+        // Textdatei. Auch Pakete sind Ordner und brauchen ihre eigene Abfrage.
+        guard !hit.isDirectory else { return nil }
         let ext = (hit.displayName as NSString).pathExtension.lowercased()
         return ext.isEmpty ? nil : ext
     }
@@ -2575,6 +2578,16 @@ let quickHandoffSuffix = ".jsonl"
 let maximumHandoffBytes = 8 * 1024 * 1024
 let maximumHandoffLineBytes = 1024 * 1024
 
+func quickHandoffInputProblem(query: String, root: String) -> String? {
+    if query.utf8.count > 4096 {
+        return "Suchtext ist zu lang für die Übergabe an Favenio (maximal 4096 UTF-8-Bytes)."
+    }
+    if root.utf8.count > 4096 {
+        return "Suchpfad ist zu lang für die Übergabe an Favenio (maximal 4096 UTF-8-Bytes)."
+    }
+    return nil
+}
+
 /// Schreibt die Quick→Haupt-App-Übergabe atomar und nur für den Besitzer.
 func writeQuickHandoff(_ hits: [Hit]) throws -> URL {
     let data = jsonlData(for: hits)
@@ -3870,7 +3883,7 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
         case 125, 126:                                   // ↓ ↑
             tableView.keyDown(with: event)
             return true
-        case 53:                                         // ⎋
+        case 53 where plainModifiers(of: event).isEmpty: // ⎋
             closeOpenPreview()
             return true
         default:

@@ -158,11 +158,14 @@ class MaterializationTests(unittest.TestCase):
     def test_cancel_terminates_the_core(self):
         pid_file = self.root / 'cancel.pid'
         cli = self.fake_cli('slow', '''
-            open(%r, "w").write(str(os.getpid()))
+            with open(%r, "w") as handle:
+                time.sleep(0.2)
+                handle.write(str(os.getpid()))
             time.sleep(20)
             emit()
             ''' % str(pid_file))
         report = self.run_probe('cancel', cli, self.archive, 'x.txt', pid_file)
+        self.assertTrue(report['started'], report)
         self.assertEqual(report['state'], 'cancelled')
         self.assertLess(report['cancel_seconds'], 2)
         self.assertTrue(report['process_gone'])

@@ -71,12 +71,17 @@ import UniformTypeIdentifiers
         var written = Set<String>()
         for name in names {
             let url = root.appendingPathComponent(name)
+            let isDirectory = name.hasSuffix("/")
             if written.insert(name).inserted {
-                FileManager.default.createFile(atPath: url.path, contents: Data())
+                if isDirectory {
+                    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                } else {
+                    FileManager.default.createFile(atPath: url.path, contents: Data())
+                }
             }
             hits.append(Hit(path: url.path, kind: "file", line: nil, size: nil,
                             filesystemPath: url.path, archiveMembers: [],
-                            isDirectory: false))
+                            isDirectory: isDirectory))
         }
         var start = Date()
         let neu = commonApplicationsFor(hits).map { $0.path }
@@ -84,8 +89,13 @@ import UniformTypeIdentifiers
         start = Date()
         let alt = commonApplicationsPerHit(hits).map { $0.path }
         let altDauer = Date().timeIntervalSince(start)
+        var direct = hits.first.map(applicationsFor) ?? []
+        for hit in hits.dropFirst() {
+            let allowed = Set(applicationsFor(hit).map { $0.standardizedFileURL })
+            direct = direct.filter { allowed.contains($0.standardizedFileURL) }
+        }
         let report: [String: [String]] = [
-            "neu": neu, "alt": alt,
+            "neu": neu, "alt": alt, "direct": direct.map { $0.path },
             "dauer": [String(format: "%.4f", neuDauer),
                       String(format: "%.4f", altDauer)],
         ]
