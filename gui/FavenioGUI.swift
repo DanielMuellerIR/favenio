@@ -421,6 +421,45 @@ func runSelfTest() -> Int32 {
     loader.searchPhase = .idle
     loader.progressPath = nil
 
+    let recordedController = MainController()
+    recordedController.searchPhase = .recorded("completed")
+    recordedController.previewRequest = MaterializationSelectionRequest()
+    recordedController.refreshStatus()
+    guard recordedController.statusLabel.stringValue.contains("Aufgezeichneter Stand"),
+          recordedController.statusLabel.stringValue.contains(MainController.materializingNote) else {
+        print("SELFTEST FEHLER: Aufgezeichneter Stand verbirgt laufendes Auspacken und Abbruchhinweis")
+        return 1
+    }
+    recordedController.cancelMaterializations(reportCancellation: false)
+    guard !recordedController.statusLabel.stringValue.contains(MainController.materializingNote) else {
+        print("SELFTEST FEHLER: Aufgezeichneter Stand behält beendeten Auspackhinweis")
+        return 1
+    }
+
+    for continuing in [false, true] {
+        let rejected = MainController()
+        let stale = SearchRunner()
+        rejected.activeSearchRun = stale
+        let oldHit = Hit(path: "/fixture/old.txt", kind: "file", line: nil, size: nil,
+                         filesystemPath: "/fixture/old.txt", archiveMembers: [], isDirectory: false)
+        rejected.hits = [oldHit]
+        rejected.pending = [oldHit]
+        let invalid = FileManager.default.temporaryDirectory.appendingPathComponent(
+            quickHandoffPrefix + UUID().uuidString + quickHandoffSuffix)
+        try? Data("kein JSON\n".utf8).write(to: invalid)
+        defer { try? FileManager.default.removeItem(at: invalid) }
+        if continuing { rejected.continueSearch(from: invalid) }
+        else { rejected.loadResults(from: invalid) }
+        rejected.finishSearchRun(stale, exit: SearchExit(status: 0, reason: .exit))
+        guard rejected.activeSearchRun == nil, stale.isCancelled,
+              rejected.hits.isEmpty, rejected.pending.isEmpty,
+              rejected.statusLabel.stringValue.contains("Ungültige oder zu große Ergebnisübergabe"),
+              rejected.searchControl.run?.state == "failed" else {
+            print("SELFTEST FEHLER: Abgewiesene Quick-Übergabe lässt den alten Suchlauf weiterlaufen")
+            return 1
+        }
+    }
+
     // Mehrwortsuche: Begriffe aus der Filteransicht erreichen Argumente,
     // URL und Vorlage; ohne Muster tragen sie die Suche; Belege im Treffer.
     let termsController = MainController()
@@ -866,6 +905,14 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: " + failure)
         return 1
     }
+    if let failure = checkSearchControl(sandbox: tmp, hits: hits) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
+    if let failure = checkFastraHandoff(sandbox: tmp) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
     print("SELFTEST OK — Suche, Archiv-Extraktion, Trefferlisten-Werkzeuge "
           + "und Sparkle-Anbindung funktionieren")
     return 0
@@ -1218,6 +1265,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     var finderScopeDenied = false
     var searchRoot = FileManager.default.homeDirectoryForCurrentUser
     var activeSearchRun: SearchRunner?
+    lazy var searchControl = LocalSearchController(host: self)
     var flushTimer: Timer?
     var pendingURL: URL?            // favenio://-URL, die vor dem Fenster kam
     /// Zustand der Suche für die Fußzeile. Gespeichert wird der ZUSTAND, nie
@@ -1229,6 +1277,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         case running
         case stopped             // vom Nutzer abgebrochen
         case finished
+        case recorded(String)
         case handedOver          // Treffer der Schnellsuche, ohne eigenen Lauf
         case failed(String)      // Grund, den die Fußzeile wörtlich zeigt
     }
@@ -1271,13 +1320,14 @@ final class MainController: HitListController, NSApplicationDelegate,
         installMainMenu(appName: "Favenio")
         installUpdateMenuItem(updaterController: updaterController)
         buildWindow()
+        searchControl.listen()
         installAboutItem()
         installViewMenu()
         installFileMenu()
         installTemplatesMenu()
         // Finder-Fenster für das Ordner-Popup vorab im Hintergrund laden
         // (der AppleScript-Aufruf darf den Start nicht blockieren).
-        refreshFinderFoldersAsync()
+        if !CommandLine.arguments.contains("--control-test-host") { refreshFinderFoldersAsync() }
 
         // Fallback-Weg ohne funktionierende URL-Zuordnung: Quick startet eine
         // neue App-Instanz und gibt denselben strukturierten URL-Datensatz als
@@ -1303,7 +1353,9 @@ final class MainController: HitListController, NSApplicationDelegate,
 
         // Beim Start einmal auf Festplattenvollzugriff hinweisen (bringt bei
         // Suchen über den ganzen Benutzerordner deutlich weniger Nachfragen).
-        maybePromptFullDiskAccess(appName: "Favenio")
+        if !CommandLine.arguments.contains("--control-test-host") {
+            maybePromptFullDiskAccess(appName: "Favenio")
+        }
 
         // Tasten, die nur IN der Trefferliste gelten. Hat die Tabelle nicht
         // den Fokus, geht das Ereignis unverändert weiter — dann tippt die
@@ -1404,6 +1456,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// App vorderste → Finder-Fenster (neu) laden. Nur wenn die App aktiv
     /// ist, zeigt TCC den Automations-Consent-Dialog. Läuft im Hintergrund.
     func applicationDidBecomeActive(_ notification: Notification) {
+        if CommandLine.arguments.contains("--control-test-host") { return }
         finderRefreshGeneration += 1
         // Finder-Fenster der vorigen Aktivierung sind keine gültige Antwort
         // für die neue: Bis die frische Abfrage da ist, bleibt die Liste leer.
@@ -1411,7 +1464,15 @@ final class MainController: HitListController, NSApplicationDelegate,
         refreshFinderFoldersAsync()
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !searchControl.handoff.jobs.isEmpty else { return .terminateNow }
+        stopSearch()
+        searchControl.handoff.shutdown { sender.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        searchControl.handoff.cancelPending()
         stopSearch()
         cleanupMaterializedHits()
     }
@@ -1479,13 +1540,20 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// die Suche lief dort schon, hier wird nichts doppelt gesucht.
     func loadResults(from file: URL) {
         guard let loaded = consumeQuickHandoff(file) else {
-            searchPhase = .failed("Ungültige oder zu große Ergebnisübergabe.")
-            refreshStatus()
+            rejectQuickHandoff()
             return
         }
         replaceSearchResults(loaded)
         exportStatus = nil
         searchPhase = .handedOver
+        refreshStatus()
+    }
+
+    func rejectQuickHandoff() {
+        replaceSearchResults([])
+        let reason = "Ungültige oder zu große Ergebnisübergabe."
+        searchPhase = .failed(reason)
+        searchControl.failed(reason)
         refreshStatus()
     }
 
@@ -1665,7 +1733,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         ])
 
         window.center()
-        window.makeKeyAndOrderFront(nil)
+        if !CommandLine.arguments.contains("--selftest") {
+            window.makeKeyAndOrderFront(nil)
+        }
         window.makeFirstResponder(searchField)
     }
 
@@ -1765,6 +1835,14 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Formuliert die Fußzeile: Kennzahlen der Trefferliste, dahinter — falls
     /// gerade etwas läuft oder abgebrochen wurde — der Zustand der Suche.
     func statusText() -> String {
+        if case .recorded(let state) = searchPhase {
+            let label = ["completed": "abgeschlossen", "warnings": "mit Warnungen",
+                         "cancelled": "abgebrochen", "failed": "fehlgeschlagen"][state] ?? state
+            return "Aufgezeichneter Stand (" + label + ") — "
+                + hitStatisticsText(statistics, selected: tableView.selectedRowIndexes.count)
+                + skippedNote(skippedCount) + (searchControl.run?.error.map { " — " + $0 } ?? "")
+                + (isMaterializing ? " — " + Self.materializingNote : "")
+        }
         if case .failed(let reason) = searchPhase { return reason }
         if hits.isEmpty {
             switch searchPhase {
@@ -2313,17 +2391,23 @@ final class MainController: HitListController, NSApplicationDelegate,
         progressPath = nil
         // Auch die leere Liste geht durch dieselbe Sortier-/Auswahlpflege.
         applyHitsToTable(keepingSelection: [])
+        searchControl.imported(controlInput)
     }
 
     @objc func startSearch() {
         replaceSearchResults([])
+        searchControl.begin(controlInput)
         searchPhase = .idle
-        guard validatePixelInputs() else { return }
+        guard validatePixelInputs() else {
+            if case .failed(let reason) = searchPhase { searchControl.failed(reason) }
+            return
+        }
         let pattern = searchField.stringValue
             .trimmingCharacters(in: .whitespaces)
         // Ohne Muster nur dann suchen, wenn ein Maß- oder Faktenfilter gesetzt ist —
         // „alle Bilder über 1000 px" ist eine vollständige Frage.
         guard !pattern.isEmpty || searchConfiguration.hasPositiveFilter else {
+            searchControl.failed("Suchmuster oder positiver Filter fehlt.")
             refreshStatus()
             return
         }
@@ -2424,8 +2508,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// `seenHitIdentities` nicht doppelt gelistet.
     func continueSearch(from file: URL) {
         guard let seed = consumeQuickHandoff(file) else {
-            searchPhase = .failed("Ungültige oder zu große Ergebnisübergabe.")
-            refreshStatus()
+            rejectQuickHandoff()
             return
         }
         replaceSearchResults(seed)
@@ -2447,7 +2530,12 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// `continueSearch` vorbelegte) Tabelle. Setzt hits/seenHitIdentities NICHT
     /// zurück — das machen die Aufrufer je nach Fall.
     func launchSearch(pattern: String) {
-        guard validatePixelInputs() else { return }
+        searchControl.begin(ControlSearchInput(pattern: pattern, root: searchRoot.path,
+                                              options: searchConfiguration))
+        guard validatePixelInputs() else {
+            if case .failed(let reason) = searchPhase { searchControl.failed(reason) }
+            return
+        }
         templateNote = nil
         clearTemplateFailure()
         exportStatus = nil
@@ -2455,6 +2543,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         // verschwundenen Ordner läse der Kern still als Namensmuster und
         // suchte im Arbeitsverzeichnis (siehe searchRootProblem).
         if let problem = searchRootProblem(searchRoot.path) {
+            searchControl.failed(problem)
             searchPhase = .failed(problem)
             refreshStatus()
             return
@@ -2462,6 +2551,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         guard let arguments = searchConfiguration.arguments(
             pattern: pattern, root: searchRoot.path, progress: true)
         else {
+            searchControl.failed("favenio.py nicht gefunden.")
             searchPhase = .failed("favenio.py nicht gefunden.")
             refreshStatus()
             return
@@ -2496,6 +2586,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     func stopSearch() {
         let run = activeSearchRun
         activeSearchRun = nil
+        if run != nil { searchControl.cancelled() }
         run?.cancel()
         flushTimer?.invalidate()
         flushTimer = nil
@@ -2546,6 +2637,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// andere Dateien meint.
     func applyHitsToTable(keepingSelection selectedIdentities: Set<HitIdentity>,
                           resort: Bool = true) {
+        searchControl.changed()
         if resort { sortHits() }
         isRestoringSelection = true
         tableView.deselectAll(nil)
@@ -2602,6 +2694,7 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     func finishSearchRun(_ run: SearchRunner, exit: SearchExit) {
         guard activeSearchRun === run else { return }
+        searchControl.finished(exit)
         flushPending()
         flushTimer?.invalidate()
         flushTimer = nil
@@ -2850,6 +2943,7 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard populateHitMenu(menu) else { return }
+        addFastraMenuItems(to: menu)
         // Dieselben Listen-Aktionen wie im Ablage-Menü, mit denselben
         // Kürzeln daneben. Sie hängen nicht an einer öffenbaren Datei: Auch
         // ein Ordner im Archiv lässt sich aus der Liste werfen.
@@ -2882,6 +2976,8 @@ final class MainController: HitListController, NSApplicationDelegate,
             withTitle: "Alle Treffer exportieren…",
             action: #selector(exportAllHits(_:)), keyEquivalent: "e")
         exportAll.target = self
+        fileMenu.addItem(.separator())
+        addFastraMenuItems(to: fileMenu)
         fileMenu.addItem(.separator())
         addResultListItems(to: fileMenu)
         fileItem.submenu = fileMenu
@@ -2923,6 +3019,13 @@ final class MainController: HitListController, NSApplicationDelegate,
         let fromTableMenu = item.menu === tableView.menu
         let mainWindowIsKey = window?.isKeyWindow == true
         switch item.action {
+        case #selector(showSelectedInFastra(_:)):
+            let indices = rows(for: item)
+            return (fromTableMenu || (mainWindowIsKey && window?.firstResponder === tableView))
+                && indices.count == 1 && hits.indices.contains(indices[0]) && !hits[indices[0]].isDirectory
+                && searchControl.run != nil && !searchControl.handoff.busy
+        case #selector(cancelFastraHandoff(_:)):
+            return (fromTableMenu || mainWindowIsKey) && searchControl.handoff.busy
         case #selector(removeFromResults(_:)), #selector(trashSelected(_:)):
             guard fromTableMenu
                     || (mainWindowIsKey

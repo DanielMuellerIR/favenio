@@ -35,6 +35,7 @@ import collections
 import datetime
 import fnmatch
 import gzip
+import hashlib
 import io
 import json
 import lzma
@@ -54,10 +55,10 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.35.1"
+__version__ = "0.38.3"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-10-02"
+__date__ = "2026-10-08"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -2919,7 +2920,9 @@ class Search:
         if member_path.strip("/") in ("", ".", ".."):
             return
 
-        full_display = display + "!/" + member_path
+        # Anzeige ohne Ordnersuffix; die Identität behält den echten Namen.
+        displayed_member = member_path.rstrip("/") if is_dir else member_path
+        full_display = display + "!/" + displayed_member
         member_chain = tuple(archive_members) + (member_path,)
         name = os.path.basename(member_path.rstrip("/"))
 
@@ -3027,7 +3030,7 @@ class Search:
             if archive.getinfo(info.filename) is not info:
                 continue
             self.visit_member(
-                info.filename.rstrip("/"),
+                info.filename,
                 info.is_dir(),
                 lambda info=info: archive.open(info, "r"),
                 display,
@@ -3057,9 +3060,13 @@ class Search:
         # Wie bei der Extraktion gewinnt der letzte gleichnamige Eintrag.
         # Der vollständige Katalog bleibt in archive erhalten: Hardlinks
         # dürfen weiterhin auf frühere Einträge zeigen.
-        members_by_name = {member.name: member
-                           for member in bounded_tar_members(archive)}
-        for member in members_by_name.values():
+        members = bounded_tar_members(archive)
+        members_by_name = {member.name: member for member in members}
+        # Die Gewinner in physischer Reihenfolge lesen: Rückwärtssprünge
+        # würden bei gzip den komprimierten Strom jedes Mal neu entpacken.
+        for member in members:
+            if members_by_name[member.name] is not member:
+                continue
             def open_member(member=member):
                 extracted = archive.extractfile(member)
                 if extracted is None:
@@ -3221,6 +3228,71 @@ def pick_member(remaining, names):
         if candidate in known:
             return candidate, count
     return remaining[0], 1
+
+
+def snapshot_position(record):
+    """Belegt eine aktuelle Fundzeile am begrenzten Blattinhalt. Das ist
+    keine Zusage über den früheren Inhalt des Suchlaufs. Matcher und
+    Zeilenzählung kommen unverändert aus dem Suchkern."""
+    required = {"path", "mode", "pattern", "terms", "regex", "caseSensitive",
+                "exact", "literalWildcards"}
+    if not isinstance(record, dict) or set(record) != required \
+            or not isinstance(record["path"], str) \
+            or not os.path.isabs(record["path"]) \
+            or record["mode"] not in ("name", "content", "metadata") \
+            or not isinstance(record["pattern"], str) \
+            or not isinstance(record["terms"], list) \
+            or not all(isinstance(term, str) and term for term in record["terms"]) \
+            or not all(type(record[key]) is bool for key in
+                       ("regex", "caseSensitive", "exact", "literalWildcards")):
+        raise ValueError("ungültiger Positionsauftrag")
+    with open_regular_file(record["path"]) as stream:
+        before = os.fstat(stream.fileno())
+        data = stream.read(262_145)
+        after = os.fstat(stream.fileno())
+    generation = lambda value: (value.st_dev, value.st_ino, value.st_size,
+                                value.st_mtime_ns, value.st_ctime_ns)
+    if len(data) > 262_144:
+        raise ValueError("Blattinhalt überschreitet 262144 Bytes")
+    if generation(before) != generation(after):
+        raise ValueError("Blattinhalt wurde während der Prüfung verändert")
+    result = {"sha256": hashlib.sha256(data).hexdigest(), "location": 0,
+              "length": 0, "positionBinding": "unboundHit"}
+    if record["mode"] != "content":
+        return result
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return result
+    if "\0" in text:
+        return result
+    terms = list(dict.fromkeys(([record["pattern"]] if record["pattern"] else []) + record["terms"]))
+    if not terms or not all(terms):
+        raise ValueError("Inhaltsbegriff fehlt")
+    matchers = [build_matcher(term, record["regex"], record["caseSensitive"],
+                             exact=record["exact"],
+                             literal_wildcards=record["literalWildcards"],
+                             text_wildcards=True) for term in terms]
+    search = Search(matchers[0], True, 0, False, extra_matchers=matchers[1:])
+    lines = search.match_content_all(iter([data]), matchers)
+    if lines is None:
+        raise ValueError("Treffer passt nicht mehr zum aktuellen Blattinhalt")
+    # Python zählt auch VT/FF/Unicode-Trenner. Fastra entfernt eine UTF-8-BOM,
+    # behält aber die Zeilentrenner; deshalb direkt UTF-16-Offsets übertragen.
+    pieces = text.splitlines(keepends=True)
+    number = lines[0]
+    prefix = "".join(pieces[:number - 1])
+    line = pieces[number - 1].splitlines()[0] if pieces[number - 1].splitlines() else ""
+    if text.startswith("\ufeff"):
+        if prefix:
+            prefix = prefix[1:]
+        elif line.startswith("\ufeff"):
+            line = line[1:]
+    result.update(location=len(prefix.encode("utf-16-le")) // 2,
+                  length=len(line.encode("utf-16-le")) // 2,
+                  positionBinding="exactUTF16", line=number,
+                  decoder="utf8; Python splitlines")
+    return result
 
 
 def extract_result(result_path=None, filesystem_path=None, archive_members=None,
@@ -3651,6 +3723,9 @@ def main(argv=None):
                              "archiveMembers materialisieren")
     parser.add_argument("--extract-root", metavar="ORDNER",
                         help="app-eigener Temp-Root für Materialisierung")
+    parser.add_argument("--snapshot-position-json", metavar="JSON",
+                        help="begrenzten aktuellen Blattinhalt hashen und "
+                             "Inhaltsfundstelle als UTF-16-Bereich belegen")
     parser.add_argument("--version", action="version",
                         version="favenio " + __version__)
     # Optionen mit Wert dürfen zwischen Muster und Startpfaden stehen. Das
@@ -3674,6 +3749,16 @@ def main(argv=None):
         args.paths = positionals[1:]
     else:
         args = parser.parse_intermixed_args(parse_argv)
+
+    if args.snapshot_position_json:
+        if args.extract or args.extract_json or args.list_metadata_fields:
+            parser.error("Positionsprüfung kann nicht mit anderen Ausgabeaktionen kombiniert werden")
+        try:
+            position = snapshot_position(json.loads(args.snapshot_position_json))
+        except (ValueError, OSError, ArchiveReadError, re.error) as err:
+            parser.error("Positionsprüfung fehlgeschlagen: %s" % err)
+        write_result([json.dumps(position, ensure_ascii=True, sort_keys=True)])
+        return 0
 
     # Extraktions-Modus: kein Suchlauf, nur einen Treffer auspacken.
     extract_options = {

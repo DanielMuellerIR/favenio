@@ -1,6 +1,7 @@
 // Testattrappen ohne Finder-Zugriff; die drei markierten Methoden
 // werden beim Build unverändert aus FavenioQuick.swift eingesetzt.
 final class QuickScopeRefreshHarness {
+    static let hint = "Suchhinweis"
     final class TimerStub { func invalidate() {} }
     var finderCallbacks: [(FinderScopeOutcome) -> Void] = []
     func finderWindowFoldersAsync(completion: @escaping (FinderScopeOutcome) -> Void) {
@@ -23,6 +24,9 @@ final class QuickScopeRefreshHarness {
     var scopeWaitTimer: TimerStub?
     var rebuilds = 0
     var shownProblems: [String] = []
+    var hits: [Hit] = []
+    var shownInfo = ""
+    func showInfo(_ text: String, detail: String? = nil) { shownInfo = text }
     var deniedReports = 0
 
     func rebuildScopePopup() { rebuilds += 1 }
@@ -50,6 +54,10 @@ final class QuickScopeRefreshHarness {
         print("NACH_DENIED|\(state.scopeFinderFolders)|\(state.scopeResolved)|"
               + "\(state.scopeDenied)|\(state.rebuilds)|\(state.deniedReports)|"
               + "\(state.shownProblems.count)|\(state.refreshingScope)")
+        let idle = QuickScopeRefreshHarness()
+        idle.scopeProblem = "Bereich unklar"
+        idle.applyScopeOutcome(.folders(["/ersatz"]))
+        print("IDLE_RESTORED|\(idle.shownInfo)")
         for searched in [false, true] {
             let finished = QuickScopeRefreshHarness()
             finished.hasSearched = searched
@@ -63,6 +71,8 @@ final class QuickScopeRefreshHarness {
             finished.searchOutcomeText = outcome
             finished.applyScopeOutcome(.folders(["/finder"]))
             print("STATUS_\(outcome)|\(finished.shownProblems.last ?? "nil")")
+            finished.applyScopeOutcome(.folders(["/ersatz"]))
+            print("RESTORED_\(outcome)|\(finished.shownInfo)")
         }
     }
 }

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "measuredAt": "2026-10-06T15:28:54.370836+00:00",
+  "sourceCommit": "b68268b33f1696a94e7379ba70d13ff87cfabd15",
+  "python": "3.9.6 (default, Aug 25 2026, 21:26:21) \n[Clang 21.0.0 (clang-2100.3.34.2)]",
+  "cpuCount": 18,
+  "workerCount": 4,
+  "maximumWorkerSeconds": 30,
+  "scope": "Existing SIGTERM rollback test; temporary mock bundles, no product installation",
+  "phases": [
+    {
+      "phase": "ambient",
+      "runs": 20,
+      "passed": 20,
+      "medianSeconds": 0.2952021460000003,
+      "minimumSeconds": 0.19408600000000004,
+      "maximumSeconds": 0.6696576670000001,
+      "readyConfirmed": true,
+      "runningAtSignal": true,
+      "exitCodes": [
+        2
+      ],
+      "loadAtSignalRange": [
+        18.4375,
+        23.126953125
+      ]
+    },
+    {
+      "phase": "four-bounded-cpu-workers",
+      "runs": 20,
+      "passed": 20,
+      "medianSeconds": 0.3507152705000003,
+      "minimumSeconds": 0.2059507500000004,
+      "maximumSeconds": 0.4482698749999994,
+      "readyConfirmed": true,
+      "runningAtSignal": true,
+      "exitCodes": [
+        2
+      ],
+      "loadAtSignalRange": [
+        23.126953125,
+        23.59716796875
+      ]
+    }
+  ],
+  "conclusion": "Not reproduced. No installer change and no timeout increase. Forty successes do not prove the historical cause.",
+  "sourceHashes": {
+    "tests/test_build_safety.py": "9fbf9c9bfbeca298bc5b9841be80a7ff2159b49f8beb4505373bedec0e46fde7",
+    "notarize-lib.sh": "de2f3ec5c6c5edfdfb0ad1ee0f24d5f06855d50eebacaff978795cbc22435d51"
+  }
+}

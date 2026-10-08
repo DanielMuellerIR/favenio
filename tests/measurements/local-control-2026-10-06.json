@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-06",
+  "productVersion": "0.36.0",
+  "protocolVersion": 1,
+  "tests": {
+    "python": {
+      "count": 560,
+      "seconds": 67.629,
+      "result": "passed"
+    },
+    "systemPython": {
+      "count": 560,
+      "seconds": 66.349,
+      "result": "passed"
+    },
+    "mainAppSelfTest": "passed",
+    "quickAppSelfTest": "passed"
+  },
+  "bundleVerification": [
+    "Developer ID signature",
+    "attached Notary tickets",
+    "Gatekeeper accepted",
+    "bundle identity, version and update feed"
+  ],
+  "visibleWindowChecks": [
+    "visible configuration",
+    "real Python results",
+    "idempotent start",
+    "bounded pages",
+    "ZIP identity",
+    "selection by identity",
+    "offline capabilities",
+    "FIFO rejection",
+    "input byte limit",
+    "input deadline",
+    "missing-root failure",
+    "visual inspection: results, selection, missing-root diagnosis"
+  ],
+  "appHiddenAfterCapture": true,
+  "bundleSize": {
+    "baselineCommit": "b68268b",
+    "baselineBytes": 3925945,
+    "currentBytes": 4171521,
+    "deltaBytes": 245576,
+    "deltaPercent": 6.255207344983182,
+    "method": "Logical regular-file bytes without symbolic links; baseline GUI compiled with current shared core, same version-string length, bundled framework, Developer-ID signature and arm64 macOS 12 optimized build settings; temporary baseline bundle not installed or executed."
+  },
+  "sourceSHA256": {
+    "favenio.py": "2414c43677054b643efd3439de6c180739cfe1c1b9d9094907220fda641211bc",
+    "common/FavenioCore.swift": "46bf610a2d543ac4097635345de8fa7d010a6fe4cedab777bf70b377c1e999f7",
+    "gui/FavenioGUI.swift": "7245688a4ba947ff2649a9c31dbe41ceaadddf02a93a5ad41d81c0dde36d530d",
+    "gui/SearchControl.swift": "c9cd34c5bc5cbc8599648cbcbcdd56b01ead113eb35e1a4aef844a9b57e7ce09",
+    "gui/SearchControlSelfTest.swift": "ed266fe1d8ec9817052866753ecb515bed007dfb00498b04b13b5a79e79bac0d",
+    "control/ControlProtocol.swift": "bbd3a338312502bcfb643c68d2abeda4da67bbd610d4f99766d7de574d00c679",
+    "control/main.swift": "e4adbcef461e5d3bbfc0f316f8fef35b7db837d8f176d79885125b96bd565be6",
+    "build-app.sh": "ec237d0777c5a823a0b938009105e0488ef027950304a9f2b121a27ea5cc11bd",
+    "tools/control-smoke.py": "056e2d8e2176d30c7453431e1923e2b56ebeb54b40fd08835c7dd9c867ce7a89",
+    "tests/test_probe.swift": "4f96d6916ddd8017a948d6e68682fba166a869ffd0b1c16fef3cec7e8c9fe566",
+    "tests/test_swift_guards.py": "272b81a69dc952afc933d2eaefec56ff25533e0e43c6523ca56bc41295b7379d"
+  },
+  "limitations": [
+    "Fastra archive provenance and recorder/playback remain separate planned work.",
+    "Visual smoke test suppresses unrelated Finder/FDA permission prompts.",
+    "LaunchServices comparison test freezes one query snapshot; production lookup remains unchanged."
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-08",
+  "version": "0.37.0",
+  "receiverVersion": "1.137.1",
+  "pythonTests": {
+    "normal": 569,
+    "system": 569
+  },
+  "swiftGuards": 87,
+  "positionTestsPerInterpreter": 9,
+  "appSelfTests": 2,
+  "notarization": "accepted",
+  "signaturesAndGatekeeper": "passed",
+  "nativeWindowTest": {
+    "result": "passed",
+    "cases": [
+      "UTF-8 BOM, emoji, CRLF and exact UTF-16 selection",
+      "ZIP member containing !/",
+      "explicit weaker generation binding for large archive",
+      "distinct invalid UTF-8 TAR names with equal display name",
+      "changed archive yields current bytes and current selection",
+      "receiver copy survives sender exit"
+    ],
+    "screenshotsVisuallyChecked": 13,
+    "receiverInventory": "session hash and actual document selection verified"
+  },
+  "bundleGrowthBytes": 188750,
+  "bundleGrowthPercent": 4.5247,
+  "limitations": [
+    "Search-time content is not retained; navigation is rechecked against current adopted content.",
+    "Large outer archives use explicitly labelled generation binding."
+  ]
+}

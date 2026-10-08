@@ -1041,6 +1041,9 @@ class QuickScopeRefreshBehaviourTest(unittest.TestCase):
         self.assertEqual(
             self.lines["NACH_DENIED"], "[]|true|true|1|1|1|false")
 
+    def test_resolved_scope_without_a_search_restores_the_idle_hint(self):
+        self.assertEqual(self.lines["IDLE_RESTORED"], "Suchhinweis")
+
     def test_late_finder_answer_preserves_the_scope_of_a_finished_search(self):
         self.assertEqual(self.lines["SPAET_true"], "/ersatz|/finder")
         self.assertEqual(self.lines["SPAET_false"], "nil|nil")
@@ -1048,6 +1051,7 @@ class QuickScopeRefreshBehaviourTest(unittest.TestCase):
     def test_late_finder_answer_keeps_warnings_and_search_errors_visible(self):
         for outcome in ("Keine Treffer. — 1 Objekt übersprungen.", "Suche fehlgeschlagen."):
             self.assertEqual(self.lines["STATUS_" + outcome], outcome + " Bereichshinweis")
+            self.assertEqual(self.lines["RESTORED_" + outcome], outcome)
 
 
 @unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")
@@ -1093,11 +1097,11 @@ class PixelFieldValidationGuards(unittest.TestCase):
             self.assertIn("func validatePixelInputs()", source)
             self.assertIn("validatePixelFields(pixelFields)", source)
             start = swift_function(source, "func startSearch()")
-            self.assertIn("guard validatePixelInputs() else { return }", start)
+            self.assertIn("guard validatePixelInputs() else {", start)
         for source, signature in ((GUI, "func launchSearch(pattern:"),
                                   (GUI, "func continueSearch(from"),
                                   (QUICK, "func openInMainApp()")):
-            self.assertIn("guard validatePixelInputs() else { return }",
+            self.assertIn("guard validatePixelInputs() else {",
                           swift_function(source, signature))
 
 
@@ -1363,7 +1367,7 @@ class CommonApplicationsTest(unittest.TestCase):
         for names in (["folder.txt/", "file.txt"], ["file.txt", "folder.txt/"],
                       ["one.app/", "two.app/", "file.app"]):
             with self.subTest(names=names):
-                report = json.loads(run_probe('common-apps', input=json.dumps(names)).stdout)
+                report = json.loads(run_probe('common-apps', '--direct', input=json.dumps(names)).stdout)
                 self.assertEqual(report["neu"], report["direct"])
 
 

@@ -13,6 +13,25 @@ struct ExportProbe {
     }
 
     static func main() throws {
+        var metadata = Hit(path: "/fixture/a.txt", kind: "file", line: nil, size: nil,
+                           filesystemPath: "/fixture/a.txt", archiveMembers: [], isDirectory: false,
+                           field: "Description", value: "")
+        let overhead = jsonlData(for: [metadata]).count - 1
+        for count in [600_000, maximumHandoffLineBytes - overhead] {
+            metadata.value = String(repeating: "/", count: count)
+            let handoff = try writeQuickHandoff([metadata])
+            precondition(consumeQuickHandoff(handoff) == [metadata])
+            precondition(!FileManager.default.fileExists(atPath: handoff.path))
+        }
+        for value in [String(repeating: "/", count: maximumHandoffLineBytes - overhead + 1),
+                      String(repeating: "\n", count: 600_000)] {
+            metadata.value = value
+            do {
+                let unexpected = try writeQuickHandoff([metadata])
+                try? FileManager.default.removeItem(at: unexpected)
+                preconditionFailure("Übergabe akzeptiert eine zu lange JSONL-Zeile")
+            } catch { precondition((error as? CocoaError)?.code == .fileWriteOutOfSpace) }
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

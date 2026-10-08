@@ -2564,7 +2564,7 @@ func jsonlData(for hits: [Hit]) -> Data {
             if let modified = hit.modified { object["modified"] = modified }
             if let created = hit.created { object["created"] = created }
             if !hit.terms.isEmpty { object["terms"] = hit.terms.map { $0.json } }
-            if let encoded = try? JSONSerialization.data(withJSONObject: object) {
+            if let encoded = try? JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes) {
                 data.append(encoded)
                 data.append(0x0A)
             }
@@ -2591,7 +2591,8 @@ func quickHandoffInputProblem(query: String, root: String) -> String? {
 /// Schreibt die Quick→Haupt-App-Übergabe atomar und nur für den Besitzer.
 func writeQuickHandoff(_ hits: [Hit]) throws -> URL {
     let data = jsonlData(for: hits)
-    guard data.count <= maximumHandoffBytes else {
+    guard data.count <= maximumHandoffBytes,
+          data.split(separator: 0x0A).allSatisfy({ $0.count <= maximumHandoffLineBytes }) else {
         throw CocoaError(.fileWriteOutOfSpace)
     }
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -2678,7 +2679,16 @@ func plainModifiers(of event: NSEvent) -> NSEvent.ModifierFlags {
 /// Bei normalen Dateien direkt über die URL, bei Archiv-Einträgen über den
 /// Dateityp (Endung), damit fürs bloße Menü noch nichts ausgepackt wird.
 /// Nach Namen sortiert, Doppelte entfernt.
+#if FAVENIO_TEST_SUITE
+// Beide Vergleichsalgorithmen müssen denselben LaunchServices-Stand sehen,
+// auch wenn während der Tests andere Apps gebaut oder registriert werden.
+var applicationsLookupForTesting: ((Hit) -> [URL])?
+#endif
+
 func applicationsFor(_ hit: Hit) -> [URL] {
+#if FAVENIO_TEST_SUITE
+    if let lookup = applicationsLookupForTesting { return lookup(hit) }
+#endif
     var urls: [URL] = []
     if hit.isMember {
         let ext = (hit.displayName as NSString).pathExtension

@@ -167,13 +167,57 @@ BUILD_MOUNTED=0
 VERIFY_MOUNT=""
 VERIFY_MOUNTED=0
 WORK_SHA_PATH=""
+MOUNT_LOCK_PATH="/private/tmp/favenio-release-Favenio.mount-lock"
+MOUNT_LOCK_SOURCE="$STAGING/mount-lock"
+
+favenio_mount_unlock() {
+    if [ -n "${MOUNT_LOCK_PATH:-}" ] && [ -e "$MOUNT_LOCK_PATH" ] \
+            && [ "$MOUNT_LOCK_PATH" -ef "$MOUNT_LOCK_SOURCE" ]; then
+        rm -f "$MOUNT_LOCK_PATH"
+    fi
+}
+
+favenio_build_device() {
+    hdiutil info -plist > "$STAGING/mount-info.plist" || return 1
+    /usr/bin/python3 - "$STAGING/mount-info.plist" "$RW_DMG" "$MOUNT_DIR" "${1:-}" <<'PYINFO'
+import os
+import plistlib
+import sys
+with open(sys.argv[1], "rb") as handle:
+    images = plistlib.load(handle).get("images", [])
+for image in images:
+    if os.path.realpath(image.get("image-path", "")) != os.path.realpath(sys.argv[2]):
+        continue
+    entities = image.get("system-entities", [])
+    for entity in entities:
+        if entity.get("mount-point") == sys.argv[3] and entity.get("dev-entry"):
+            sys.stdout.write(entity["dev-entry"] + "\n")
+            sys.exit(0)
+    # Ein Signal kann schon während attach eintreffen, bevor der Mountpoint
+    # erscheint. Nur das nachweislich eigene Image darf dann verschwinden.
+    if sys.argv[4] != "mounted":
+        for entity in entities:
+            if entity.get("dev-entry"):
+                sys.stdout.write(entity["dev-entry"] + "\n")
+                sys.exit(0)
+sys.exit(1)
+PYINFO
+}
+
+favenio_detach_build() {
+    local device
+    device=$(favenio_build_device) || return 1
+    [[ "$device" == /dev/* ]] || return 1
+    hdiutil detach "$device" -quiet || hdiutil detach -force "$device"
+}
+
 favenio_release_cleanup() {
     if [ "$VERIFY_MOUNTED" = "1" ]; then
         hdiutil detach "$VERIFY_MOUNT" -quiet 2>/dev/null || true
         VERIFY_MOUNTED=0
     fi
     if [ "$BUILD_MOUNTED" = "1" ]; then
-        hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true
+        favenio_detach_build 2>/dev/null || true
         BUILD_MOUNTED=0
     fi
     # Die leeren Mountpoints gehören uns und dürfen nicht liegen bleiben.
@@ -199,6 +243,7 @@ favenio_release_cleanup() {
             rm -f "$FINAL_SHA_PATH"
         fi
     fi
+    favenio_mount_unlock
     rm -rf "$STAGING"
     favenio_release_unlock
 }
@@ -234,22 +279,27 @@ tiffutil -cathidpicheck "$STAGING/DmgBg_1x.png" "$STAGING/DmgBg_2x.png" \
 # Ein fremdes Volume gleichen Namens wird NICHT ausgehängt: Das Finder-Skript
 # unten spricht die Platte über ihren Namen an und träfe sonst die falsche.
 # Lieber abbrechen, damit ein Mensch die Abweichung prüfen kann.
+# Alle Release-Versionen und Arbeitskopien teilen denselben Finder-Mountpoint.
+# Die Hardlink-Sperre bleibt von der Prüfung bis zum Aushängen gehalten.
+: > "$MOUNT_LOCK_SOURCE"
+if ! ln "$MOUNT_LOCK_SOURCE" "$MOUNT_LOCK_PATH" 2>/dev/null; then
+    echo "FEHLER: Der Release-Mountpoint ist durch einen anderen Lauf gesperrt." >&2
+    exit 1
+fi
 if [ -d "$MOUNT_DIR" ]; then
     echo "FEHLER: $MOUNT_DIR ist bereits eingehängt." >&2
     echo "Dieses Volume gehört nicht diesem Lauf. Erst selbst auswerfen," >&2
     echo "dann den Release erneut starten." >&2
     exit 1
 fi
-hdiutil create -size 100m -fs HFS+ -volname "$VOL_NAME" -ov -quiet "$RW_DMG"
-# Die Merkvariable VOR dem Attach setzen, wie install.sh es mit MOUNT tut:
-# Zwischen einem gelungenen `attach` und der Zuweisung dahinter liegt sonst
-# ein Fenster, in dem ein Signal die Aufräumung mit BUILD_MOUNTED=0 laufen
-# lässt — und /Volumes/Favenio bliebe eingehängt zurück, was jeden weiteren
-# Release-Lauf absichtlich abbrechen lässt. Ein `detach` auf einen gar nicht
-# eingehängten Pfad ist dagegen folgenlos (`|| true` in der Aufräumung).
+hdiutil create -size 100m -fs HFS+ -volname "$VOL_NAME" -ov -quiet "$RW_DMG" || exit 1
+# Auch ein unterbrochenes attach muss aufgeräumt werden. Das Flag markiert
+# nur den Versuch; die Aufräumung prüft die Image-Identität neu und hängt
+# ausschließlich dessen Device aus, niemals den festen Mountpfad.
 BUILD_MOUNTED=1
 hdiutil attach -readwrite -noverify -noautoopen -quiet \
-    -mountpoint "$MOUNT_DIR" "$RW_DMG"
+    -mountpoint "$MOUNT_DIR" "$RW_DMG" || exit 1
+favenio_build_device mounted > /dev/null || exit 1
 
 # ditto statt cp -R: erhält erweiterte Attribute und das in Schritt 2
 # angeheftete Notary-Ticket unverändert.
@@ -296,7 +346,7 @@ fi
 # Kurze Pause: der Finder muss die .DS_Store fertig schreiben, bevor das
 # Volume ausgehängt und eingefroren wird.
 sleep 2
-hdiutil detach "$MOUNT_DIR" -quiet || hdiutil detach -force "$MOUNT_DIR"
+favenio_detach_build || exit 1
 BUILD_MOUNTED=0
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -quiet -o "$DMG_PATH"
 echo "DMG gebaut: $DMG_PATH"

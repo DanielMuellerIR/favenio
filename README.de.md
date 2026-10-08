@@ -72,14 +72,17 @@ installierten App-Binaries mit `--selftest` starten und prüfen, dass die
 letzte Ausgabezeile mit `SELFTEST OK` beginnt.
 Was in `/Applications` landet, trägt ein angeheftetes
 Notary-Ticket: `install.sh` notarisiert die Bundles selbst, prüft sie vor und
-nach dem Kopieren (`codesign`, `spctl`, `stapler validate`) und endet bei jedem
-Fehler mit Exit-Code 2, ohne `/Applications` anzufassen. Eine gültige Signatur
+nach dem Kopieren (`codesign`, `spctl`, `stapler validate`) und endet mit Exit-Code 2, wenn der alte Installationsstand unverändert oder
+wiederhergestellt ist. Exit 3 meldet einen unvollständigen Rollback samt
+verbleibendem Zustand. Eine gültige Signatur
 allein genügt nicht: Geprüft werden auch die Bundle-IDs und die übereinstimmende
 Version, damit keine fremde notarisierte App unter demselben Dateinamen an die
 Stelle von Favenio treten kann. Beide Apps werden als eine Transaktion
-getauscht — scheitert ein Schritt, kommen beide alten Stände zurück.
+getauscht; scheitert ein Schritt, wird die Wiederherstellung beider alten
+Stände versucht.
 `./install.sh --dmg <pfad>` installiert stattdessen aus einem fertigen DMG,
-`./install.sh --verify-only` führt nur die Prüfung aus. Auch die Bundles in
+`./install.sh --verify-only` baut, notarisiert und prüft ohne Installation.
+Mit `--dmg <pfad>` prüft es nur das vorhandene Image und dessen Bundles. Auch die Bundles in
 einem DMG brauchen ihr eigenes angeheftetes Ticket, damit sie offline starten;
 sehr alte DMGs, die es nur am Image tragen, werden abgelehnt. Beide Skripte
 prüfen außerdem, dass die Bundles auf den Produktions-Update-Feed zeigen:
@@ -136,10 +139,12 @@ einschließlich TAR.ZST, gilt der erste Eintrag.
 Favenio ist bewusst maschinenfreundlich gebaut:
 
 - **`--json`**: Ein Treffer pro Zeile als JSON-Objekt (JSONL), etwa
-  `{"path": "...", "type": "member", "isDirectory": false, "filesystemPath": "/tmp/a.zip", "archiveMembers": ["innen.txt"], "line": 2}`.
+  `{"path": "...", "type": "member", "isDirectory": false, "filesystemPath": "/tmp/a.zip", "archiveMembers": ["innen.txt"], "archiveMemberBytes": ["aW5uZW4udHh0"], "line": 2}`.
   `path` bleibt die menschenlesbare Darstellung; Automation sollte die
   eindeutigen strukturierten Felder verwenden. Jeder Treffer trägt `path`,
-  `type`, `isDirectory`, `filesystemPath` und `archiveMembers`; Inhaltstreffer
+  `type`, `isDirectory`, `filesystemPath` und `archiveMembers`. Archivtreffer
+  tragen außerdem `archiveMemberBytes`: die exakte Base64-Namensidentität
+  jeder Stufe. Inhaltstreffer
   zusätzlich `line`. Dateien tragen `size` (entpackte Bytes), **soweit das
   Format die Größe vorab nennt**: normale Dateien, Zip- und Tar-Einträge ja,
   einzeln komprimierte Dateien (`.gz`, `.bz2`, `.xz`) und über `bsdtar`
@@ -173,6 +178,20 @@ Favenio ist bewusst maschinenfreundlich gebaut:
 Beginnt das Suchmuster mit `-`, steht davor `--`, damit es nicht als Option
 gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 
+Seit 0.36.0 bietet Favenio außerdem einen lokalen Bundle-Helfer, der das sichtbare
+Hauptfenster konfiguriert, Suchen startet und abbricht, begrenzte Ergebnisseiten
+liest und Treffer über ihre Identität auswählt. Der versionierte JSON-Vertrag
+steht unter [lokaler Suchsteuerung](docs/LOCAL-CONTROL.md).
+
+Einen einzelnen Treffer auswählen und im Treffermenü oder unter „Ablage“
+**In Fastra zeigen** wählen. Fastra ab 1.137.0 übernimmt eine eigene
+schreibgeschützte Inhaltskopie mit exakter Archividentität und Quellengeneration.
+Inhaltstreffer werden vor dem UTF-16-Sprung erneut geprüft; bei anderen oder
+nicht belegten Encodings erklärt die Ansicht die Positionsgrenze. Die Übergabe
+ist auf 256 KiB Blattinhalt begrenzt und im selben Menü abbrechbar.
+
+Suchaufzeichnungen (0.38.0) können einen begrenzten gespeicherten Trefferstand ohne Suche wieder öffnen oder seine Konfiguration ausdrücklich mit neuer Laufkennung erneut suchen. Historische Dateiinhalte werden dabei nicht gespeichert. Siehe [Aufnahmebefehle](docs/LOCAL-CONTROL.md#suchaufzeichnungen-ab-0380).
+
 ## Optionen
 
 | Option | Wirkung |
@@ -204,6 +223,7 @@ gelesen wird: `./favenio.py -- -entwurf ~/Dokumente`.
 | `--progress` | laufend melden, wo gerade gesucht wird (mit `--json` als JSONL-Objekte, sonst auf stderr) |
 | `--extract TREFFER` | Treffer-Pfad (`!/`-Notation) in einen Temp-Ordner auspacken und den nutzbaren Pfad ausgeben |
 | `--extract-json JSON` | einen eindeutigen strukturierten JSON-Treffer auspacken |
+| `--snapshot-position-json JSON` | begrenzten aktuellen Blattinhalt hashen und eine UTF-16-Inhaltsposition belegen; Vertrag unter lokaler Suchsteuerung |
 | `--extract-root ORDNER` | Temp-Wurzel für die Extraktion (nutzen die Apps, die sie selbst aufräumen) |
 | `--version` | Version anzeigen |
 
@@ -414,7 +434,8 @@ dort kommen die Maße selbst von exiftool, billiger sind sie nicht zu haben.
 
 ## Wie die Inhaltssuche liest
 
-Mit `-c` liest Favenio häppchenweise und hört beim ersten Treffer auf. Bei
+Mit `-c` liest Favenio häppchenweise und hört auf, sobald alle angefragten
+Begriffe gefunden sind. Bei
 einem festen Suchtext (ohne `-r`, ohne Platzhalter) arbeitet die Suche in zwei
 Schritten: erst ein billiger Test, ob der Text überhaupt vorkommt, und nur bei
 einem echten Treffer ein zweiter Durchlauf für die Zeilennummer. Das ist rund
@@ -427,10 +448,10 @@ Drei Punkte, die man dazu wissen sollte:
 - Inhalt wird als UTF-8 mit `errors="replace"` gelesen. Deshalb bleiben
   Treffer in teilweise binären Dateien möglich; andere Textkodierungen werden
   nicht versprochen.
-- Nicht-UTF-8-Namen (etwa aus einem Latin-1-Tar) erscheinen in der
-  Textausgabe als rohe Bytes wie bei grep/find; Warnungen maskieren sie mit
-  Backslash. Mit `--json` ist die Zeile dann kein gültiges UTF-8, und die Apps
-  zeigen diesen Treffer derzeit nicht an (offener Punkt).
+- Nicht-UTF-8-Namen (etwa aus einem Latin-1-Tar) bleiben unterscheidbar:
+  Textausgabe erhält rohe Bytes, Warnungen maskieren sie, und JSON zeigt U+FFFD
+  im Anzeigenamen neben exakten Base64-Identitäten in `archiveMemberBytes`.
+  Die Apps verwenden diese Byteidentität für Auswahl und Extraktion.
 - Weil das Lesen beim ersten Treffer endet, wird die CRC-Prüfsumme eines
   ZIP-Eintrags **nicht** geprüft — Python prüft sie erst am Ende des Eintrags.
   Ein Treffer ist ein Fund, keine Aussage über die Unversehrtheit des Archivs.
@@ -563,7 +584,7 @@ Ein Archiv-Eintrag hat keinen eigenen POSIX-Pfad; ihn stillschweigend
 wegzulassen wäre schlimmer, als ihn kenntlich zu machen.
 
 ```bash
-# Alle exportierten Treffer nach „TODO" durchsuchen (BSD-xargs kennt kein -a)
+# Export nur normaler Dateien durchsuchen (Archivtreffer vorher materialisieren)
 xargs -0 grep -l TODO < Favenio-Treffer.txt
 ```
 

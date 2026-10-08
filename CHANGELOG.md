@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.38.3 — 2026-10-08
+
+- Aufgezeichnete Suchstände zeigen laufendes Auspacken samt Escape-Abbruchhinweis.
+- Eine ungültige Ergebnisübergabe aus der Schnellsuche beendet den vorherigen
+  Suchlauf und entfernt dessen Treffer. Sein späterer Abschluss kann die
+  Fehlermeldung nicht mehr überschreiben.
+
+## 0.38.2 — 2026-10-08
+
+- ZIP-Ordner behalten ihren tatsächlichen Eintragsnamen in der Trefferidentität.
+  Ein Ordner `same/` und eine Datei `same` im selben Archiv bleiben dadurch
+  getrennte Treffer und lassen sich eindeutig zuordnen.
+
+## 0.38.1 — 2026-10-08
+
+- Abweichende Übernahmekennungen in Fastra-Statusantworten werden abgewiesen.
+  Die Fehlerbereinigung schließt ausschließlich die ursprünglich bestätigte
+  eigene Empfängersitzung.
+
+## 0.38.0 — 2026-10-08
+
+- Begrenzte Suchaufzeichnungen mit Konfiguration, Treffern, Auswahl, Herkunft,
+  Warnungszahl und Abschlusszustand. Wiederöffnung zeigt den gespeicherten
+  Stand sichtbar ohne neue Suche; erneute Suche erhält neue Laufkennung/Zeit.
+- Lokaler Aufnahme-/Wiedergabehelfer für Suchstände und bis zu 32 Auswahl-/
+  Fastra-Aktionen; veraltete Kennungen und fehlende Treffer bleiben Fehler.
+
+## 0.37.0 — 2026-10-06
+
+- Einzelne Treffer über das Menü oder den lokalen Controller an Fastra
+  übergeben: eigene schreibgeschützte Kopie, bytegenaue Archivkette,
+  Quellengeneration und bestätigter Inhaltshash.
+- Frische begrenzte Materialisierung unabhängig vom Vorschau-Cache;
+  geänderte Quellen, fehlende Editorfähigkeit, Abbruch und unbestätigte
+  Übernahmen bleiben ausdrückliche Fehlerzustände.
+- Der Python-Suchkern prüft aktuelle Inhaltsbegriffe erneut und belegt
+  UTF-16-Fundpositionen einschließlich BOM und anderer Zeilentrenner.
+  Nicht belegbare Positionen öffnen mit sichtbarer Einschränkung am Anfang.
+
+## 0.36.0 — 2026-10-06
+
+- Lokale sichtbare Suchsteuerung über den Bundle-Helfer `favenio-control`:
+  Konfiguration, Start, ausdrückliches Ersetzen, Abbruch, Status, begrenzte
+  Ergebnisseiten und Auswahl über die exakte Trefferidentität.
+- Suchläufe frieren ihre Konfiguration unter einer eigenen Kennung ein.
+  Veraltete Laufzeitkennungen und Ergebnisgenerationen werden abgewiesen;
+  wiederholte bestätigte Aufträge erzeugen keine zweite Suche.
+- Lifecycle-Selbsttest mit echten Python-/Archivtreffern sowie deterministischen
+  Prüfungen für Teilergebnisse, Warnungen, Fehler und Suchwechsel.
+
+## 0.35.2 — 2026-10-03
+
+- Die Schnellsuche entfernt erledigte Finder-Bereichswarnungen einschließlich Farbe und Tooltip.
+- Doppelte TAR-Einträge werden weiterhin eindeutig, aber in Dateireihenfolge gelesen; komprimierte Archive vermeiden wiederholtes Entpacken.
+- Die App-Übergabe erhält große Metadaten mit Schrägstrichen und lehnt überlange JSONL-Zeilen vor dem Öffnen ab.
+- Release-Läufe sperren den gemeinsamen Mountpoint und hängen nur das nachweislich eigene Image aus.
+
 ## 0.35.1 — 2026-10-02
 
 - Suche und Extraktion verwenden bei doppelten ZIP-/TAR-Eintragsnamen

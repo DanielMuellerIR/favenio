@@ -173,6 +173,7 @@ class BuildSafetyTest(unittest.TestCase):
                 '  else print -r -- "$2" >> "$DETACH_LOG"; fi\n'
                 '}\n'
                 + shell_function(source, 'favenio_release_unlock') + '\n'
+                + shell_function(source, 'favenio_mount_unlock') + '\n'
                 + shell_function(source, 'favenio_release_cleanup') + '\n'
                 + "trap favenio_release_cleanup EXIT\ntrap 'exit 1' TERM\n"
                 + attach)
@@ -1886,6 +1887,90 @@ class SelfTestGateTest(unittest.TestCase):
                 printed = [line for line in source.splitlines()
                            if 'print("SELFTEST OK' in line]
                 self.assertEqual(len(printed), 1, printed)
+
+
+class ReleaseMountOwnershipTest(unittest.TestCase):
+    def run_mount_fixture(self, scenario):
+        source = (REPO / 'release.sh').read_text(encoding='utf-8')
+        section = source[source.index('# Alle Release-Versionen'):source.index('# ditto statt cp -R')]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage = root / 'stage'
+            stage.mkdir()
+            mount = root / 'mount'
+            image = stage / 'own.dmg'
+            image.touch()
+            for name, path, device in [('own', image, '/dev/ownFixture'),
+                                       ('foreign', root / 'foreign.dmg', '/dev/foreignFixture')]:
+                (root / (name + '.plist')).write_bytes(plistlib.dumps({'images': [{
+                    'image-path': str(path), 'system-entities': [{
+                        'mount-point': str(mount), 'dev-entry': device}]}]}))
+            (root / 'partial.plist').write_bytes(plistlib.dumps({'images': [{
+                'image-path': str(image), 'system-entities': [{'dev-entry': '/dev/ownFixture'}]}]}))
+            (root / 'info.plist').write_bytes(plistlib.dumps({'images': []}))
+            lock = root / 'mount.lock'
+            if scenario == 'locked':
+                lock.write_text('foreign lock')
+            functions = '\n'.join(shell_function(source, name) for name in (
+                'favenio_mount_unlock', 'favenio_build_device',
+                'favenio_detach_build', 'favenio_release_cleanup'))
+            script = '''set -euo pipefail
+ROOT="$1"; SCENARIO="$2"; STAGING="$ROOT/stage"
+RW_DMG="$STAGING/own.dmg"; MOUNT_DIR="$ROOT/mount"; VOL_NAME="Fixture"
+MOUNT_LOCK_SOURCE="$STAGING/mount-lock"; MOUNT_LOCK_PATH="$ROOT/mount.lock"
+BUILD_MOUNTED=0; VERIFY_MOUNTED=0; VERIFY_MOUNT=""; WORK_SHA_PATH=""
+FINAL_DMG_PATH="$ROOT/final.dmg"; FINAL_SHA_PATH="$ROOT/final.sha"; DMG_PATH="$STAGING/final.dmg"
+favenio_release_unlock() { :; }
+hdiutil() {
+    case "$1" in
+        create) if [ "$SCENARIO" = foreign ]; then
+                    mkdir "$MOUNT_DIR"; cp "$ROOT/foreign.plist" "$ROOT/info.plist"
+                fi ;;
+        attach) print attach >> "$ROOT/actions"
+                if [ "$SCENARIO" = foreign ]; then return 1; fi
+                cp "$ROOT/own.plist" "$ROOT/info.plist"
+                if [ "$SCENARIO" = partial ]; then cp "$ROOT/partial.plist" "$ROOT/info.plist"; fi
+                if [[ "$SCENARIO" = signal || "$SCENARIO" = partial ]]; then kill -TERM $$; fi ;;
+        info) cat "$ROOT/info.plist" ;;
+        detach) print -r -- "$2" >> "$ROOT/detached" ;;
+        *) return 9 ;;
+    esac
+}
+'''
+            script += functions + "\ntrap favenio_release_cleanup EXIT\ntrap 'exit 1' TERM\n"
+            script += section + '\nfavenio_detach_build\nBUILD_MOUNTED=0\n'
+            result = subprocess.run(['zsh', '-c', script, 'probe', str(root), scenario],
+                                    capture_output=True, text=True, timeout=10)
+            detached = (root / 'detached').read_text() if (root / 'detached').exists() else ''
+            if scenario == 'foreign':
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(mount.is_dir())
+                self.assertEqual(detached, '')
+            elif scenario == 'locked':
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(lock.read_text(), 'foreign lock')
+                self.assertFalse((root / 'actions').exists())
+                self.assertEqual(detached, '')
+            else:
+                self.assertEqual(result.returncode, 1 if scenario in ('signal', 'partial') else 0, result.stderr)
+                self.assertEqual(detached, '/dev/ownFixture\n')
+            if scenario != 'locked':
+                self.assertFalse(lock.exists(), result.stdout + result.stderr)
+
+    def test_foreign_mount_appearing_during_create_survives_failed_attach(self):
+        self.run_mount_fixture('foreign')
+
+    def test_signal_during_attach_detaches_only_the_own_image(self):
+        self.run_mount_fixture('signal')
+
+    def test_signal_before_mountpoint_creation_detaches_only_the_own_device(self):
+        self.run_mount_fixture('partial')
+
+    def test_normal_detach_uses_the_proven_device(self):
+        self.run_mount_fixture('normal')
+
+    def test_common_mount_lock_blocks_another_release_and_is_preserved(self):
+        self.run_mount_fixture('locked')
 
 
 if __name__ == "__main__":

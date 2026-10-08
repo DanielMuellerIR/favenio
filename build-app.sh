@@ -128,8 +128,13 @@ mkdir -p Favenio.app/Contents/MacOS Favenio.app/Contents/Resources \
     Favenio.app/Contents/Frameworks
 swiftc -O -target "$TARGET" -F "$SPARKLE_SEARCH_PATH" -framework Sparkle \
     -Xlinker -rpath -Xlinker @loader_path/../Frameworks \
-    common/FavenioCore.swift common/Version.swift gui/FavenioGUI.swift \
+    common/FavenioCore.swift common/Version.swift control/ControlProtocol.swift \
+    gui/SearchControl.swift gui/SearchRecording.swift gui/FastraHandoff.swift gui/FastraHandoffSelfTest.swift gui/SearchControlSelfTest.swift gui/FavenioGUI.swift \
     -o Favenio.app/Contents/MacOS/Favenio
+mkdir -p Favenio.app/Contents/Helpers
+swiftc -O -target "$TARGET" control/ControlProtocol.swift control/main.swift \
+    -o Favenio.app/Contents/Helpers/favenio-control
+codesign "${NESTED_SIGN[@]}" Favenio.app/Contents/Helpers/favenio-control
 cp favenio.py Favenio.app/Contents/Resources/
 # App-Icon (vorgefertigt eingecheckt; neu erzeugen: swift icons/make-icons.swift
 # + iconutil — siehe icons/make-icons.swift).

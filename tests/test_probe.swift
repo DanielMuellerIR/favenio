@@ -17,7 +17,7 @@ import UniformTypeIdentifiers
         case "scope-note": QuickScopeNoteHarness.run()
         case "pixel-limit", "csv-field", "type-description":
             try values(command[1])
-        case "common-apps": try commonApps()
+        case "common-apps": try commonApps(compareDirect: command.contains("--direct"))
         default: exit(2)
         }
     }
@@ -56,7 +56,7 @@ import UniformTypeIdentifiers
     /// Liest eine Liste von Dateinamen (je Zeile ein Treffer) und
     /// vergleicht beide Fassungen: gleiche Anwendungsliste, und wie lange
     /// jede gebraucht hat.
-    static func commonApps() throws {
+    static func commonApps(compareDirect: Bool) throws {
         let input = FileHandle.standardInput.readDataToEndOfFile()
         let names = try JSONDecoder().decode([String].self, from: input)
         // ECHTE Dateien: `urlsForApplications(toOpen: URL)` liefert für
@@ -83,16 +83,33 @@ import UniformTypeIdentifiers
                             filesystemPath: url.path, archiveMembers: [],
                             isDirectory: isDirectory))
         }
+        func lookupKey(_ hit: Hit) -> String {
+            let ext = (hit.displayName as NSString).pathExtension.lowercased()
+            if hit.isDirectory || ext.isEmpty { return hit.filesystemPath }
+            return "extension:" + ext
+        }
+        var snapshot: [String: [URL]] = [:]
+        for hit in hits where snapshot[lookupKey(hit)] == nil {
+            snapshot[lookupKey(hit)] = applicationsFor(hit)
+        }
+        applicationsLookupForTesting = { snapshot[lookupKey($0)] ?? [] }
+        defer { applicationsLookupForTesting = nil }
         var start = Date()
         let neu = commonApplicationsFor(hits).map { $0.path }
         let neuDauer = Date().timeIntervalSince(start)
         start = Date()
         let alt = commonApplicationsPerHit(hits).map { $0.path }
         let altDauer = Date().timeIntervalSince(start)
-        var direct = hits.first.map(applicationsFor) ?? []
-        for hit in hits.dropFirst() {
-            let allowed = Set(applicationsFor(hit).map { $0.standardizedFileURL })
-            direct = direct.filter { allowed.contains($0.standardizedFileURL) }
+        // Der ungecachte dritte Vergleich wird nur für die Typprüfung
+        // ausgewertet. 200 unnötige LaunchServices-Abfragen überschritten
+        // dessen Prozessfrist, obwohl beide verglichenen Fassungen fertig waren.
+        var direct: [URL] = []
+        if compareDirect {
+            direct = hits.first.map(applicationsFor) ?? []
+            for hit in hits.dropFirst() {
+                let allowed = Set(applicationsFor(hit).map { $0.standardizedFileURL })
+                direct = direct.filter { allowed.contains($0.standardizedFileURL) }
+            }
         }
         let report: [String: [String]] = [
             "neu": neu, "alt": alt, "direct": direct.map { $0.path },

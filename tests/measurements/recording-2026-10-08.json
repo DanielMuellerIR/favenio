@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-08",
+  "version": "0.38.0",
+  "pythonTests": {
+    "normal": {
+      "count": 574,
+      "seconds": 61.488
+    },
+    "system": {
+      "count": 574,
+      "seconds": 60.132
+    }
+  },
+  "appSelfTests": 2,
+  "nativeWindowTest": {
+    "result": "passed",
+    "cases": [
+      "record completed state and exact selection",
+      "record and replay selection action",
+      "open stored two-hit list after source deletion without a search",
+      "old run ID is stale after reopening",
+      "rerun gets new run ID/start time and one current hit",
+      "missing replay target fails explicitly",
+      "recording bytes remain unchanged by open and rerun"
+    ],
+    "screenshotsVisuallyChecked": 2
+  },
+  "limits": {
+    "recordingBytes": 48000,
+    "hits": 128,
+    "fileBytes": 60000,
+    "actions": 32,
+    "searchTimeoutSeconds": 300
+  },
+  "limitations": [
+    "No historical file content is retained.",
+    "Warnings retain the count shown by the existing GUI, not individual diagnostic messages."
+  ],
+  "notarization": "accepted",
+  "signaturesAndGatekeeper": "passed",
+  "bundleGrowth": {
+    "Favenio.app": {
+      "baselineBytes": 4360271,
+      "bytes": 4381887,
+      "delta": 21616,
+      "percent": 0.4957
+    },
+    "FavenioQuick.app": {
+      "baselineBytes": 3718743,
+      "bytes": 3718743,
+      "delta": 0,
+      "percent": 0.0
+    }
+  }
+}

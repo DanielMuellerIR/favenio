@@ -88,6 +88,28 @@ class TempTreeTest(unittest.TestCase):
 
 
 class DuplicateArchiveMemberTest(TempTreeTest):
+    def test_zip_file_and_directory_keep_distinct_exact_names(self):
+        archive_path = Path(self.root, "same-name.zip")
+        archive_path.write_bytes(self.archive_bytes("zip", [
+            ("same/", b""), ("same", b"FILE CONTENT"),
+        ]))
+        code, lines, err = run(["--json", "same", str(archive_path)])
+        self.assertEqual(code, 0, err)
+        records = [json.loads(line) for line in lines]
+        records = [item for item in records if item["type"] == "member"]
+        self.assertEqual(len(records), 2)
+        self.assertEqual([item["archiveMembers"] for item in records],
+                         [["same/"], ["same"]])
+        self.assertNotEqual(records[0]["archiveMemberBytes"],
+                            records[1]["archiveMemberBytes"])
+        code, extracted, err = run(["--extract-json", json.dumps(records[0])])
+        self.assertEqual(code, 2)
+        self.assertEqual(extracted, [])
+        self.assertIn("Ordner", err)
+        code, extracted, err = run(["--extract-json", json.dumps(records[1])])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(Path(extracted[0]).read_bytes(), b"FILE CONTENT")
+
     def archive_bytes(self, kind, entries):
         output = io.BytesIO()
         if kind == "zip":
@@ -129,6 +151,44 @@ class DuplicateArchiveMemberTest(TempTreeTest):
                     "--content", "newneedle", str(archive_path)])
                 self.assertEqual(code, 0, err)
                 self.assertEqual(len(lines), 1)
+
+    def test_gzip_duplicate_winners_are_read_in_forward_order(self):
+        entries = [("%02d.txt" % i, b"OLD" + b"x" * 8192) for i in range(32)]
+        entries += [("%02d.txt" % i, b"NEEDLE" + b"y" * 8192) for i in reversed(range(32))]
+        packed = Path(self.root, "duplicates.tar.gz")
+        raw = self.archive_bytes("tar", entries)
+        packed.write_bytes(gzip.compress(raw))
+        offsets = []
+        original = tarfile.TarFile.extractfile
+        decoded = [0]
+        original_read = gzip._GzipReader.read
+
+        def counting_read(reader, size=-1):
+            data = original_read(reader, size)
+            decoded[0] += len(data)
+            return data
+
+        def tracking_extract(archive, member):
+            offsets.append(member.offset_data)
+            return original(archive, member)
+
+        payloads = []
+
+        def visit(name, is_directory, opener, *args, **kwargs):
+            with opener() as handle:
+                payloads.append(handle.read())
+
+        visitor = type("Visitor", (), {"visit_member": staticmethod(visit)})()
+        with mock.patch.object(tarfile.TarFile, "extractfile", tracking_extract), \
+                mock.patch.object(gzip._GzipReader, "read", counting_read):
+            with tarfile.open(str(packed), mode="r:gz") as archive:
+                favenio.Search.walk_tar(visitor, archive, str(packed), 0, str(packed), [])
+        self.assertEqual(payloads, [b"NEEDLE" + b"y" * 8192] * 32)
+        code, lines, err = run(["--content", "NEEDLE", str(packed)])
+        self.assertEqual((code, len(lines), err), (0, 32, ""))
+        self.assertEqual(offsets, sorted(offsets))
+        self.assertEqual(len(set(offsets)), 32)
+        self.assertLess(decoded[0], len(raw) * 5)
 
     def test_nested_duplicate_archive_uses_last_payload(self):
         for kind in ("zip", "tar"):

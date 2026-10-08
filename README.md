@@ -72,13 +72,14 @@ after installation, run each installed app binary with `--selftest` and check
 that its final output line begins with `SELFTEST OK`.
 Whatever lands in `/Applications` carries a stapled notarization ticket:
 `install.sh` notarizes the bundles itself, verifies them before and after
-copying (`codesign`, `spctl`, `stapler validate`), and exits with code 2 without
-touching `/Applications` if anything fails. A valid signature alone is not
+copying (`codesign`, `spctl`, `stapler validate`), and exits with code 2 when the previous installation is unchanged or restored.
+Exit 3 means rollback itself was incomplete and reports the remaining state. A valid signature alone is not
 enough: the bundle identifiers and matching versions are checked as well, so a
 foreign notarized app cannot take Favenio's place under the same file name.
-Both apps are swapped as a single transaction — if any step fails, both
-previous bundles are restored. `./install.sh --dmg <path>` installs from a
-finished DMG instead; `./install.sh --verify-only` runs the checks alone. Both
+Both apps are swapped as a single transaction; failure triggers restoration
+of both previous bundles. `./install.sh --dmg <path>` installs from a
+finished DMG instead; `./install.sh --verify-only` builds, notarizes and checks without installing.
+Combined with `--dmg <path>`, it only checks the supplied image and its bundles. Both
 bundles inside a DMG need their own stapled ticket as well, so they start
 offline; very old DMGs that carry the ticket only on the image are rejected.
 Both scripts also check that the bundles point at the production update feed:
@@ -133,10 +134,12 @@ Formats read through `bsdtar`, including TAR.ZST, use the first occurrence.
 Favenio is deliberately machine-friendly:
 
 - **`--json`**: one hit per line as a JSON object (JSONL), e.g.
-  `{"path": "...", "type": "member", "isDirectory": false, "filesystemPath": "/tmp/a.zip", "archiveMembers": ["inside.txt"], "line": 2}`.
+  `{"path": "...", "type": "member", "isDirectory": false, "filesystemPath": "/tmp/a.zip", "archiveMembers": ["inside.txt"], "archiveMemberBytes": ["aW5zaWRlLnR4dA=="], "line": 2}`.
   `path` remains the human-readable representation; automation should use the
   unambiguous structured fields. Every hit carries `path`, `type`,
-  `isDirectory`, `filesystemPath` and `archiveMembers`; content hits also
+  `isDirectory`, `filesystemPath` and `archiveMembers`. Archive hits additionally
+  carry `archiveMemberBytes`, the exact Base64 name identity at each level;
+  content hits also
   `line`. Files carry `size` (uncompressed bytes) **as far as the format
   states it up front**: plain files, ZIP and TAR entries do, single compressed
   files (`.gz`, `.bz2`, `.xz`) and entries read through `bsdtar` (7z, ISO,
@@ -166,6 +169,20 @@ Favenio is deliberately machine-friendly:
 
 If the search pattern begins with `-`, put `--` before it so it cannot be
 mistaken for an option: `./favenio.py -- -draft ~/Documents`.
+
+Since 0.36.0 Favenio also provides a local bundle helper to configure and run the
+visible main window, cancel searches, read bounded result pages and select
+hits by identity. See [local search control](docs/LOCAL-CONTROL.md) for the
+versioned JSON contract.
+
+Select a single result and choose **Show in Fastra** from the result menu
+or File menu. Fastra 1.137.0 or later receives an independent read-only copy,
+the exact archive member identity and the source generation. Content hits
+are checked again before UTF-16 navigation; other or unverified encodings
+open with an explicit position limitation. Handoffs are limited to 256 KiB
+of leaf content and can be cancelled from the same menu.
+
+Search recordings (0.38.0) can reopen a bounded saved result list without searching, or explicitly rerun its configuration with a new run ID. Recorded states do not preserve historical file contents. See [recording commands](docs/LOCAL-CONTROL.md#suchaufzeichnungen-ab-0380).
 
 ## Options
 
@@ -198,6 +215,7 @@ mistaken for an option: `./favenio.py -- -draft ~/Documents`.
 | `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
 | `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |
 | `--extract-json JSON` | extract an unambiguous structured JSON hit |
+| `--snapshot-position-json JSON` | hash a bounded current text leaf and verify a UTF-16 content position; contract in local search control |
 | `--extract-root FOLDER` | temp root for extraction (used by the apps, which clean it up themselves) |
 | `--version` | show version |
 
@@ -397,7 +415,7 @@ themselves come from `exiftool` — there is no cheaper way to learn them.
 
 ## How content search reads
 
-With `-c`, Favenio reads in chunks and stops at the first hit. For a fixed
+With `-c`, Favenio reads in chunks and stops when all requested terms have matched. For a fixed
 search text (no `-r`, no wildcards) it works in two steps: a cheap check
 whether the text occurs at all, and only for a real hit a second pass that
 determines the line number. That is roughly **1.4× to 1.9× faster** than
@@ -408,10 +426,10 @@ Three consequences worth knowing:
 
 - Content is read as UTF-8 with `errors="replace"`, so hits in partly binary
   files remain possible; other text encodings are not promised.
-- Names that are not valid UTF-8 (e.g. from a Latin-1 tar) are printed as raw
-  bytes in the text output, as grep and find do; warnings escape them with
-  backslashes. With `--json` such a line is then not valid UTF-8, and the apps
-  currently do not show that hit (open issue).
+- Names that are not valid UTF-8 (e.g. from a Latin-1 tar) remain distinguishable:
+  text output preserves raw bytes, warnings escape them, and JSON uses U+FFFD
+  in display names alongside exact Base64 `archiveMemberBytes`. The apps use
+  this byte identity for selection and extraction.
 - Because reading stops at the first hit, the CRC checksum of a ZIP member is
   **not** verified — Python only checks it at the end of the member. A hit is a
   find, not a statement about archive integrity. Use an archive tool if you
@@ -537,7 +555,7 @@ archive's member list). An archive entry has no POSIX path of its own;
 dropping it silently would be worse than marking it.
 
 ```bash
-# Grep all exported hits for "TODO" (BSD xargs on macOS has no -a; feed stdin)
+# Grep an export containing only ordinary files (materialize archive hits first)
 xargs -0 grep -l TODO < Favenio-Treffer.txt
 ```
 

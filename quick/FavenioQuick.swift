@@ -22,6 +22,51 @@ import Quartz   // QLPreviewPanel (QuickLook-Vorschau)
 @main
 struct FavenioQuickApp {
     static func main() {
+        if CommandLine.arguments.contains("--selftest-scope-ui") {
+            let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            let app = NSApplication.shared
+            app.setActivationPolicy(.accessory)
+            let controller = QuickController()
+            controller.buildWindow()
+            controller.field.stringValue = "fixture"
+            controller.hasSearched = true
+            controller.searchRoot = "/ersatz"
+            controller.finish(query: "fixture", errorText: nil)
+            controller.window.orderBack(nil)
+            defer { controller.window.orderOut(nil) }
+            let output = URL(fileURLWithPath: CommandLine.arguments.last!)
+            do {
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                for (index, folders) in [["/finder"], ["/ersatz"]].enumerated() {
+                    controller.applyScopeOutcome(.folders(folders))
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+                    precondition(!app.isActive && controller.window.isVisible)
+                    if index == 0 {
+                        precondition(controller.infoLabel.stringValue.contains("Finder-Ordner ist /finder"))
+                        precondition(controller.infoLabel.textColor == .systemOrange)
+                    } else {
+                        precondition(controller.runScopeMismatch == nil)
+                        precondition(controller.infoLabel.stringValue == controller.searchOutcomeText)
+                        precondition(controller.infoLabel.textColor == .secondaryLabelColor)
+                        precondition(controller.infoLabel.toolTip == controller.searchOutcomeText! + "\n/ersatz")
+                    }
+                    controller.window.displayIfNeeded()
+                    let capture = Process()
+                    capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                    capture.arguments = ["-x", "-l", "\(controller.window.windowNumber)",
+                        output.appendingPathComponent("scope-\(index).png").path]
+                    try capture.run()
+                    capture.waitUntilExit()
+                    precondition(capture.terminationStatus == 0 && !app.isActive)
+                    precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmost)
+                }
+                print("SCOPE UI OK — Bereichswarnung und normaler Quick-Endstand im Hintergrund geprüft")
+            } catch {
+                print("SELFTEST FEHLER: \(error)")
+                exit(1)
+            }
+            exit(0)
+        }
         if CommandLine.arguments.contains("--selftest") {
             _ = NSApplication.shared
             let controller = QuickController()
@@ -839,6 +884,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     /// Antwort des Finders verarbeiten. Wichtig: Ein Fehlschlag wird GEMELDET
     /// statt stillschweigend auf den Benutzerordner zurückzufallen.
     func applyScopeOutcome(_ outcome: FinderScopeOutcome) {
+        let hadScopeWarning = scopeProblem != nil || runScopeNoteText() != nil
         scopeResolved = true
         scopeProblem = outcome.problemText
         runScopeMismatch = nil
@@ -849,21 +895,20 @@ final class QuickController: HitListController, NSApplicationDelegate,
         scopeFinderFolders = outcome.folders
         rebuildScopePopup()
 
-        let outcomePrefix = !searching && !(searchOutcomeText ?? "").isEmpty
-            ? searchOutcomeText! + " " : ""
-        if let problem = scopeProblem, !searching {
-            showScopeProblem(outcomePrefix + problem)
-        }
-        // Kam die Finder-Antwort erst, nachdem eine Suche im Ersatzordner
-        // angelaufen ist: sagen, wo der Finder steht, auch nach Suchende.
-        // Die laufende Suche wird
-        // NICHT hinter dem Rücken des Nutzers umgehängt.
         if scopeProblem == nil, hasSearched, !userPickedScope,
            let front = scopeFinderFolders.first, front != searchRoot {
-            // Merken, nicht nur anzeigen: flushPending() und finish() setzen
-            // die Info-Zeile neu und hätten den Hinweis sonst weggewischt.
             runScopeMismatch = (searched: searchRoot, finder: front)
-            if let note = runScopeNoteText() { showScopeProblem(outcomePrefix + note) }
+        }
+        let outcomePrefix = !searching && !(searchOutcomeText ?? "").isEmpty
+            ? searchOutcomeText! + " " : ""
+        if let problem = scopeProblem ?? runScopeNoteText() {
+            showScopeProblem(outcomePrefix + problem)
+        } else if searching {
+            showInfo("\(hits.count) Treffer — Suche läuft…", detail: searchRoot)
+        } else if let summary = searchOutcomeText {
+            showInfo(summary, detail: summary + "\n" + searchRoot)
+        } else if hadScopeWarning {
+            showInfo(Self.hint)
         }
         if scopeDenied { maybeReportDeniedAutomation() }
 

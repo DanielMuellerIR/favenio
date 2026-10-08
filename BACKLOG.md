@@ -3,7 +3,7 @@
 Vor jedem Punkt gegen Code und Git verifizieren. Erledigte Punkte in Changelog
 oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
-## Flackernder Test: Ursache weiterhin offen
+## SIGTERM-Diagnose: Messauftrag abgeschlossen, historische Ursache offen
 
 `test_sigterm_during_the_swap_restores_both_bundles`
 (`tests/test_build_safety.py`) schlug am 2026-09-03 zweimal unter hoher
@@ -19,6 +19,16 @@ jetzt auch nach einem Timeout ein; ein mit echtem Prozess erzwungener Timeout
 prüft das. Dies belegt keine Ursache für den ursprünglichen SIGTERM-Fehlschlag.
 Bei erneutem Auftreten Bereitschaftsdatei, Prozessstatus, Ausgabe und Systemlast
 sichern, bevor Timing-Grenzen geändert werden.
+
+Der begrenzte Messauftrag vom 2026-10-06 ist abgeschlossen: 20 Wiederholungen
+unter vorhandener Last und 20 mit vier zusätzlichen, zeitlich begrenzten
+CPU-Prozessen bestanden. Vor jedem Signal war die Bereitschaft bestätigt und
+die Shell lief noch; jeder Test endete mit Status 2, stellte beide alten
+Bundles wieder her und hinterließ keine Transaktionsreste. Der ursprüngliche
+Fehler wurde nicht reproduziert; Installer und Timeouts bleiben unverändert.
+Zusammenfassung: [SIGTERM-Messung](tests/measurements/sigterm-2026-10-06.json).
+Wiederholbarer Aufruf: `python3 tools/measure-sigterm.py --output /tmp/sigterm.json`.
+Weitere Diagnose erst bei einem neuen tatsächlichen Fehlschlag.
 
 Nicht offen — Mehrwortsuche: mit 0.34.0 als `--term` gebaut; Vertrag (UND
 über das ganze Objekt, Belege je Begriff) in AGENTS und beiden READMEs.
