@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.38.5 — 2026-10-13
+
+- Nach dem Öffnen einer Suchaufzeichnung bleibt beim Laden einer Vorlage der
+  Hinweis auf einen fehlenden Suchordner neben der Aufnahmeherkunft sichtbar.
+
+## 0.38.4 — 2026-10-09
+
+- Reine Filtersuchen lassen sich auch im Inhaltsmodus an Fastra übergeben;
+  ohne Suchbegriff wird keine Fundposition behauptet.
+- Aufgezeichnete Treffer behalten nach Filteränderungen ihren Herkunftshinweis,
+  auch bei ungültigen Maßangaben.
+- Der Aufnahmehelfer gibt nach abgespielten Aktionen die aktuelle Auswahl aus
+  und weist einen zwischenzeitlich ersetzten Suchlauf ab. Eine unerreichbare
+  zweite Größenprüfung der Trefferidentität entfällt.
+- Die Release-Mountsperre funktioniert auch bei einem Checkout auf einem anderen
+  Dateisystem und entfernt ihre eigene temporäre Sperrquelle beim Aufräumen.
+
 ## 0.38.3 — 2026-10-08
 
 - Aufgezeichnete Suchstände zeigen laufendes Auspacken samt Escape-Abbruchhinweis.

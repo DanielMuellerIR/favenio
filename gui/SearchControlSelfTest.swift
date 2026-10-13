@@ -99,7 +99,35 @@ func checkSearchControl(sandbox: URL, hits: [Hit]) -> String? {
           code(request("select", ["runID": savedRun, "identity": LocalSearchController.identityObject(hits[0].identity)])) == "stale" else {
         return "Wiederöffnung startet eine Suche oder verliert Herkunft/Entwertung"
     }
+    let previousRoot = host.searchRoot
+    host.applyTemplate(SearchTemplate(name: "Fehlender Ordner", pattern: "neu",
+        root: sandbox.appendingPathComponent("missing-template-root").path,
+        configuration: input.options))
+    guard host.activeSearchRun == nil, host.searchRoot == previousRoot,
+          host.statusLabel.stringValue.contains("Aufgezeichneter Stand"),
+          host.statusLabel.stringValue.contains("Vorlage „Fehlender Ordner“ geladen"),
+          host.statusLabel.stringValue.contains("fehlt:") else {
+        return "Vorlage nach Aufzeichnung verdeckt den fehlenden Suchordner oder die Herkunft"
+    }
     var invalid = recording
+    let recordedRun = control.run!.id
+    host.filterView.rawFacts = ["min-size": "1"]
+    host.stopSearchForChangedCriteria()
+    guard host.activeSearchRun == nil, control.run?.id == recordedRun,
+          host.hits.count == hits.count, host.statusLabel.stringValue.contains("Aufgezeichneter Stand (abgeschlossen)") else {
+        return "Filteränderung entfernt die Kennzeichnung des unveränderten aufgezeichneten Stands"
+    }
+    host.minWidthField.stringValue = "ungültig"
+    host.stopSearchForChangedCriteria()
+    guard host.statusLabel.stringValue.contains("Aufgezeichneter Stand"),
+          host.statusLabel.stringValue.contains("Breite") else {
+        return "Ungültiger Maßfilter verdeckt Aufnahmeherkunft oder Eingabefehler"
+    }
+    host.minWidthField.stringValue = ""
+    host.stopSearchForChangedCriteria()
+    guard host.statusLabel.stringValue.contains("Aufgezeichneter Stand (abgeschlossen)") else {
+        return "Korrigierter Maßfilter verliert Aufnahmeherkunft"
+    }
     invalid["state"] = "completed"; invalid["warningCount"] = 1
     guard code(request("openRecording", ["recording": invalid])) == "invalidRequest",
           control.run?.origin == "recording" else { return "Ungültige Aufzeichnung verändert den Stand" }

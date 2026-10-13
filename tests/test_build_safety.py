@@ -1917,10 +1917,16 @@ class ReleaseMountOwnershipTest(unittest.TestCase):
             script = '''set -euo pipefail
 ROOT="$1"; SCENARIO="$2"; STAGING="$ROOT/stage"
 RW_DMG="$STAGING/own.dmg"; MOUNT_DIR="$ROOT/mount"; VOL_NAME="Fixture"
-MOUNT_LOCK_SOURCE="$STAGING/mount-lock"; MOUNT_LOCK_PATH="$ROOT/mount.lock"
+MOUNT_LOCK_PATH="$ROOT/mount.lock"
 BUILD_MOUNTED=0; VERIFY_MOUNTED=0; VERIFY_MOUNT=""; WORK_SHA_PATH=""
 FINAL_DMG_PATH="$ROOT/final.dmg"; FINAL_SHA_PATH="$ROOT/final.sha"; DMG_PATH="$STAGING/final.dmg"
 favenio_release_unlock() { :; }
+ln() {
+    if [ "$SCENARIO" = cross-device ] && [ "${1:h}" != "${2:h}" ]; then
+        print -u2 'ln: Cross-device link'; return 1
+    fi
+    command ln "$@"
+}
 hdiutil() {
     case "$1" in
         create) if [ "$SCENARIO" = foreign ]; then
@@ -1937,6 +1943,7 @@ hdiutil() {
     esac
 }
 '''
+            script += source[source.index('MOUNT_LOCK_SOURCE='):source.index('\nfavenio_mount_unlock()')]
             script += functions + "\ntrap favenio_release_cleanup EXIT\ntrap 'exit 1' TERM\n"
             script += section + '\nfavenio_detach_build\nBUILD_MOUNTED=0\n'
             result = subprocess.run(['zsh', '-c', script, 'probe', str(root), scenario],
@@ -1956,6 +1963,7 @@ hdiutil() {
                 self.assertEqual(detached, '/dev/ownFixture\n')
             if scenario != 'locked':
                 self.assertFalse(lock.exists(), result.stdout + result.stderr)
+            self.assertEqual(list(root.glob('mount.lock.*')), [])
 
     def test_foreign_mount_appearing_during_create_survives_failed_attach(self):
         self.run_mount_fixture('foreign')
@@ -1971,6 +1979,9 @@ hdiutil() {
 
     def test_common_mount_lock_blocks_another_release_and_is_preserved(self):
         self.run_mount_fixture('locked')
+
+    def test_mount_lock_does_not_depend_on_the_checkout_filesystem(self):
+        self.run_mount_fixture('cross-device')
 
 
 if __name__ == "__main__":

@@ -181,8 +181,13 @@ the exact archive member identity and the source generation. Content hits
 are checked again before UTF-16 navigation; other or unverified encodings
 open with an explicit position limitation. Handoffs are limited to 256 KiB
 of leaf content and can be cancelled from the same menu.
+Filter-only searches also support handoff in content mode; without search terms,
+the copy opens at the beginning without a verified hit position.
 
 Search recordings (0.38.0) can reopen a bounded saved result list without searching, or explicitly rerun its configuration with a new run ID. Recorded states do not preserve historical file contents. See [recording commands](docs/LOCAL-CONTROL.md#suchaufzeichnungen-ab-0380).
+Changing filters keeps the recorded-state label until a new search or result list
+replaces that state. Loading a template also keeps its confirmation and any
+missing-folder warning visible beside the recorded-state label.
 
 ## Options
 

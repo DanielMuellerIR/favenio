@@ -1835,13 +1835,22 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Formuliert die Fußzeile: Kennzahlen der Trefferliste, dahinter — falls
     /// gerade etwas läuft oder abgebrochen wurde — der Zustand der Suche.
     func statusText() -> String {
-        if case .recorded(let state) = searchPhase {
+        // Kriterienänderungen können die Anzeigephase ändern, aber sie
+        // prüfen den aufgezeichneten Trefferstand nicht erneut.
+        let recordedState: String?
+        if let run = searchControl.run, run.origin == "recording" { recordedState = run.state }
+        else if case .recorded(let state) = searchPhase { recordedState = state }
+        else { recordedState = nil }
+        if let state = recordedState {
             let label = ["completed": "abgeschlossen", "warnings": "mit Warnungen",
                          "cancelled": "abgebrochen", "failed": "fehlgeschlagen"][state] ?? state
-            return "Aufgezeichneter Stand (" + label + ") — "
+            var text = "Aufgezeichneter Stand (" + label + ") — "
                 + hitStatisticsText(statistics, selected: tableView.selectedRowIndexes.count)
                 + skippedNote(skippedCount) + (searchControl.run?.error.map { " — " + $0 } ?? "")
                 + (isMaterializing ? " — " + Self.materializingNote : "")
+            if case .failed(let reason) = searchPhase { text += " — " + reason }
+            if let templateNote { text += " — " + templateNote }
+            return text
         }
         if case .failed(let reason) = searchPhase { return reason }
         if hits.isEmpty {

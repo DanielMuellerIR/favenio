@@ -80,6 +80,31 @@ func checkFastraHandoff(sandbox: URL) -> String? {
         return job.terminal
     }
     do {
+        host.modeControl.segmentCount = SearchTextMode.allCases.count
+        host.typeControl.segmentCount = 3
+        host.fieldPopup.addItem(withTitle: "Alle")
+        host.setSearchRoot(sandbox)
+        host.searchField.stringValue = ""
+        host.applyConfiguration(SearchConfiguration(mode: .content, archives: false, rawFacts: ["min-size": "1"]))
+        host.startSearch()
+        let filterDeadline = ProcessInfo.processInfo.systemUptime + 10
+        while host.activeSearchRun != nil && ProcessInfo.processInfo.systemUptime < filterDeadline {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.005))
+        }
+        guard controller.run?.state == "completed", host.hits.contains(where: { $0.identity == normal.identity }) else {
+            return "Reine Filtersuche im Inhaltsmodus liefert keinen echten Treffer"
+        }
+        let filteredRecording = try SearchRecording.decode(controller.captureRecording())
+        for reopen in [false, true] {
+            if reopen { try controller.openRecording(filteredRecording) }
+            let filtered = try handoff.start(hit: normal, run: controller.run!)
+            guard wait(filtered), filtered.state == "ready", adoptedBytes == first,
+                  (filtered.receipt?["selection"] as? [String: Int]) == ["location": 0, "length": 0],
+                  (filtered.receipt?["provenance"] as? [String: Any])?["positionBinding"] as? String == "unboundHit" else {
+                return "Reine Filtersuche kann live oder aufgezeichnet nicht ohne Fundposition übergeben werden (\(filtered.error?.message ?? filtered.state))"
+            }
+        }
+        host.replaceSearchResults([normal, archived]); controller.begin(input)
         let original = try handoff.start(hit: normal, run: controller.run!)
         guard wait(original), original.state == "ready", adoptedBytes == first,
               FileManager.default.fileExists(atPath: source.path),

@@ -61,6 +61,13 @@ class SnapshotPositionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "passt nicht mehr"):
             self.query(b"no longer present\n")
 
+    def test_filter_only_content_mode_hashes_without_binding_a_position(self):
+        for data in (b"ordinary text\n", b"invalid\xff", b"text\0"):
+            with self.subTest(data=data):
+                _, value = self.query(data, pattern="", regex=True)
+                self.assertEqual(value, dict(sha256=hashlib.sha256(data).hexdigest(),
+                                             location=0, length=0, positionBinding="unboundHit"))
+
     def test_unverified_decoder_and_non_content_hits_never_guess(self):
         for data, options in [(b"invalid\xffneedle", {}), (b"needle\0", {}), (b"needle", {"mode": "name"}),
                               (b"needle", {"mode": "metadata"}), (b"\xff\xfeneedle", {})]:

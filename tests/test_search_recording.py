@@ -1,5 +1,7 @@
 """Dateigrenzen und Wiedergabe nutzen den tatsächlichen Controllervertrag."""
 import importlib.util
+import contextlib
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -76,6 +78,41 @@ class PlaybackTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'nicht bestätigt'):
                 controller.play_actions([dict(operation='handoff', identity={}), dict(operation='select', identity={})], 'own')
         self.assertEqual(sent, ['handoff', 'handoffStatus'])
+
+    def test_cli_reports_current_selection_after_actions_and_rejects_replaced_run(self):
+        identity = dict(filesystemPath='/fixture.txt', archiveMembers=[], archiveMemberBytes=[])
+        for command in ('open', 'rerun'):
+            for replaced in (False, True):
+                with self.subTest(command=command, replaced=replaced), tempfile.TemporaryDirectory() as folder:
+                    path = Path(folder) / 'recording.json'
+                    recording.save_recording(path, dict(schemaVersion=1,
+                        recording=dict(configuration={}), actions=[dict(operation='select', identity=identity)]))
+                    status = dict(runID='own', state='completed', selection=[])
+                    selected = False
+                    def send(controller, operation, **fields):
+                        nonlocal selected
+                        if operation == 'capabilities':
+                            return dict(runtimeID='runtime', windowID='window',
+                                        capabilities=dict(recordingSchemaVersion=1))
+                        if operation == 'select':
+                            self.assertEqual(fields, dict(runID='own', identity=identity))
+                            selected = True
+                            status['selection'] = [identity]
+                            if replaced:
+                                status['runID'] = 'other'
+                        return dict(status=dict(status))
+                    output = io.StringIO()
+                    with patch.object(recording.Controller, 'send', send), \
+                         patch('sys.argv', ['search-recording.py', '--helper', '/unused', command, str(path), '--actions']), \
+                         contextlib.redirect_stdout(output):
+                        if replaced:
+                            with self.assertRaisesRegex(ValueError, 'ersetzt'):
+                                recording.main()
+                            self.assertEqual(output.getvalue(), '')
+                        else:
+                            recording.main()
+                            self.assertEqual(json.loads(output.getvalue()), status)
+                    self.assertTrue(selected)
 
 
 if __name__ == '__main__':

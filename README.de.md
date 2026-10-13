@@ -189,8 +189,14 @@ schreibgeschützte Inhaltskopie mit exakter Archividentität und Quellengenerati
 Inhaltstreffer werden vor dem UTF-16-Sprung erneut geprüft; bei anderen oder
 nicht belegten Encodings erklärt die Ansicht die Positionsgrenze. Die Übergabe
 ist auf 256 KiB Blattinhalt begrenzt und im selben Menü abbrechbar.
+Auch reine Filtersuchen im Inhaltsmodus lassen sich übergeben; ohne Suchbegriffe
+öffnet sich die Kopie am Anfang ohne belegte Fundposition.
 
 Suchaufzeichnungen (0.38.0) können einen begrenzten gespeicherten Trefferstand ohne Suche wieder öffnen oder seine Konfiguration ausdrücklich mit neuer Laufkennung erneut suchen. Historische Dateiinhalte werden dabei nicht gespeichert. Siehe [Aufnahmebefehle](docs/LOCAL-CONTROL.md#suchaufzeichnungen-ab-0380).
+Filteränderungen behalten den Aufnahmehinweis, bis eine neue Suche oder eine
+andere Trefferliste den Stand ersetzt. Beim Laden einer Vorlage bleiben auch
+die Bestätigung und ein Hinweis auf einen fehlenden Ordner neben der
+Aufnahmeherkunft sichtbar.
 
 ## Optionen
 

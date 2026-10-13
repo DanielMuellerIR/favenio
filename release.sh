@@ -168,12 +168,15 @@ VERIFY_MOUNT=""
 VERIFY_MOUNTED=0
 WORK_SHA_PATH=""
 MOUNT_LOCK_PATH="/private/tmp/favenio-release-Favenio.mount-lock"
-MOUNT_LOCK_SOURCE="$STAGING/mount-lock"
+MOUNT_LOCK_SOURCE=""
 
 favenio_mount_unlock() {
     if [ -n "${MOUNT_LOCK_PATH:-}" ] && [ -e "$MOUNT_LOCK_PATH" ] \
             && [ "$MOUNT_LOCK_PATH" -ef "$MOUNT_LOCK_SOURCE" ]; then
         rm -f "$MOUNT_LOCK_PATH"
+    fi
+    if [ -n "$MOUNT_LOCK_SOURCE" ]; then
+        rm -f "$MOUNT_LOCK_SOURCE"
     fi
 }
 
@@ -281,7 +284,9 @@ tiffutil -cathidpicheck "$STAGING/DmgBg_1x.png" "$STAGING/DmgBg_2x.png" \
 # Lieber abbrechen, damit ein Mensch die Abweichung prüfen kann.
 # Alle Release-Versionen und Arbeitskopien teilen denselben Finder-Mountpoint.
 # Die Hardlink-Sperre bleibt von der Prüfung bis zum Aushängen gehalten.
-: > "$MOUNT_LOCK_SOURCE"
+# Beide Links müssen auf demselben Dateisystem liegen, auch bei einem
+# Checkout auf einem externen Volume. mktemp legt die eigene Quelle sicher an.
+MOUNT_LOCK_SOURCE=$(mktemp "$MOUNT_LOCK_PATH.XXXXXX") || exit 1
 if ! ln "$MOUNT_LOCK_SOURCE" "$MOUNT_LOCK_PATH" 2>/dev/null; then
     echo "FEHLER: Der Release-Mountpoint ist durch einen anderen Lauf gesperrt." >&2
     exit 1

@@ -136,8 +136,6 @@ def main():
         if len(value['actions']) >= 32:
             raise ValueError('Aufnahme ist auf 32 Aktionen begrenzt.')
         identity_data = read_regular(args.identity, 48000)
-        if len(identity_data) > 48000:
-            raise ValueError('Trefferidentität zu groß.')
         identity = json.loads(identity_data)
         if identity not in [dict(filesystemPath=h['filesystemPath'], archiveMembers=h['archiveMembers'],
                                  archiveMemberBytes=h.get('archiveMemberBytes', [])) for h in value['recording']['hits']]:
@@ -163,7 +161,11 @@ def main():
             if status['state'] not in ('completed', 'warnings'):
                 raise ValueError('Neue Suche endete ohne erfolgreichen Abschluss: ' + status['state'])
         if args.actions:
-            controller.play_actions(value['actions'], status['runID'])
+            run_id = status['runID']
+            controller.play_actions(value['actions'], run_id)
+            status = controller.current()
+            if status.get('runID') != run_id:
+                raise ValueError('Suchlauf wurde während der Wiedergabe ersetzt.')
         print(json.dumps(status, ensure_ascii=False))
 
 

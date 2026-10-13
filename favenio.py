@@ -55,10 +55,10 @@ import traceback
 import zipfile
 import zlib
 
-__version__ = "0.38.3"
+__version__ = "0.38.5"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-10-08"
+__date__ = "2026-10-13"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -3258,7 +3258,10 @@ def snapshot_position(record):
         raise ValueError("Blattinhalt wurde während der Prüfung verändert")
     result = {"sha256": hashlib.sha256(data).hexdigest(), "location": 0,
               "length": 0, "positionBinding": "unboundHit"}
-    if record["mode"] != "content":
+    terms = list(dict.fromkeys(([record["pattern"]] if record["pattern"] else []) + record["terms"]))
+    # Der gewählte Inhaltsmodus ist bei einer reinen Filtersuche kein
+    # Textkriterium. Dafür lässt sich keine Fundzeile belegen.
+    if record["mode"] != "content" or not terms:
         return result
     try:
         text = data.decode("utf-8")
@@ -3266,9 +3269,6 @@ def snapshot_position(record):
         return result
     if "\0" in text:
         return result
-    terms = list(dict.fromkeys(([record["pattern"]] if record["pattern"] else []) + record["terms"]))
-    if not terms or not all(terms):
-        raise ValueError("Inhaltsbegriff fehlt")
     matchers = [build_matcher(term, record["regex"], record["caseSensitive"],
                              exact=record["exact"],
                              literal_wildcards=record["literalWildcards"],
