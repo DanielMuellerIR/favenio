@@ -2,7 +2,7 @@
 
 ## 0.64.0 — 2026-10-18
 
-- README-Überblick über die Neuerungen seit 0.38.5 ergänzt; PDF-OCR, Suchzielmenü, Kriterienumfang, Dublettenaufruf und optionale macOS-13-Funktionen in beiden Sprachen abgeglichen.
+- README-Überblick über die Neuerungen seit 0.38.5 ergänzt; PDF-OCR, Suchzielmenü, Kriterienumfang, Dublettenaufruf, Controller-/Aufzeichnungsformate, Dokumentationslinks und optionale macOS-13-Funktionen abgeglichen.
 - Aktualisierte Beispiele und Screenshots für Kriterien, Dokumenttext, OCR und Fundstellenkontext; Kriterienversionen in der CLI-Hilfe berichtigt.
 - Archivmitglieder mit normalen Dateien in derselben ausdrücklichen Dublettenprüfung vergleichen. Gemeinsame Materialisierungsaufträge und befristete Leases erhalten Archivketten und Rohname-Identitäten.
 - Inhalts- und äußere Quellgeneration bleiben während des Vergleichs gebunden; CRC-/Archiv-/Budgetfehler erzeugen gekennzeichnete Teilprüfungen. Fortschritt und Abbruch umfassen die Archivvorbereitung.

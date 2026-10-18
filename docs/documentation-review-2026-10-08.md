@@ -33,7 +33,7 @@ ist eine separate Prüfung; dieses Dokument behauptet ihn nicht.
 
 ## Intensiver Code-Review und Schlussprüfung, Version 0.38.3
 
-Alle elf Bereiche in der [Abdeckung](../.codeqa/coverage.json) sind aktuell
+Alle elf Bereiche der damaligen Abdeckung wurden vollständig
 geprüft. Bestehende Vollprüfungen wurden durch vollständige Deltas und die
 heutigen Ein-/Ausgänge ergänzt; neue Controller-, Übergabe- und
 Aufzeichnungsmodule wurden vollständig geprüft. Suchsemantik bleibt allein

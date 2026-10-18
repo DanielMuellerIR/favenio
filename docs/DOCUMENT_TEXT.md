@@ -291,7 +291,7 @@ CSV verwendet `documentPart`/`documentParagraph` sowie zusätzlich `documentChap
 für EPUB; `documentPage` und `documentPartKind` bleiben bei ODT/EPUB leer.
 Öffnen und Quick Look verwenden das Originaldokument. Nachladen bleibt bei drei
 Sekunden Kern / fünf Sekunden App; der Ausschnitt-SHA ist kein Vollinhaltshash.
-Die Berichtsgründe bleiben im bestehenden Register von 32 Kennungen.
+Die Berichtsgründe bleiben im gemeinsam begrenzten Register des [Suchberichts](SEARCH_REPORT.md).
 
 Formatgrundlagen: [ODF 1.3, Teil 3](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html),
 [EPUB-Paket und Spine](https://www.w3.org/TR/epub-33/#sec-spine).

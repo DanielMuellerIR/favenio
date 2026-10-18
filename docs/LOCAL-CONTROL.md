@@ -4,6 +4,11 @@ Ab Favenio 0.36.0, Protokollversion 1. Der Bundle-Helfer
 `Contents/Helpers/favenio-control` konfiguriert und steuert das normale
 Hauptfenster. Die Suche läuft weiterhin ausschließlich im Python-Kern.
 
+Stand 0.64.0: `capabilities` nennt Kriterienschema 3 (lesbar: 1–3),
+Konfigurationsformate 1–7 und Aufzeichnungsformat 8 (lesbar: 1–8).
+Neue Fragen verwenden das kleinste passende Format; die Abschnitte unten
+beschreiben die Erweiterungen und ihre zusätzlichen Fähigkeiten.
+
 ```sh
 /Applications/Favenio.app/Contents/Helpers/favenio-control --capabilities --json
 /Applications/Favenio.app/Contents/Helpers/favenio-control --request request.json
@@ -28,8 +33,8 @@ Auftragsgrenze 262.144 Byte; `maximumRequestBytes` nennt den aktuellen Wert.
 | `capabilities` | keine | Fähigkeiten, Produktversion, Laufzeit und Fenster |
 | `configuration` | keine | aktuelle sichtbare Eingaben |
 | `configure` | `configuration` | Eingaben setzen; keine Suche starten |
-| `start` | keine | neue Suche; laufende Suche ergibt `busy` |
-| `replace` | keine | laufende Suche ausdrücklich ersetzen |
+| `start` | optional `dateReferenceTime` | neue Suche; laufende Suche ergibt `busy` |
+| `replace` | optional `dateReferenceTime` | laufende Suche ausdrücklich ersetzen |
 | `cancel` | `runID` | abbrechen und bereits empfangene Treffer erhalten |
 | `status` | keine | Laufzustand, Fortschritt, Warnungszahl und Trefferanzahl |
 | `report` | `runID` | begrenzter JSON-Suchbericht des aktuellen Laufs, auch vorläufig; [Vertrag](SEARCH_REPORT.md) |
@@ -41,7 +46,7 @@ Auftragsgrenze 262.144 Byte; `maximumRequestBytes` nennt den aktuellen Wert.
 | `captureRecording` | `runID` | ab 0.38.0: beendeten eigenen Suchstand vollständig aufnehmen |
 | `openRecording` | `recording` | ab 0.38.0: gespeicherten Stand ohne Suche sichtbar öffnen |
 
-Die Konfiguration enthält `pattern`, einen absoluten `root` und `options`
+Das bisherige Konfigurationsformat enthält `pattern`, einen absoluten `root` und `options`
 als Liste von Objekten mit `name` und `value` (beides Strings). Optionen
 verwenden denselben Katalog wie Quick-Übergabe und Suchvorlagen: `mode`
 (`name`, `content`, `metadata`, `document`), `only` (`both`, `files`, `dirs`), die
@@ -49,16 +54,17 @@ Schalter `regex`, `case`, `archives`, `hidden`, `exact`, `literal-wildcards`
 (`0` oder `1`), `field`, `minw`, `maxw`, `minh`, `maxh`, die sechs Größen-/
 Datumsfilter sowie wiederholbare `term` und `exclude`. Ab 0.40.0 enthält
 `criteria` optional einen JSON-Kriterienbaum als String; die Fähigkeitsabfrage
-nennt `criteriaSchemaVersion: 1`. Werte bleiben roh;
+nennt aktuell `criteriaSchemaVersion: 3` und `criteriaSchemaVersions: [1,2,3]`. Werte bleiben roh;
 Python validiert Größen, Daten und Suchmuster. GUI-Maßfehler verhindern wie
 beim manuellen Start die Suche.
 
 Ab 0.55.0 wird alternativ die strikte Form
 `{"schemaVersion":2,"pattern":"Beispiel","roots":["/tmp/docs","/tmp/project"],"options":[]}`
 gelesen. Die geordnete Liste, Herkunft je Treffer, Versionsmigration und Grenzen
-stehen im [Suchbereichsvertrag](SEARCH_ROOTS.md). Capabilities nennen
-`configurationSchemaVersions: [1,2]` und `recordingSchemaVersion: 3` mit
-`recordingSchemaVersions: [1,2,3]`. Historisches Öffnen prüft die Wurzelliste nicht
+stehen im [Suchbereichsvertrag](SEARCH_ROOTS.md). Mehrere Wurzeln benötigen
+mindestens Konfigurationsformat 2 und Aufzeichnungsformat 3; Kalender, Finder,
+lokale Inhaltspolitik und OCR verwenden die unten beschriebenen Folgeformate.
+Historisches Öffnen prüft die Wurzelliste nicht
 auf Vorhandensein; ein neuer Gesamtstart prüft alle Bereiche.
 
 ```json
@@ -178,14 +184,15 @@ Fehler ergeben Exit 2 mit Favenio-Diagnose. Es entsteht keine zweite Suchlogik.
 ## Suchaufzeichnungen (ab 0.38.0)
 
 `captureRecording` braucht die aktuelle `runID` und einen beendeten eigenen
-Suchlauf. Die Antwort enthält `recording`: Schema 1 (ohne Kriterien und mit UTF-8) oder 2 (mit Kriterien oder Nichtstandardkodierung), Konfiguration, ursprüngliche
+Suchlauf. Die Antwort enthält `recording`: je nach benötigten Fähigkeiten Schema 1–8, Konfiguration, ursprüngliche
 Laufkennung und Startzeit, Aufnahmezeit, Abschlusszustand, Warnungszahl, gegebenenfalls
 Fehler, vollständige Treffer und Auswahl. Maximal 128 Treffer und 196.608 Byte;
 Überschreitung ist `capacity`, niemals eine still gekürzte vollständige Liste.
-Schema-1-Aufnahmen aus 0.40.0 mit Kriterien bleiben verlustfrei lesbar und
+Einfache alte Konfigurationen verwenden Schema 1; Kriterien oder Nichtstandardkodierung
+benötigen mindestens Schema 2. Schema-1-Aufnahmen aus 0.40.0 mit Kriterien bleiben verlustfrei lesbar und
 werden bei erneuter Aufnahme als Schema 2 ausgegeben.
 Eine laufende Suche muss zuerst ausdrücklich mit `cancel` beendet werden.
-Fähigkeiten nennen `recordingSchemaVersion: 2`, `recordingSchemaVersions: [1, 2]`,
+Fähigkeiten nennen `recordingSchemaVersion: 8`, `recordingSchemaVersions: [1,2,3,4,5,6,7,8]`,
 `maximumRecordingBytes: 196608`
 und `maximumRecordingHits: 128`. Warnungen bewahren wie die bisherige GUI
 die Anzahl übersprungener Objekte, keine einzelnen Diagnosetexte.
@@ -228,9 +235,10 @@ nennt die zulässigen Werte. Fehlende Option bleibt `utf-8`. Unbekannte oder dop
 Werte werden vor jeder Konfigurationsänderung abgewiesen.
 
 Im Suchziel `document` beziehen sich Muster und Inhaltskriterien auf logischen
-PDF-Text. Seitenlokatoren und Quellbindung bleiben in Ergebnissen, Aufnahmen und
-Schema-2-Übergaben erhalten; siehe [Dokumenttext](DOCUMENT_TEXT.md). Die
-Rohtext-Positionsübergabe an Fastra erhält dadurch keinen PDF-Seitenoffset.
+PDF-/DOCX-/ODT-/EPUB-/XLSX-/PPTX-Text, mit den gesonderten Opt-ins auch auf Bild-/PDF-OCR.
+Dokumentlokatoren und Quellbindung bleiben in Ergebnissen und den jeweils passenden
+Aufnahme-/Übergabeformaten erhalten; siehe [Dokumenttext](DOCUMENT_TEXT.md).
+Die Rohtext-Positionsübergabe an Fastra erhält dadurch keinen erfundenen Dokumentoffset.
 
 ## Ansichtsfilter ab 0.53.0
 

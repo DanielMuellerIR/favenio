@@ -49,8 +49,8 @@ dieses Zeitfenster.
 
 Die Ausgangssuite bestand mit 546 Tests. Der Endstand hat 553 Tests;
 zusätzlich prüfen beide gebauten Apps ihre Abläufe mit `--selftest`.
-Die ausgeführten Befehle und Ergebnisse stehen im ergänzenden Eintrag
-`timeboxed_reviews` in [coverage.json](../.codeqa/coverage.json).
+Die ausgeführten Befehle und Ergebnisse wurden in der damaligen
+Review-Abdeckung festgehalten.
 
 Die Tests liefen ohne Übernahme des Fensterfokus. Die geänderten
 Controllerzustände, Statusmeldungen und Tastaturereignisse wurden headless
