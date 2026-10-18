@@ -1,11 +1,11 @@
 import AppKit
 import Darwin
 
-func runControlHelper() throws -> [String: Any] {
+func runControlHelper() throws -> Data {
     var arguments = Array(CommandLine.arguments.dropFirst())
     let noLaunch = arguments.first == "--no-launch"
     if noLaunch { arguments.removeFirst() }
-    if arguments == ["--capabilities", "--json"] { return SearchControlWire.capabilities }
+    if arguments == ["--capabilities", "--json"] { return SearchControlWire.encode(SearchControlWire.capabilities) }
     guard arguments.count == 2, arguments[0] == "--request" else {
         throw SearchControlFailure(code: "invalidRequest", message: "Aufruf: favenio-control [--no-launch] --request <Datei|->")
     }
@@ -60,7 +60,10 @@ func runControlHelper() throws -> [String: Any] {
                   let object = try? JSONSerialization.jsonObject(with: reply) as? [String: Any] else {
                 throw SearchControlFailure(code: "delivery", message: "Keine Antwort; denselben Auftrag unverändert wiederholen.")
             }
-            return object
+            // Die Antwort ist geprüft; erneutes Dekodieren/Kodieren würde
+            // führendes U+FEFF in erfassten Finder-Strings entfernen.
+            _ = object
+            return reply
         }
         if noLaunch || launchFailed { break }
         if !launched {
@@ -78,8 +81,9 @@ func runControlHelper() throws -> [String: Any] {
 
 do {
     let result = try runControlHelper()
-    FileHandle.standardOutput.write(SearchControlWire.encode(result) + Data([10]))
-    exit(result["error"] == nil ? 0 : 1)
+    FileHandle.standardOutput.write(result + Data([10]))
+    let object = try JSONSerialization.jsonObject(with: result) as? [String: Any]
+    exit(object?["error"] == nil ? 0 : 1)
 } catch {
     let failure = error as? SearchControlFailure ?? SearchControlFailure(code: "invalidRequest", message: "Auftrag konnte nicht gelesen werden.")
     FileHandle.standardOutput.write(SearchControlWire.encode(["protocolVersion": 1, "error": failure.object]) + Data([10]))

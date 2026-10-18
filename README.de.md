@@ -22,16 +22,40 @@ Der Suchkern ist pures Python 3 (nur Standardbibliothek), eine Datei, keine
 Installation. Darauf aufbauend gibt es zwei native macOS-Apps: ein großes
 Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
 
+## Neu in 0.64.0
+
+Seit dem letzten GitHub-Release 0.38.5 sind in beiden Apps hinzugekommen:
+
+- Ein grafischer Editor für verschachtelte UND-/ODER-Kriterien, mehrere
+  Suchdateien und -ordner, Kalenderbereiche, Finder-Tags und Finder-Kommentare.
+- Kanonischer Unicode-Vergleich und wählbare Textkodierungen mit
+  quellengebundener Vorschau, Fundstellennavigation und Kontext auf Anforderung.
+- Logische Textsuche in PDF, DOCX, ODT, EPUB, XLSX und PPTX. Lokale Bild-OCR und
+  OCR textloser PDF-Seiten sind getrennt zuschaltbar; erkannter Text bleibt
+  unsicher, eingebettete Office-Bilder sind ausgeschlossen.
+- Reversible Trefferfilter, einklappbare Gruppen, Miniaturansichten und
+  ausdrückliche Aktionen für das Quellarchiv eines Archivtreffers.
+- Eine Option für lokal vorhandene Inhalte mit belegter Unterstützung für
+  iCloud Drive auf APFS. Weitere Cloudprovider sind ungeprüft; eine allgemeine
+  Offlinegarantie gibt es nicht.
+- Ausdrückliche Dublettenprüfung über Dateien und Archivmitglieder mit
+  vollständigem Bytevergleich sowie Suchberichte zu Auslassungen und Grenzen.
+  Die Prüfung löscht keine Dateien, verändert keine Archive und behauptet keine Speicherersparnis.
+
+Bestehende Vorlagen und Aufzeichnungen bleiben lesbar; neue Fähigkeiten tragen
+ausdrückliche Formatversionen und weisen ältere Empfänger ab. Details stehen
+in den folgenden Abschnitten und im [Changelog](CHANGELOG.md).
+
 ## Screenshots
 
-Die Haupt-App durchsucht Dateiinhalte und Archive. Das Beispiel verwendet
-`Archiv*Suche` mit dem zusätzlichen Begriff `Demo` und zeigt die optionalen Filter.
+Die Haupt-App verbindet Kriterien, Dokumenttext und ausdrücklich gewählte lokale OCR.
+Das Beispiel zeigt ein gescanntes PDF mit Seitenbeleg und begrenztem Kontext.
 
-![Favenio 0.35.0: Hauptfenster mit drei Treffern, darunter ein Archiv-Eintrag](assets/screenshots/main-window.png)
+![Favenio 0.64.0: Hauptfenster mit PDF-OCR-Fund und quellengebundenem Kontext](assets/screenshots/main-window.png)
 
 Die Finder-Schnellsuche verwendet denselben Suchkern und dieselben Filter.
 
-![Favenio 0.35.0: Schnellsuche mit weiteren Begriffen und dem Schalter für wörtliche Sterne](assets/screenshots/quick-search.png)
+![Favenio 0.64.0: Schnellsuche mit PDF-OCR und quellengebundenem Kontext](assets/screenshots/quick-search.png)
 
 ## Voraussetzungen
 
@@ -40,6 +64,8 @@ Die Finder-Schnellsuche verwendet denselben Suchkern und dieselben Filter.
   neuer, Apple Silicon. Die Apps starten den Suchkern mit dem System-Python
   `/usr/bin/python3` aus Apples Command Line Tools; fehlen diese, bietet
   macOS die Installation automatisch an.
+- **Schutz lokal vorhandener Inhalte und OCR**: macOS 13 oder neuer; die
+  übrigen Suchmodi bleiben unter macOS 12 verfügbar.
 
 ## Installation
 
@@ -186,9 +212,10 @@ steht unter [lokaler Suchsteuerung](docs/LOCAL-CONTROL.md).
 Einen einzelnen Treffer auswählen und im Treffermenü oder unter „Ablage“
 **In Fastra zeigen** wählen. Fastra ab 1.137.0 übernimmt eine eigene
 schreibgeschützte Inhaltskopie mit exakter Archividentität und Quellengeneration.
-Inhaltstreffer werden vor dem UTF-16-Sprung erneut geprüft; bei anderen oder
-nicht belegten Encodings erklärt die Ansicht die Positionsgrenze. Die Übergabe
-ist auf 256 KiB Blattinhalt begrenzt und im selben Menü abbrechbar.
+Inhaltstreffer werden vor dem UTF-16-Sprung erneut geprüft; nicht belegbare
+Fundpositionen bleiben ausdrücklich ungebunden. Eine Nichtstandardkodierung
+braucht Fastras Decoderfähigkeit und fehlerfreie Textbindung. Die Übergabe ist
+auf 256 KiB Blattinhalt begrenzt und im selben Menü abbrechbar.
 Auch reine Filtersuchen im Inhaltsmodus lassen sich übergeben; ohne Suchbegriffe
 öffnet sich die Kopie am Anfang ohne belegte Fundposition.
 
@@ -202,14 +229,30 @@ Aufnahmeherkunft sichtbar.
 
 | Option | Wirkung |
 |---|---|
+| `--criteria-json JSON` | zusätzlicher versionierter UND-/ODER-Kriterienbaum für Name, Endung, relativen Pfad, Inhalt, Medien-/Finder-Metadaten, Größe, Datum und Bildmaße |
+| `--criteria-file DATEI` | denselben Kriterienbaum aus UTF-8-JSON lesen; `-` liest stdin; maximal 64 KiB |
+| `--validate-criteria` | nur den angegebenen Kriterienbaum prüfen, ohne Dateisystemsuche |
+| `--duplicates-file JSON` | reguläre Dateien und bereitgestellte Archivmitglieder eines Schema-1/2-Auftrags ausdrücklich vergleichen; begrenzter JSONL-Fortschritt und bytegeprüfte Gruppen; [Vertrag](docs/DUPLICATES.md) |
+| `--filter-results JSONL` | vorhandene JSONL-Treffer mit dem Kriterienbaum filtern; `-` liest stdin, keine Quellenöffnung |
+| `--results-root ORDNER` | rein lexikalische Wurzel für relative Dateipfade im Trefferfilter |
+| `--validate-result-filter` | Kriterien ausschließlich für bekannte Trefferwerte prüfen |
 | `-c`, `--content` | im Dateiinhalt suchen statt in Namen |
+| `--document-text` | logischen PDF-/DOCX-/ODT-/EPUB-/XLSX-/PPTX-Text mit Dokumentbelegen suchen; optionaler PDFKit-Helfer, begrenzt und abbrechbar; siehe [Dokumenttext](docs/DOCUMENT_TEXT.md) |
 | `-m`, `--metadata` | in den kuratierten Metadaten-Textfeldern suchen (Stichwörter, Titel, Beschreibung …) statt in Namen; braucht `exiftool` |
 | `--metadata-field TAG` | `--metadata` auf ein Feld der kuratierten Liste eingrenzen (wiederholbar; schaltet `--metadata` ein) |
+| `--finder-metadata` | Finder-Tags und -Kommentar für passende lokale Objekte erfassen; braucht `--json` |
+| `--local-only` | nur lokal vorhandene Inhalte lesen (macOS 13+); Namen/bekannte Fakten bleiben suchbar, ausgelassene Cloudinhalte werden erklärt; siehe [lokale Inhalte](docs/LOCAL_CONTENT.md) |
+| `--ocr` | lokale deutsche/englische Bild-OCR im Dokumenttextmodus zuschalten (macOS 13+); [Grenzen und erkannte Belege](docs/OCR.md) |
+| `--pdf-ocr` | textlose PDF-Seiten ausdrücklich begrenzt per lokaler OCR lesen; Textebenen bevorzugen, Seitenherkunft erhalten; [Grenzen und Abdeckung](docs/PDF_OCR.md) |
 | `--term TEXT` | weiterer Suchbegriff, der ZUSÄTZLICH zutreffen muss (wiederholbar); gleiche Regeln und gleiches Ziel wie das Muster; UND über die ganze Datei, nicht dieselbe Zeile (siehe unten) |
 | `--list-metadata-fields` | die kuratierte Feldliste ausgeben, eine je Zeile, und beenden |
 | `--min-size BYTES`, `--max-size BYTES` | inklusive Dateigrößengrenzen; ganze nichtnegative Bytezahl, optional B/KiB/MiB/GiB/TiB |
 | `--modified-from ISO`, `--modified-to ISO` | inklusive Grenzen der Änderungszeit; ISO-Zeitpunkt mit `Z` oder ausdrücklichem Offset |
 | `--created-from ISO`, `--created-to ISO` | inklusive Grenzen der Erstellungszeit; ISO-Zeitpunkt mit `Z` oder ausdrücklichem Offset |
+| `--date-ranges-json JSON` | typisierte feste oder relative Kalenderbereiche für Geändert/Erstellt; [Vertrag](docs/DATE_RANGES.md) |
+| `--date-reference-time ISO` | ausdrücklicher einmaliger Laufzeitpunkt mit Z/Offset für Kalenderfragen |
+| `--date-resolution-json JSON` | vollständig geprüfte konkrete Grenzen für Fortsetzung oder weitere Filterbatches übernehmen |
+| `--resolve-date-range JSON` | Kalenderbereich ohne Suche prüfen und konkrete ISO-/Epochgrenzen anzeigen |
 | `--min-width PX`, `--max-width PX` | nur Bilder ab / bis zu dieser Breite (Pixel) |
 | `--min-height PX`, `--max-height PX` | nur Bilder ab / bis zu dieser Höhe (Pixel); alle vier Maßfilter gelten per UND zusätzlich zum Muster, das dann auch fehlen darf |
 | `-r`, `--regex` | Muster als regulären Ausdruck interpretieren |
@@ -225,7 +268,11 @@ Aufnahmeherkunft sichtbar.
 | `--only both\|files\|dirs` | Treffer auf Dateien, Ordner oder beides (Default) begrenzen |
 | `--hidden` | unsichtbare (Punkt-)Dateien und -Ordner mitdurchsuchen |
 | `--exclude GLOB` | passende Dateien und Teilbäume vor Öffnen oder Abstieg ausschließen (wiederholbar; Groß-/Kleinschreibung gilt; siehe unten) |
+| `--encoding NAME` | Inhaltskodierung: `utf-8` (Standard), `auto`, `utf-16-le`, `utf-16-be`, `windows-1252`, `iso-8859-1`, `mac-roman` |
+| `--content-preview` | begrenzte Originalausschnitte und Hervorhebungsbereiche im JSONL erfassen; braucht `--json` |
+| `--preview-request JSON` | begrenzt eine Fundstelle oder mehr Kontext eines Vorschautreffers laden; siehe [Vertrag](docs/CONTENT_PREVIEW.md) |
 | `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` in Bytes, soweit das Format sie nennt) |
+| `--search-report` | mit `--json` begrenzte strukturierte Suchberichte ausgeben; [Vertrag](docs/SEARCH_REPORT.md) |
 | `--progress` | laufend melden, wo gerade gesucht wird (mit `--json` als JSONL-Objekte, sonst auf stderr) |
 | `--extract TREFFER` | Treffer-Pfad (`!/`-Notation) in einen Temp-Ordner auspacken und den nutzbaren Pfad ausgeben |
 | `--extract-json JSON` | einen eindeutigen strukturierten JSON-Treffer auspacken |
@@ -319,8 +366,78 @@ Platzhalter (CLI: `--literal-wildcards`), auch in weiteren Suchbegriffen.
 Mehrere Sterne wirken wie einer; es gibt keine mehrzeilige `**`-Suche.
 Regex und Ausschlussmuster bleiben unverändert.
 
+Normale Namens-, Inhalts- und Metadatensuchen vergleichen kanonisch gleiche
+Unicode-Schreibweisen in NFC, auch bei Literal- und Glob-Mustern. `Büro`
+findet daher auch `Bu` mit anschließendem kombinierendem Umlaut und `ro`.
+Ausschlüsse verwenden denselben Vergleich und bleiben groß-/kleinschreibungsabhängig.
+Regex prüft ursprüngliche Codepoints. Akzente bleiben erhalten; eine
+Kompatibilitätsnormalisierung findet nicht statt. Anzeigenamen, Archivnamensbytes
+und Belege bleiben original. Unterschiedliche Archivnamen bleiben getrennte
+Treffer, auch wenn ihre sichtbare Schreibweise gleich ist.
+
+Der inkrementelle Normalisierer hält höchstens 65.536 noch nicht abgeschlossene
+Zeichen zurück. Überschreitet eine Kombinationsfolge diese Grenze in einer
+fragmentierten Zeile, wird der ungeprüfte Rest gemeldet und bleibt auch unter
+Negation unbekannt. Bereits belegte Treffer zählen weiter. Zeilennummern und
+UTF-16-Zeilenbereiche beziehen sich auf den ursprünglichen Inhalt.
+
 Ordner können eine Namenssuche und bekannte Datumsfakten erfüllen;
-Dateigrößen-, Maß-, Metadaten- und Inhaltsfilter erfüllen sie nicht.
+Dateigrößen-, Maß-, eingebettete Medienmetadaten- und Inhaltsfilter erfüllen sie nicht. Finder-Kriterien können erfasste Ordnereigenschaften prüfen.
+
+### Textkodierung
+
+Unter **Weitere Filter → Textkodierung** wählen beide Apps dieselbe globale
+Inhaltskodierung wie `--encoding`. Sie gilt auch für Inhaltsbedingungen im
+Kriterienbaum, wenn der Hauptmodus Name oder Metadaten ist. Namen und
+Metadatenwerte bleiben davon unberührt.
+
+Der Standard `utf-8` erhält das bisherige Verhalten, einschließlich einer BOM
+im Suchtext. `auto` entfernt genau eine UTF-8- oder UTF-16-BOM und verwendet
+ohne BOM UTF-8. UTF-32-BOM wird ausdrücklich als nicht unterstützt gemeldet.
+Für UTF-16 ohne BOM muss `utf-16-le` oder `utf-16-be` gewählt werden. Diese
+beiden Optionen entfernen eine passende Datei-BOM; eine entgegengesetzte BOM
+wird gemeldet und bleibt auch unter Negation unbekannt. Die Legacy-Optionen
+`windows-1252`, `iso-8859-1` und `mac-roman` dekodieren ausdrücklich die
+angegebenen Bytes und erkennen keine BOM. Es gibt keine Kodierungsraterei.
+
+Beispiel: `favenio --content --encoding=mac-roman 'Jahresbericht für Köln' ordner`.
+Ungültige Zeichenfolgen werden für positive Suchen ersetzt; ihre Abwesenheit
+kann keine negative Inhaltsbedingung beweisen. Exakte Editorpositionen brauchen
+fehlerfreie Dekodierung. JSONL und CSV nennen den tatsächlich gelesenen Decoder
+als `contentEncoding`, sofern Inhalt gelesen wurde. JSONL erhält ihn auch in
+Inhaltsbelegen. Ein allein entscheidender Namenszweig öffnet dafür keine Datei.
+
+Alte Vorlagen und Aufzeichnungen ohne Option bleiben bei UTF-8. Eine andere
+Wahl verwendet das strikte Format 2; alte Empfänger weisen die neue Option ab.
+Quick prüft vor der Übergabe zusätzlich die Fähigkeit der Haupt-App. Fastra
+braucht für Nichtstandardkodierungen `sourceSnapshotTextEncodings`; Rohbytes,
+Texthash und ursprüngliche UTF-16-Auswahl werden unabhängig bestätigt.
+
+### Fundstellenvorschau im Suchfenster
+
+**Fundstellenvorschau** vor der Suche einschalten, um den ersten Inhaltsbeleg
+je Begriff bzw. entscheidendem positivem Inhaltskriterium zu erfassen. Bei
+Auswahl eines Treffers erscheinen Originalausschnitt und markierter Fundtext,
+auch aus verschachtelten Archiven und mit gewählter Textkodierung. Die Leertaste
+öffnet weiterhin Quick Look. Für ältere Treffer bietet die zugeschaltete
+Vorschau ausdrücklich **Mit Vorschau neu suchen** an, ohne die Suche selbst zu starten.
+
+Die Ausschnitte enthalten Kontext innerhalb der Fundzeile und bleiben begrenzt:
+je 256 Codepoints, insgesamt 2048 je Treffer, höchstens 32 Ausschnitte und 8 MiB
+Vorschauobjekte je Suchlauf. Frühes Leseende und Archivbudgets bleiben erhalten;
+ohne Vorschau läuft der bisherige Leser. Geänderte oder fehlende Quellen leeren
+die Vorschau und verlangen eine neue Suche. Fehlerhafte Dekodierung oder nicht
+belegbare Bereiche werden ohne angeblich exakte Hervorhebung erklärt. JSONL-Export,
+Aufzeichnungen und Quick-Übergabe erhalten die Ausschnitte. Details stehen im
+[Vorschauvertrag](docs/CONTENT_PREVIEW.md).
+
+Im Menü der Vorschau einen Begriff oder eine positive Inhaltsbedingung wählen,
+dann **Vorherige**, **Nächste** oder **Mehr Kontext** anklicken. Die Navigation
+liest ausschließlich die ausgewählte Quelle erneut und startet keine globale
+Suche. Mehr Kontext umfasst bis zu drei Zeilen davor und danach. Pro Auftrag
+gelten höchstens 64 MiB erneutes Lesen, drei Sekunden im Leser und fünf Sekunden
+einschließlich Auspacken. **Abbrechen**, Auswahlwechsel oder Ausschalten beenden
+den Auftrag. Eine Grenzmeldung unterscheidet unvollständiges Lesen vom Quellende.
 
 ### Mehrere Begriffe (`--term`)
 
@@ -353,8 +470,103 @@ Belege je Begriff: `--json` ergänzt `terms` — `[{"term": "alpha", "line":
 1}, {"term": "beta", "line": 3}]` bei Inhalt, `[{"term": …, "field": …,
 "value": …}]` bei Metadaten —, während `line`, `field` und `value` weiter den
 ersten Begriff nennen. Die Textausgabe nennt alle Zeilen (`pfad:1,3`) bzw.
-alle Felder (`pfad:Keywords: Winter | Title: Alpen`). Gemischte Ziele je
-Begriff und ODER gibt es nicht.
+alle Felder (`pfad:Keywords: Winter | Title: Alpen`). `--term` verknüpft
+weiterhin nur dasselbe Ziel per UND; gemischte Ziele und ODER stehen im
+Kriterienbaum zur Verfügung.
+
+## PDF-, DOCX-, ODT-, EPUB-, XLSX- und PPTX-Dokumenttext
+
+Im Suchzielmenü **Dokumenttext** wählen oder `favenio --document-text suchtext ordner` verwenden.
+Das liest die PDF-Textebene einschließlich komprimierter Ströme. **Inhalt** / `--content` durchsucht weiterhin Rohbytes.
+Der optionale lokale PDFKit-Helfer ist in beiden Apps enthalten; die CLI findet ihn im Bundle, unter `.build/favenio-pdf` oder im PATH. `FAVENIO_PDF_HELPER` wählt einen ausführbaren Pfad; ein leerer Wert schaltet ihn ab. Bisherige Modi bleiben ohne Helfer nutzbar.
+
+Python entscheidet sämtliche Muster und Kriterien. Begriffe können auf verschiedenen Seiten stehen; Inhaltskriterien lassen sich mit Name, Pfad und Fakten kombinieren. Seitenbelege bleiben in Vorschau, begrenztem Nachladen, JSONL- und CSV-Export erhalten. Text-/Spaltenreihenfolge folgt PDFKit; eine semantische Leserichtung wird nicht zugesagt. Textlose Seiten lassen sich mit der unten beschriebenen separaten Option `--pdf-ocr` lesen. Verschlüsselte oder nicht lesbare Seiten, textlose Seiten ohne OCR, fehlender Helfer und Grenzen sind ausdrückliche Berichtsgründe, keine vollständig geprüften Negativergebnisse.
+
+Grenzen: 64 MiB PDF/Materialisierung, fünf Sekunden je Dokument, 512 angefragte Seiten, 256 KiB UTF-8 je Seite und 8 MiB extrahierter Text je Dokument; Archivbudgets gelten zusätzlich. Bei ausreichendem Treffer endet das Lesen früh. Siehe [Leser-, Positions- und Helfervertrag](docs/DOCUMENT_TEXT.md).
+
+DOCX benötigt keinen PDF-Helfer. Getrennte Word-Textläufe werden verbunden; Haupttext, Tabellen, verknüpfte Kopf-/Fußzeilen und Fuß-/Endnoten erhalten Teil-/Absatzbelege. Kommentare, gelöschte Änderungen, Feldanweisungen, Notentrenner und Textkästen sind ausgeschlossen; Einfügungen und Feldergebnisse enthalten. XML-Tags und Formatattribute werden nicht durchsucht. Rohinhaltssuche bleibt separat verfügbar.
+
+DOCX-Grenzen: 64 MiB Paket, fünf Sekunden, 64 Textteile, 32768 Absätze, 256 KiB UTF-8 je Absatz und 8 MiB Text insgesamt. ZIP-Katalog, XML und bestehende Archivbudgets sind zusätzlich begrenzt. Fehlende/beschädigte Teile oder erreichte Grenzen bleiben unter Negation unbekannt. Einzelheiten und Belegvertrag: [Dokumenttext](docs/DOCUMENT_TEXT.md).
+
+ODT verbindet Textspans und liest Haupttext-/Tabellenabsätze. Annotationen,
+Änderungsaufzeichnungen, Noten, Verzeichnisse und Zeichenobjekte bleiben aus.
+EPUB folgt Container, OPF und Spine, verbindet HTML-Inline-Text und löst
+Entities auf; Navigation, nicht lineare Zusatzkapitel, Skripte und Stile bleiben
+aus. Kapitel-/Absatzbelege bleiben in Vorschau, Navigation, Übergabe und Export
+erhalten; CSV ergänzt `documentChapter`. Beide Leser verwenden die Standardbibliothek
+und die bestehenden Paket-/Archivgrenzen. [Projektion und Grenzen](docs/DOCUMENT_TEXT.md).
+
+XLSX liest tatsächliche Zellen in der Blattreihenfolge der Arbeitsmappe. Shared
+Strings werden bei Verwendung über einen begrenzten Cache aufgelöst; unbenutzte
+Strings erzeugen keine Zelltreffer. Inline- und Rich-Text-Läufe werden verbunden.
+Formeln tragen nur ausdrücklich beschriftete gespeicherte Ergebnisse bei, die
+veraltet sein können. Formeltext bleibt aus, Zahlen bleiben unformatierte
+Speicherwerte. Versteckte Blätter/Zellen sind enthalten, Kommentare und Zeichnungen
+ausgeschlossen. Vorschau, Navigation und Exporte erhalten Blattnamen, Zelladressen
+und Wertarten. [XLSX-Projektion und Grenzen](docs/DOCUMENT_TEXT.md).
+
+PPTX folgt Präsentationsliste und Folienbeziehungen; Form-/Textkastenläufe und
+Tabellenabsätze bleiben mit Folie, gespeicherter Objekt-ID und Absatz belegt.
+Tabellen ergänzen Zeile/Spalte. Ausgeblendete Folien sind enthalten; Notizen,
+Master-/Layouttexte, Kommentare, Felder, Diagramme, Bilder und eingebettete
+Fremdobjekte bleiben aus. Innerhalb einer Folie gilt XML-Objektreihenfolge;
+keine visuelle Leserichtung oder PowerPoint-Berechnung wird versprochen.
+64 Folien, 32768 Objekte/Absätze und 131072 Tabellenzellen/-zeilen ergänzen die bestehenden
+Paket-/XML-/Textgrenzen. Vorschau, Navigation, Übergabe und Export erhalten die
+jeweiligen Lokatoren. Einzelheiten: [Dokumenttext](docs/DOCUMENT_TEXT.md).
+
+
+### Lokale Bild-OCR
+
+Im Suchziel **Dokumenttext** unter **Weitere Filter** die Bild-OCR aktivieren
+oder `--document-text --ocr` verwenden. Der lokale Vision-Helfer erkennt deutsche
+und englische Texte aus begrenzten einzelnen Bildframes; Python entscheidet
+dieselben Muster und Kriterien. OCR ist standardmäßig aus. Vorschau, JSONL und
+CSV kennzeichnen erkannten Text und ungefähre Bildregionen. Erkennung kann Text
+übersehen oder falsch lesen; negative Inhaltsbedingungen bleiben deshalb unbekannt.
+Siehe [OCR](docs/OCR.md).
+
+Scan-PDFs: `--document-text --pdf-ocr` ergänzt ausdrücklich die lokale OCR textloser Seiten. Vorhandene Textebenen werden bevorzugt; Seite und Herkunft bleiben erhalten. Grenzen und unvollständige Originalabdeckung stehen unter [PDF-OCR](docs/PDF_OCR.md). Bild-OCR bleibt eine eigene Option.
+
+## Strukturierte Kriterien
+
+`--criteria-json` oder `--criteria-file` ergänzt einen verschachtelten
+UND-/ODER-Baum für Name, Endung, relativen Pfad, Inhalt, Medien-/Finder-Metadaten, Dateigröße,
+Zeitpunkte und Bildmaße. Negative Bedingungen
+verwandeln unbekannte Werte nicht in Treffer. Vorhandene Suchbegriffe und
+Filter gelten zusätzlich per UND; jeder Baum besitzt eigene Musteroptionen.
+Ein Baum genügt auch ohne Suchmuster. JSONL-Treffer tragen zusätzlich begrenzte
+`criteriaEvidence` mit stabilen Bedingungskennungen. Schema, Beispiele,
+Archivwurzelbezug und Grenzen stehen unter [Suchkriterien](docs/CRITERIA.md).
+In beiden Apps öffnet **Zusätzliche Kriterien → Bearbeiten…** den grafischen
+Editor. `+` ergänzt eine Bedingung, `⌥+` eine Untergruppe; **Gruppe hinzufügen**
+bietet denselben Weg. Jede Gruppe wählt UND oder ODER. Änderungen werden mit
+**Übernehmen** angewendet; **Abbrechen** erhält den bisherigen Stand.
+Der Kern prüft den Baum vor der Übernahme. Die bisherigen Suchbegriffe und
+weiteren Filter oben bleiben zusätzlich wirksam. Quick übergibt den vollständigen
+Baum samt Trefferauswahl an die Haupt-App. Kriterienvorlagen und -aufzeichnungen
+verwenden Format 2; bisherige Dateien bleiben lesbar.
+
+## Finder-Tags und Finder-Kommentare
+
+CLI-Kriterienschema 3 ergänzt `finderTags` und `finderComment`, getrennt von
+eingebetteten Medienmetadaten. `--finder-metadata --json` erfasst beide Werte
+für passende lokale Dateien und Ordner ohne Spotlight oder exiftool. Fehlende,
+unlesbare und geänderte Werte bleiben unter Negation unbekannt. Beide Apps bieten
+**Finder-Tag** und **Finder-Kommentar** im Kriterieneditor und Ansichtsfilter.
+Unter **Weitere Filter** erfasst **Finder-Eigenschaften erfassen** beide Werte
+auch bei einer gewöhnlichen Namenssuche. **Finder-Eigenschaften** unter der Liste
+zeigt die erfassten Werte samt Tagfarben; das Kontextmenü des Tabellenkopfs
+bietet optionale Tag- und Kommentarspalten. Eine Spalte einzublenden aktiviert
+die Erfassung für die nächste Suche. Auswahl und Filter einer aufgezeichneten
+Liste verwenden die erfassten Werte.
+
+Finder-Fragen nutzen Kriterienschema 3 und Konfigurationsformat 4; Finder-Vorlagen,
+Quick-Übergaben und Aufzeichnungen verwenden Format 5. Erfasste Finder-Werte
+brauchen das neue Format auch bei einer reinen Namensfrage. Kombinierte
+Kalenderfragen behalten ihre Frage und eingefrorenen Grenzen. Alte Empfänger
+werden vor Übernahme der neuen Daten abgewiesen.
+Details: [Finder-Eigenschaften](docs/FINDER_METADATA.md).
 
 ## Dateigrößen- und Datumsfilter
 
@@ -405,6 +617,8 @@ Dateifakten werden je Objekt einmal für Filter und Trefferausgabe gelesen.
 So ausgeschlossene Dateien erreichen weder Bildkopf-, Metadaten- noch
 Inhaltsleser; der Archivabstieg bleibt wie beschrieben unabhängig davon.
 
+Kalendercontrols und relative Datumsbereiche (Heute, letzte sieben Kalendertage, dieser Monat) verwenden einen ausdrücklichen Laufzeitpunkt und eine Zeitzone. Vorlagen unterscheiden feste Grenzen von bei jedem neuen Start aufgelösten Bereichen; Berichte und Aufzeichnungen bewahren die verwendeten Grenzen. Siehe [Kalenderbereiche](docs/DATE_RANGES.md).
+
 ## Metadaten- und Bildmaßsuche
 
 `--metadata` prüft das Muster gegen eine **kuratierte Liste von Textfeldern**
@@ -452,8 +666,8 @@ Zeilennummern.
 Drei Punkte, die man dazu wissen sollte:
 
 - Inhalt wird als UTF-8 mit `errors="replace"` gelesen. Deshalb bleiben
-  Treffer in teilweise binären Dateien möglich; andere Textkodierungen werden
-  nicht versprochen.
+  Treffer in teilweise binären Dateien möglich. Weitere Kodierungen sind
+  ausdrücklich über `--encoding` wählbar.
 - Nicht-UTF-8-Namen (etwa aus einem Latin-1-Tar) bleiben unterscheidbar:
   Textausgabe erhält rohe Bytes, Warnungen maskieren sie, und JSON zeigt U+FFFD
   im Anzeigenamen neben exakten Base64-Identitäten in `archiveMemberBytes`.
@@ -470,9 +684,10 @@ Aufklapp-Schalter **Weitere Filter**; zugeklappt nennt er die Zahl der
 gesetzten Filter. Der Zustand bleibt je App erhalten.
 Die Zeilen **Größe**, **Geändert** und **Erstellt** bieten jeweils eine Von-
 und Bis-Grenze. Alle Grenzen sind inklusive. Größe akzeptiert ganze Bytes ab
-0, optional mit B, KiB, MiB, GiB oder TiB; Zeitpunkte brauchen ISO 8601 mit
-`Z` oder Offset, zum Beispiel `2026-09-05T12:00:00+02:00`. Ein Datum ohne
-Uhrzeit/Zone ist ungültig. Leer bedeutet keine Grenze. Diese Filter
+0, optional mit B, KiB, MiB, GiB oder TiB. Kalenderknöpfe erlauben die Wahl von
+Datum, Uhrzeit und Zeitzone; rohe ISO-Eingaben bleiben verfügbar. Rohe Zeitpunkte
+brauchen ISO 8601 mit `Z` oder Offset, etwa `2026-09-05T12:00:00+02:00`.
+Ein rohes Datum ohne Uhrzeit/Zone ist ungültig. Leer bedeutet keine Grenze. Diese Filter
 funktionieren auch ohne Suchtext und werden von Quick vollständig übergeben.
 Der Python-Kern meldet ungültige Eingaben konkret in der Statuszeile.
 
@@ -490,7 +705,7 @@ ab. Eine JSONL-Zeile über 1 MiB beendet den Lauf mit einer konkreten Fehlermeld
 
 
 EasyFind-artige Oberfläche: Suchfeld, Ordnerwahl, Optionen, Trefferliste.
-Der Umschalter **Name | Inhalt | Metadaten** sagt, wogegen das Muster läuft;
+Das Suchzielmenü **Name / Inhalt / Metadaten / Dokumenttext** sagt, wogegen das Muster läuft;
 im Metadaten-Modus grenzt ein Feldmenü auf ein Feld ein. Die Zeile
 **Bildmaße** (Breite und Höhe je von/bis) filtert per UND und funktioniert auch
 allein ohne Muster. In beiden Apps werden ungültige Maßfelder rot markiert;
@@ -533,15 +748,15 @@ Aus der Trefferliste heraus:
   Begriff die Zeile oder das Feld
 
 **Suchvorlagen** (Menü *Vorlagen*): *Suche als Vorlage sichern…* (⌘S)
-speichert Muster, den aktuellen Suchordner und alle Optionen — Modus,
+speichert Muster, die geordneten Suchdateien und -ordner und alle Optionen — Modus,
 Metadatenfeld, Bildmaße, Größen-/Datumsgrenzen, Ausschlüsse und alle
 Schalter — unter einem Namen in
 `~/Library/Application Support/Favenio/search-templates.json` (versioniertes
 JSON; die Optionen stehen in derselben Form wie in der URL der Schnellsuche,
 geladene Vorlage, CLI-Argumente und Übergabe beschreiben also dieselbe
 Suche). Ein Klick auf eine Vorlage befüllt das Fenster, ohne die Suche zu
-starten; gibt es ihren Ordner nicht mehr, steht das mit Pfad in der
-Fußzeile, der aktuelle Ordner bleibt. *Vorlagen verwalten…* zeigt die Liste
+starten. Fehlende gespeicherte Bereiche bleiben mit Pfad sichtbar und blockieren
+eine neue Suche. Eine Vorlage ohne gespeicherte Bereiche behält die aktuelle Auswahl. *Vorlagen verwalten…* zeigt die Liste
 zum Laden, Umbenennen und Löschen. Rohtexte bleiben wie eingegeben: Ein
 ungültiger Wert ist nach dem Laden sichtbar und wird beim Suchstart
 bemängelt. Die Regex-Vorlagen neben dem Suchfeld sind davon getrennt eine
@@ -552,19 +767,42 @@ sich verteilen; ab zwei markierten Zeilen auch die Größe der Auswahl. Steht ei
 `≥` vor der Datenmenge, hat mindestens eine Datei keine vorab bekannte Größe
 (siehe `size` im JSON-Vertrag).
 
+
+### Suchbericht
+
+„Suchbericht…“ erklärt in beiden Apps Auslassungen nach Gründen: absichtliche
+Ausschlüsse, technische Lesefehler und ausgeschöpfte Budgets. Gezählt werden
+Ereignisse, keine eindeutigen Dateien; pro Grund gibt es höchstens drei gekürzte
+Pfadbeispiele. „Bericht exportieren…“ speichert auf Anforderung den beim Klick
+festgehaltenen Stand als JSON, auch während einer laufenden Suche. Kriterien,
+Grenzen und Abschlusszustand bleiben sichtbar. Warnungen, Abbruch und die
+Quick-Treffergrenze sind keine vollständige Abdeckung. Der Bericht ergänzt
+keinen Vollscan; [Datenvertrag und Grenzen](docs/SEARCH_REPORT.md).
+
 ### Trefferliste verfeinern, exportieren, aufräumen
 
-Diese drei Punkte stehen im Menü **Ablage** und im Rechtsklick-Menü der
+**Tabelle / Miniaturen** schaltet dieselbe Trefferliste zwischen Zeilen und Bildraster um. Auswahl, Sortierung, Gruppen, QuickLook, Öffnen und Drag-and-drop bleiben gemeinsam. Nur sichtbare Rasterbilder werden im Hintergrund geladen; fehlende Miniaturen nennen den Grund. Miniaturen lesen unabhängig von der Suchoption ausschließlich lokale Inhalte. [Grenzen und Dateiaktionen](docs/THUMBNAILS.md).
+
+**Dubletten prüfen…** prüft in beiden Apps eine festgehaltene Auswahl oder alle aktuell gefilterten Treffer. Ordner bleiben ausgenommen. Archivmitglieder verwenden denselben Materialisierer wie Öffnen und Vorschau; Archivdateien bleiben getrennte ganze Dateien. Größe grenzt Kandidaten ein, danach liest der Python-Kern den vollständigen SHA-256 und bestätigt passende Inhalte byteweise. Gruppen benennen Hardlinks und symbolische Verknüpfungen ohne behauptete Speicherersparnis. Fortschritt, Abbruch, geänderte Quellen und Teilprüfungen bleiben sichtbar. Die lokale Inhaltsoption je Prüfung übernimmt zunächst die aktuelle Suchwahl. [Grenzen und Belegschema](docs/DUPLICATES.md).
+
+
+**Gruppieren** ordnet die Treffer nach Ordner, Endung oder Quellarchiv. Gruppen lassen sich ein-/aufklappen; ihre Überschriften sind keine Dateien. Der vollständige Export enthält ausdrücklich auch eingeklappte gefilterte Treffer. **Quellarchiv im Finder zeigen** führt zur äußeren Archivdatei, **Archivkette anzeigen…** erklärt die einzelnen Stufen. [Gruppierung und Archivquelle](docs/RESULT_GROUPS.md).
+
+Beide Apps durchsuchen über **Ablage → Suchbereiche bearbeiten…** (⇧⌘O) mehrere Dateien und Ordner in einer geordneten Liste. Überlappende Treffer erscheinen einmal; eine fehlende Wurzel blockiert den gesamten neuen Start. Vorlagen, Quick-Übergabe und Aufzeichnungen erhalten dieselbe Liste. [Suchbereiche und Migration](docs/SEARCH_ROOTS.md).
+
+Beide Apps begrenzen über **Trefferliste filtern → Bearbeiten…** vorhandene Treffer nach bekannten Namen, Pfaden, Endungen, Fakten und erfassten Finder-Eigenschaften. **x von y Treffern** zeigt gefilterte und ursprüngliche Menge; **Zurücksetzen** stellt versteckte Zeilen ohne erneute Suche wieder her. Fehlende Fakten erfüllen auch negative Bedingungen nicht. Auswahlaktionen und Auswahl-Exporte verwenden aufgeklappte Trefferzeilen; der vollständige Export enthält alle gefilterten Treffer; Aufzeichnungen und Quick-Übergabe bewahren den gesamten Quellstand. Neue Suchen setzen den Ansichtsfilter zurück. Einzelheiten: [Trefferfilter](docs/RESULT_FILTER.md).
+
+Diese Einträge stehen im Menü **Ablage** und im Rechtsklick-Menü der
 Trefferliste. Die Kürzel, die auf der Auswahl arbeiten (⌫, ⌘⌫, ⇧⌘E), gelten
 nur, solange die Trefferliste den Fokus hat — im Suchfeld löscht ⌫ weiterhin
-ein Zeichen. ⌘E exportiert die ganze Liste und gilt, sobald das Hauptfenster
+ein Zeichen. ⌘E exportiert alle gefilterten Treffer samt eingeklappter Gruppen und gilt, sobald das Hauptfenster
 aktiv ist; in einem Dialog gilt es nie.
 
 | Aktion | Kürzel | Wirkung |
 | --- | --- | --- |
 | Aus Trefferliste entfernen | ⌫ | Wirft Zeilen nur aus der **Anzeige**. Die Dateien bleiben unangetastet. Damit lässt sich eine große Trefferliste schrittweise auf das eindampfen, was wirklich gemeint war |
 | In den Papierkorb legen | ⌘⌫ | Legt die Dateien nach Rückfrage in den Papierkorb — wie im Finder, mit demselben Geräusch, und aus dem Papierkorb zurückholbar. Einträge *in* einem Archiv werden ausgelassen und genannt: Hinter ihnen liegt keine eigene Datei |
-| Alle Treffer exportieren… | ⌘E | Schreibt die ganze Liste in eine Datei |
+| Alle Treffer exportieren… | ⌘E | Schreibt alle gefilterten Treffer samt eingeklappter Gruppen in eine Datei |
 | Auswahl exportieren… | ⇧⌘E | Dasselbe nur für die markierten Zeilen |
 
 Der Export verwendet den beim Aufruf gewählten Trefferstand und schreibt im
@@ -608,7 +846,7 @@ gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
   Treffer im Archiv **Archive** ankreuzen
 - Der Typ-Umschalter begrenzt Treffer auf Dateien und Ordner, nur Dateien oder
   nur Ordner
-- **Name | Inhalt | Metadaten** wählt, wogegen der eine Suchbegriff läuft; die
+- **Name / Inhalt / Metadaten / Dokumenttext** wählt, wogegen der eine Suchbegriff läuft; die
   `px`-Zeile (Breite und Höhe je von/bis) ergänzt Maßfilter und funktioniert
   auch ohne Begriff
 - Die Ergebnisspalten sind sortierbar und verschiebbar; horizontales Scrollen

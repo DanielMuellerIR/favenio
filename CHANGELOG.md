@@ -1,5 +1,258 @@
 # Changelog
 
+## 0.64.0 — 2026-10-18
+
+- README-Überblick über die Neuerungen seit 0.38.5 ergänzt; PDF-OCR, Suchzielmenü, Kriterienumfang, Dublettenaufruf und optionale macOS-13-Funktionen in beiden Sprachen abgeglichen.
+- Aktualisierte Beispiele und Screenshots für Kriterien, Dokumenttext, OCR und Fundstellenkontext; Kriterienversionen in der CLI-Hilfe berichtigt.
+- Archivmitglieder mit normalen Dateien in derselben ausdrücklichen Dublettenprüfung vergleichen. Gemeinsame Materialisierungsaufträge und befristete Leases erhalten Archivketten und Rohname-Identitäten.
+- Inhalts- und äußere Quellgeneration bleiben während des Vergleichs gebunden; CRC-/Archiv-/Budgetfehler erzeugen gekennzeichnete Teilprüfungen. Fortschritt und Abbruch umfassen die Archivvorbereitung.
+
+## 0.63.0 — 2026-10-18
+
+- Explizite Dublettenprüfung normaler Dateien in Auswahl oder gefilterter Trefferliste beider Apps: Größenfilter, vollständiger SHA-256 und Bytevergleich im Python-Kern.
+- Fortschritt und Abbruch, geprüfte Quellenstände, Hardlink-/Verknüpfungshinweise und nachvollziehbare Teilprüfungen; keine automatische Löschung.
+
+## 0.62.1 — 2026-10-18
+
+- Das Kontextmenü im Miniaturraster bezieht sich in beiden Apps auf die angeklickte Kachel und erhält die wirksame Mehrfachauswahl.
+- QuickLook erhält Fokus und Pfeilnavigation in der aktiven Trefferansicht, einschließlich des Rasters.
+
+## 0.62.0 — 2026-10-18
+
+- Tabelle und Miniaturraster in beiden Apps umschalten; Auswahl, Sortierung, Gruppen, QuickLook und Dateiaktionen verwenden dieselben Treffer.
+- Sichtbare Bildminiaturen werden lokal im Hintergrund mit begrenzten Lese-, Pixel-, Archiv- und Cachebudgets geladen. Unlesbare oder nicht lokale Bilder erhalten klare Platzhalter; reine Miniaturkopien aus Archiven werden nach dem Decodieren entfernt.
+
+## 0.61.0 — 2026-10-18
+
+- Textlose PDF-Seiten lassen sich im Dokumenttextziel ausdrücklich per lokaler Vision-OCR lesen. Vorhandene Textebenen werden bevorzugt; gemischte Dokumente behalten Seite und Herkunft ohne doppelte Treffer.
+- Begrenztes Rendering, Seiten-/Pixel-/Zeitbudgets, asynchroner Seitenfortschritt und Abbruch; Archiv-, Quellen- und lokale Inhaltsregeln gelten weiter. Vorschau und versionierte Transporte kennzeichnen die begrenzte Originalabdeckung.
+
+## 0.60.0 — 2026-10-18
+
+- Ausdrücklich zuschaltbare lokale Vision-OCR für deutsche und englische Bildtexte im Dokumenttextmodus; Datei-/Maßvorfilter, Archivbudgets und Abbruch gelten weiter.
+- OCR-Belege zeigen erkannten Text, Modellwert und ungefähre Bildregionen in Vorschau und Export; fehlende Erkennung beweist keine Abwesenheit im Original.
+- Beide Apps, Vorlagen, Quick, Controller und Aufzeichnungen erhalten OCR über neue Fähigkeiten und Formatversionen; frühere Formate bleiben ohne OCR nutzbar.
+
+## 0.59.0 — 2026-10-18
+
+- Wählbarer lokaler Lesemodus für iCloud-Platzhalter, einschließlich Archiv-/Dokumentlesern und Vorschau-Nachladen; Namen und bekannte Fakten bleiben suchbar.
+- Prozessgebundene macOS-Materialisierungssperre schützt auch Zwischenordner und Leserennen; nicht lokale beziehungsweise unbekannte Inhalte erhalten Abdeckungsgründe.
+- Die gemeinsame Option bleibt über beide Apps, Vorlagen, Quick, Controller und Aufzeichnungen erhalten; ältere Empfänger weisen die neue Politik vor Übernahme ab.
+
+## 0.58.0 — 2026-10-18
+
+- Finder-Tags und Finder-Kommentare in beiden Kriterieneditoren und im reversiblen Ansichtsfilter verwenden.
+- Erfasste Finder-Eigenschaften mit Tagfarben in einer gemeinsamen Vorschau und optionalen Spalten anzeigen; zusätzliche Erfassung bleibt ausdrücklich wählbar.
+- Finder-Snapshots über Quick, Vorlagen, lokale Steuerung, Aufzeichnungen sowie JSONL-/CSV-Exporte erhalten, einschließlich gemeinsamer Kalenderfragen und klarer Ablehnung durch ältere Empfänger.
+- Änderungen zwischen Fakten- und Attributabfrage machen Finder-Belege unbekannt; unabhängig bewiesene Namenstreffer bleiben erhalten.
+- Beim Abbruch während der Anlage eines temporären Archivdokuments bleibt keine unverwaltete Dokumentkopie zurück.
+- Die Schnellsuche erhält abgelehnte Übergaben als sichtbaren Hinweis, während der eigene Suchlauf weiterläuft; neue Such- oder Aktionsfehler bleiben vorrangig.
+
+## 0.57.1 — 2026-10-18
+
+- Der eingefrorene Finder-Filter weist lokale Quellengenerationen auch bei Archivmitgliedern mit leerer Archivkette ab.
+- Gemeinsames Swift-Datenmodell für bytegetreue Finder-Snapshots mit strikten Grenzen und Quellbindung vorbereitet; die grafische Anbindung bleibt offen.
+
+## 0.57.0 — 2026-10-18
+
+- CLI-Kriterien für lokale Finder-Tags und Finder-Kommentare, getrennt von Medienmetadaten, mit Farben, Quellbindung und JSONL-Belegen.
+- Begrenzte native Attributabfrage ohne Spotlight/exiftool; fehlende, unlesbare oder geänderte Werte bleiben auch unter Negation unbekannt.
+- Die Apps weisen das neue CLI-Kriterienschema vor Übernahme ab; grafische Finder-Kriterien, Vorschau, Spalten und App-Transporte sind noch offen.
+
+## 0.56.0 — 2026-10-18
+
+- Gemeinsame Kalender-/Uhrzeiteingabe und relative Datumsbereiche für beide Apps und Regelzeilen.
+- Expliziter Laufzeitpunkt/IANA-Zone, Sommerzeit-/Monatsgrenzen und inklusive ISO-/Epochbelege aus dem Python-Kern. Positive Datumsbelege runden nicht über die gerade noch erfüllte Sekundengrenze.
+- Feste gegenüber relativen Vorlagen; historische Aufzeichnungen und Quick-Fortsetzung bewahren ihren Bezug. Neue Formatversionen schützen alte Empfänger.
+
+## 0.55.0 — 2026-10-18
+
+- Beide Apps durchsuchen geordnete Listen von Dateien und Ordnern über einen gemeinsamen nativen Bereichseditor, direkt über Ablage/⇧⌘O. Fehlende Bereiche blockieren den Gesamtstart mit konkretem Pfad.
+- Überlappende Bereiche werden je Wurzel vollständig ausgewertet; Apps deduplizieren erfolgreiche Treffer vor Filter, Statistik und Quicks 20er-Grenze. JSONL und Ansichtsfilter bewahren die tatsächliche Herkunft, HitIdentity bleibt unverändert.
+- Vorlagenformat 3, Quick-Übergabe 3, Controller-Konfiguration 2 und Aufzeichnung 3 transportieren dieselbe Liste. Alte Einzelwurzelformate bleiben lesbar; historische Bereiche brauchen beim Öffnen keine vorhandenen Quellen. Manuelle Quick-Bereiche bleiben vor späten Finderantworten geschützt.
+
+## 0.54.0 — 2026-10-18
+
+- Beide Apps gruppieren Treffer nach Ordner, Endung oder äußerem Quellarchiv.
+  Einklappbare Überschriften und Trefferzahlen bleiben von Dateiidentitäten,
+  Auswahl, Vorschau und Drag-and-drop getrennt.
+- Gruppenköpfe samt Trefferzahl bleiben auch bei horizontalem Scrollen und
+  schmalen Fenstern im sichtbaren Ausschnitt. Sehr lange Archivpfade vergrößern
+  das Vorschaufenster nicht; die Archivkette bleibt begrenzt und scrollbar.
+- Vollständiger Export und Controller-Ergebnisse enthalten ausdrücklich auch
+  eingeklappte gefilterte Treffer; Auswahlaktionen verwenden echte aufgeklappte
+  Zeilen. Controller-select und -handoff klappen ihren Zieltreffer sichtbar auf.
+- Quellarchiv-Finderaktion zeigt die äußere Datei ohne Auspacken; Archivkette
+  und Pfadtooltip nennen getrennte Stufen. Die bisherige Finderaktion bleibt
+  bei der materialisierten Datei. Klappwechsel entwerten alte Datei-/Fastra-Jobs.
+
+## 0.53.0 — 2026-10-18
+
+- Beide Apps filtern vorhandene Treffer reversibel nach bekannten Namen, Pfaden,
+  Endungen und Fakten über denselben Python-Kriterienkern, ohne Quellen erneut
+  zu öffnen. Sichtbare Menge und Quellmenge bleiben getrennt.
+- Auswahl und Exporte betreffen sichtbare Treffer; Aufzeichnung und Quick-Übergabe
+  bewahren den vollständigen Suchstand. Reset erhält auch laufenden Nachschub,
+  während bewusst entfernte Treffer entfernt bleiben.
+- Filtergenerationen, Zeit-/Recordgrenzen und eigenes Prozess-/Temp-Cleanup
+  einschließlich App-Ende schützen laufende Aktionen und Originalbelege.
+
+## 0.52.0 — 2026-10-18
+
+- PPTX-Dokumenttext verbindet DrawingML-Textläufe in Formen und Tabellen und folgt
+  der Präsentationsreihenfolge. Ausgeblendete Folien sind enthalten; Notizen,
+  Master-/Layouttexte, Kommentare, Felder und Fremdobjekte sind ausgeschlossen.
+- Gemeinsame Vorschau, Navigation, Kontext, Übergabe und Exporte bewahren Folie,
+  gespeicherte Objekt-ID, Absatz und Tabellenzelle ohne erfundene Dateioffsets.
+- Folien-/Objekt-/Absatz-/Zellgrenzen ergänzen die bestehenden Paket-, XML-, Text-,
+  Zeit- und Archivbudgets. Defekte angefragte Teile bleiben unter Negation unbekannt.
+
+## 0.51.0 — 2026-10-18
+
+- XLSX-Dokumenttext löst Shared Strings und Inline-Textläufe an tatsächlichen
+  Zellen auf und folgt der Blattreihenfolge der Arbeitsmappe. Unbenutzte Strings
+  erzeugen keine Fundstellen.
+- Gemeinsame Vorschau, Navigation, Kontext, Übergabe und Exporte bewahren
+  Blattnamen und Zelladressen. Gespeicherte Formelergebnisse sind beschriftet;
+  Formeltext wird nicht gesucht, Zahlen werden nicht nach Excel-Stilen formatiert.
+- Begrenzter Stringcache, Zell-/Blatt-/XML-/Zeitdeckel und bestehende Archivbudgets
+  halten große oder beschädigte Mappen abbrechbar. Fehlende Werte bleiben unbekannt.
+
+## 0.50.0 — 2026-10-18
+
+- Dokumenttext unterstützt ODT-Haupttext und Tabellenabsätze sowie EPUB-Kapitel
+  in Spine-Lesereihenfolge. Textspans und HTML-Inline-Elemente verbinden Wörter;
+  Navigation, Annotationen und technische Formattexte sind ausdrücklich abgegrenzt.
+- Gemeinsame Vorschau, begrenztes Nachladen, Kontext, Übergabe und JSONL bewahren
+  Absatz-/Kapitelbelege und Quellbindung. CSV ergänzt `documentChapter`.
+- ZIP-/XML-/HTML-, Text-, Zeit- und Archivbudgets begrenzen die Standardbibliothek-
+  Leser. Fehlende/beschädigte Teile bleiben unter Negation unbekannt; frühe
+  Treffer benötigen keinen vorausgehenden Vollscan.
+
+## 0.49.0 — 2026-10-18
+
+- DOCX-Dokumenttext verbindet Word-Textläufe und liest Absätze, Tabellen sowie verknüpfte Kopf-/Fußzeilen und Noten mit begrenztem ZIP/XML-Leser.
+- Beide Apps zeigen Teil-/Absatzbelege mit vorheriger/nächster Fundstelle und Kontext auf Anforderung; JSONL und CSV bewahren die Dokumentposition.
+- Fehlende/beschädigte Textteile und Lesegrenzen bleiben nachvollziehbar und unter Negation unbekannt. Rohinhaltssuche bleibt verfügbar.
+
+## 0.48.0 — 2026-10-18
+
+- Dokumenttext als eigenes Suchziel in beiden Apps und der CLI: komprimierte PDF-Textebene mit Seiten- und Zeilenbelegen.
+- Optionaler PDFKit-Datenhelfer, seitenweise Abrufe mit frühem Ende, begrenzte Archivmaterialisierung und definierte Gründe für Verschlüsselung, fehlende Textebene und Lesergrenzen.
+- Gemeinsame Fundstellenvorschau samt Navigation/Kontext und JSONL-/CSV-Export erhalten Seitenbelege und Quellbindung.
+- Natives Suchzielmenü hält die vier Modi auch in schmalen Fenstern erreichbar.
+
+## 0.47.0 — 2026-10-18
+
+- Suchbericht in Haupt-App und Schnellsuche: stabile Auslassungsgründe,
+  Ereigniszähler und begrenzte, ausdrücklich gekürzte Pfadbeispiele.
+- Absichtliche Ausschlüsse, technische Lesefehler und erreichte Budgets
+  getrennt erklären; Laufkennung, Kriterien und tatsächlichen Abschlusszustand
+  auf Anforderung als JSON exportieren, auch während einer Suche.
+- Opt-in `--json --search-report` und lokaler Lesezugriff auf den Bericht.
+  Bestehende stderr-/Exit-Verträge und frühes Leseende bleiben erhalten.
+
+## 0.46.0 — 2026-10-17
+
+- Weitere Fundstellen je Begriff oder positivem Inhaltskriterium mit „Vorherige“
+  und „Nächste“ in der gemeinsamen Vorschau durchgehen, auch innerhalb einer Zeile.
+- Mehr Kontext ausdrücklich laden: bis zu drei Zeilen davor und danach.
+  Nachladen bleibt auf die ausgewählte Quelle begrenzt, mit Lese-/Zeitbudget,
+  Abbruch und erneuter Prüfung von Container und Blattdatei.
+- Veränderte ausgepackte Cachedateien erhalten bei erneuter Anforderung eine
+  frische Kopie. Ursprüngliche Suchläufe behalten ihr frühes Leseende.
+
+## 0.45.0 — 2026-10-16
+
+- Beide Apps zeigen auf Wunsch begrenzte Fundzeilenausschnitte mit originaler
+  Hervorhebung je Begriff oder positivem entscheidendem Inhaltskriterium.
+  Der Python-Kern liefert Ausschnitte und Bereiche; ohne Vorschau bleiben
+  Leser, frühes Leseende und Archivbudgets erhalten.
+- Vorschauen bewahren tatsächlichen Decoder und ursprüngliche Archividentität.
+  Dateigenerationen werden im Hintergrund geprüft; geänderte Quellen und
+  schnelle Auswahlwechsel können keine alte Vorschau stehen lassen.
+- JSONL, Aufzeichnungen und Quick-Übergabe erhalten die gedeckelten Belege.
+  Ungültige Dekodierung, nicht belegbare Bereiche und Speichergrenzen werden
+  sichtbar erklärt. Fastra prüft zusätzlich den gespeicherten Quellstand.
+- Der Auspackcache erkennt geänderte Container und veröffentlicht keine während
+  des Auspackens veraltete Kopie. Quick hält auch bei geöffneter Vorschau
+  genügend Platz für die Trefferauswahl frei.
+
+## 0.44.1 — 2026-10-16
+
+- Auch leere oder doppelte Kodierungsoptionen werden im alten Quick-Übergabeformat
+  vor jeder Konfigurationsänderung abgewiesen.
+
+## 0.44.0 — 2026-10-16
+
+- Inhaltskodierung inkrementell wählen: UTF-8, BOM-Automatik, UTF-16 LE/BE,
+  Windows-1252, ISO-8859-1 und Mac Roman. Der bisherige UTF-8-Standard bleibt erhalten.
+- Beide Apps bieten die gemeinsame Wahl unter Weitere Filter. Inhaltskriterien,
+  Vorlagen, Quick, lokale Steuerung und Aufzeichnungen erhalten denselben Wert;
+  alte Empfänger verlieren neue Optionen nicht stillschweigend.
+- JSONL-/CSV-Exporte bewahren den tatsächlich gelesenen Decoder. Ungültige
+  Zeichenfolgen können keine Abwesenheit für negative Inhaltskriterien belegen.
+- Die Fastra-Übergabe prüft Originalbyte- und Texthash sowie ursprüngliche
+  UTF-16-Positionen mit derselben Decoderentscheidung aus dem Python-Kern.
+  Nichtstandardkodierung braucht die entsprechende Empfängerfähigkeit.
+
+## 0.43.0 — 2026-10-16
+
+- Normale Namens-, Inhalts- und Metadatensuchen sowie Ausschlüsse erkennen
+  kanonisch gleiche Unicode-Schreibweisen. Literal- und Glob-Muster verwenden
+  NFC; reguläre Ausdrücke prüfen weiterhin den Originaltext.
+- Namen, Archivnamensbytes und Fundbelege bleiben unverändert. Die Apps halten
+  verschieden kodierte Archivnamen auch bei gleicher sichtbarer Schreibweise
+  als getrennte Treffer mit eigener Auswahl und Materialisierung.
+- Die Normalisierung arbeitet inkrementell mit begrenztem Restpuffer. Ein
+  überschrittener Rest bleibt unbekannt und kann keine negative Bedingung belegen.
+- Zu große Regex-Wiederholungszahlen werden als Eingabefehler mit Status 2
+  statt mit einem ungefangenen Abbruch gemeldet.
+
+## 0.42.0 — 2026-10-16
+
+- Kriterien können Name, Pfad, Inhalt, Metadaten, Dateigröße, Zeitpunkte und
+  Bildmaße innerhalb verschachtelter UND-/ODER-Gruppen kombinieren.
+- Negative Inhaltsbedingungen gelten für das ganze Objekt. Fehlende Werte,
+  unlesbare Inhalte und nicht vollständig geprüfte Zeilen bleiben unbekannt.
+- Mehrere Inhaltsbedingungen und bisherige Inhaltsbegriffe teilen einen
+  fortsetzbaren Leser. Billige Bedingungen und Filter werden zuerst geprüft;
+  ein bereits bewiesener Zweig bleibt ohne zusätzliche teure Prüfungen erhalten.
+- Beide Kriterieneditoren bieten passende Operatoren, Metadatenfelder und
+  Wertangaben; das Startblatt hält auch die Zeilenknöpfe breiter Metadatenzeilen sichtbar. Inhaltsbelege nennen Zeilen, Metadatenbelege ihre Felder und
+  bleiben beim Export und in Aufzeichnungen erhalten.
+
+## 0.41.0 — 2026-10-16
+
+- Die Schnellsuche bietet denselben Kriterieneditor wie das Hauptfenster und
+  übergibt Gruppen, Suchoptionen und die exakte Trefferauswahl vollständig.
+- Kriterienvorlagen und Kriterienaufzeichnungen verwenden Format 2; bisherige
+  Dateien bleiben lesbar. Alte Haupt-Apps werden vor komplexen Übergaben erkannt.
+- Größenlimits berücksichtigen vollständige Kriterienbäume. Unbekannte Versionen,
+  doppelte Kriterienoptionen und zu große Daten werden ohne Abschneiden abgewiesen.
+
+## 0.40.0 — 2026-10-16
+
+- Im Hauptfenster können zusätzliche Kriterien für Name, Endung und relativen
+  Pfad in einem nativen Editor mit verschachtelten UND-/ODER-Gruppen erstellt
+  werden. `+`, `⌥+` und ein sichtbarer Gruppenknopf ergänzen Bedingungen.
+- Änderungen werden nach Prüfung durch den Python-Kern übernommen; Abbrechen
+  und vorübergehendes Deaktivieren erhalten den bisherigen Stand.
+- Kriterien bleiben in Vorlagen, lokaler Konfiguration und bestehenden
+  Aufzeichnungen erhalten; Trefferbelege überleben JSONL-Export und Wiederöffnung.
+- `--validate-criteria` prüft einen Baum ohne Dateisystemsuche. Der gemeinsame
+  Suchkern bleibt die einzige Instanz für Muster- und Regex-Validierung.
+
+## 0.39.0 — 2026-10-16
+
+- Der Suchkern unterstützt mit `--criteria-json` und `--criteria-file` einen
+  versionierten Kriterienbaum für Name, Endung und relativen Pfad, mit
+  verschachteltem UND/ODER und negativen Bedingungen. Unbekannte Werte werden
+  auch bei Negation nicht zu Treffern.
+- JSONL-Treffer einer solchen Suche nennen begrenzte Belege mit stabilen
+  Bedingungskennungen. Bisherige Suchbegriffe und Filter bleiben zusätzlich
+  nutzbar; der grafische Kriterieneditor folgt als eigene Ausbaustufe.
+
 ## 0.38.5 — 2026-10-13
 
 - Nach dem Öffnen einer Suchaufzeichnung bleibt beim Laden einer Vorlage der

@@ -9,16 +9,20 @@ struct SearchControlFailure: Error {
 }
 
 enum SearchControlWire {
-    static let maximumRequestBytes = 65_536
+    static let maximumRequestBytes = 262_144
     static let maximumReplyBytes = 1_048_576
     static let maximumPage = 128
-    static let operations = ["capabilities", "configuration", "configure", "start", "replace", "cancel", "status", "results", "select", "handoff", "handoffStatus", "cancelHandoff", "captureRecording", "openRecording"]
+    static let operations = ["capabilities", "configuration", "configure", "start", "replace", "cancel", "status", "report", "results", "select", "handoff", "handoffStatus", "cancelHandoff", "captureRecording", "openRecording"]
     static var capabilities: [String: Any] {
         ["protocolVersion": 1, "operations": operations,
          "maximumRequestBytes": maximumRequestBytes, "maximumReplyBytes": maximumReplyBytes,
          "maximumPage": maximumPage, "fastraSourceSnapshotSchemaVersion": 1,
-         "maximumHandoffBytes": 262_144, "handoffTimeoutSeconds": 30, "recordingSchemaVersion": 1,
-         "maximumRecordingBytes": 48_000, "maximumRecordingHits": 128]
+         "maximumHandoffBytes": 262_144, "handoffTimeoutSeconds": 30, "recordingSchemaVersion": 8,
+         "recordingSchemaVersions": [1, 2, 3, 4, 5, 6, 7, 8], "maximumRecordingBytes": 196_608, "maximumRecordingHits": 128,
+         "configurationSchemaVersions": [1, 2, 3, 4, 5, 6, 7], "maximumSearchRoots": 16,
+         "maximumSearchRootBytes": 4096, "maximumSearchRootsBytes": 65_536,
+         "criteriaSchemaVersion": 3, "criteriaSchemaVersions": [1, 2, 3], "dateRangeSchemaVersion": 1, "finderMetadataSchemaVersion": 1, "localContentSchemaVersion": 1, "ocrSchemaVersion": 1, "pdfOCRSchemaVersion": 1, "maximumCriteriaBytes": 65_536,
+         "textEncodings": ["utf-8", "auto", "utf-16-le", "utf-16-be", "windows-1252", "iso-8859-1", "mac-roman"]]
     }
     static func endpoint(_ identifier: String) -> String {
         "\(identifier).search-control.\(getuid()).v1"
@@ -35,8 +39,13 @@ enum SearchControlWire {
     }
     static func decode(_ data: Data) throws -> [String: Any] {
         guard data.count <= maximumRequestBytes,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              integer(object["version"]) == 1,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SearchControlFailure(code: "invalidRequest", message: "Ungültiger oder zu großer Steuerungsauftrag.")
+        }
+        return try validate(object)
+    }
+    static func validate(_ object: [String: Any]) throws -> [String: Any] {
+        guard integer(object["version"]) == 1,
               let id = object["id"] as? String, UUID(uuidString: id) != nil,
               let operation = object["operation"] as? String, operations.contains(operation),
               let deadline = object["deadline"] as? NSNumber,
@@ -44,8 +53,9 @@ enum SearchControlWire {
             throw SearchControlFailure(code: "invalidRequest", message: "Ungültiger Steuerungsauftrag (Version, UUID, Operation oder Frist).")
         }
         let extras: [String: Set<String>] = [
+            "start": ["dateReferenceTime"], "replace": ["dateReferenceTime"],
             "configure": ["configuration"], "captureRecording": ["runID"], "openRecording": ["recording"], "results": ["runID", "generation", "offset", "limit"],
-            "cancel": ["runID"], "select": ["runID", "identity"],
+            "report": ["runID"], "cancel": ["runID"], "select": ["runID", "identity"],
             "handoff": ["runID", "identity"], "handoffStatus": ["jobID"], "cancelHandoff": ["jobID"]]
         let allowed = Set(["version", "id", "operation", "deadline", "runtimeID", "windowID"])
             .union(extras[operation] ?? [])

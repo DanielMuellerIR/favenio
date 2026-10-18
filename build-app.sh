@@ -128,13 +128,20 @@ mkdir -p Favenio.app/Contents/MacOS Favenio.app/Contents/Resources \
     Favenio.app/Contents/Frameworks
 swiftc -O -target "$TARGET" -F "$SPARKLE_SEARCH_PATH" -framework Sparkle \
     -Xlinker -rpath -Xlinker @loader_path/../Frameworks \
-    common/FavenioCore.swift common/Version.swift control/ControlProtocol.swift \
-    gui/SearchControl.swift gui/SearchRecording.swift gui/FastraHandoff.swift gui/FastraHandoffSelfTest.swift gui/SearchControlSelfTest.swift gui/FavenioGUI.swift \
+    common/FavenioCore.swift common/SearchReport.swift common/ContentPreview.swift common/Thumbnails.swift common/DuplicateCheck.swift common/Version.swift common/CriteriaEditor.swift common/DateRanges.swift common/FinderMetadata.swift control/ControlProtocol.swift \
+    gui/SearchControl.swift gui/SearchRecording.swift gui/FastraHandoff.swift gui/FastraHandoffSelfTest.swift gui/SearchControlSelfTest.swift gui/CriteriaEditorSelfTest.swift gui/FavenioGUI.swift \
     -o Favenio.app/Contents/MacOS/Favenio
 mkdir -p Favenio.app/Contents/Helpers
 swiftc -O -target "$TARGET" control/ControlProtocol.swift control/main.swift \
     -o Favenio.app/Contents/Helpers/favenio-control
 codesign "${NESTED_SIGN[@]}" Favenio.app/Contents/Helpers/favenio-control
+mkdir -p .build
+swiftc -O -target "$TARGET" ocr/VisionText.swift pdf/main.swift -o .build/favenio-pdf
+cp .build/favenio-pdf Favenio.app/Contents/Helpers/favenio-pdf
+codesign "${NESTED_SIGN[@]}" Favenio.app/Contents/Helpers/favenio-pdf
+swiftc -O -target "$TARGET" ocr/VisionText.swift ocr/main.swift -o .build/favenio-ocr
+cp .build/favenio-ocr Favenio.app/Contents/Helpers/favenio-ocr
+codesign "${NESTED_SIGN[@]}" Favenio.app/Contents/Helpers/favenio-ocr
 cp favenio.py Favenio.app/Contents/Resources/
 # App-Icon (vorgefertigt eingecheckt; neu erzeugen: swift icons/make-icons.swift
 # + iconutil — siehe icons/make-icons.swift).
@@ -146,6 +153,13 @@ cat > Favenio.app/Contents/Info.plist <<EOF
 <dict>
     <key>CFBundleExecutable</key><string>Favenio</string>
     <key>CFBundleIdentifier</key><string>local.favenio</string>
+    <key>FavenioQuickHandoffVersion</key><integer>8</integer>
+    <key>FavenioDateRangeSchemaVersion</key><integer>1</integer>
+    <key>FavenioFinderMetadataSchemaVersion</key><integer>1</integer>
+    <key>FavenioLocalContentSchemaVersion</key><integer>1</integer>
+    <key>FavenioOCRSchemaVersion</key><integer>1</integer>
+    <key>FavenioPDFOCRSchemaVersion</key><integer>1</integer>
+    <key>FavenioTextEncodingVersion</key><integer>1</integer>
     <key>CFBundleName</key><string>Favenio</string>
     <key>CFBundleDisplayName</key><string>Favenio</string>
     <key>CFBundleIconFile</key><string>Favenio</string>
@@ -189,8 +203,13 @@ mkdir -p FavenioQuick.app/Contents/MacOS \
     FavenioQuick.app/Contents/Frameworks
 swiftc -O -target "$TARGET" -F "$SPARKLE_SEARCH_PATH" -framework Sparkle \
     -Xlinker -rpath -Xlinker @loader_path/../Frameworks \
-    common/FavenioCore.swift common/Version.swift quick/FavenioQuick.swift \
+    common/FavenioCore.swift common/SearchReport.swift common/ContentPreview.swift common/Thumbnails.swift common/DuplicateCheck.swift common/Version.swift common/CriteriaEditor.swift common/DateRanges.swift common/FinderMetadata.swift quick/FavenioQuick.swift \
     -o FavenioQuick.app/Contents/MacOS/FavenioQuick
+mkdir -p FavenioQuick.app/Contents/Helpers
+cp .build/favenio-pdf FavenioQuick.app/Contents/Helpers/favenio-pdf
+codesign "${NESTED_SIGN[@]}" FavenioQuick.app/Contents/Helpers/favenio-pdf
+cp .build/favenio-ocr FavenioQuick.app/Contents/Helpers/favenio-ocr
+codesign "${NESTED_SIGN[@]}" FavenioQuick.app/Contents/Helpers/favenio-ocr
 cp favenio.py FavenioQuick.app/Contents/Resources/
 cp icons/FavenioQuick.icns FavenioQuick.app/Contents/Resources/
 cat > FavenioQuick.app/Contents/Info.plist <<EOF
@@ -200,6 +219,10 @@ cat > FavenioQuick.app/Contents/Info.plist <<EOF
 <dict>
     <key>CFBundleExecutable</key><string>FavenioQuick</string>
     <key>CFBundleIdentifier</key><string>local.favenio.quick</string>
+    <key>FavenioFinderMetadataSchemaVersion</key><integer>1</integer>
+    <key>FavenioLocalContentSchemaVersion</key><integer>1</integer>
+    <key>FavenioOCRSchemaVersion</key><integer>1</integer>
+    <key>FavenioPDFOCRSchemaVersion</key><integer>1</integer>
     <key>CFBundleName</key><string>Favenio Schnellsuche</string>
     <key>CFBundleDisplayName</key><string>Favenio Schnellsuche</string>
     <key>CFBundleIconFile</key><string>FavenioQuick</string>

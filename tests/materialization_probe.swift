@@ -82,6 +82,57 @@ struct MaterializationProbe {
         }
         let start = ProcessInfo.processInfo.systemUptime
         switch mode {
+        case "leaf-generation":
+            let target = hit(arguments[2], ["inner/geheim.txt"])
+            var outcome: MaterializationOutcome?
+            manager.request(target) { received(); outcome = $0 }
+            guard spin(until: { outcome != nil }), case .ready(let first)? = outcome else { fatalError("Erstes Blatt fehlt") }
+            try! Data("EXTERNAL EDIT".utf8).write(to: first)
+            report["leaf_invalidated"] = manager.knownURL(for: target) == nil
+            outcome = nil
+            manager.request(target) { received(); outcome = $0 }
+            report["finished"] = spin(until: { outcome != nil })
+            if case .ready(let second)? = outcome {
+                report["fresh_copy"] = first != second && (try? String(contentsOf: second, encoding: .utf8)) == "FAVENIO_PROBE im Zip"
+                report["old_copy_kept"] = (try? String(contentsOf: first, encoding: .utf8)) == "EXTERNAL EDIT"
+            }
+        case "generation":
+            let target = hit(arguments[2], [arguments[3]])
+            var bound = target
+            bound.contentPreview = ContentPreview(status: "ready", sourceGeneration: ContentSourceGeneration.current(target.filesystemPath), encoding: "utf-8", snippets: [], omitted: 0)
+            manager.request(target) { received(); outcome = $0 }
+            precondition(spin(until: { outcome != nil }))
+            guard case .ready(let first)? = outcome else { fatalError("Erstes Archiv nicht ausgepackt") }
+            report["first_content"] = try! String(contentsOf: first, encoding: .utf8)
+            let rewrite = Process(); rewrite.executableURL = URL(fileURLWithPath: pythonPath)
+            rewrite.arguments = ["-c", "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1],'w'); z.writestr(sys.argv[2],'NEW'); z.close()", arguments[2], arguments[3]]
+            try! rewrite.run(); rewrite.waitUntilExit(); precondition(rewrite.terminationStatus == 0)
+            var fresh = target
+            fresh.contentPreview = ContentPreview(status: "ready", sourceGeneration: ContentSourceGeneration.current(target.filesystemPath), encoding: "utf-8", snippets: [], omitted: 0)
+            report["cache_invalidated"] = manager.knownURL(for: fresh) == nil
+            var rejected: MaterializationOutcome?
+            manager.request(bound) { received(); rejected = $0 }
+            precondition(spin(until: { rejected != nil }))
+            report["old_bound"] = describe(rejected)
+            outcome = nil
+            manager.request(fresh) { received(); outcome = $0 }
+            precondition(spin(until: { outcome != nil }))
+            if case .ready(let second)? = outcome {
+                report["second_content"] = try! String(contentsOf: second, encoding: .utf8)
+                report["different_copy"] = first != second
+            }
+            report["previous_copy_retained"] = FileManager.default.fileExists(atPath: first.path)
+        case "generation-during":
+            manager.cliPath = arguments[2]
+            let target = hit(arguments[3], [arguments[4]])
+            manager.request(target) { received(); outcome = $0 }
+            let marker = URL(fileURLWithPath: arguments[5])
+            precondition(spin(until: { FileManager.default.fileExists(atPath: marker.path) }))
+            try! Data("changed container".utf8).write(to: URL(fileURLWithPath: target.filesystemPath))
+            try! Data().write(to: URL(fileURLWithPath: arguments[6]))
+            precondition(spin(until: { outcome != nil }))
+            report = describe(outcome)
+            report["cache_empty"] = manager.knownURL(for: target) == nil
         case "action-reset", "action-cancel", "action-cancel-then-reset":
             manager.cliPath = arguments[2]
             let target = hit(arguments[3], [arguments[4]])

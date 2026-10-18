@@ -2,21 +2,45 @@ import AppKit
 
 struct ControlSearchInput {
     let pattern: String
-    let root: String
+    let roots: [String]
+    var root: String { roots.count == 1 ? roots[0] : "" }
     let options: SearchConfiguration
+    init(pattern: String, root: String, options: SearchConfiguration) {
+        self.init(pattern: pattern, roots: [root], options: options)
+    }
+    init(pattern: String, roots: [String], options: SearchConfiguration) {
+        self.pattern = pattern; self.roots = roots; self.options = options
+    }
     var object: [String: Any] {
-        ["pattern": pattern, "root": root,
-         "options": options.queryItems.map { ["name": $0.name, "value": $0.value ?? ""] }]
+        var value: [String: Any] = ["pattern": pattern,
+            "options": options.queryItems.map { ["name": $0.name, "value": $0.value ?? ""] }]
+        if options.pdfOCR { value["schemaVersion"] = 7; value["roots"] = roots }
+        else if options.ocr { value["schemaVersion"] = 6; value["roots"] = roots }
+        else if options.localOnly { value["schemaVersion"] = 5; value["roots"] = roots }
+        else if options.requiresFinderMetadata { value["schemaVersion"] = 4; value["roots"] = roots }
+        else if options.requiresDateRanges { value["schemaVersion"] = 3; value["roots"] = roots }
+        else if roots.count == 1 { value["root"] = roots[0] }
+        else { value["schemaVersion"] = 2; value["roots"] = roots }
+        return value
     }
     static func decode(_ value: Any?) throws -> ControlSearchInput {
-        guard let object = value as? [String: Any], Set(object.keys) == ["pattern", "root", "options"],
-              let pattern = object["pattern"] as? String, !pattern.utf8.contains(0), let root = object["root"] as? String,
-              root.hasPrefix("/"), !root.utf8.contains(0),
+        guard let object = value as? [String: Any],
+              let pattern = object["pattern"] as? String, !pattern.utf8.contains(0),
               let pairs = object["options"] as? [[String: String]] else {
-            throw SearchControlFailure(code: "invalidRequest", message: "Konfiguration braucht Muster, absoluten Suchordner und Optionen.")
+            throw SearchControlFailure(code: "invalidRequest", message: "Konfiguration braucht Muster, Suchbereiche und Optionen.")
         }
-        let known = Set(["mode", "content", "only", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "field", "exclude", "term"] + SearchConfiguration.pixelKeys + FactFilterOption.all.map { $0.key })
-        let booleans = Set(["content", "regex", "case", "archives", "hidden", "exact", "literal-wildcards"])
+        let roots: [String]
+        if Set(object.keys) == ["pattern", "root", "options"], let root = object["root"] as? String {
+            roots = [root]
+            if let problem = SearchRoots.problem(roots, limited: false) {
+                throw SearchControlFailure(code: "invalidRequest", message: problem)
+            }
+        } else if Set(object.keys) == ["schemaVersion", "pattern", "roots", "options"],
+                  [2, 3, 4, 5, 6, 7].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0), let paths = object["roots"] as? [String],
+                  SearchRoots.problem(paths) == nil { roots = paths }
+        else { throw SearchControlFailure(code: "invalidRequest", message: "Ungültige oder zu große Suchbereichsliste (Konfigurationsformat 2).") }
+        let known = Set(["mode", "content", "only", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "field", "exclude", "term", "criteria", "encoding", "date-ranges", "date-reference-time", "finder-metadata", "local-only", "ocr", "pdf-ocr"] + SearchConfiguration.pixelKeys + FactFilterOption.all.map { $0.key })
+        let booleans = Set(["content", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "finder-metadata", "local-only", "ocr", "pdf-ocr"])
         var seen = Set<String>()
         var items: [URLQueryItem] = []
         for pair in pairs {
@@ -26,16 +50,34 @@ struct ControlSearchInput {
                   name != "mode" || SearchTextMode(rawValue: text) != nil,
                   name != "only" || ["both", "files", "dirs"].contains(text),
                   name != "field" || metadataFieldList().contains(text),
+                  name != "encoding" || SearchTextEncoding(rawValue: text) != nil,
                   !["term", "exclude"].contains(name) || (!text.isEmpty && !text.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) })) else {
                 throw SearchControlFailure(code: "invalidRequest", message: "Unbekannte, doppelte oder ungültige Suchoption.")
             }
             items.append(URLQueryItem(name: name, value: text))
         }
         let options = SearchConfiguration.fromQueryItems(items)
+        guard !options.requiresDateRanges || [3, 4, 5, 6, 7].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0),
+              options.dateReferenceTime == nil || options.requiresDateRanges else {
+            throw SearchControlFailure(code: "invalidRequest", message: "Kalenderbereiche benötigen Konfigurationsformat 3.")
+        }
+        guard !options.requiresFinderMetadata || [4, 5, 6, 7].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0) else {
+            throw SearchControlFailure(code: "invalidRequest", message: "Finder-Eigenschaften benötigen Konfigurationsformat 4.")
+        }
+        guard !options.localOnly || [5, 6, 7].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0) else {
+            throw SearchControlFailure(code: "invalidRequest", message: "Lokale Inhalte benötigen Konfigurationsformat 5.")
+        }
+        guard !options.pdfOCR || SearchControlWire.integer(object["schemaVersion"]) == 7 else { throw SearchControlFailure(code: "invalidRequest", message: "PDF-OCR benötigt Konfigurationsformat 7.") }
+        guard !options.ocr || (SearchControlWire.integer(object["schemaVersion"]) ?? 0) >= 6 else {
+            throw SearchControlFailure(code: "invalidRequest", message: "OCR benötigt Konfigurationsformat 6.")
+        }
+        if let problem = CriteriaTransport.problem(items) {
+            throw SearchControlFailure(code: "invalidRequest", message: problem)
+        }
         guard options.metadataField == nil || options.mode == .metadata else {
             throw SearchControlFailure(code: "invalidRequest", message: "Ein Metadatenfeld braucht den Metadatenmodus.")
         }
-        return ControlSearchInput(pattern: pattern, root: root, options: options)
+        return ControlSearchInput(pattern: pattern, roots: roots, options: options)
     }
 }
 
@@ -91,8 +133,7 @@ final class LocalSearchController {
         guard let host else { return ["state": "closed"] }
         var selection: [[String: Any]] = []
         var selectionBytes = 0
-        for index in host.tableView.selectedRowIndexes.prefix(SearchControlWire.maximumPage)
-            where host.hits.indices.contains(index) {
+        for index in host.selectedHitIndices.prefix(SearchControlWire.maximumPage) {
             let identity = Self.identityObject(host.hits[index].identity)
             let bytes = SearchControlWire.encode(identity).count
             guard selectionBytes + bytes <= SearchControlWire.maximumReplyBytes / 4 else { break }
@@ -101,14 +142,22 @@ final class LocalSearchController {
         }
         var object: [String: Any] = ["state": run?.state ?? "idle", "generation": generation,
             "count": host.hits.count, "pendingCount": host.pending.count,
-            "warningCount": run?.warningCount ?? 0, "complete": run?.state == "completed",
-            "selectionCount": host.tableView.selectedRowIndexes.count,
-            "selectionTruncated": host.tableView.selectedRowIndexes.count > selection.count,
+            "warningCount": run?.warningCount ?? 0,
+            "complete": run?.state == "completed" && host.searchReportController.snapshot?.coverage == "withinRequestedScope"
+                && !host.resultFilter.isFiltering && host.resultFilter.errorMessage == nil,
+            "resultFilter": host.resultFilter.state,
+            "resultGrouping": host.resultGrouping.state,
+            "coverage": host.searchReportController.snapshot?.coverage ?? "incomplete",
+            "selectionCount": host.selectedHitIndices.count,
+            "selectionTruncated": host.selectedHitIndices.count > selection.count,
             "selection": selection]
         if let run {
             object["runID"] = run.id; object["startedAt"] = run.startedAt
             object["configuration"] = run.input.object; object["origin"] = run.origin
             if let error = run.error { object["error"] = error }
+        }
+        if let report = host.searchReportController.snapshot {
+            object["reportRunID"] = report.object["runID"]; object["reportState"] = report.state
         }
         if let recordedSource { object["recordedSource"] = recordedSource }
         if let path = host.progressPath { object["progressPath"] = path }
@@ -136,8 +185,12 @@ final class LocalSearchController {
     func handle(_ data: Data) -> Data {
         precondition(Thread.isMainThread)
         do {
-            let request = try SearchControlWire.decode(data)
-            let canonical = SearchControlWire.encode(request)
+            guard data.count <= SearchControlWire.maximumRequestBytes, !DateRangeTransport.hasDuplicateKeys(data),
+                  let object = preservedJSONObject(data) as? [String: Any] else {
+                throw SearchControlFailure(code: "invalidRequest", message: "Ungültige oder doppelte Auftragsfelder.")
+            }
+            let request = try SearchControlWire.validate(object)
+            let canonical = request["operation"] as? String == "openRecording" ? data : SearchControlWire.encode(request)
             let id = request["id"] as! String
             let operation = request["operation"] as! String
             let now = Date().timeIntervalSince1970
@@ -172,7 +225,7 @@ final class LocalSearchController {
             case "configure":
                 guard host.window?.attachedSheet == nil else { throw SearchControlFailure(code: "busy", message: "Ein Dialog ist geöffnet.") }
                 let input = try ControlSearchInput.decode(request["configuration"])
-                host.setSearchRoot(URL(fileURLWithPath: input.root))
+                host.setSearchRoots(input.roots)
                 host.searchField.stringValue = input.pattern
                 host.applyConfiguration(input.options)
                 host.recolorRegexField()
@@ -182,10 +235,21 @@ final class LocalSearchController {
                 guard operation == "replace" || host.activeSearchRun == nil else { throw SearchControlFailure(code: "busy", message: "Suche läuft; zum Ersetzen die Operation replace verwenden.") }
                 let pattern = host.searchField.stringValue.trimmingCharacters(in: .whitespaces)
                 guard !pattern.isEmpty || host.searchConfiguration.hasPositiveFilter else { throw SearchControlFailure(code: "invalidRequest", message: "Suchmuster oder positiver Filter fehlt.") }
-                host.startSearch()
+                let reference = request["dateReferenceTime"] as? String
+                if request["dateReferenceTime"] != nil && (reference == nil || !DateRangeTransport.isISO(reference!)) {
+                    throw SearchControlFailure(code: "invalidRequest", message: "Laufzeitpunkt muss ein ISO-Text mit Z oder Offset sein.")
+                }
+                if reference != nil && !host.searchConfiguration.requiresDateRanges {
+                    throw SearchControlFailure(code: "invalidRequest", message: "Ein Laufzeitpunkt braucht Kalenderbereiche.")
+                }
+                host.startSearchWithReference(reference)
                 reply["status"] = status
             case "cancel": try requireRun(request); host.stopSearchClicked(); reply["status"] = status
             case "status": host.flushPending(); reply["status"] = status
+            case "report":
+                try requireRun(request)
+                reply["report"] = host.searchReportController.snapshot?.exportObject ?? ["state": "unavailable", "coverage": "incomplete"]
+                reply["runID"] = run?.id
             case "results":
                 try requireRun(request); host.flushPending()
                 guard let offset = SearchControlWire.integer(request["offset"]), let limit = SearchControlWire.integer(request["limit"]),
@@ -204,30 +268,38 @@ final class LocalSearchController {
                         break
                     }
                     byteCount += bytes.count
-                    page.append(try JSONSerialization.jsonObject(with: bytes) as! [String: Any])
+                    guard let row = preservedJSONObject(bytes) as? [String: Any] else {
+                        throw SearchControlFailure(code: "invalidRequest", message: "Treffer kann nicht übertragen werden.")
+                    }
+                    page.append(row)
                 }
                 reply["hits"] = page; reply["runID"] = run!.id; reply["generation"] = generation
                 reply["count"] = host.hits.count; reply["nextOffset"] = offset + page.count
                 reply["hasMore"] = offset + page.count < host.hits.count
                 reply["state"] = run!.state
+                reply["resultFilter"] = host.resultFilter.state
+                reply["resultGrouping"] = host.resultGrouping.state
             case "select":
                 try requireRun(request); host.flushPending()
                 let identity = try Self.identity(request["identity"])
-                guard let row = host.hits.firstIndex(where: { $0.identity == identity }) else { throw SearchControlFailure(code: "missingHit", message: "Treffer gehört nicht mehr zur aktuellen Liste.") }
+                guard let row = host.revealTableRow(for: identity) else { throw SearchControlFailure(code: "missingHit", message: "Treffer gehört nicht mehr zur aktuellen Liste.") }
                 host.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
                 host.tableView.scrollRowToVisible(row)
                 reply["identity"] = Self.identityObject(identity); reply["runID"] = run!.id
             case "captureRecording":
                 try requireRun(request); reply["recording"] = try captureRecording()
             case "openRecording":
-                let recording = try SearchRecording.decode(request["recording"])
+                let recording = try SearchRecording.decode(request["recording"], rawData: JSONByteSlices.member("recording", in: data))
                 try openRecording(recording); reply["status"] = status
             case "handoff":
                 try requireRun(request); host.flushPending()
                 let identity = try Self.identity(request["identity"])
-                guard let hit = host.hits.first(where: { $0.identity == identity }) else {
+                guard let row = host.revealTableRow(for: identity),
+                      let index = host.hitIndex(forTableRow: row) else {
                     throw SearchControlFailure(code: "missingHit", message: "Treffer gehört nicht mehr zur aktuellen Liste.")
                 }
+                let hit = host.hits[index]
+                host.tableView.scrollRowToVisible(row)
                 reply["handoff"] = try handoff.start(hit: hit, run: run!).object
             case "handoffStatus", "cancelHandoff":
                 guard let id = request["jobID"] as? String, let job = handoff.jobs[id] else {
@@ -254,7 +326,7 @@ final class LocalSearchController {
 
 extension MainController {
     var controlInput: ControlSearchInput {
-        ControlSearchInput(pattern: searchField.stringValue, root: searchRoot.path, options: searchConfiguration)
+        ControlSearchInput(pattern: searchField.stringValue, roots: searchRoots, options: searchConfiguration)
     }
     @objc func showSelectedInFastra(_ sender: Any?) {
         let rows = rows(for: sender)

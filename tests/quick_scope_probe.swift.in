@@ -1,4 +1,6 @@
-// Testattrappen ohne Finder-Zugriff; die drei markierten Methoden
+import AppKit
+
+// Testattrappen ohne Finder-Zugriff; die markierten Methoden
 // werden beim Build unverändert aus FavenioQuick.swift eingesetzt.
 final class QuickScopeRefreshHarness {
     static let hint = "Suchhinweis"
@@ -18,6 +20,7 @@ final class QuickScopeRefreshHarness {
     var searching = false
     var hasSearched = false
     var searchOutcomeText: String?
+    var handoffIssue: String?
     var userPickedScope = false
     var searchRoot = "/ersatz"
     var queuedQuery = false
@@ -26,11 +29,15 @@ final class QuickScopeRefreshHarness {
     var shownProblems: [String] = []
     var hits: [Hit] = []
     var shownInfo = ""
-    func showInfo(_ text: String, detail: String? = nil) { shownInfo = text }
+    func showInfo(_ text: String, detail: String? = nil,
+                  color: NSColor = .secondaryLabelColor,
+                  lineBreak: NSLineBreakMode = .byTruncatingTail) {
+        shownInfo = text
+        if color == .systemOrange { shownProblems.append(text) }
+    }
     var deniedReports = 0
 
     func rebuildScopePopup() { rebuilds += 1 }
-    func showScopeProblem(_ text: String) { shownProblems.append(text) }
     func runScopeNoteText() -> String? { runScopeMismatch == nil ? nil : "Bereichshinweis" }
     func maybeReportDeniedAutomation() { deniedReports += 1 }
     func startSearch() {}
@@ -38,6 +45,10 @@ final class QuickScopeRefreshHarness {
 /* REFRESH */
 
 /* APPLY */
+
+/* SEARCH_INFO */
+
+/* SCOPE_PROBLEM */
 
     static func run() {
         let state = QuickScopeRefreshHarness()
@@ -74,6 +85,14 @@ final class QuickScopeRefreshHarness {
             finished.applyScopeOutcome(.folders(["/ersatz"]))
             print("RESTORED_\(outcome)|\(finished.shownInfo)")
         }
+        let rejected = QuickScopeRefreshHarness()
+        rejected.hasSearched = true
+        rejected.searchOutcomeText = "1 Treffer."
+        rejected.handoffIssue = "Übergabe abgelehnt"
+        rejected.applyScopeOutcome(.folders(["/finder"]))
+        print("HANDOFF_SCOPE|\(rejected.shownInfo)")
+        rejected.applyScopeOutcome(.folders(["/ersatz"]))
+        print("HANDOFF_RESTORED|\(rejected.shownInfo)")
     }
 }
 final class QuickScopeNoteHarness {

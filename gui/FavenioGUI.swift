@@ -32,6 +32,7 @@ struct FavenioApp {
             runFinderScopeDiagnostic()
         }
         let app = NSApplication.shared
+        applyUITestAppearance(app)
         let controller = MainController()
         app.delegate = controller
         app.setActivationPolicy(.regular)
@@ -113,8 +114,8 @@ func checkDiagnosticsReachTheSurface(sandbox: URL) -> String? {
         return "Warnungen jenseits der Pipe-Größe nicht vollständig gezählt "
             + "(\(flooded.warningCount) statt \(many + 1))"
     }
-    guard skippedNote(1).contains("1 Objekt"), skippedNote(0).isEmpty,
-          skippedNote(3).contains("3 Objekte") else {
+    guard skippedNote(1).contains("1 Warnung"), skippedNote(0).isEmpty,
+          skippedNote(3).contains("3 Warnungen") else {
         return "Fußzeilen-Zusatz für übersprungene Objekte stimmt nicht"
     }
     return nil
@@ -123,6 +124,12 @@ func checkDiagnosticsReachTheSurface(sandbox: URL) -> String? {
 func runSelfTest() -> Int32 {
     defer { cleanupMaterializedHits() }
     _ = NSApplication.shared
+    do {
+        try CriteriaEditorSelfTest.run()
+    } catch {
+        print("SELFTEST FEHLER: Kriterieneditor: \(error)")
+        return 1
+    }
     let pixelController = MainController()
     if let error = pixelFieldSelfTest(pixelController.pixelFields,
                                      validate: pixelController.validatePixelInputs) {
@@ -136,7 +143,19 @@ func runSelfTest() -> Int32 {
     // wird dafür beiseitegelegt und am Ende zurückgeschrieben — jeder
     // Build löschte ihn sonst (build-app.sh führt den Selbsttest aus).
     let savedFiltersExpanded = UserDefaults.standard.object(forKey: MainController.filtersExpandedKey)
+    let columnsKeys = ["NSTableView Columns Favenio.hits.columns", "NSTableView Columns v3 Favenio.hits.columns"]
+    let savedColumns = UserDefaults.standard.dictionaryRepresentation().filter { columnsKeys.contains($0.key) }
+    let finderColumnKeys = ["finderColumn.finderTags", "finderColumn.finderComment"]
+    let savedFinderColumns = UserDefaults.standard.dictionaryRepresentation().filter { finderColumnKeys.contains($0.key) }
     defer {
+        for key in columnsKeys {
+            if let value = savedColumns[key] { UserDefaults.standard.set(value, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        for key in finderColumnKeys {
+            if let value = savedFinderColumns[key] { UserDefaults.standard.set(value, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
         if let savedFiltersExpanded {
             UserDefaults.standard.set(savedFiltersExpanded, forKey: MainController.filtersExpandedKey)
         } else {
@@ -144,9 +163,14 @@ func runSelfTest() -> Int32 {
         }
     }
     UserDefaults.standard.removeObject(forKey: MainController.filtersExpandedKey)
+    finderColumnKeys.forEach { UserDefaults.standard.removeObject(forKey: $0) }
     let collapsedController = MainController()
     collapsedController.buildWindow()   // sonst erst in applicationDidFinishLaunching
     collapsedController.window.orderOut(nil)
+    if let error = contentPreviewDisclosureSelfTest(collapsedController) {
+        print("SELFTEST FEHLER: \(error)")
+        return 1
+    }
     // Zugeklappt beim Start, Umschalten, Zählung im Titel und Maßfelder ohne
     // Suche beim Fokusverlust — gemeinsam mit der Schnellsuche geprüft.
     if let error = filterDisclosureSelfTest(collapsedController.filters) {
@@ -165,6 +189,16 @@ func runSelfTest() -> Int32 {
         return 1
     }
     collapsedController.window.close()
+    UserDefaults.standard.set(true, forKey: "finderColumn.finderTags")
+    let restoredFinderColumns = MainController()
+    restoredFinderColumns.buildWindow()
+    restoredFinderColumns.window.orderOut(nil)
+    guard restoredFinderColumns.finderColumnsVisible,
+          restoredFinderColumns.searchConfiguration.finderMetadata else {
+        print("SELFTEST FEHLER: Wiederhergestellte Finder-Spalten: visible=\(restoredFinderColumns.finderColumnsVisible), capture=\(restoredFinderColumns.searchConfiguration.finderMetadata), saved=\(UserDefaults.standard.bool(forKey: "finderColumn.finderTags"))")
+        return 1
+    }
+    UserDefaults.standard.removeObject(forKey: "finderColumn.finderTags")
 
     pixelController.filterView.exclusions = ["node_modules", " keep spaces "]
     pixelController.filterView.rawFacts = ["min-size": "0"]
@@ -269,7 +303,7 @@ func runSelfTest() -> Int32 {
     guard loader.minWidthField.stringValue == "10.5",
           loader.selectedMode == .metadata,
           loader.selectedMetadataField == nil || loader.selectedMetadataField == "Title",
-          loader.searchRoot.path == existingRoot,
+          loader.searchRoot.path == rawTemplate.root,
           loader.statusLabel.stringValue.contains("fehlt: /nicht/vorhanden/favenio-selftest") else {
         print("SELFTEST FEHLER: Rohtext oder fehlender Vorlagenordner werden nicht sichtbar")
         return 1
@@ -284,10 +318,11 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: Umbenennen oder Löschen einer Vorlage")
         return 1
     }
-    try? Data("{\"version\": 2, \"templates\": []}".utf8).write(to: templateFile)
+    let futureTemplateVersion = SearchTemplateFormat.version + 1
+    try? Data("{\"version\": \(futureTemplateVersion), \"templates\": []}".utf8).write(to: templateFile)
     var migrationError = ""
     do { _ = try SearchTemplateStore(fileURL: templateFile).load() } catch { migrationError = "\(error)" }
-    guard migrationError.contains("Formatversion 2") else {
+    guard migrationError.contains("Formatversion \(futureTemplateVersion)") else {
         print("SELFTEST FEHLER: Neuere Vorlagendatei wird nicht abgelehnt: \(migrationError)")
         return 1
     }
@@ -536,7 +571,7 @@ func runSelfTest() -> Int32 {
     rootController.setSearchRoot(URL(fileURLWithPath: "/nicht/vorhanden/favenio-selftest"))
     rootController.launchSearch(pattern: "x")
     guard rootController.activeSearchRun == nil, rootController.exportStatus == nil,
-          rootController.statusLabel.stringValue.contains("Suchordner fehlt"),
+          rootController.statusLabel.stringValue.contains("Suchbereich fehlt"),
           rootController.statusLabel.stringValue.contains("/nicht/vorhanden/favenio-selftest") else {
         print("SELFTEST FEHLER: Fehlender Suchordner oder alter Exportstatus: "
               + rootController.statusLabel.stringValue)
@@ -909,7 +944,48 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: " + failure)
         return 1
     }
+    if let failure = checkResultFilterControl(sandbox: tmp) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
+    if let failure = checkDateRangesControl(sandbox: tmp) {
+        fputs("SELFTEST FAILED: \(failure)\n", stderr); exit(1)
+    }
+    if let failure = checkPDFOCRControl(sandbox: tmp) { print("SELFTEST FEHLER: \(failure)"); return 1 }
+    if let failure = checkOCRControl(sandbox: tmp) {
+        print("SELFTEST FEHLER: \(failure)"); return 1
+    }
+    if let failure = checkLocalContentControl(sandbox: tmp) {
+        print("SELFTEST FEHLER: \(failure)"); return 1
+    }
+    if let failure = checkFinderMetadataControl(sandbox: tmp) {
+        print("SELFTEST FEHLER: \(failure)"); return 1
+    }
+    if let failure = checkSearchRootsControl(sandbox: tmp) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
+    if let failure = checkResultGroupingControl(sandbox: tmp) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
     if let failure = checkFastraHandoff(sandbox: tmp) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
+    let grouped = MainController()
+    grouped.tableView.dataSource = grouped
+    grouped.tableView.addTableColumn(NSTableColumn(identifier: .init("name")))
+    if let failure = resultGroupingListSelfTest(grouped) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
+    let filtered = MainController()
+    filtered.tableView.dataSource = filtered
+    filtered.tableView.addTableColumn(NSTableColumn(identifier: .init("name")))
+    if let failure = resultFilterListSelfTest(filtered, terminate: {
+        filtered.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+    }) {
         print("SELFTEST FEHLER: " + failure)
         return 1
     }
@@ -955,7 +1031,10 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
     list.tableView.allowsMultipleSelection = true
     list.enqueueSearchHits([literal, nested, literal])
     var identityFailures: [String] = []
-    if list.pending != [literal, nested] { identityFailures.append("Deduplikation") }
+    if list.pending.map({ $0.identity }) != [literal.identity, nested.identity]
+        || list.pending.contains(where: { $0.searchRootBytes != Data(list.searchRoots[0].utf8) }) {
+        identityFailures.append("Deduplikation/Herkunft")
+    }
     list.pending = []
     list.hits = [literal, nested]
     list.applyHitsToTable(keepingSelection: [], resort: false)
@@ -1082,9 +1161,9 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
     }
     guard let csv = String(data: csvData.dropFirst(3), encoding: .utf8),
           csv.hasPrefix("path,type,isDirectory,size,line,filesystemPath,"
-                        + "field,value,width,height,modified,created\n"),
+            + "field,value,width,height,modified,created,contentEncoding,documentPage,documentLine,documentPart,documentPartKind,documentParagraph,documentChapter,documentSheet,documentSheetIndex,documentCell,documentValueKind,documentSlide,documentObjectID,documentObjectKind,documentRow,documentColumn,finderTags,finderTagColors,finderComment,finderTagsStatus,finderCommentStatus,ocrBlock,ocrConfidence,ocrRegion\n"),
           csv.contains("\"/tmp/mit,Komma und \"\"Zitat\"\".txt\"") else {
-        return "CSV-Export maskiert Komma und Anführungszeichen nicht"
+        return "CSV-Export hat eine falsche Kopfzeile oder Maskierung"
     }
 
     // ---- Auswahl fürs Löschen ----
@@ -1184,9 +1263,9 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
 /// für beide Apps.
 final class MainController: HitListController, NSApplicationDelegate,
                             NSTableViewDataSource, NSTableViewDelegate,
-                            NSFilePromiseProviderDelegate,
-                            NSMenuDelegate, NSMenuItemValidation,
+                            NSMenuDelegate,
                             NSSearchFieldDelegate {
+    override var localOnlyContent: Bool { filterView.localOnly }
 
     /// Ein Controller pro App-Prozess; Sparkle hält darüber Update-Zustand,
     /// Download und Installation über die gesamte App-Laufzeit zusammen.
@@ -1194,16 +1273,21 @@ final class MainController: HitListController, NSApplicationDelegate,
     let searchField = NSSearchField()
     let stopButton = NSButton(title: "", target: nil, action: nil)
     let folderButton = NSButton(title: "Ordner…", target: nil, action: nil)
-    // Wogegen das Muster läuft: Name | Inhalt | Metadaten.
-    let modeControl = NSSegmentedControl(
-        labels: SearchTextMode.allCases.map { $0.title },
-        trackingMode: .selectOne, target: nil, action: nil)
+    // Suchziel; das Menü hält auch Dokumenttext in schmalen Fenstern erreichbar.
+    let modeControl: NSPopUpButton = {
+        let control = NSPopUpButton()
+        control.addItems(withTitles: SearchTextMode.allCases.map { $0.title })
+        control.setAccessibilityIdentifier("searchTextMode")
+        control.toolTip = "Suchziel: Rohinhalt oder logischer PDF-Dokumenttext mit Seitenbelegen"
+        return control
+    }()
     // Nur bei „Metadaten": ein Feld oder alle Textfelder. Die Liste kommt
     // vom Kern (--list-metadata-fields) und wird hier nicht nachgebaut.
     let fieldPopup = NSPopUpButton()
     // Bildmaße: Breite und Höhe je von/bis, leer = egal. Gelten immer
     // zusätzlich (UND) zum Muster; das Muster darf dann auch fehlen.
     let filterView = SearchFilterView()
+    let criteriaControl = CriteriaControl()
     /// Aufklapp-Schalter über den Größen-/Datums- und Ausschlussfeldern.
     /// Diese Filter braucht man selten; zugeklappt kostet die Zeile nur
     /// eine Höhe. Der Zustand überlebt den Neustart (`filtersExpandedKey`).
@@ -1246,8 +1330,6 @@ final class MainController: HitListController, NSApplicationDelegate,
     // Suchprozess kennt den Papierkorb nicht und streamt Treffer unter einem
     // verschobenen Ordner oder in einem verschobenen Archiv weiter.
     var trashedPaths = TrashedPaths()
-    // Wahr, solange applyHitsToTable die Auswahl leert und wieder setzt.
-    var isRestoringSelection = false
     var cachedFinderFolders: [String] = []   // Finder-Fenster (async geladen)
     var refreshingFinder = false
     /// Zählt die Aktivierungen des Fensters. Nur die Antwort der AKTUELLEN
@@ -1263,7 +1345,12 @@ final class MainController: HitListController, NSApplicationDelegate,
     // Zeitüberschreitung). Steht im Ordner-Menü, statt kommentarlos zu fehlen.
     var finderScopeProblem: String?
     var finderScopeDenied = false
-    var searchRoot = FileManager.default.homeDirectoryForCurrentUser
+    var searchRoots = [FileManager.default.homeDirectoryForCurrentUser.path]
+    var searchRoot: URL {
+        get { URL(fileURLWithPath: searchRoots.first ?? "/") }
+        set { searchRoots = [newValue.path] }
+    }
+    var rootsEditor: SearchRootsEditor?
     var activeSearchRun: SearchRunner?
     lazy var searchControl = LocalSearchController(host: self)
     var flushTimer: Timer?
@@ -1295,14 +1382,13 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Der offene Sichern-Dialog des Exports; das Format-Aufklappmenü darin
     /// muss seinen Dateinamen ändern können.
     var exportSavePanel: NSSavePanel?
-    let exportWriter = ExportWriter()
     /// Exporttext hinter dem Suchstatus in der Fußzeile. Er überlebt eine
     /// LAUFENDE Suche (ein später Exportabschluss darf sie nicht
     /// verdrängen), aber nicht den nächsten Start: `launchSearch()` und
     /// `loadResults()` nehmen ihn weg — bis 0.34.0 hing er die ganze
     /// Sitzung hinter jedem Status.
     var exportStatus: String?
-    var exportIsBusy: Bool { exportSavePanel != nil || exportWriter.isWriting }
+    var exportIsBusy: Bool { exportSavePanel != nil || exportWriter.isWriting || searchReportController.isSaving }
 
     // ---------- App-Lebenszyklus ----------
 
@@ -1324,6 +1410,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         installAboutItem()
         installViewMenu()
         installFileMenu()
+        installSearchRootsMenu(target: self, action: #selector(editSearchRoots))
         installTemplatesMenu()
         // Finder-Fenster für das Ordner-Popup vorab im Hintergrund laden
         // (der AppleScript-Aufruf darf den Start nicht blockieren).
@@ -1386,7 +1473,7 @@ final class MainController: HitListController, NSApplicationDelegate,
                 if self.cancelMaterializations() { return nil }
             }
             // Alles Weitere gilt nur, solange die Trefferliste den Fokus hat.
-            guard self.window.firstResponder === self.tableView else { return event }
+            guard self.resultListHasFocus else { return event }
             switch event.keyCode {
             case 49 where modifiers.isEmpty:               // Leertaste
                 self.contextRow = -1
@@ -1447,6 +1534,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         guard !isRestoringSelection else { return }
         contextRow = -1
         refreshStatus()     // „N ausgewählt" in der Fußzeile mitziehen
+        refreshContentPreview()
         reloadPreviewIfSelectionChanged()
     }
 
@@ -1472,8 +1560,13 @@ final class MainController: HitListController, NSApplicationDelegate,
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        duplicateCheckController.stopForTermination()
+        filterView.stopDateEditorForTermination()
+        criteriaControl.stopForTermination()
+        resultFilter.stopForTermination()
         searchControl.handoff.cancelPending()
         stopSearch()
+        thumbnailController?.loader.cancelAll(clearCache: true)
         cleanupMaterializedHits()
     }
 
@@ -1493,23 +1586,88 @@ final class MainController: HitListController, NSApplicationDelegate,
     }
 
     func handleFavenioURL(_ url: URL) {
-        guard let components = URLComponents(url: url,
+        guard url.absoluteString.utf8.count <= maximumQuickURLBytes,
+              let components = URLComponents(url: url,
                                              resolvingAgainstBaseURL: false),
-              components.scheme?.lowercased() == "favenio",
-              components.host?.lowercased() == "results"
+              components.scheme?.lowercased() == "favenio"
         else { return }
+        guard ["results", "results-v2", "results-v3", "results-v4", "results-v5", "results-v6", "results-v7", "results-v8"].contains(components.host?.lowercased() ?? "") else {
+            if components.host?.lowercased().hasPrefix("results-v") == true {
+                presentActionIssue(summary: "Unbekannte Version der Quick-Übergabe.", detail: nil)
+            }
+            return
+        }
         let items = components.queryItems ?? []
         func value(_ name: String) -> String? {
             items.first { $0.name == name }?.value
+        }
+        let version2 = components.host?.lowercased() == "results-v2"
+        let version3 = components.host?.lowercased() == "results-v3"
+        let version4 = components.host?.lowercased() == "results-v4"
+        let version5 = components.host?.lowercased() == "results-v5"
+        let version6 = components.host?.lowercased() == "results-v6"
+        let version7 = components.host?.lowercased() == "results-v7"
+        let version8 = components.host?.lowercased() == "results-v8"
+        if version2 || version3 || version4 || version5 || version6 || version7 || version8 {
+            let transportKeys = Set(["q", "root", "file", "continue"])
+            let envelope = items.filter { transportKeys.contains($0.name) }
+            guard Set(envelope.map { $0.name }).count == envelope.count,
+                  envelope.allSatisfy({ $0.value != nil && !$0.value!.utf8.contains(0) }),
+                  !(version3 || version4 || version5 || version6 || version7 || version8) || value("root") == nil else {
+                presentActionIssue(summary: "Ungültige Quick-Übergabe.", detail: nil)
+                return
+            }
+            if let problem = SearchConfiguration.transportProblem(items.filter { !transportKeys.contains($0.name) }) {
+                presentActionIssue(summary: problem, detail: nil)
+                return
+            }
+        }
+        if let problem = CriteriaTransport.problem(items) {
+            presentActionIssue(summary: problem, detail: nil)
+            return
+        }
+        guard (value("criteria") == nil && !items.contains(where: { $0.name == "encoding" })) || version2 || version3 || version4 || version5 || version6 || version7 || version8 else {
+            presentActionIssue(summary: "Kriterien und Textkodierung benötigen Übergabeformat 2.", detail: nil)
+            return
+        }
+        let configuration = SearchConfiguration.fromQueryItems(items)
+        guard !configuration.requiresDateRanges || version4 || version5 || version6 || version7 || version8 else {
+            presentActionIssue(summary: "Kalenderbereiche benötigen Übergabeformat 4.", detail: nil); return
+        }
+        guard !configuration.requiresFinderMetadata || version5 || version6 || version7 || version8 else {
+            presentActionIssue(summary: "Finder-Eigenschaften benötigen Übergabeformat 5.", detail: nil); return
+        }
+        guard !configuration.localOnly || version6 || version7 || version8 else {
+            presentActionIssue(summary: "Lokale Inhalte benötigen Übergabeformat 6.", detail: nil); return
+        }
+        guard !configuration.pdfOCR || version8 else { presentActionIssue(summary: "PDF-OCR benötigt Übergabeformat 8.", detail: nil); return }
+        guard !configuration.ocr || version7 || version8 else {
+            presentActionIssue(summary: "OCR benötigt Übergabeformat 7.", detail: nil); return
         }
         guard let filePath = value("file"),
               validatedQuickHandoff(URL(fileURLWithPath: filePath)) != nil,
               quickHandoffInputProblem(query: value("q") ?? "",
                                        root: value("root") ?? "") == nil else { return }
-        if let query = value("q") { searchField.stringValue = query }
-        if let root = value("root") {
-            setSearchRoot(URL(fileURLWithPath: root))
+        guard let incoming = consumeQuickHandoffPayload(URL(fileURLWithPath: filePath)),
+              incoming.version == (version8 ? 8 : version7 ? 7 : version6 ? 6 : version5 ? 5 : version4 ? 4 : (version3 ? 3 : (version2 ? 2 : 1))),
+              let payload = incoming.bound(to: incoming.roots ?? value("root").map { [$0] } ?? searchRoots) else {
+            presentActionIssue(summary: "Ungültige oder zu große Ergebnisübergabe.", detail: nil)
+            return
         }
+        if version4 || version5 || version6 || version7 || version8 {
+            guard let frozen = payload.configuration,
+                  frozen.queryItems.flatMap({ [Data($0.name.utf8), Data(($0.value ?? "").utf8)] })
+                    == configuration.queryItems.flatMap({ [Data($0.name.utf8), Data(($0.value ?? "").utf8)] }) else {
+                presentActionIssue(summary: "Suchoptionen und Laufzeitpunkt der Übergabe stimmen nicht überein.", detail: nil); return
+            }
+        }
+        if let root = value("root"), SearchRoots.problem([root], limited: false) != nil {
+            presentActionIssue(summary: "Ungültiger Suchbereich der Quick-Übergabe.", detail: nil)
+            return
+        }
+        if let query = value("q") { searchField.stringValue = query }
+        if let roots = payload.roots { setSearchRoots(roots) }
+        else if let root = value("root") { setSearchRoots([root]) }
         // Suchoptionen der Schnellsuche übernehmen (Default: aus), damit die
         // Weitersuche hier mit denselben Einstellungen läuft. „Aus" ist bei
         // regex, case und field kein Verlust: Die Schnellsuche hat diese
@@ -1518,7 +1676,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         // Treffer nicht zur fortgesetzten Suche. Neue Quick-Versionen
         // schicken regex=0 und case=0 ausdrücklich mit.
         // Alte Quick-Versionen schicken nur content=0/1, neue den Modus.
-        applyConfiguration(SearchConfiguration.fromQueryItems(items))
+        applyConfiguration(configuration)
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -1527,9 +1685,9 @@ final class MainController: HitListController, NSApplicationDelegate,
             // Schnellsuche hat bei 20 Treffern übergeben: die 20 sofort
             // zeigen und die Suche hier live fortsetzen (weitere Treffer
             // kommen hinzu, die 20 werden dabei nicht doppelt gelistet).
-            continueSearch(from: URL(fileURLWithPath: filePath))
+            continueSearch(payload: payload)
         } else {
-            loadResults(from: URL(fileURLWithPath: filePath))
+            loadResults(payload: payload)
         }
         // Auch eine reine Ergebnisanzeige markiert ungültige URL-Eingaben;
         // der nächste Start bleibt durch denselben Validator gesperrt.
@@ -1539,11 +1697,29 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Fertige Treffer (JSONL-Datei der Schnellsuche) direkt anzeigen —
     /// die Suche lief dort schon, hier wird nichts doppelt gesucht.
     func loadResults(from file: URL) {
-        guard let loaded = consumeQuickHandoff(file) else {
+        guard let payload = consumeQuickHandoffPayload(file) else {
             rejectQuickHandoff()
             return
         }
-        replaceSearchResults(loaded)
+        loadResults(payload: payload)
+    }
+
+    func loadResults(payload: QuickHandoffPayload) {
+        guard let payload = payload.bound(to: payload.roots ?? searchRoots) else {
+            presentActionIssue(summary: "Die Herkunft der übergebenen Treffer passt nicht zu den Suchbereichen.", detail: nil)
+            return
+        }
+        if let configuration = payload.configuration { applyConfiguration(configuration) }
+        if let roots = payload.roots { setSearchRoots(roots) }
+        replaceSearchResults(payload.hits)
+        if let configuration = payload.configuration {
+            let input = ControlSearchInput(pattern: searchField.stringValue.trimmingCharacters(in: .whitespaces), roots: searchRoots, options: configuration)
+            searchControl.imported(input)
+            var report = SearchReportSnapshot.pending(configuration: input.object, state: "recorded")
+            if let dates = payload.dateResolution { report.object["dateResolution"] = preservedJSONObject(dates) }
+            searchReportController.accept(report)
+        }
+        applyHitsToTable(keepingSelection: payload.selection)
         exportStatus = nil
         searchPhase = .handedOver
         refreshStatus()
@@ -1632,6 +1808,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             .defaultLow, for: .horizontal)
         statusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        onFinderColumnsShown = { [weak self] in self?.filterView.finderMetadata = true; self?.filters.refreshTitle() }
         buildTable()
         let scroll = NSScrollView()
         scroll.documentView = tableView
@@ -1642,13 +1819,14 @@ final class MainController: HitListController, NSApplicationDelegate,
         // Balken. Bis 0.28.3 deckelte `lastColumnOnlyAutoresizingStyle` ohne
         // Scroller die Summe auf die Fensterbreite.
         scroll.hasHorizontalScroller = true
+        installThumbnails(in: scroll, compact: false)
         scroll.autohidesScrollers = true
         scroll.setContentHuggingPriority(NSLayoutConstraint.Priority(1),
                                          for: .vertical)
 
         let topRow = NSStackView(views: [stopButton, searchField, folderButton])
         topRow.orientation = .horizontal
-        modeControl.selectedSegment = 0
+        modeControl.selectItem(at: 0)
         modeControl.target = self
         modeControl.action = #selector(modeChanged)
         fieldPopup.addItem(withTitle: "Alle Textfelder")
@@ -1697,21 +1875,33 @@ final class MainController: HitListController, NSApplicationDelegate,
             self?.filters.refreshTitle()
         }
         // Aufklapp-Zeile: Dreieck plus klickbarer Titel, beide schalten um.
-        let filtersRow = NSStackView(views: [filters.disclosureButton, filters.titleButton])
+        criteriaControl.onChange = { [weak self] in self?.stopSearchForChangedCriteria() }
+        let filterSpacer = NSView()
+        filterSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let filtersRow = NSStackView(views: [filters.disclosureButton, filters.titleButton,
+                                            filterSpacer, searchReportController.button, duplicateCheckController.button, criteriaControl])
         filtersRow.orientation = .horizontal
         filtersRow.alignment = .centerY
         filtersRow.spacing = 2
+        contentPreviewView.onRestart = { [weak self] in self?.startSearch() }
         let stack = NSStackView(views: [topRow, optionsRow, filtersRow, sizeRow, filterView,
-                                        scroll, statusLabel])
+                                        resultFilter.view, resultGrouping.view, scroll, finderMetadataView, contentPreviewView, statusLabel])
         // Erst NACH dem Einhängen in den Stack verstecken: `NSStackView(views:)`
         // hängt eine schon versteckte Ansicht sichtbar ein.
         filters.extraViews = [sizeRow]
         filters.restoreSavedState()
+        contentPreviewView.syncVisibility()
+        finderMetadataView.syncVisibility()
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
+        // Bei offenen Filtern und beiden Vorschauen bleibt der Fensterabschluss
+        // auch auf niedrigen Bildschirmen erreichbar; die Trefferliste scrollt.
+        let preferredResultHeight = scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200)
+        preferredResultHeight.priority = .defaultHigh
+        preferredResultHeight.isActive = true
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: content.topAnchor,
                                        constant: 12),
@@ -1723,15 +1913,21 @@ final class MainController: HitListController, NSApplicationDelegate,
                                           constant: -12),
             topRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             optionsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            filtersRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             sizeRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             filterView.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            resultFilter.view.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            resultGrouping.view.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            contentPreviewView.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            finderMetadataView.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // Statuszeile an die Stack-Breite binden → kann das Fenster nicht
             // in die Breite ziehen (langer „durchsuche …"-Pfad).
             statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 100),
         ])
 
+        windowViewport = SearchWindowViewport(window: window)
         window.center()
         if !CommandLine.arguments.contains("--selftest") {
             window.makeKeyAndOrderFront(nil)
@@ -1777,6 +1973,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             }
             tableView.addTableColumn(column)
         }
+        configureFinderColumns()
         // Keine automatische Anpassung: Die Summe der Spalten darf das
         // Fenster überragen (waagerechter Balken), und keine Spalte wird
         // beim Fensterziehen heimlich schmaler.
@@ -1805,6 +2002,7 @@ final class MainController: HitListController, NSApplicationDelegate,
 
         // Drag & Drop nach draußen (Finder, andere Apps) erlauben.
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
+        restoreFinderColumnVisibility()
     }
 
     // ---------- Fußzeile ----------
@@ -1845,7 +2043,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             let label = ["completed": "abgeschlossen", "warnings": "mit Warnungen",
                          "cancelled": "abgebrochen", "failed": "fehlgeschlagen"][state] ?? state
             var text = "Aufgezeichneter Stand (" + label + ") — "
-                + hitStatisticsText(statistics, selected: tableView.selectedRowIndexes.count)
+                + hitStatisticsText(statistics, selected: selectedHitIndices.count)
                 + skippedNote(skippedCount) + (searchControl.run?.error.map { " — " + $0 } ?? "")
                 + (isMaterializing ? " — " + Self.materializingNote : "")
             if case .failed(let reason) = searchPhase { text += " — " + reason }
@@ -1853,7 +2051,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             return text
         }
         if case .failed(let reason) = searchPhase { return reason }
-        if hits.isEmpty {
+        if hits.isEmpty && !resultFilter.isActive {
             switch searchPhase {
             case .idle:
                 return templateNote ?? "Bereit."
@@ -1867,7 +2065,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             }
         }
         var text = hitStatisticsText(
-            statistics, selected: tableView.selectedRowIndexes.count)
+            statistics, selected: selectedHitIndices.count)
         switch searchPhase {
         case .running:
             text += progressPath.map { " — durchsuche " + abbreviateHome($0) }
@@ -1885,12 +2083,27 @@ final class MainController: HitListController, NSApplicationDelegate,
     }
 
     func setSearchRoot(_ url: URL) {
-        searchRoot = url
-        // Wurzel-Ordner heißt "" bei "/" → dann den Pfad zeigen.
-        let name = url.lastPathComponent.isEmpty ? url.path
-                                                 : url.lastPathComponent
-        folderButton.title = "📁 " + name + " ▾"
-        folderButton.toolTip = url.path
+        setSearchRoots([url.path])
+    }
+
+    func setSearchRoots(_ paths: [String]) {
+        searchRoots = paths
+        let scope = SearchRoots(paths)
+        folderButton.title = (scope.single.map { ($0 as NSString).lastPathComponent.isEmpty ? $0 : ($0 as NSString).lastPathComponent } ?? scope.title) + " ▾"
+        folderButton.toolTip = scope.detail
+    }
+
+    @objc func editSearchRoots() {
+        guard let window, window.attachedSheet == nil, rootsEditor == nil else { return }
+        let editor = SearchRootsEditor(paths: searchRoots)
+        rootsEditor = editor
+        editor.present(on: window) { [weak self] paths in
+            guard let self else { return }
+            self.rootsEditor = nil
+            guard let paths else { return }
+            self.stopSearchForChangedCriteria()
+            self.setSearchRoots(paths)
+        }
     }
 
     // ---------- Suche (asynchron, streamend) ----------
@@ -2000,7 +2213,7 @@ final class MainController: HitListController, NSApplicationDelegate,
 
         // 3) Beliebiger Ordner über den Dateidialog (der frühere Direktweg).
         menu.addItem(.separator())
-        let other = NSMenuItem(title: "Anderer Ordner…",
+        let other = NSMenuItem(title: "Suchbereiche bearbeiten…",
                                action: #selector(chooseFolder),
                                keyEquivalent: "")
         other.target = self
@@ -2025,8 +2238,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         item.target = self
         item.representedObject = path
         item.toolTip = abbreviateHome(path)
-        let icon = NSWorkspace.shared.icon(forFile: path)
-        icon.size = NSSize(width: 16, height: 16)
+        // Providerabhängige eigene Ordnersymbole können die Quelle abfragen.
+        let icon = localOnlyContent ? NSImage(named: NSImage.folderName) : NSWorkspace.shared.icon(forFile: path)
+        icon?.size = NSSize(width: 16, height: 16)
         item.image = icon
         if path == searchRoot.path { item.state = .on }
         menu.addItem(item)
@@ -2038,14 +2252,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     }
 
     @objc func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.directoryURL = searchRoot
-        panel.prompt = "Hier suchen"
-        if panel.runModal() == .OK, let url = panel.url {
-            setSearchRoot(url)
-        }
+        editSearchRoots()
     }
 
     // ---------- Benannte Suchvorlagen ----------
@@ -2074,7 +2281,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Grund, warum die Vorlagendatei zuletzt nicht lesbar war. Solange er
     /// steht, wird NICHT gesichert: Die Liste ist dann leer, und ein
     /// Sichern schriebe die Datei mit der einen neuen Vorlage — alle
-    /// Vorlagen einer neueren Fassung (Formatversion 2) wären weg.
+    /// Vorlagen einer neueren Fassung wären weg.
     var templateLoadError: String?
     /// Die zuletzt von den Vorlagen selbst gesetzte Fehlermeldung. Sie steht
     /// NEBEN dem Zustand der Suche, nicht in ihm: Der Fehler der letzten Suche
@@ -2140,7 +2347,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         parts.append(template.pattern.isEmpty
             ? "ohne Muster" : "„\(template.pattern)“")
         parts.append(template.configuration.mode.rawValue)
-        if let root = template.root { parts.append(abbreviateHome(root)) }
+        if let roots = template.roots { parts += roots.map(abbreviateHome) }
         let filters = template.configuration.filterSummary
         if !filters.isEmpty { parts.append(filters) }
         if !template.configuration.exclusions.isEmpty {
@@ -2155,7 +2362,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         let pattern = searchField.stringValue.trimmingCharacters(in: .whitespaces)
         let alert = NSAlert()
         alert.messageText = "Suche als Vorlage sichern"
-        alert.informativeText = "Gespeichert werden Muster, Ordner „\(abbreviateHome(searchRoot.path))“ "
+        alert.informativeText = "Gespeichert werden Muster, Suchbereiche „\(SearchRoots(searchRoots).title)“ "
             + "und alle Optionen. Ein vorhandener Name wird ersetzt."
         let nameField = NSTextField(string: pattern)
         nameField.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
@@ -2167,7 +2374,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
         storeTemplate(SearchTemplate(name: name, pattern: pattern,
-                                     root: searchRoot.path,
+                                     roots: searchRoots,
                                      configuration: searchConfiguration))
     }
 
@@ -2243,8 +2450,8 @@ final class MainController: HitListController, NSApplicationDelegate,
     }
 
     /// Befüllt die Oberfläche aus der Vorlage — und startet KEINE Suche.
-    /// Ein gespeicherter Ordner, den es nicht mehr gibt, wird konkret
-    /// genannt; der aktuelle Ordner bleibt dann stehen.
+    /// Fehlende gespeicherte Bereiche bleiben deklariert und werden konkret
+    /// genannt; eine neue Suche prüft die vollständige Liste.
     func applyTemplate(_ template: SearchTemplate) {
         // Nicht bloss `stopSearch()`: Das liesse bis zu 150 ms Nachschub
         // unsichtbar in `pending` liegen, den der naechste Suchstart dann
@@ -2260,10 +2467,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         // `handleFavenioURL` setzen den Text schon vor dem Faerben.
         recolorRegexField()
         var note = "Vorlage „\(template.name)“ geladen — ↩ startet die Suche."
+        if let roots = template.roots { setSearchRoots(roots) }
         if let missing = template.missingRootMessage {
             note += " " + missing
-        } else if let root = template.root {
-            setSearchRoot(URL(fileURLWithPath: root))
         }
         // Ein Feld, das das Menü nicht kennt (andere Feldliste des Kerns),
         // fällt auf „Alle Textfelder" zurück — das steht dann dabei, statt
@@ -2384,10 +2590,32 @@ final class MainController: HitListController, NSApplicationDelegate,
         }
     }
 
+    override var resultFilterRoot: String? { SearchRoots(searchControl.run?.input.roots ?? searchRoots).single }
+    override func flushResultFilterPending() { flushPending() }
+    override func resultViewWillChange() {
+        super.resultViewWillChange()
+        searchControl.handoff.cancelPending()
+        searchControl.changed()
+    }
+    override func replaceFilteredHits(_ incoming: [Hit], keepingSelection selection: Set<HitIdentity>) {
+        hits = incoming
+        statistics = .over(incoming)
+        applyHitsToTable(keepingSelection: selection)
+        refreshStatus()
+    }
+    override func appendFilteredHits(_ incoming: [Hit], keepingSelection selection: Set<HitIdentity>) {
+        incoming.forEach { statistics.add($0) }
+        if let comparator = hitComparator() { mergeSortedHits(incoming, using: comparator) }
+        else { hits.append(contentsOf: incoming) }
+        applyHitsToTable(keepingSelection: selection, resort: false)
+        refreshStatus()
+    }
+
     /// Ersetzt den Trefferstand für Suchstart und beide Quick-Übergaben.
     /// Vorlagen benutzen diesen Weg nicht: Sie ändern nur die Suchoptionen.
     func replaceSearchResults(_ incoming: [Hit]) {
         stopSearch()
+        resultFilter.clearForSearch()
         // Vorschau und Öffnen gehören zur alten Liste. Der Abbruch verhindert,
         // dass ein fertiger Auftrag später einen verschwundenen Treffer öffnet.
         cancelMaterializations(reportCancellation: false)
@@ -2401,11 +2629,15 @@ final class MainController: HitListController, NSApplicationDelegate,
         // Auch die leere Liste geht durch dieselbe Sortier-/Auswahlpflege.
         applyHitsToTable(keepingSelection: [])
         searchControl.imported(controlInput)
+        searchReportController.begin(configuration: controlInput.object, state: "recorded")
     }
 
-    @objc func startSearch() {
+    @objc func startSearch() { startSearchWithReference(nil) }
+
+    func startSearchWithReference(_ referenceTime: String?) {
         replaceSearchResults([])
         searchControl.begin(controlInput)
+        searchReportController.reset()
         searchPhase = .idle
         guard validatePixelInputs() else {
             if case .failed(let reason) = searchPhase { searchControl.failed(reason) }
@@ -2420,20 +2652,27 @@ final class MainController: HitListController, NSApplicationDelegate,
             refreshStatus()
             return
         }
-        launchSearch(pattern: pattern)
+        launchSearch(pattern: pattern, dateReferenceTime: referenceTime)
     }
 
     /// Setzt alle Suchoptionen der Oberfläche aus einer Konfiguration — die
     /// Gegenrichtung zu `searchConfiguration`. Genau EINE Stelle dafür; die
     /// Quick-Übergabe und das Laden einer Vorlage gehen beide hier durch.
     func applyConfiguration(_ configuration: SearchConfiguration) {
+        criteriaControl.applyJSON(configuration.criteriaJSON)
         selectMode(configuration.mode)
         selectMetadataField(configuration.metadataField)
         for (field, text) in zip(pixelFields, configuration.pixelTexts) { field.stringValue = text }
         filterView.exclusions = configuration.exclusions
+        filterView.dateRanges = configuration.dateRanges
         filterView.rawFacts = configuration.rawFacts
         filterView.terms = configuration.terms
         filterView.literalWildcards = configuration.literalWildcards
+        filterView.textEncoding = configuration.textEncoding
+        filterView.localOnly = configuration.localOnly
+        filterView.ocr = configuration.ocr
+        filterView.pdfOCR = configuration.pdfOCR
+        filterView.finderMetadata = configuration.finderMetadata
         // Übergebene Filter sollen sichtbar sein, sonst wundert man sich
         // über eine kürzere Trefferliste ohne erkennbaren Grund.
         if filters.activeCount > 0 { filters.setExpanded(true) }
@@ -2454,14 +2693,21 @@ final class MainController: HitListController, NSApplicationDelegate,
         configuration.includeHidden = hiddenCheckbox.state == .on
         configuration.exact = exactCheckbox.state == .on
         configuration.literalWildcards = filterView.literalWildcards
+        configuration.textEncoding = filterView.textEncoding
+        configuration.localOnly = filterView.localOnly
+        configuration.ocr = filterView.ocr
+        configuration.pdfOCR = filterView.pdfOCR
+        configuration.finderMetadata = filterView.finderMetadata
         configuration.pixelTexts = pixelFields.map { $0.stringValue }
         configuration.exclusions = filterView.exclusions
         configuration.rawFacts = filterView.rawFacts
+        configuration.dateRanges = filterView.dateRanges
         configuration.terms = filterView.terms
         configuration.regex = regexCheckbox.state == .on
         configuration.caseSensitive = caseCheckbox.state == .on
         configuration.metadataField = selectedMetadataField
         configuration.only = ["both", "files", "dirs"][max(0, min(2, typeControl.selectedSegment))]
+        configuration.criteriaJSON = criteriaControl.queryJSON
         return configuration
     }
 
@@ -2484,12 +2730,11 @@ final class MainController: HitListController, NSApplicationDelegate,
     var selectedMode: SearchTextMode {
         SearchTextMode.allCases[
             max(0, min(SearchTextMode.allCases.count - 1,
-                       modeControl.selectedSegment))]
+                       modeControl.indexOfSelectedItem))]
     }
 
     func selectMode(_ mode: SearchTextMode) {
-        modeControl.selectedSegment =
-            SearchTextMode.allCases.firstIndex(of: mode) ?? 0
+        modeControl.selectItem(at: SearchTextMode.allCases.firstIndex(of: mode) ?? 0)
         fieldPopup.isHidden = mode != .metadata
     }
 
@@ -2516,11 +2761,22 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// hier LIVE fortsetzen. Die schon gezeigten Treffer werden über
     /// `seenHitIdentities` nicht doppelt gelistet.
     func continueSearch(from file: URL) {
-        guard let seed = consumeQuickHandoff(file) else {
+        guard let payload = consumeQuickHandoffPayload(file) else {
             rejectQuickHandoff()
             return
         }
-        replaceSearchResults(seed)
+        continueSearch(payload: payload)
+    }
+
+    func continueSearch(payload: QuickHandoffPayload) {
+        guard let payload = payload.bound(to: payload.roots ?? searchRoots) else {
+            presentActionIssue(summary: "Die Herkunft der übergebenen Treffer passt nicht zu den Suchbereichen.", detail: nil)
+            return
+        }
+        if let configuration = payload.configuration { applyConfiguration(configuration) }
+        if let roots = payload.roots { setSearchRoots(roots) }
+        replaceSearchResults(payload.hits)
+        applyHitsToTable(keepingSelection: payload.selection)
         searchPhase = .handedOver
         guard validatePixelInputs() else { return }
         let pattern = searchField.stringValue
@@ -2532,15 +2788,17 @@ final class MainController: HitListController, NSApplicationDelegate,
             refreshStatus()
             return
         }
-        launchSearch(pattern: pattern)
+        launchSearch(pattern: pattern, dateReferenceTime: payload.configuration?.dateReferenceTime, frozenDateResolution: payload.dateResolution)
     }
 
     /// Startet den Suchprozess und streamt Treffer in die (evtl. schon per
     /// `continueSearch` vorbelegte) Tabelle. Setzt hits/seenHitIdentities NICHT
     /// zurück — das machen die Aufrufer je nach Fall.
-    func launchSearch(pattern: String) {
-        searchControl.begin(ControlSearchInput(pattern: pattern, root: searchRoot.path,
-                                              options: searchConfiguration))
+    func launchSearch(pattern: String, dateReferenceTime: String? = nil, frozenDateResolution: Data? = nil) {
+        let configuration = searchConfiguration.forNewRun(reference: dateReferenceTime)
+        searchControl.begin(ControlSearchInput(pattern: pattern, roots: searchRoots,
+                                              options: configuration))
+        searchReportController.begin(configuration: searchControl.run?.input.object ?? controlInput.object)
         guard validatePixelInputs() else {
             if case .failed(let reason) = searchPhase { searchControl.failed(reason) }
             return
@@ -2548,19 +2806,19 @@ final class MainController: HitListController, NSApplicationDelegate,
         templateNote = nil
         clearTemplateFailure()
         exportStatus = nil
-        // Ohne Muster ist der Ordner das einzige Positionsargument; einen
-        // verschwundenen Ordner läse der Kern still als Namensmuster und
-        // suchte im Arbeitsverzeichnis (siehe searchRootProblem).
-        if let problem = searchRootProblem(searchRoot.path) {
+        // Kein Teilstart, wenn auch nur ein deklarierter Bereich fehlt.
+        if let problem = SearchRoots(searchRoots).liveProblem {
             searchControl.failed(problem)
+            searchReportController.end("failed")
             searchPhase = .failed(problem)
             refreshStatus()
             return
         }
-        guard let arguments = searchConfiguration.arguments(
-            pattern: pattern, root: searchRoot.path, progress: true)
+        guard let arguments = configuration.arguments(
+            pattern: pattern, roots: searchRoots, progress: true, frozenDateResolution: frozenDateResolution)
         else {
             searchControl.failed("favenio.py nicht gefunden.")
+            searchReportController.end("failed")
             searchPhase = .failed("favenio.py nicht gefunden.")
             refreshStatus()
             return
@@ -2568,13 +2826,16 @@ final class MainController: HitListController, NSApplicationDelegate,
 
         let run = SearchRunner()
         activeSearchRun = run
-        run.start(arguments: arguments, onBatch: { [weak self, weak run] hits, progress in
+        run.start(arguments: searchOutputArguments(arguments), onBatch: { [weak self, weak run] hits, progress in
             guard let self, let run, self.activeSearchRun === run else { return }
             if let progress {
                 self.progressPath = progress
                 self.refreshStatus()
             }
             self.enqueueSearchHits(hits)
+        }, onReport: { [weak self, weak run] report in
+            guard let self, let run, self.activeSearchRun === run else { return }
+            self.searchReportController.accept(report)
         }, completion: { [weak self, weak run] exit in
             guard let self, let run, self.activeSearchRun === run else { return }
             self.finishSearchRun(run, exit: exit)
@@ -2595,7 +2856,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     func stopSearch() {
         let run = activeSearchRun
         activeSearchRun = nil
-        if run != nil { searchControl.cancelled() }
+        if run != nil { searchControl.cancelled(); searchReportController.end("cancelled") }
         run?.cancel()
         flushTimer?.invalidate()
         flushTimer = nil
@@ -2649,21 +2910,24 @@ final class MainController: HitListController, NSApplicationDelegate,
         searchControl.changed()
         if resort { sortHits() }
         isRestoringSelection = true
+        resultGrouping.rebuild()
         tableView.deselectAll(nil)
         tableView.reloadData()
-        let rows = IndexSet(hits.indices.filter {
-            selectedIdentities.contains(hits[$0].identity)
-        })
+        let rows = tableRows(for: selectedIdentities)
         tableView.selectRowIndexes(rows, byExtendingSelection: false)
         isRestoringSelection = false
         contextRow = -1
+        refreshContentPreview()
         reloadPreviewIfSelectionChanged()
+        resultFilter.refresh()
     }
 
     /// Nimmt neue Treffer des aktuellen Laufs an. Bewusst entfernte oder
     /// in den Papierkorb gelegte Dateien dürfen nicht erneut erscheinen.
     func enqueueSearchHits(_ incoming: [Hit]) {
-        for hit in incoming where !trashedPaths.contains(hit.filesystemPath) {
+        let scope = SearchRoots(searchControl.run?.input.roots ?? searchRoots)
+        for original in incoming where !trashedPaths.contains(original.filesystemPath) {
+            guard let hit = scope.carrying(original) else { continue }
             if seenHitIdentities.insert(hit.identity).inserted { pending.append(hit) }
         }
     }
@@ -2681,6 +2945,14 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     func flushPending() {
         guard !pending.isEmpty else { return }
+        if resultFilter.isActive {
+            let incoming = pending
+            pending = []
+            resultFilter.append(incoming)
+            searchControl.changed()
+            refreshStatus()
+            return
+        }
         // Auswahl über den reloadData hinweg festhalten (sonst verliert man
         // beim Streamen sofort wieder die markierte Zeile — etwa fürs
         // QuickLook). Wir merken die Identitäten und stellen sie danach wieder her.
@@ -2704,6 +2976,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     func finishSearchRun(_ run: SearchRunner, exit: SearchExit) {
         guard activeSearchRun === run else { return }
         searchControl.finished(exit)
+        searchReportController.end(searchExitIsError(exit.status, reason: exit.reason) ? "failed" : "finished", exit: exit)
         flushPending()
         flushTimer?.invalidate()
         flushTimer = nil
@@ -2718,7 +2991,15 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     // ---------- Tabelle ----------
 
-    func numberOfRows(in tableView: NSTableView) -> Int { hits.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { resultTableRowCount }
+
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        resultGrouping.projection.group(at: row) != nil
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        hitIndex(forTableRow: row) != nil
+    }
 
     /// Welche Datumsstufe eine Datumsspalte bei ihrer aktuellen Breite
     /// zeigt. Die Zelle hat je 2 pt Rand, und ein Muster, das haargenau
@@ -2754,12 +3035,14 @@ final class MainController: HitListController, NSApplicationDelegate,
     func tableView(_ tableView: NSTableView,
                    viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
+        if let header = resultGrouping.header(at: row) { return header }
         // Zellbau samt Bereichsprüfung in der Basisklasse — dort steht
         // auch, warum `row < hits.count` Pflicht ist.
         guard let column = tableColumn,
               let cell = hitCell(tableView, column: column, row: row)
         else { return nil }
-        let hit = hits[row]
+        guard let index = hitIndex(forTableRow: row) else { return nil }
+        let hit = hits[index]
         // Zellen werden recycelt → Ausrichtung je Spalte neu setzen.
         let identifier = column.identifier.rawValue
         cell.textField?.alignment =
@@ -2772,6 +3055,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         cell.textField?.font = Self.dateColumns.contains(identifier)
             ? dateFont : NSFont.systemFont(ofSize: NSFont.systemFontSize)
         cell.textField?.toolTip = nil
+        if renderFinderColumn(column, cell: cell, hit: hit) { return cell }
         switch identifier {
         case "name":
             cell.textField?.stringValue = hit.displayName
@@ -2794,8 +3078,8 @@ final class MainController: HitListController, NSApplicationDelegate,
             // Nur der Ordner, relativ zum Suchordner — der Dateiname steht
             // schon in der ersten Spalte, der Suchordner im Ordnerknopf.
             cell.textField?.stringValue =
-                hit.folderText(relativeTo: searchRoot.path)
-            cell.textField?.toolTip = hit.folderPath
+                hit.folderText(relativeTo: resultFilterRoot ?? "/", showSearchRoot: resultFilterRoot == nil)
+            cell.textField?.toolTip = hit.isMember ? archiveChainText(for: hit) : hit.folderPath
         }
         return cell
     }
@@ -2864,81 +3148,8 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Abwägung in `tests/MATERIALIZATION_MEASUREMENTS.md`.
     func tableView(_ tableView: NSTableView,
                    pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-        guard row < hits.count else { return nil }
-        let hit = hits[row]
-        guard hit.hasOpenableFile else { return nil }
-        if let url = MaterializationManager.shared.knownURL(for: hit) {
-            return url as NSURL
-        }
-        let fileExtension = (hit.path as NSString).pathExtension
-        let type = UTType(filenameExtension: fileExtension) ?? .data
-        let provider = NSFilePromiseProvider(fileType: type.identifier,
-                                             delegate: self)
-        provider.userInfo = hit
-        return provider
-    }
-
-    // ---------- Dateiversprechen für Archiv-Einträge ----------
-
-    /// Eigene Queue: Die Delegate-Aufrufe des Versprechens laufen dort,
-    /// nicht auf Main.
-    let promiseQueue: OperationQueue = {
-        let queue = OperationQueue()
-        queue.name = "favenio.file-promise"
-        queue.qualityOfService = .userInitiated
-        return queue
-    }()
-
-    func filePromiseProvider(_ provider: NSFilePromiseProvider,
-                             fileNameForType fileType: String) -> String {
-        guard let hit = provider.userInfo as? Hit else { return "Datei" }
-        return (hit.archiveMembers.last.map { ($0 as NSString).lastPathComponent }
-                ?? (hit.path as NSString).lastPathComponent)
-    }
-
-    /// Der Empfänger löst das Versprechen ein: auspacken (oder aus dem
-    /// Cache nehmen) und an die gewünschte Stelle KOPIEREN — die Temp-Datei
-    /// bleibt für weitere Aktionen erhalten, aufgeräumt wird beim App-Ende.
-    /// Fehler und Abbruch gehen als Error an den Empfänger, der sie nennt.
-    /// Bewusst NICHT in `actionRequests`/⎋ eingebunden: Der Auftrag gehört
-    /// dem Finder, der auf die versprochene Datei wartet; ein Abbruch aus
-    /// unserem Fenster ließe seinen Ablegevorgang mit einem Fehler enden.
-    /// Deshalb auch kein „Packe aus…" in der Fußzeile.
-    func filePromiseProvider(_ provider: NSFilePromiseProvider,
-                             writePromiseTo url: URL,
-                             completionHandler: @escaping (Error?) -> Void) {
-        guard let hit = provider.userInfo as? Hit else {
-            completionHandler(promiseError("Treffer nicht mehr bekannt"))
-            return
-        }
-        DispatchQueue.main.async {
-            MaterializationManager.shared.request(hit) { outcome in
-                switch outcome {
-                case .ready(let source):
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        do {
-                            try FileManager.default.copyItem(at: source, to: url)
-                            completionHandler(nil)
-                        } catch {
-                            completionHandler(error)
-                        }
-                    }
-                case .failed(let reason):
-                    completionHandler(self.promiseError(reason))
-                case .cancelled:
-                    completionHandler(self.promiseError("Auspacken abgebrochen"))
-                }
-            }
-        }
-    }
-
-    func operationQueue(for provider: NSFilePromiseProvider) -> OperationQueue {
-        promiseQueue
-    }
-
-    private func promiseError(_ reason: String) -> NSError {
-        NSError(domain: "Favenio", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: reason])
+        guard let index = hitIndex(forTableRow: row) else { return nil }
+        return hitPasteboardWriter(index)
     }
 
     // ---------- Aktionen (Doppelklick, Kontextmenü) ----------
@@ -3005,7 +3216,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         if let item = sender as? NSMenuItem, item.menu === tableView.menu {
             return actionRows()
         }
-        return Array(tableView.selectedRowIndexes)
+        return selectedHitIndices
     }
 
     /// Die Treffer zu einer Zeilenmenge, in Listenreihenfolge.
@@ -3017,20 +3228,20 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// deshalb löscht ⌫ im Suchfeld weiter ein Zeichen und ⌘⌫ dort weiter bis
     /// zum Zeilenanfang, statt an Dateien zu gehen: Beide Punkte gelten nur,
     /// solange die Trefferliste den Fokus hat. Im Rechtsklick-Menü der
-    /// Tabelle entfällt diese Bedingung — dort ist der Bezug der Klick.
+    /// Trefferansicht entfällt diese Bedingung — dort ist der Bezug der Klick.
     ///
     /// Dieselbe Bedingung wie beim Tastaturmonitor: Das Hauptfenster muss das
     /// Tastaturfenster sein. Solange ein Blatt oder ein Alert offen ist,
     /// bleiben alle vier Punkte grau — sonst startete ⌘⌫ aus dem Exportdialog
     /// heraus einen zweiten Papierkorb-Dialog. „Alle Treffer exportieren"
-    /// braucht keine Auswahl und deshalb auch keinen Tabellenfokus.
-    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    /// braucht keine Auswahl und deshalb auch keinen Fokus in der Trefferansicht.
+    override func validateMenuItem(_ item: NSMenuItem) -> Bool {
         let fromTableMenu = item.menu === tableView.menu
         let mainWindowIsKey = window?.isKeyWindow == true
         switch item.action {
         case #selector(showSelectedInFastra(_:)):
             let indices = rows(for: item)
-            return (fromTableMenu || (mainWindowIsKey && window?.firstResponder === tableView))
+            return (fromTableMenu || (mainWindowIsKey && resultListHasFocus))
                 && indices.count == 1 && hits.indices.contains(indices[0]) && !hits[indices[0]].isDirectory
                 && searchControl.run != nil && !searchControl.handoff.busy
         case #selector(cancelFastraHandoff(_:)):
@@ -3038,18 +3249,20 @@ final class MainController: HitListController, NSApplicationDelegate,
         case #selector(removeFromResults(_:)), #selector(trashSelected(_:)):
             guard fromTableMenu
                     || (mainWindowIsKey
-                        && window?.firstResponder === tableView)
+                        && resultListHasFocus)
             else { return false }
             return !rows(for: item).isEmpty
         case #selector(exportSelectedHits(_:)):
             guard !exportIsBusy,
-                  fromTableMenu || (mainWindowIsKey && window?.firstResponder === tableView)
+                  fromTableMenu || (mainWindowIsKey && resultListHasFocus)
             else { return false }
             return !rows(for: item).isEmpty
         case #selector(exportAllHits(_:)):
+            item.title = resultGrouping.isActive ? "Alle gefilterten Treffer exportieren…"
+                : resultFilter.isActive ? "Sichtbare Treffer exportieren…" : "Alle Treffer exportieren…"
             return !exportIsBusy && mainWindowIsKey && !hits.isEmpty
         default:
-            return true
+            return super.validateMenuItem(item)
         }
     }
 
@@ -3074,6 +3287,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Stelle der ersten entfernten gerückt ist.
     @discardableResult
     func removeHits(where shouldRemove: (Hit) -> Bool) -> Int {
+        resultFilter.remove(where: shouldRemove)
         guard let firstRemoved = hits.firstIndex(where: shouldRemove) else {
             return 0
         }
@@ -3083,9 +3297,9 @@ final class MainController: HitListController, NSApplicationDelegate,
         // einen bewusst entfernten Treffer nicht gleich wieder einfügen.
         statistics = .over(hits)
         applyHitsToTable(keepingSelection: [])
-        if !hits.isEmpty {
+        if !hits.isEmpty, let row = tableRow(forHitIndex: min(firstRemoved, hits.count - 1)) {
             tableView.selectRowIndexes(
-                [min(firstRemoved, hits.count - 1)], byExtendingSelection: false)
+                [row], byExtendingSelection: false)
         }
         refreshStatus()
         return before - hits.count
@@ -3147,7 +3361,8 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     @objc func exportAllHits(_ sender: Any?) {
         guard !exportIsBusy else { return }
-        runExport(hits, scope: "alle Treffer")
+        runExport(hits, scope: resultGrouping.isActive ? "alle gefilterten Treffer einschließlich eingeklappter Gruppen"
+            : resultFilter.isActive ? "sichtbare Treffer" : "alle Treffer")
     }
 
     @objc func exportSelectedHits(_ sender: Any?) {

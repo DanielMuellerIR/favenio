@@ -54,6 +54,10 @@ class MaterializationTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    def test_changed_materialized_leaf_gets_fresh_copy(self):
+        report = json.loads(run_probe('materialization', 'leaf-generation', self.archive).stdout)
+        self.assertTrue(all(report.values()), report)
+
     def fake_cli(self, name, body):
         path = self.root / (name + '.py')
         path.write_text(FAKE_CLI_HEAD + textwrap.dedent(body))
@@ -104,6 +108,33 @@ class MaterializationTests(unittest.TestCase):
         self.assertFalse(report['second_deferred'])
         self.assertEqual(report['known'], report['path'])
         self.assertEqual(report['reentrant_known'], report['path'])
+
+    def test_changed_archive_invalidates_cache_and_rejects_old_preview_generation(self):
+        archive = self.root / 'generation.zip'
+        with zipfile.ZipFile(archive, 'w') as output:
+            output.writestr('source.txt', 'OLD')
+        report = self.run_probe('generation', archive, 'source.txt')
+        self.assertEqual(report['first_content'], 'OLD')
+        self.assertTrue(report['cache_invalidated'])
+        self.assertEqual(report['old_bound']['state'], 'failed')
+        self.assertEqual(report['second_content'], 'NEW')
+        self.assertTrue(report['different_copy'])
+        self.assertTrue(report['previous_copy_retained'])
+
+    def test_container_changed_during_extraction_is_not_published(self):
+        archive = self.root / 'generation-during.zip'
+        archive.write_bytes(b'original container')
+        marker = self.root / 'generation-during.marker'
+        release = self.root / 'generation-during.release'
+        cli = self.fake_cli('generation-during', '''
+            open(%r, 'w').close()
+            wait_for_file(%r)
+            emit()
+            ''' % (str(marker), str(release)))
+        report = self.run_probe('generation-during', cli, archive, 'source.txt', marker, release)
+        self.assertEqual(report['state'], 'failed')
+        self.assertIn('Quelle', report['reason'])
+        self.assertTrue(report['cache_empty'])
 
     def test_trailing_filename_whitespace_survives_extraction_and_cache(self):
         for suffix in (' ', '\t', '\n', '\r', '\r\n', ' \t\n'):

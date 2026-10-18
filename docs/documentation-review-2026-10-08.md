@@ -33,8 +33,8 @@ ist eine separate Prüfung; dieses Dokument behauptet ihn nicht.
 
 ## Intensiver Code-Review und Schlussprüfung, Version 0.38.3
 
-Elf Bereiche der eigenen Quellen, Tests, Hilfswerkzeuge und Verträge sind
-aktuell geprüft. Bestehende Vollprüfungen wurden durch vollständige Deltas und die
+Alle elf Bereiche in der [Abdeckung](../.codeqa/coverage.json) sind aktuell
+geprüft. Bestehende Vollprüfungen wurden durch vollständige Deltas und die
 heutigen Ein-/Ausgänge ergänzt; neue Controller-, Übergabe- und
 Aufzeichnungsmodule wurden vollständig geprüft. Suchsemantik bleibt allein
 im Python-Kern. Es gibt keine offenen Querschnittsfunde oder nicht zugeordneten

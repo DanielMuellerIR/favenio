@@ -65,8 +65,9 @@ class SnapshotPositionTests(unittest.TestCase):
         for data in (b"ordinary text\n", b"invalid\xff", b"text\0"):
             with self.subTest(data=data):
                 _, value = self.query(data, pattern="", regex=True)
-                self.assertEqual(value, dict(sha256=hashlib.sha256(data).hexdigest(),
-                                             location=0, length=0, positionBinding="unboundHit"))
+                self.assertEqual(value["sha256"], hashlib.sha256(data).hexdigest())
+                self.assertEqual((value["location"], value["length"], value["positionBinding"]),
+                                 (0, 0, "unboundHit"))
 
     def test_unverified_decoder_and_non_content_hits_never_guess(self):
         for data, options in [(b"invalid\xffneedle", {}), (b"needle\0", {}), (b"needle", {"mode": "name"}),
@@ -91,6 +92,42 @@ class SnapshotPositionTests(unittest.TestCase):
         for update in ({"surprise": 1}, {"regex": 1}, {"terms": "needle"}, {"terms": [None]}, {"mode": "other"}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 favenio.snapshot_position(dict(record, **update))
+
+    def test_selected_decoders_bind_original_text_and_offsets(self):
+        import codecs
+        for choice, codec, bom in [("auto", "utf-16-le", codecs.BOM_UTF16_LE),
+                                   ("auto", "utf-16-be", codecs.BOM_UTF16_BE),
+                                   ("utf-16-le", "utf-16-le", b""),
+                                   ("utf-16-be", "utf-16-be", b""),
+                                   ("windows-1252", "cp1252", b""),
+                                   ("iso-8859-1", "latin-1", b""),
+                                   ("mac-roman", "mac_roman", b"")]:
+            text = "vor\r\nJahresbericht für Köln\r\n"
+            if codec.startswith("utf-16"):
+                text = "😀\ufeff" + text
+            data = bom + text.encode(codec)
+            with self.subTest(choice=choice, codec=codec):
+                _, value = self.query(data, pattern="Jahresbericht", encoding=choice)
+                self.assertEqual(value["sha256"], hashlib.sha256(data).hexdigest())
+                self.assertEqual(value["textSHA256"], hashlib.sha256(text.encode()).hexdigest())
+                self.assertEqual(value["textUTF16Length"], len(text.encode("utf-16-le")) // 2)
+                self.assertEqual((value["line"], value["location"], value["length"]),
+                                 (2, len(text.splitlines(keepends=True)[0].encode("utf-16-le")) // 2, 22))
+                self.assertEqual(value["positionBinding"], "exactUTF16")
+
+    def test_second_bom_and_invalid_decoding_never_produce_false_binding(self):
+        import codecs
+        for codec, bom in [("utf-8", codecs.BOM_UTF8), ("utf-16-le", codecs.BOM_UTF16_LE),
+                           ("utf-16-be", codecs.BOM_UTF16_BE)]:
+            text = "\ufeffneedle\n"
+            for choice in ("auto", codec):
+                _, value = self.query(bom + text.encode(codec), encoding=choice)
+                self.assertEqual(value["textSHA256"], hashlib.sha256(text.encode()).hexdigest())
+                self.assertEqual((value["location"], value["length"]), (0, 7))
+        for data, choice in [(codecs.BOM_UTF16_LE+b"n\0\0\xd8", "auto"), (b"needle\x81", "windows-1252")]:
+            _, value = self.query(data, encoding=choice)
+            self.assertEqual(value["positionBinding"], "unboundHit")
+            self.assertNotIn("textSHA256", value)
 
     def test_cli_stdout_is_json_and_failure_is_exit_two(self):
         record, expected = self.query(b"before\nneedle\n")

@@ -23,16 +23,39 @@ The search core is pure Python 3 (standard library only), a single file, no
 installation. Two native macOS apps are built on top of it: a full search
 window and a small quick-search panel for the Finder toolbar.
 
+## What's new in 0.64.0
+
+Since the previous GitHub release, 0.38.5, both apps have gained:
+
+- A graphical editor for nested AND/OR criteria, several search files and
+  folders, calendar ranges, Finder tags and Finder comments.
+- Canonical Unicode matching and explicit text encodings, with source-bound
+  previews, occurrence navigation and additional context on request.
+- Logical PDF, DOCX, ODT, EPUB, XLSX and PPTX text search. Local image OCR and
+  OCR of textless PDF pages are separate opt-ins; recognized text remains
+  uncertain, and embedded Office images are excluded.
+- Reversible result filters, collapsible groups, thumbnail views and explicit
+  access to an archive result's source archive.
+- A local-content search option supported for iCloud Drive on APFS. Other cloud
+  providers remain unverified; this is no general offline guarantee.
+- Explicit duplicate checks across files and archive members, confirmed by
+  full byte comparison, plus search reports explaining omissions and limits.
+  Duplicate checks never delete files or modify archives and claim no space savings.
+
+Existing templates and recordings remain readable; newer features carry explicit
+format versions and reject older receivers. Details are in the sections below
+and the [changelog](CHANGELOG.md).
+
 ## Screenshots
 
-The main app searches file contents and archives. This example uses
-`Archiv*Suche` with the additional term `Demo` and shows the optional filters.
+The main app combines criteria, document text and optional local OCR.
+This example shows a scanned PDF with its page evidence and bounded context.
 
-![Favenio 0.35.0 main window with three results, including an archive entry](assets/screenshots/main-window.png)
+![Favenio 0.64.0 main window with a PDF OCR result and source-bound context](assets/screenshots/main-window.png)
 
 The Finder quick-search panel uses the same search core and filters.
 
-![Favenio 0.35.0 quick search with additional terms and the literal-star option](assets/screenshots/quick-search.png)
+![Favenio 0.64.0 quick search with PDF OCR and source-bound context](assets/screenshots/quick-search.png)
 
 ## Requirements
 
@@ -41,6 +64,8 @@ The Finder quick-search panel uses the same search core and filters.
   Apple Silicon. The apps run the search core with the system
   `/usr/bin/python3` from Apple's Command Line Tools; macOS offers to install
   those automatically if they are missing.
+- **Local-content protection and OCR**: macOS 13 or newer; other search modes
+  remain available on macOS 12.
 
 ## Installation
 
@@ -149,7 +174,7 @@ Favenio is deliberately machine-friendly:
   as optional. Ask
   `isDirectory`, not `type`: a **folder inside an archive** arrives as
   `"type": "member"` just like a file does. Metadata hits add `field` and
-  `value`; with a size filter, hits add `width` and `height` (pixels). All
+  `value`; with a dimension filter, hits add `width` and `height` (pixels). All
   four are optional. `modified` and `created` are the modification and
   creation time as Unix seconds (float): plain files and folders carry
   both (from the same `stat` call as `size`), ZIP and TAR entries only
@@ -178,8 +203,9 @@ versioned JSON contract.
 Select a single result and choose **Show in Fastra** from the result menu
 or File menu. Fastra 1.137.0 or later receives an independent read-only copy,
 the exact archive member identity and the source generation. Content hits
-are checked again before UTF-16 navigation; other or unverified encodings
-open with an explicit position limitation. Handoffs are limited to 256 KiB
+are checked again before UTF-16 navigation; positions that cannot be verified
+remain explicitly unbound. Nondefault choices require Fastra’s explicit decoder
+capability and strict text binding. Handoffs are limited to 256 KiB
 of leaf content and can be cancelled from the same menu.
 Filter-only searches also support handoff in content mode; without search terms,
 the copy opens at the beginning without a verified hit position.
@@ -193,14 +219,30 @@ missing-folder warning visible beside the recorded-state label.
 
 | Option | Effect |
 |---|---|
+| `--criteria-json JSON` | additional versioned AND/OR criteria tree for name, extension, relative path, content, media/Finder metadata, size, dates and dimensions |
+| `--criteria-file FILE` | read that criteria tree from UTF-8 JSON; `-` reads stdin; maximum 64 KiB |
+| `--validate-criteria` | validate the supplied criteria tree without searching the filesystem |
+| `--duplicates-file JSON` | explicitly compare regular files and prepared archive-member contents from a schema-1/2 request; bounded JSONL progress and byte-verified groups; [contract](docs/DUPLICATES.md) |
+| `--filter-results JSONL` | filter known JSONL results with the criteria tree; `-` reads stdin; no source access |
+| `--results-root FOLDER` | lexical root for relative file paths in the result filter |
+| `--validate-result-filter` | validate criteria restricted to known result values |
 | `-c`, `--content` | search file contents instead of names |
+| `--document-text` | search logical PDF/DOCX/ODT/EPUB/XLSX/PPTX text with document evidence; optional PDFKit helper, bounded and cancellable; see [document text](docs/DOCUMENT_TEXT.md) |
 | `-m`, `--metadata` | search the curated metadata text fields (keywords, title, description …) instead of names; needs `exiftool` |
 | `--metadata-field TAG` | restrict `--metadata` to one field from the curated list (repeatable; implies `--metadata`) |
+| `--finder-metadata` | capture Finder tags and comment for matching local objects; requires `--json` |
+| `--local-only` | read only locally available contents on macOS 13+; names/known facts remain searchable, skipped cloud contents are explained; see [local contents](docs/LOCAL_CONTENT.md) |
+| `--ocr` | opt in to local German/English image OCR in document text mode (macOS 13+); [limits and recognized evidence](docs/OCR.md) |
+| `--pdf-ocr` | opt in to bounded local OCR of textless PDF pages, preserving text layers and page origins; [limits and coverage](docs/PDF_OCR.md) |
 | `--term TEXT` | an additional search term that must ALSO match (repeatable); same rules and same target as the pattern; AND across the whole file, not the same line (see below) |
 | `--list-metadata-fields` | print the curated field list, one per line, and exit |
 | `--min-size BYTES`, `--max-size BYTES` | inclusive file-size bounds; whole nonnegative bytes, optionally B/KiB/MiB/GiB/TiB |
 | `--modified-from ISO`, `--modified-to ISO` | inclusive modification-time bounds; ISO datetime with `Z` or explicit offset |
 | `--created-from ISO`, `--created-to ISO` | inclusive creation-time bounds; ISO datetime with `Z` or explicit offset |
+| `--date-ranges-json JSON` | typed fixed or relative modification/creation calendar ranges; [contract](docs/DATE_RANGES.md) |
+| `--date-reference-time ISO` | explicit per-run reference datetime with Z/offset for calendar questions |
+| `--date-resolution-json JSON` | reuse fully validated concrete bounds for continuation or later filter batches |
+| `--resolve-date-range JSON` | resolve and inspect calendar ISO/epoch bounds without searching |
 | `--min-width PX`, `--max-width PX` | only images at least / at most this wide (pixels) |
 | `--min-height PX`, `--max-height PX` | only images at least / at most this tall (pixels); all four dimension filters are ANDed with the pattern, which may then be omitted |
 | `-r`, `--regex` | interpret the pattern as a regular expression |
@@ -216,7 +258,11 @@ missing-folder warning visible beside the recorded-state label.
 | `--only both\|files\|dirs` | limit hits to files, directories or both (default) |
 | `--hidden` | include hidden (dot) files and directories |
 | `--exclude GLOB` | exclude matching files and subtrees before opening or descending (repeatable; case-sensitive; see below) |
+| `--encoding NAME` | content encoding: `utf-8` (default), `auto`, `utf-16-le`, `utf-16-be`, `windows-1252`, `iso-8859-1`, `mac-roman` |
+| `--content-preview` | capture bounded original excerpts and highlight ranges in JSONL; requires `--json` |
+| `--preview-request JSON` | load a bounded occurrence or extra context for one preview hit; see [contract](docs/CONTENT_PREVIEW.md) |
 | `--json` | JSONL output for scripts/agents (with `size` in bytes where the format states it) |
+| `--search-report` | with `--json`, emit bounded structured search reports; [contract](docs/SEARCH_REPORT.md) |
 | `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
 | `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |
 | `--extract-json JSON` | extract an unambiguous structured JSON hit |
@@ -305,8 +351,74 @@ wildcards (CLI: `--literal-wildcards`), including additional search terms.
 Repeated stars work like one star; there is no multiline `**` search.
 Regex and exclusion patterns are unaffected.
 
+Normal name, content and metadata searches compare canonically equivalent
+Unicode spellings using NFC, including literal and glob patterns. For example,
+`Büro` also matches `Bu` followed by a combining diaeresis and `ro`.
+Exclusions use the same canonical comparison and remain case-sensitive.
+Regex patterns and their targets keep their original code points. Accents
+are retained; compatibility characters are not folded. Display names, archive
+name bytes and evidence remain original. Distinct archive entries remain
+distinct even when their names look identical.
+
+Streaming normalization keeps at most 65,536 unresolved characters. If a
+combining sequence exceeds that limit in a fragmented line, its unchecked
+remainder is reported and stays unknown, including under negation. Already
+proved matches still count. Line numbers and UTF-16 line ranges refer to the
+original content.
+
 Directories can match a name search and known date facts; file-size,
-dimension, metadata and content filters cannot match directories.
+dimension, embedded-media metadata and content filters cannot match directories. Finder criteria can match captured folder properties.
+
+### Text encoding
+
+Both apps offer **More filters → Text encoding**, using the same global content
+encoding as `--encoding`. It also applies to content conditions when the main
+mode is name or metadata. Names and metadata values are unaffected.
+
+The `utf-8` default preserves existing behavior, including a BOM in search
+text. `auto` removes exactly one UTF-8 or UTF-16 BOM and uses UTF-8 without a
+BOM. UTF-32 BOM is reported as unsupported. Select `utf-16-le` or `utf-16-be`
+for UTF-16 without a BOM. These options remove a matching file BOM; an opposite
+BOM is reported and remains unknown under negation. The explicit legacy choices
+`windows-1252`, `iso-8859-1` and `mac-roman` decode the selected bytes without
+BOM detection. No heuristic encoding detection is performed.
+
+Example: `favenio --content --encoding=mac-roman 'Jahresbericht für Köln' folder`.
+Invalid byte sequences are replaced for positive searches; they cannot prove
+absence for a negative content condition. Exact editor positions require strict
+decoding. JSONL and CSV carry the actual decoder as `contentEncoding` when
+content was read. JSONL content evidence also preserves it. A decisive name
+branch does not open content just to populate this field.
+
+Old templates and recordings without the option retain UTF-8. A different choice
+uses strict format 2, so older receivers reject the new option. Quick additionally
+checks the main app's encoding capability. Nondefault encoding handoffs require
+Fastra's `sourceSnapshotTextEncodings` capability; original bytes, decoded text
+hash and original UTF-16 selection are confirmed independently.
+
+### In-window content preview
+
+Enable **Fundstellenvorschau** in either app before starting a search to capture
+the first content evidence for each term or decisive positive content condition.
+Select a result to see its original excerpt and highlighted match, including
+nested archive members and selected text encodings. Quick Look remains available
+with the space bar. Enabling preview for older results offers an explicit
+**Mit Vorschau neu suchen** button instead of restarting the search silently.
+
+Excerpts contain context within the matching line and remain bounded: 256
+codepoints each, 2048 per result, up to 32 excerpts and 8 MiB of preview objects
+per search. The usual early exit and archive budgets remain unchanged; searches
+without preview keep the existing reader. Missing or changed sources clear the
+preview and request a new search. Invalid decoding or an unprovable range is
+explained without claiming an exact highlight. JSONL export, recordings and
+Quick handoff preserve the excerpts. See [the preview contract](docs/CONTENT_PREVIEW.md).
+Choose a term or positive content condition in the preview, then use **Vorherige**,
+**Nächste** or **Mehr Kontext**. Navigation reads only the selected source again;
+it starts no global search. Context includes up to three lines before and after
+the match. Each request is limited to 64 MiB of rereading, three seconds in the
+reader and five seconds including archive materialization. **Abbrechen**,
+changing the selection or disabling preview stops that request. An explicit
+limit message distinguishes an incomplete read from the end of the source.
 
 ### Several terms (`--term`)
 
@@ -336,8 +448,97 @@ Evidence per term: `--json` adds `terms` — `[{"term": "alpha", "line": 1},
 {"term": "beta", "line": 3}]` for content, `[{"term": …, "field": …,
 "value": …}]` for metadata — while `line`, `field` and `value` keep
 describing the first term. Text output prints all lines (`path:1,3`) or all
-fields (`path:Keywords: Winter | Title: Alpen`). Mixing modes per term and
-OR are not available.
+fields (`path:Keywords: Winter | Title: Alpen`). `--term` continues to require
+all terms in the same target. Mixed targets and OR are available through the
+criteria tree.
+
+## PDF, DOCX, ODT, EPUB, XLSX and PPTX document text
+
+Choose **Dokumenttext** in the search-target menu, or use `favenio --document-text needle folder`.
+This reads the PDF text layer, including compressed streams. **Inhalt** / `--content` continues to search raw bytes.
+The optional local PDFKit helper is bundled with both apps; the CLI finds it in the bundle, `.build/favenio-pdf` or PATH. `FAVENIO_PDF_HELPER` selects an executable; an empty value disables it. Existing modes work without the helper.
+
+Python keeps all matching logic. Terms can occur on different pages; content criteria can combine with name, path and facts. Page evidence survives preview, on-demand navigation, JSONL and CSV exports. PDFKit determines text and column order; no semantic reading order is promised. Textless pages can use the separate opt-in `--pdf-ocr` described below. Encrypted or unreadable pages, textless pages without OCR, missing helpers and limits are explicit report reasons, not fully checked negative results.
+
+Limits: 64 MiB PDF/materialization, five seconds per document, 512 requested pages, 256 KiB UTF-8 per page and 8 MiB extracted text per document; archive budgets also apply. The reader stops once a hit is proved. See [reader, position and helper contract](docs/DOCUMENT_TEXT.md).
+
+DOCX needs no PDF helper. Word text runs are joined; body text, tables, linked headers/footers and footnotes/endnotes carry part/paragraph evidence. Comments, deleted changes, field instructions, note separators and text boxes are excluded; insertions and displayed field results are included. XML tags and formatting attributes are not searchable text. Raw-content archive search remains separately available.
+
+DOCX limits: 64 MiB package, five seconds, 64 text parts, 32768 paragraphs, 256 KiB UTF-8 per paragraph and 8 MiB total text. ZIP catalog, XML and existing archive budgets have additional caps. Missing/damaged parts or reached limits remain unknown under negation. Details and evidence contract: [document text](docs/DOCUMENT_TEXT.md).
+
+ODT document text joins spans and reads body/table paragraphs; annotations,
+tracked-change records, notes, indexes and drawing objects are excluded. EPUB
+follows container/OPF/spine order, joins inline HTML text and decodes entities;
+navigation and non-linear auxiliary chapters, scripts and styles are excluded.
+Both use the standard library and existing package/archive limits. Chapter/paragraph
+locators survive preview, navigation, handoff and exports; CSV adds `documentChapter`.
+See [projection, exclusions and limits](docs/DOCUMENT_TEXT.md).
+
+
+XLSX reads actual cells in workbook sheet order. Shared strings are resolved on
+reference through a bounded cache; unused strings never become cell hits. Inline
+and rich text runs are joined. Formulas contribute only explicitly labelled
+stored results, which may be stale; formula text is excluded and numbers remain
+unformatted stored values. Hidden sheets/cells are included, comments and drawings
+are excluded. Preview, navigation and exports retain sheet names, cell addresses
+and value kinds. See [XLSX projection and limits](docs/DOCUMENT_TEXT.md).
+
+
+PPTX follows presentation slide relationships and joins text runs in shapes and
+tables. Evidence retains the slide, stored object ID, paragraph and table cell.
+Hidden slides are included. Notes, masters/layouts, comments, fields, charts,
+images and embedded objects are excluded. XML object order is used within a slide;
+no visual reading order or PowerPoint calculation is promised. Existing package
+limits apply, with 64 slides, 32768 objects/paragraphs and 131072 table cells/rows.
+See [PPTX projection and locators](docs/DOCUMENT_TEXT.md).
+
+### Local image OCR
+
+Choose **Document text** and enable **Image OCR in document text** in the extra
+filters, or use `--document-text --ocr`. The local Vision helper extracts German
+and English text from bounded single-frame images; Python applies the same
+matching rules. OCR is off by default. Preview, JSONL and CSV label recognized
+text and approximate image regions. Recognition may miss or misread text;
+negative content criteria therefore remain unknown. See [OCR](docs/OCR.md).
+
+Scan PDFs: opt in with `--document-text --pdf-ocr`. Existing text layers take precedence; only textless pages use bounded local OCR. Page/origin evidence, limits and partial coverage are described in [PDF OCR](docs/PDF_OCR.md). Image OCR remains a separate option.
+
+## Structured criteria
+
+`--criteria-json` or `--criteria-file` adds a nested AND/OR tree for name,
+extension, relative path, content, media/Finder metadata, size, dates and image dimensions.
+Negation does not turn unavailable values into
+matches. Existing search terms and filters also have to match; each tree has
+its own matching options. A tree can be used without a search pattern.
+JSONL hits additionally carry bounded `criteriaEvidence` with stable condition
+IDs. See [the criteria contract](docs/CRITERIA.md) for the schema, examples,
+archive-root handling and limits. In both apps, **Zusätzliche Kriterien →
+Bearbeiten…** opens the graphical editor: `+` adds a condition, `⌥+` adds a
+nested group, and **Gruppe hinzufügen** offers the same operation. Each group
+selects AND or OR. Apply accepts changes after the core validates them; Cancel
+keeps the previous settings. Existing terms and filters still apply as well.
+Quick passes the complete tree and selected hits to the main app. Templates and
+recordings containing criteria use format 2; older files remain readable.
+
+## Finder tags and comments
+
+CLI criteria schema 3 adds `finderTags` and `finderComment`, separate from
+embedded media metadata. `--finder-metadata --json` captures both properties
+for matching local files and folders without Spotlight or exiftool. Missing,
+unreadable and changed values remain unknown under negation. Both apps offer
+**Finder-Tag** and **Finder-Kommentar** in the criteria editor and result filter.
+Under **Weitere Filter**, **Finder-Eigenschaften erfassen** also captures both
+properties for ordinary name searches. **Finder-Eigenschaften** below the list
+shows captured values and tag colors; the table header context menu offers
+optional tag and comment columns. Showing a column enables capture for the next
+search. Selecting a hit or filtering a recorded list uses captured values.
+
+Finder questions use criteria schema 3 and configuration format 4; Finder
+templates, Quick handoffs and recordings use format 5. Captured Finder values
+also require the new format when the original question only searched names.
+Calendar questions and their frozen bounds remain intact when combined with
+Finder fields. Older receivers are rejected before applying the new data.
+See [the Finder metadata contract](docs/FINDER_METADATA.md).
 
 ## File size and date filters
 
@@ -385,6 +586,8 @@ File facts are read once per object for filtering and result output. Files
 rejected by these cheap checks never reach image-header, metadata or content
 readers; archive traversal remains independent as described above.
 
+Calendar controls and relative date ranges (today, the last seven calendar days, this month) share an explicit run reference and time zone. Templates distinguish fixed bounds from ranges resolved at each new start. Actual bounds are retained in reports and recordings. See [date ranges](docs/DATE_RANGES.md).
+
 ## Metadata and image size search
 
 `--metadata` runs the pattern against a **curated list of text fields**
@@ -430,7 +633,8 @@ exactly the same hits and line numbers.
 Three consequences worth knowing:
 
 - Content is read as UTF-8 with `errors="replace"`, so hits in partly binary
-  files remain possible; other text encodings are not promised.
+  files remain possible. Other supported encodings are selected explicitly
+  with `--encoding`.
 - Names that are not valid UTF-8 (e.g. from a Latin-1 tar) remain distinguishable:
   text output preserves raw bytes, warnings escape them, and JSON uses U+FFFD
   in display names alongside exact Base64 `archiveMemberBytes`. The apps use
@@ -447,8 +651,9 @@ the **More filters** disclosure (*Weitere Filter*); collapsed, it names how
 many of them are set. The state persists per app.
 The **Size**, **Modified** and **Created** rows each provide lower and upper
 bounds. All bounds are inclusive. Size accepts whole bytes from 0, optionally
-with B, KiB, MiB, GiB or TiB. Timestamps require ISO 8601 with `Z` or an
-offset, such as `2026-09-05T12:00:00+02:00`; a date without a time/zone is
+with B, KiB, MiB, GiB or TiB. Calendar buttons accept dates, times and a time zone;
+raw ISO input remains available. Raw timestamps require ISO 8601 with `Z` or an
+offset, such as `2026-09-05T12:00:00+02:00`; a raw date without a time/zone is
 invalid. Empty fields mean no bound. These filters also work without search
 text and are passed on by Quick Search. Invalid inputs receive a specific
 error from the Python engine in the status line.
@@ -467,7 +672,7 @@ A JSONL record exceeding 1 MiB ends the run with a specific error message.
 
 
 EasyFind-style interface: search field, folder picker, options, results list.
-The **Name | Content | Metadata** switch says what the pattern runs against;
+The **Name / Content / Metadata / Document text** menu selects the search target;
 in metadata mode a field menu narrows it to one field. The **Image size** row
 (width and height, each from/to) filters with AND and works on its own without
 a pattern. In both apps, invalid pixel fields turn red and show a concrete
@@ -506,14 +711,14 @@ From the results list:
   The "Fundstelle" column then lists every term's line or field
 
 **Search templates** (menu *Vorlagen*): *Suche als Vorlage sichern…* (⌘S)
-stores the pattern, the current search folder and every option — mode,
+stores the pattern, the ordered search files and folders and every option — mode,
 metadata field, image size, size/date bounds, exclusions and all checkboxes —
 under a name in `~/Library/Application Support/Favenio/search-templates.json`
 (versioned JSON; the options use the same encoding as the quick-search URL,
 so a loaded template, the CLI arguments and the handoff describe the same
 search). Picking a template fills in the window without starting a search;
-if its folder no longer exists, the footer says so with the path and the
-current folder stays. *Vorlagen verwalten…* lists the templates for loading,
+missing saved roots remain visible with their paths and block a new search.
+A template with no saved roots keeps the current scope. *Vorlagen verwalten…* lists the templates for loading,
 renaming and deleting. Raw texts are kept as typed: an invalid value is
 visible after loading and is reported when you start the search. The regex
 templates next to the search field are a separate insertion helper.
@@ -523,19 +728,41 @@ across; from two selected rows on, also the size of the selection. A `≥` in
 front of the total size means at least one file has no size known up front
 (see `size` in the JSON contract).
 
+
+### Search report
+
+“Suchbericht…” in both apps explains omissions by reason: intentional exclusions,
+technical read failures and exhausted budgets. Counts represent events, not unique
+files; each reason keeps at most three shortened path examples. “Bericht exportieren…”
+saves the snapshot captured when clicked as JSON, including during a running search.
+It includes criteria, limits and the observed completion state. Warnings, cancellation
+and Quick’s hit limit never imply complete coverage. Reporting adds no full scan;
+see [the contract and limits](docs/SEARCH_REPORT.md).
+
 ### Refine, export and clean up the result list
+
+**Tabelle / Miniaturen** switches the same result list between rows and a thumbnail grid. Selection, sorting, groups, QuickLook, opening and drag-and-drop remain shared. Only visible raster images are loaded in the background; unavailable images show a reason. Thumbnails always read local content only, independently of the search setting. See [thumbnail limits and actions](docs/THUMBNAILS.md).
+
+**Dubletten prüfen…** checks a frozen selection or all currently filtered results in either app. Folders are excluded. Archive members share the existing materializer with opening and preview; archive containers remain separate whole files. Size narrows candidates, then the Python core reads the full SHA-256 and confirms matching bytes. Groups name hardlinks and symbolic links without claiming saved space. Progress, cancellation, changed sources and incomplete checks remain visible. The per-check local-content option follows the current search initially. [Limits and proof schema](docs/DUPLICATES.md).
+
+
+**Gruppieren** groups results by folder, extension or outer source archive. Groups can be collapsed and expanded; their headers are not files. Full export explicitly includes collapsed filtered results. **Quellarchiv im Finder zeigen** reveals the outer archive, and **Archivkette anzeigen…** shows each archive stage. See [grouping and archive sources](docs/RESULT_GROUPS.md).
+
+Both apps search an ordered list of files and folders through **Ablage → Suchbereiche bearbeiten…** (⇧⌘O). Overlapping successful hits appear once; a missing root blocks the whole new search. Templates, Quick handoff and recordings retain the same list. See [search roots and migration](docs/SEARCH_ROOTS.md).
+
+Both apps offer **Trefferliste filtern → Bearbeiten…** to narrow existing results by known name, path, extension, facts and captured Finder properties. **x von y Treffern** shows filtered and original counts; **Zurücksetzen** restores hidden rows without rescanning. Missing facts do not satisfy negated conditions. Selection actions and selection exports use expanded hit rows; full export includes all filtered hits; recordings and Quick handoff retain the whole source list. A new search resets this view filter. See [result filtering](docs/RESULT_FILTER.md).
 
 These entries live in the **Ablage** (File) menu and in the result list's
 context menu. The shortcuts that act on the selection (⌫, ⌘⌫, ⇧⌘E) only apply
 while the result list has focus — in the search field, ⌫ still deletes a
-character. ⌘E exports the whole list and works whenever the main window is
+character. ⌘E exports all filtered hits, including collapsed groups, and works whenever the main window is
 active; it never applies inside a dialog.
 
 | Action | Shortcut | Effect |
 | --- | --- | --- |
 | Remove from result list | ⌫ | Drops rows from the **display** only. The files are left alone. This is how a large result list is narrowed down step by step to what was actually meant |
 | Move to Trash | ⌘⌫ | After confirmation, moves the files to the Trash — like Finder, with the same sound, and recoverable from the Trash. Entries *inside* an archive are skipped and named: there is no file of their own behind them |
-| Export all hits… | ⌘E | Writes the whole list to a file |
+| Export all hits… | ⌘E | Writes all filtered hits, including collapsed groups, to a file |
 | Export selection… | ⇧⌘E | The same for the selected rows only |
 
 Export uses the result snapshot selected when invoked and writes in the
@@ -577,7 +804,7 @@ the header of a Finder window while holding **Cmd**.
   an optional switch and are **off** by default; tick **Archives** to search
   inside them
 - The type switch limits hits to files and folders, files only, or folders only
-- **Name | Content | Metadata** picks what the one search term runs against;
+- **Name / Content / Metadata / Document text** selects the search target;
   the `px` row (width and height, from/to) adds size filters and also works
   without a term
 - The result columns are sortable and resizable; horizontal scrolling exposes

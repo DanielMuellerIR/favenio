@@ -18,6 +18,15 @@ verarbeiten seinen JSONL-Strom. Suchsemantik nicht in Swift nachbauen.
 - `tests/test_favenio.py`: ausführbare Spezifikation des Python-Kerns.
 - `common/FavenioCore.swift`: gemeinsame Prozess-, JSONL- und
   Materialisierungslogik der Apps.
+- `common/DuplicateCheck.swift`: gemeinsame Auftragssteuerung und Darstellung der ausdrücklich angeforderten Dublettenprüfung; Vergleich ausschließlich in `favenio.py`; Archivmitglieder über befristete Leases des gemeinsamen MaterializationManager und dessen unveränderte Quell-/Inhaltsgenerationen, Vertrag in `docs/DUPLICATES.md`.
+- `common/ContentPreview.swift`: begrenzte Fundstellendarstellung, Prüfung der
+  Quellengeneration und Validierung der vom Kern gelieferten Ausschnittbereiche.
+- `common/CriteriaEditor.swift`: struktureller Kriterieneditor und
+  Anschluss an die Validierung im Python-Kern; keine Suchauswertung in Swift.
+- `common/DateRanges.swift`: gemeinsame Kalenderansicht und Transportprüfung
+  expliziter Zeitbelege; relative Kalenderauflösung bleibt ausschließlich im Kern.
+- `common/FinderMetadata.swift`: bytegetreues Transportmodell begrenzter Finder-
+  Snapshots; keine Quellenabfrage oder Suchauswertung.
 - `gui/FavenioGUI.swift`: Hauptfenster und dessen Headless-Selbsttest.
 - `quick/FavenioQuick.swift`: Finder-nahe Schnellsuche und Übergabe an die App.
 - `build.sh`: einheitlicher Bau-Einstieg (Wrapper auf `build-app.sh`, ohne
@@ -48,6 +57,11 @@ sowie die iWork-Formate PAGES, NUMBERS und KEY dazu.
 
 Verbindliches CLI-Verhalten:
 
+- `--criteria-json` / `--criteria-file` nehmen den versionierten Baum aus
+  `docs/CRITERIA.md` an. Schema, Grenzen, Dreiwertlogik, Wurzelbezug und
+  `criteriaEvidence` gelten gleichermaßen für Dateien und Archivmitglieder.
+  Die Auswertung bleibt im Python-Kern; Frontends erzeugen/transportieren
+  nur den Baum. Bestehende Suchbegriffe und Filter gelten zusätzlich per UND.
 - `--json` schreibt JSONL, ein Objekt pro Treffer. Jeder Treffer trägt
   `path`, `type`, `isDirectory`, `filesystemPath` und `archiveMembers`;
   Archivtreffer zusätzlich `archiveMemberBytes` mit der Base64-Identität jeder
@@ -76,6 +90,10 @@ Verbindliches CLI-Verhalten:
 - `--progress` erzeugt gedrosselte Fortschrittsobjekte. Im JSON-Modus stehen sie
   im selben stdout-Strom und sind über `type: progress` erkennbar. Ohne JSON
   gehen Fortschritte nach stderr.
+- `--json --content-preview` erfasst begrenzte erste Inhaltsbelege aus demselben
+  Leser, ohne zusätzliches Nachlesen. Schema, Quellbindung, Ausschnittbereiche
+  und Grenzen stehen in `docs/CONTENT_PREVIEW.md`; die Apps bauen keine eigene
+  Such- oder Hervorhebungslogik. Ohne Option bleibt die Erfassung aus.
 - Warnungen und Diagnose gehören nach stderr; stdout bleibt parsebar.
 - `FavenioArgumentParser.error()` gibt auch Validierungsfehler mit
   `favenio: fehler: ` und Exit 2 aus. Das Präfix gehört zum Vertrag mit
@@ -124,9 +142,27 @@ Verbindliches CLI-Verhalten:
   `search_path()` entfernt ausgeschlossene Ordner vor dem Abstieg aus
   `dirnames`; `visit_file()` und `visit_member()` prüfen vor jedem Öffnen,
   auch vor dem Rückfall auf rohe Archivbytes. Kein Standardausschluss.
-- Inhalt wird als UTF-8 mit `errors="replace"` gelesen. Dadurch bleiben Treffer
-  in teilweise binären Dateien möglich; andere Textkodierungen werden nicht
-  versprochen.
+- `--local-only` setzt vor Auftrags-/Pfadzugriffen die macOS-Prozesssperre gegen
+  dataless-Materialisierung; Helfer erben sie. Statusprüfungen allein ersetzen
+  die Sperre nicht. Namen/bekannte Fakten bleiben suchbar, nicht lokale oder
+  unbekannte Inhalte erfüllen auch Negation nicht. Explizite Dateiaktionen
+  bleiben getrennt. Vorschau-Nachladen übernimmt die Politik; automatische
+  Swift-Generationsprüfungen dürfen keine Materialisierung auslösen. Grenzen,
+  Providerunterstützung und Transportgates stehen in `docs/LOCAL_CONTENT.md`.
+- Inhalt wird standardmäßig als UTF-8 mit `errors="replace"` gelesen. `--encoding`
+  wählt aus einer begrenzten Positivliste; BOM-Automatik ist ausdrücklich zu wählen.
+  Der gemeinsame inkrementelle Decoder versorgt Vortest, Inhaltskriterien und
+  Positionsprüfung. Suchaufträge bewahren die Wahl; `contentEncoding` nennt den
+  tatsächlich gelesenen Decoder ohne zusätzliche Dateiöffnung. Ungültige
+  Zeichenfolgen können positive Treffer liefern, aber keine Abwesenheit beweisen.
+  Originalbytes und Zeilentrenner bleiben erhalten; exakte Positionsbelege
+  erfordern fehlerfreie Dekodierung und getrennte Byte-/Texthashes.
+- Normale Matcher und Ausschlüsse vergleichen in NFC; Regex arbeitet auf den
+  ursprünglichen Codepoints. Quellen und Belege werden nicht normalisiert.
+  `ContentProbe` und `iter_matching_pieces()` halten über Häppchengrenzen den
+  letzten noch komponierbaren Starter samt Kombinationszeichen zurück. Ein
+  übergroßer Rest bleibt unbekannt; der Vortest antwortet dann konservativ Ja.
+  Regex und kanonische Matcher können denselben Rohzeilenleser verwenden.
 - Gelesen wird nur, was nachweislich eine reguläre Datei ist
   (`open_regular_file()`, `O_NONBLOCK` plus `fstat`). Ein gewöhnliches
   `open()` auf eine benannte Pipe ohne Schreiber wartet unbegrenzt: Bis
@@ -273,8 +309,17 @@ Verbindliches CLI-Verhalten:
   wird also schon im Maßkriterium gefragt. Zwei Tests halten beide Hälften
   fest — der ältere prüfte nur PNGs und hätte die zweite nie bemerkt. `FileProbe` beantwortet die
   teuren Fragen (Maße, Metadaten, Inhaltszeile) je Datei genau einmal. Ein
-  weiteres Textkriterium (mehrere UND-verknüpfte Begriffe) wäre eine weitere
-  Klasse in dieser Liste — der Kern ist dafür geschnitten.
+  zusätzlicher `CriteriaQuery` enthält den strukturierten UND-/ODER-Baum.
+  `Search.evaluate()` prüft ihn gemeinsam mit den bisherigen Filtern in
+  Kostenphasen. `Condition` hält bekannte Ergebnisse und begrenzte Belege je
+  `FileProbe` fest; `CriteriaGroup` behält entscheidende Zweige. Unbekannte
+  Werte werden auch durch Negation nicht wahr. `CriteriaContentScan` teilt
+  einen fortsetzbaren Leser zwischen allen Inhaltsblättern und bisherigen
+  Inhaltsbegriffen, einschließlich früher ODER-Entscheidung. Negative
+  Inhaltsbedingungen beweisen Abwesenheit nur nach vollständigem Lesen;
+  ungeprüfte überlange verankerte Zeilen und Lesefehler bleiben unbekannt.
+  Metadatenfelder verwenden dieselbe Positivliste wie `--metadata-field`.
+  Schema und Grenzen stehen in `docs/CRITERIA.md`; keine Suchsemantik in Swift.
 - **Mehrwortsuche** (`--term`, wiederholbar, seit 0.34.0): PATTERN und jeder
   `--term` sind Begriffe, die ALLE im selben Objekt zutreffen müssen —
   gleiche Regeln (`build_matcher` je Begriff) und dasselbe Ziel. Vertrag,
@@ -408,6 +453,7 @@ Verbindliches CLI-Verhalten:
 ## Swift-Frontends
 
 Beide Apps sind programmatische AppKit-Frontends ohne Xcode-Projekt.
+`common/Thumbnails.swift` bildet dieselben Treffer und die kanonische Tabellenauswahl als Raster ab; Dateiaktionen und Archivmaterialisierung bleiben gemeinsam. Bei `NSCollectionView` muss das Layout vor den Item-/Headerklassen registriert werden. Reine Miniaturabrufe geben ihre Materialisierungs-Lease nach jedem Ausgang frei; ausdrückliche Dateiaktionen behalten den gemeinsamen Cacheeintrag.
 `NSStackView(views:)` kann eine Ansicht beim Einhängen wieder sichtbar machen,
 obwohl ihr `isHidden` vorher gesetzt wurde. Den anfänglichen Sichtbarkeitszustand
 deshalb erst nach dem Einfügen in den Stack setzen und im App-Selbsttest prüfen.
@@ -415,7 +461,9 @@ Ein umbrechendes Label in einem Popover braucht außerdem eine feste Breite oder
 eine gleichwertige Layout-Constraint; ohne sie kann AppKit den Inhalt als schmalen
 Balken anordnen.
 `HitIdentity` besteht aus `filesystemPath`, `archiveMembers` und
-`archiveMemberBytes`. Deduplikation,
+`archiveMemberBytes`. Vergleich und Hash verwenden die ursprünglichen
+UTF-8-Bytes: Swifts kanonischer Stringvergleich würde unterschiedliche
+Archivnamen mit NFC-/NFD-Schreibweise zusammenführen. Deduplikation,
 Auswahlerhalt, Entfernen aus der Trefferliste und die Schlüssel von
 Auspack-Zwischenspeicher und -Aufträgen (`MaterializationManager`) verwenden
 diese Identität,
@@ -431,6 +479,14 @@ teilen. Anzeige und Export behalten ihren bisherigen Pfadtext.
 Unterprozessaufrufe und den `MaterializationManager`. Änderungen am
 JSONL-Schema zuerst im Kern und in gemeinsamen Tests spezifizieren, dann beide
 Frontends anpassen.
+Finder-Snapshots werden ausschließlich im Python-Kern erfasst. Swift prüft den
+ursprünglichen JSON-Zweig vor Dictionary-Roundtrips über `JSONByteSlices` und
+`FinderMetadataSnapshot`; führendes U+FEFF und Zahlenlexeme dürfen nicht vor der
+Prüfung verändert werden. Snapshot-Gleichheit verwendet ursprüngliche Wertbytes,
+Status und Generation, keine JSON-Einrückung. Die Formatwahl berücksichtigt auch
+optional erfasste Werte in Treffern, nicht nur Kriterien. Vorschau, Spalten und
+historischer Ansichtsfilter lesen keine Finder-Attribute nach; Datenvertrag und
+Versionsgates stehen in [docs/FINDER_METADATA.md](docs/FINDER_METADATA.md).
 Dort steht auch `HitListController`, die Basisklasse BEIDER Controller:
 Trefferliste, wirksame Zeilenmenge (`actionRows`), Quick-Look-Vorschau samt
 Tastenweiterleitung und die Kontextmenü-Aktionen „Öffnen mit", „Im Finder
@@ -1076,3 +1132,12 @@ behobene Finder-Probleme nicht wieder als offene Arbeit übernehmen.
 - [assets/](assets/) — Signing-Entitlements und DMG-Hintergrund-Generator.
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) — CI auf macOS:
   Kern-Tests mit beiden Interpretern plus App-Build und Selbsttest.
+
+Bild-OCR bleibt ausdrücklich wählbar im Dokumenttextmodus. `favenio-ocr` erkennt
+mit Vision nur Text und Bildregionen; Suchmuster/Kriterien entscheidet ausschließlich
+Python. OCR-Belege tragen `vision-ocr-text-v1`/`imageOCR`, bleiben als erkannt und
+ungefähr gekennzeichnet und beweisen auch nach vollständiger Erkennung keine
+Abwesenheit im Original. Datei-/Maßvorfilter, Archivbudgets, Quellbindung, Abbruch
+und lokale Inhaltspolitik gelten vor jedem OCR-Zugriff. Vertrag: `docs/OCR.md`.
+
+PDF-OCR ist ausschließlich mit `--document-text --pdf-ocr` aktiv. Der PDF-Helfer bevorzugt vorhandene Textebenen und rendert nur textlose Seiten innerhalb der dokumentierten Seiten-/Pixelbudgets. Er verwendet `ocr/VisionText.swift` gemeinsam mit Bild-OCR; Matching bleibt Python. `pdfkit-vision-text-v1` bindet `pdfTextPage` und `pdfOCR` an denselben eingefrorenen Leser; Herkunft/Seite bleiben in Kriterien, Vorschau und Transport erhalten. OCR beweist keine Originalabwesenheit. Vertrag: `docs/PDF_OCR.md`.

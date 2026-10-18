@@ -112,14 +112,30 @@ def suite_binary():
             ('REFRESH', 'func refreshFinderFoldersAsync() {'),
             ('APPLY', 'func applyScopeOutcome(_ outcome: FinderScopeOutcome) {'),
             ('NOTE', 'func runScopeNoteText() -> String? {'),
+            ('SEARCH_INFO', 'func showSearchInfo('),
+            ('SCOPE_PROBLEM', 'func showScopeProblem('),
         ):
             harness = harness.replace('/* ' + marker + ' */', swift_function(quick, signature))
         scope = root / 'QuickScope.swift'
         scope.write_text(harness, encoding='utf-8')
+        filter_source = (REPO / 'tests/result_filter_probe.swift').read_text(encoding='utf-8')
+        for marker, signature in (
+            ('QUICK_FILTER_RELOAD', 'func reloadKeepingSelection('),
+            ('QUICK_FILTER_SELECTION', 'func tableViewSelectionDidChange('),
+        ):
+            filter_source = filter_source.replace('/* ' + marker + ' */', swift_function(quick, signature))
+        filter_probe = root / 'ResultFilterProbe.swift'
+        filter_probe.write_text(filter_source, encoding='utf-8')
         binary = root / 'TestProbe'
         probes = ['runner_probe.swift', 'materialization_probe.swift',
-                  'configuration_probe.swift', 'export_probe.swift', 'test_probe.swift']
-        command = ['swiftc', '-O', '-D', 'FAVENIO_TEST_SUITE', str(core), str(scope)]
+                  'configuration_probe.swift', 'thumbnail_probe.swift', 'duplicate_probe.swift', 'export_probe.swift', 'search_report_probe.swift', 'content_preview_probe.swift', 'test_probe.swift']
+        command = ['swiftc', '-O', '-D', 'FAVENIO_TEST_SUITE', str(core), str(scope),
+                   str(REPO / 'common/ContentPreview.swift'), str(REPO / 'common/Thumbnails.swift'),
+                   str(REPO / 'common/SearchReport.swift'), str(REPO / 'common/DuplicateCheck.swift'),
+                   str(REPO / 'common/CriteriaEditor.swift'),
+                   str(REPO / 'common/DateRanges.swift'), str(REPO / 'common/FinderMetadata.swift'),
+                   str(REPO / 'gui/CriteriaEditorSelfTest.swift'), str(filter_probe),
+                   str(REPO / 'tests/result_grouping_probe.swift'), str(REPO / 'tests/search_roots_probe.swift'), str(REPO / 'tests/date_ranges_probe.swift'), str(REPO / 'tests/finder_metadata_probe.swift')]
         command += [str(REPO / 'tests' / name) for name in probes]
         result = run_process(command + ['-o', str(binary)], timeout=120)
         if result.returncode:

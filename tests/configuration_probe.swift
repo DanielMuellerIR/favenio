@@ -11,6 +11,20 @@ struct ConfigurationProbe {
     static func run(_ arguments: [String]) throws {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
+        let nfc = "Büro"
+        let nfd = "Bu\u{0308}ro"
+        precondition(nfc == nfd && !nfc.utf8.elementsEqual(nfd.utf8))
+        let firstPath = HitIdentity(filesystemPath: "/" + nfc, archiveMembers: [])
+        let secondPath = HitIdentity(filesystemPath: "/" + nfd, archiveMembers: [])
+        let firstMember = HitIdentity(filesystemPath: "/archive.zip", archiveMembers: [nfc])
+        let secondMember = HitIdentity(filesystemPath: "/archive.zip", archiveMembers: [nfd])
+        precondition(Set([firstPath, secondPath, firstMember, secondMember]).count == 4,
+                     "Kanonisch gleiche Anzeigenamen dürfen keine Originalidentitäten zusammenführen")
+        let ascii = HitIdentity(filesystemPath: "/ascii", archiveMembers: ["item"])
+        let bridged = HitIdentity(filesystemPath: NSString(string: "/ascii") as String, archiveMembers: ["item"])
+        precondition(ascii == bridged && Set([ascii, bridged]).count == 1)
+        let bridgedNFD = HitIdentity(filesystemPath: NSString(string: "/" + nfd) as String, archiveMembers: [])
+        precondition(secondPath == bridgedNFD && Set([secondPath, bridgedNFD]).count == 1)
         var original = SearchConfiguration()
         original.mode = .metadata
         original.regex = true
@@ -28,7 +42,7 @@ struct ConfigurationProbe {
                              "created-from": "2000-01-01T00:00:00Z",
                              "created-to": "2099-01-01T00:00:00Z"]
         original.exclusions = ["node_modules", "Cache/*.zip", " whitespace ", "100%+#Ü.txt", "-cache", "--hidden"]
-        original.terms = ["beta", " mit Leerraum ", "-dash", "100%+#Ü"]
+        original.terms = ["beta", " mit Leerraum ", "-dash", "100%+#Ü", nfd]
         var url = URLComponents()
         url.scheme = "favenio"
         url.host = "results"
@@ -36,6 +50,7 @@ struct ConfigurationProbe {
         let decoded = SearchConfiguration.fromQueryItems(
             URLComponents(url: url.url!, resolvingAgainstBaseURL: false)!.queryItems!)
         precondition(original == decoded, "Options-URL verliert Werte")
+        precondition(decoded.terms.last!.utf8.elementsEqual(nfd.utf8), "Options-URL verändert Original-Codepoints")
         let args = decoded.arguments(pattern: "Winter", root: "/fixture")!
         precondition(args.filter { $0.hasPrefix("--exclude=") }
             .map { String($0.dropFirst("--exclude=".count)) } == original.exclusions)
@@ -141,12 +156,242 @@ struct ConfigurationProbe {
         let loaded = try store.load()
         precondition(loaded == templates, "Vorlagendatei verliert Werte")
         let json = try JSONSerialization.jsonObject(with: Data(contentsOf: templateFile)) as! [String: Any]
-        precondition(json["version"] as? Int == SearchTemplateFormat.version)
+        precondition(json["version"] as? Int == 1)
+        let criteria = """
+        {"schemaVersion":1,"root":{"id":"all","op":"and","children":[
+          {"id":"name","field":"name","operator":"contains","value":"needle"},
+          {"id":"formats","op":"or","children":[
+            {"id":"txt","field":"extension","operator":"equals","value":"txt"},
+            {"id":"log","field":"extension","operator":"equals","value":"log"}]}]}}
+        """
+        var criteriaConfiguration = SearchConfiguration(archives: true)
+        criteriaConfiguration.criteriaJSON = criteria
+        let criteriaTemplate = SearchTemplate(name: "Baum", pattern: "", root: fixture.path,
+                                              configuration: criteriaConfiguration)
+        try store.save([criteriaTemplate])
+        let criteriaData = try Data(contentsOf: templateFile)
+        var criteriaObject = try JSONSerialization.jsonObject(with: criteriaData) as! [String: Any]
+        precondition(criteriaObject["version"] as? Int == 2)
+        let criteriaLoaded = try store.load()
+        precondition(criteriaLoaded == [criteriaTemplate])
+        let criteriaURL = SearchTemplateFormat.encodeOptions(criteriaLoaded[0].configuration)
+        let criteriaRestored = try SearchTemplateFormat.decodeOptions(criteriaURL)
+        precondition(criteriaRestored == criteriaConfiguration)
+        var criteriaHits: [Hit] = []
+        let criteriaExit = runSearchStreaming(arguments: criteriaRestored.arguments(pattern: "", root: fixture.path)!,
+                                              onHit: { criteriaHits.append($0) }, onProgress: { _ in })
+        precondition(criteriaExit.status == 0 && criteriaHits.count == 2)
+        precondition(criteriaHits.allSatisfy { $0.criteriaEvidence.map { $0.id } == ["name", "txt"] })
+        // Alte Leser müssen die neue Frage ablehnen, statt deren Kriterien zu verlieren.
+        criteriaObject["version"] = 1
+        let migrated = try SearchTemplateFormat.decode(JSONSerialization.data(withJSONObject: criteriaObject))
+        precondition(migrated == [criteriaTemplate], "Kriterien aus 0.40.0 gehen beim Laden verloren")
+        let migratedObject = try JSONSerialization.jsonObject(with: SearchTemplateFormat.encode(migrated)) as! [String: Any]
+        precondition(migratedObject["version"] as? Int == 2)
+        for invalidVersion: Any in [6, true, 1.5] {
+            criteriaObject["version"] = invalidVersion
+            do {
+                _ = try SearchTemplateFormat.decode(JSONSerialization.data(withJSONObject: criteriaObject))
+                preconditionFailure("Unpassende Vorlagenversion akzeptiert")
+            } catch is SearchTemplateError {}
+        }
+        criteriaObject["version"] = 2
+        let validEntry = (criteriaObject["templates"] as! [[String: Any]])[0]
+        for field in ["pattern", "root", "options"] {
+            var entry = validEntry
+            entry[field] = 1
+            criteriaObject["templates"] = [entry]
+            do {
+                _ = try SearchTemplateFormat.decode(JSONSerialization.data(withJSONObject: criteriaObject))
+                preconditionFailure("Ungültiges Vorlagenfeld wird still durch einen Default ersetzt")
+            } catch is SearchTemplateError {}
+        }
+        for raw in ["{future: true}", criteria.replacingOccurrences(of: "needle", with: "Bu\u{0308}ro #100% + a!/b"),
+                    criteria + String(repeating: " ", count: CriteriaTransport.maximumBytes - criteria.utf8.count)] {
+            criteriaConfiguration.criteriaJSON = raw
+            let rawTemplate = SearchTemplate(name: "Rohbaum", pattern: "", root: nil, configuration: criteriaConfiguration)
+            let restored = try SearchTemplateFormat.decode(SearchTemplateFormat.encode([rawTemplate]))
+            precondition(restored == [rawTemplate], "Rohtext eines nicht darstellbaren Baums wird verändert")
+        }
+        let finderSchema = #"{"schemaVersion":3,"root":{"id":"tag","field":"finderTags","operator":"contains","value":"Projekt"}}"#
+        precondition(SearchConfiguration.transportProblem([URLQueryItem(name: "criteria", value: finderSchema)]) == nil)
+        var finderConfiguration = SearchConfiguration(); finderConfiguration.criteriaJSON = finderSchema
+        let finderTemplate = SearchTemplate(name: "Finder", pattern: "", roots: ["/missing"], configuration: finderConfiguration)
+        let finderData = try SearchTemplateFormat.encode([finderTemplate])
+        var finderObject = try JSONSerialization.jsonObject(with: finderData) as! [String: Any]
+        let restoredFinder = try SearchTemplateFormat.decode(finderData)
+        precondition(finderObject["version"] as? Int == 5 && restoredFinder == [finderTemplate])
+        let rawFinder = String(decoding: finderData, as: UTF8.self)
+        let duplicateFinder = rawFinder.replacingOccurrences(of: "\"version\" : 5", with: "\"version\" : 4, \"version\" : 5")
+        precondition(duplicateFinder != rawFinder)
+        do { _ = try SearchTemplateFormat.decode(Data(duplicateFinder.utf8)); preconditionFailure("Doppelte Finder-Vorlagenfelder akzeptiert") }
+        catch is SearchTemplateError {}
+        finderObject["version"] = 4
+        do { _ = try SearchTemplateFormat.decode(JSONSerialization.data(withJSONObject: finderObject)); preconditionFailure("Finder-Frage unter Altformat akzeptiert") }
+        catch is SearchTemplateError {}
+        finderConfiguration.criteriaJSON = nil; finderConfiguration.finderMetadata = true
+        precondition(finderConfiguration.arguments(pattern: "synthetic", root: "/missing")!.contains("--finder-metadata"))
+        criteriaConfiguration.criteriaJSON = String(repeating: " ", count: CriteriaTransport.maximumBytes + 1)
+        let beforeOversized = try Data(contentsOf: templateFile)
+        do {
+            try store.save([SearchTemplate(name: "Zu groß", pattern: "", root: nil, configuration: criteriaConfiguration)])
+            preconditionFailure("Zu große Kriterien wurden gesichert")
+        } catch is SearchTemplateError {}
+        let afterOversized = try Data(contentsOf: templateFile)
+        precondition(afterOversized == beforeOversized)
+        for options in ["criteria=x&criteria=y", "criteria", "criteria=%00"] {
+            do { _ = try SearchTemplateFormat.decodeOptions(options); preconditionFailure("Ungültiger Kriterientransport") }
+            catch is SearchTemplateError {}
+        }
+        let chosen = Set(criteriaHits.map { $0.identity }.prefix(1))
+        let handoff = try writeQuickHandoff(criteriaHits, selection: chosen, version: 2)
+        let payload = consumeQuickHandoffPayload(handoff)!
+        precondition(payload.version == 2 && payload.hits == criteriaHits && payload.selection == chosen)
+        precondition(!FileManager.default.fileExists(atPath: handoff.path))
+        let malformed = try writeQuickHandoff(criteriaHits, version: 2)
+        let malformedData = try String(contentsOf: malformed, encoding: .utf8)
+        try malformedData.replacingOccurrences(of: "\"schemaVersion\":2", with: "\"schemaVersion\":3")
+            .write(to: malformed, atomically: true, encoding: .utf8)
+        precondition(consumeQuickHandoffPayload(malformed) == nil)
         try Data("{\"version\": 99, \"templates\": []}".utf8).write(to: templateFile)
         do { _ = try store.load(); preconditionFailure("Version 99 wurde gelesen") }
         catch let error as SearchTemplateError { precondition(error.description.contains("99")) }
         let missing = try SearchTemplateStore(fileURL: templateFile.appendingPathExtension("fehlt")).load()
         precondition(missing.isEmpty)
+        for encoding in SearchTextEncoding.allCases {
+            var configuration = SearchConfiguration()
+            configuration.mode = .content
+            configuration.textEncoding = encoding
+            let items = configuration.queryItems
+            precondition(SearchConfiguration.transportProblem(items) == nil)
+            precondition(SearchConfiguration.fromQueryItems(items) == configuration)
+            precondition(configuration.arguments(pattern: "Büro", root: "/tmp")!.contains("--encoding=" + encoding.rawValue) == (encoding != .utf8))
+            precondition(configuration.requiresTransportVersion2 == (encoding != .utf8))
+            precondition(!SearchConfiguration(textEncoding: encoding).hasPositiveFilter)
+            let template = SearchTemplate(name: "Kodierung", pattern: "Büro", root: nil, configuration: configuration)
+            let data = try SearchTemplateFormat.encode([template])
+            let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            precondition(object["version"] as? Int == (encoding == .utf8 ? 1 : 2))
+            let decodedTemplates = try SearchTemplateFormat.decode(data)
+            precondition(decodedTemplates == [template])
+            let filters = SearchFilterView()
+            filters.textEncoding = encoding
+            precondition(filters.textEncoding == encoding && filters.activeFilterCount == (encoding == .utf8 ? 0 : 1))
+            var notified = 0
+            filters.onChange = { notified += 1 }
+            _ = filters.encodingPopup.sendAction(filters.encodingPopup.action, to: filters.encodingPopup.target)
+            precondition(notified == 1)
+        }
+        for query in ["encoding=utf-7", "encoding=", "encoding=utf-8&encoding=auto", "encoding=mac-roman&surprise=1"] {
+            let items = URLComponents(string: "?" + query)!.queryItems!
+            precondition(SearchConfiguration.transportProblem(items) != nil)
+            do { _ = try SearchTemplateFormat.decodeOptions(query); preconditionFailure("Ungültiger Decoder wurde übernommen") }
+            catch is SearchTemplateError {}
+        }
+        var encodedHit = criteriaHits[0]
+        encodedHit.contentEncoding = "utf-16-be"
+        encodedHit.criteriaEvidence = [CriterionEvidence(id: "content", field: "content", value: "Büro", line: 2, contentEncoding: "utf-16-be")]
+        precondition(parseHit(jsonlData(for: [encodedHit]).dropLast()) == encodedHit)
+        let csvLines = String(decoding: exportData(for: [encodedHit], format: .csv), as: UTF8.self).split(separator: "\n")
+        let csvHeaders = csvLines[0].split(separator: ",", omittingEmptySubsequences: false)
+        let csvValues = csvLines[1].split(separator: ",", omittingEmptySubsequences: false)
+        precondition(csvHeaders.count == csvValues.count && csvValues[csvHeaders.firstIndex(of: "contentEncoding")!] == "utf-16-be")
+        var localConfiguration = SearchConfiguration()
+        localConfiguration.localOnly = true
+        precondition(localConfiguration.arguments(pattern: "needle", root: "/fixture")!.contains("--local-only"))
+        precondition(SearchConfiguration.fromQueryItems(localConfiguration.queryItems) == localConfiguration)
+        let localTemplate = SearchTemplate(name: "Lokal", pattern: "needle", root: "/fixture", configuration: localConfiguration)
+        let localData = try SearchTemplateFormat.encode([localTemplate])
+        var localObject = try JSONSerialization.jsonObject(with: localData) as! [String: Any]
+        precondition(localObject["version"] as? Int == 6)
+        let localRestored = try SearchTemplateFormat.decode(localData)
+        precondition(localRestored[0].configuration.localOnly)
+        localObject["version"] = 5
+        do { _ = try SearchTemplateFormat.decode(JSONSerialization.data(withJSONObject: localObject)); preconditionFailure("Lokale Politik unter Altformat") }
+        catch is SearchTemplateError {}
+        for query in ["local-only=2", "local-only=1&local-only=0", "local-only"] {
+            do { _ = try SearchTemplateFormat.decodeOptions(query); preconditionFailure("Ungültige lokale Politik") }
+            catch is SearchTemplateError {}
+        }
+        let localHandoff = try writeQuickHandoff([], version: 6, roots: ["/fixture"], configuration: localConfiguration)
+        let localPayload = consumeQuickHandoffPayload(localHandoff)!.bound(to: ["/fixture"])!
+        precondition(localPayload.version == 6 && localPayload.configuration!.localOnly)
+        do { _ = try writeQuickHandoff([], version: 5, roots: ["/fixture"], configuration: localConfiguration); preconditionFailure("Lokale Politik in alter Quick-Übergabe") }
+        catch {}
+        let localView = SearchFilterView()
+        var localChanges = 0
+        localView.onChange = { localChanges += 1 }
+        precondition(!localView.localOnly && localView.activeFilterCount == 0)
+        localView.localOnlyCheckbox.performClick(nil)
+        precondition(localView.localOnly && localView.activeFilterCount == 1 && localChanges == 1)
+        var pdfConfiguration = SearchConfiguration()
+        pdfConfiguration.mode = .document; pdfConfiguration.pdfOCR = true; pdfConfiguration.ocr = true; pdfConfiguration.localOnly = true
+        precondition(pdfConfiguration.arguments(pattern: "München", root: "/fixture")!.contains("--pdf-ocr"))
+        precondition(SearchConfiguration.fromQueryItems(pdfConfiguration.queryItems) == pdfConfiguration)
+        let pdfTemplate = SearchTemplate(name: "PDF-OCR", pattern: "München", root: "/fixture", configuration: pdfConfiguration)
+        let pdfData = try SearchTemplateFormat.encode([pdfTemplate])
+        var pdfObject = try JSONSerialization.jsonObject(with: pdfData) as! [String: Any]
+        precondition(pdfObject["version"] as? Int == 8)
+        let restoredPDF = try SearchTemplateFormat.decode(pdfData); precondition(restoredPDF[0].configuration.pdfOCR)
+        pdfObject["version"] = 7
+        do { _ = try SearchTemplateFormat.decode(JSONSerialization.data(withJSONObject: pdfObject)); preconditionFailure("PDF-OCR unter Altformat") } catch {}
+        let pdfHandoff = try writeQuickHandoff([], version: 8, roots: ["/fixture"], configuration: pdfConfiguration)
+        let pdfPayload = consumeQuickHandoffPayload(pdfHandoff)!.bound(to: ["/fixture"])!
+        precondition(pdfPayload.version == 8 && pdfPayload.configuration!.pdfOCR && pdfPayload.configuration!.ocr)
+        do { _ = try writeQuickHandoff([], version: 7, roots: ["/fixture"], configuration: pdfConfiguration); preconditionFailure("PDF-OCR in alter Übergabe") } catch {}
+        let pdfView = SearchFilterView(); precondition(!pdfView.pdfOCR); pdfView.pdfOCRCheckbox.performClick(nil)
+        precondition(pdfView.pdfOCR && pdfView.activeFilterCount == 1)
+        let pdfPosition: [String: Any] = ["kind": "pdfOCR", "page": 2, "block": 1, "line": 1, "confidence": 0.9, "region": [0.1, 0.2, 0.5, 0.1]]
+        precondition(DocumentPosition.parse(pdfPosition)!.json["page"] as? Int == 2)
+        var badPDFPosition = pdfPosition; badPDFPosition["page"] = true
+        precondition(DocumentPosition.parse(badPDFPosition) == nil)
+        precondition(DocumentPosition.parse(["kind": "pdfTextPage", "page": 1, "line": 1])!.reader == "pdfkit-vision-v1")
+        if case .progress(let detail)? = parseSearchLine(Data(#"{"type":"progress","path":"/fixture","stage":"pdfOCR","page":2,"pages":4}"#.utf8)) { precondition(detail.contains("PDF-OCR · Seite 2 von 4")) } else { preconditionFailure("PDF-Fortschritt fehlt") }
+        var ocrConfiguration = SearchConfiguration()
+        ocrConfiguration.mode = .document; ocrConfiguration.ocr = true; ocrConfiguration.localOnly = true
+        precondition(ocrConfiguration.arguments(pattern: "München", root: "/fixture")!.contains("--ocr"))
+        precondition(SearchConfiguration.fromQueryItems(ocrConfiguration.queryItems) == ocrConfiguration)
+        let ocrTemplate = SearchTemplate(name: "OCR", pattern: "München", root: "/fixture", configuration: ocrConfiguration)
+        let ocrData = try SearchTemplateFormat.encode([ocrTemplate])
+        var ocrObject = try JSONSerialization.jsonObject(with: ocrData) as! [String: Any]
+        precondition(ocrObject["version"] as? Int == 7)
+        let restoredOCR = try SearchTemplateFormat.decode(ocrData)
+        precondition(restoredOCR[0].configuration.ocr)
+        ocrObject["version"] = 6
+        do { _ = try SearchTemplateFormat.decode(JSONSerialization.data(withJSONObject: ocrObject)); preconditionFailure("OCR unter Altformat") }
+        catch is SearchTemplateError {}
+        let ocrHandoff = try writeQuickHandoff([], version: 7, roots: ["/fixture"], configuration: ocrConfiguration)
+        let ocrPayload = consumeQuickHandoffPayload(ocrHandoff)!.bound(to: ["/fixture"])!
+        precondition(ocrPayload.version == 7 && ocrPayload.configuration!.ocr && ocrPayload.configuration!.localOnly)
+        do { _ = try writeQuickHandoff([], version: 6, roots: ["/fixture"], configuration: ocrConfiguration); preconditionFailure("OCR in alter Quick-Übergabe") }
+        catch {}
+        let ocrView = SearchFilterView()
+        precondition(!ocrView.ocr)
+        ocrView.ocrCheckbox.performClick(nil)
+        precondition(ocrView.ocr && ocrView.activeFilterCount == 1)
+        let ocrPosition: [String: Any] = ["kind": "imageOCR", "block": 1, "line": 1, "confidence": 0.9, "region": [0.1, 0.2, 0.5, 0.1]]
+        let ocrGeneration: [String: Any] = ["device": "1", "inode": "2", "size": "3", "modifiedNS": "4", "changedNS": "5"]
+        let ocrRow: [String: Any] = ["path": "/fixture/screen.png", "type": "file", "isDirectory": false, "filesystemPath": "/fixture/screen.png", "archiveMembers": [], "line": 1,
+            "contentEncoding": "vision-ocr-text-v1", "documentPosition": ocrPosition, "documentSourceGeneration": ocrGeneration]
+        let ocrHit = parseHit(try JSONSerialization.data(withJSONObject: ocrRow))!
+        precondition(ocrHit.documentPosition!.title.contains("OCR") && ocrHit.documentPosition!.title.contains("ca."))
+        precondition(parseHit(jsonlData(for: [ocrHit]).dropLast()) == ocrHit)
+        let boundOCRHit = SearchRoots(["/fixture"]).carrying(ocrHit)!
+        var pdfOnly = pdfConfiguration; pdfOnly.ocr = false
+        do { _ = try writeQuickHandoff([boundOCRHit], version: 8, roots: ["/fixture"], configuration: pdfOnly); preconditionFailure("Bild-OCR ohne aktive Bildoption in PDF-Übergabe") } catch {}
+        let mixedHandoff = try writeQuickHandoff([boundOCRHit], version: 8, roots: ["/fixture"], configuration: pdfConfiguration)
+        let lines = try Data(contentsOf: mixedHandoff).split(separator: 10)
+        var header = try JSONSerialization.jsonObject(with: Data(lines[0])) as! [String: Any]
+        header["options"] = pdfOnly.queryItems.map { ["name": $0.name, "value": $0.value ?? ""] }
+        var altered = try JSONSerialization.data(withJSONObject: header); altered.append(10); altered.append(jsonlData(for: [boundOCRHit]))
+        try altered.write(to: mixedHandoff)
+        precondition(consumeQuickHandoffPayload(mixedHandoff) == nil)
+        var badOCR = ocrPosition; badOCR["confidence"] = true
+        precondition(DocumentPosition.parse(badOCR) == nil)
+        badOCR = ocrPosition; badOCR["region"] = [0.9, 0.2, 0.5, 0.1]
+        precondition(DocumentPosition.parse(badOCR) == nil)
+        let ocrCSV = String(decoding: exportData(for: [ocrHit], format: .csv), as: UTF8.self)
+        precondition(ocrCSV.contains("ocrBlock,ocrConfidence,ocrRegion") && ocrCSV.contains("0.1;0.2;0.5;0.1"))
         let view = SearchFilterView()
         view.literalWildcards = true
         precondition(view.literalWildcardsCheckbox.title == "* wörtlich")

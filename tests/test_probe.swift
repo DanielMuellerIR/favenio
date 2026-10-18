@@ -9,10 +9,20 @@ import UniformTypeIdentifiers
         // Die Einzelproben behalten ihre bisherigen Argumentpositionen.
         let arguments = [command[0]] + Array(command.dropFirst(2))
         switch command[1] {
+        case "search-report": try SearchReportProbe.run(arguments)
         case "runner": RunnerProbe.run(arguments)
         case "materialization": MaterializationProbe.run(arguments)
         case "configuration": try ConfigurationProbe.run(arguments)
+        case "duplicates": try DuplicateProbe.run(arguments)
+        case "thumbnails": try ThumbnailProbe.run(Array(CommandLine.arguments.dropFirst()))
         case "export": try ExportProbe.main()
+        case "content-preview": try ContentPreviewProbe.run(arguments)
+        case "result-filter": try ResultFilterProbe.run(arguments)
+        case "result-grouping": try ResultGroupingProbe.run(arguments)
+        case "search-roots": try SearchRootsProbe.run(arguments)
+        case "finder-metadata": try FinderMetadataProbe.run(arguments)
+        case "date-ranges": try DateRangesProbe.run(arguments)
+        case "criteria-editor": try CriteriaEditorSelfTest.run()
         case "scope-refresh": QuickScopeRefreshHarness.run()
         case "scope-note": QuickScopeNoteHarness.run()
         case "pixel-limit", "csv-field", "type-description":

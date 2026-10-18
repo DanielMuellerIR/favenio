@@ -888,11 +888,13 @@ echo "INSTALL OK: test"
         # Beim Einsetzen der zweiten App ist die erste bereits neu und die
         # zweite alte App liegt im Sicherungsordner. INT oder TERM darf diesen
         # Zwischenstand weder liegen lassen noch nur die Sperre entfernen.
+        # Ein Signal während des zsh-print-Redirects kann einen Nachfahren
+        # mit offener Ausgabepipe zurücklassen. Die Marke schreibt ein Kind.
         prelude = r'''
         mv() {
             if [[ "$1" == */.favenio-install.*/FavenioQuick.app &&
                   "$2" == "$FAVENIO_TEST_DEST/FavenioQuick.app" ]]; then
-                print -r -- bereit > "$FAVENIO_TEST_READY"
+                /bin/echo bereit > "$FAVENIO_TEST_READY"
                 while true; do :; done
             fi
             command mv "$@"
@@ -904,7 +906,7 @@ echo "INSTALL OK: test"
         process = subprocess.Popen(
             ["zsh", "-c", self.install_script("    return 0", prelude)],
             cwd=REPO, env=environment, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT)
+            stderr=subprocess.STDOUT, start_new_session=True)
         try:
             deadline = time.monotonic() + 5
             while not ready.exists() and time.monotonic() < deadline:
@@ -912,19 +914,24 @@ echo "INSTALL OK: test"
                     break
                 time.sleep(0.01)
             if not ready.exists():
-                if process.poll() is None:
-                    process.kill()
-                output = process.communicate()[0].decode("utf-8", "replace")
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                output = process.communicate(timeout=5)[0].decode("utf-8", "replace")
                 self.fail("Tauschphase nicht erreicht:\n%s" % output)
             process.send_signal(signum)
             output = process.communicate(timeout=5)[0].decode("utf-8", "replace")
         finally:
-            # Auch bei Timeout oder einer fehlgeschlagenen Assertion darf
-            # die wartende Shell nicht weiterlaufen; anschließend einsammeln.
-            if process.poll() is None:
-                process.kill()
+            # Auch ein bereits beendeter Elternprozess kann Nachfahren mit
+            # offener Pipe hinterlassen. Nur die eigene neue Gruppe beenden.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=5)
             if not process.stdout.closed:
-                process.communicate()
+                process.communicate(timeout=5)
             else:
                 process.wait()
         self.assertEqual(process.returncode, 2, output)

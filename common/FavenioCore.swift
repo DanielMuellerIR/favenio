@@ -150,6 +150,15 @@ struct Hit: Hashable {
     /// Mehrwortsuche (`--term`): je Begriff der Beleg — Zeile bei Inhalt,
     /// Feld und Wert bei Metadaten. Leer bei einem Begriff.
     var terms: [TermEvidence] = []
+    var criteriaEvidence: [CriterionEvidence] = []
+    var contentEncoding: String? = nil
+    var contentPreview: ContentPreview? = nil
+    var documentEvidence: DocumentEvidence? = nil
+    var searchRootBytes: Data? = nil
+    var finderMetadata: FinderMetadataSnapshot? = nil
+    var searchRoot: String? { searchRootBytes.map { String(decoding: $0, as: UTF8.self) } }
+    var documentPosition: DocumentPosition? { documentEvidence?.position }
+    var documentSourceGeneration: ContentSourceGeneration? { documentEvidence?.generation }
 
     /// Anzeige und Suchbelege können sich ändern; das gefundene Objekt wird
     /// allein durch Dateisystempfad und die einzelnen Archivstufen bestimmt.
@@ -172,12 +181,12 @@ struct Hit: Hashable {
     var hasOpenableFile: Bool { !(isMember && isDirectory) }
 
     /// Die Spalte „Fundstelle": Zeilennummer bei Inhaltstreffern,
-    /// „Feld: Wert" bei Metadatentreffern, sonst leer.
+    /// „Feld: Wert“ bei Metadaten oder begrenzte Kriterienbelege.
     var locationText: String {
         if terms.count > 1 {
             // Alle Begriffe: „1, 3" bzw. „Keywords: Winter | Title: Alpen".
             if terms.allSatisfy({ $0.line != nil }) {
-                return terms.map { String($0.line!) }.joined(separator: ", ")
+                return terms.map { $0.documentPosition?.title ?? String($0.line!) }.joined(separator: ", ")
             }
             if terms.allSatisfy({ $0.field != nil }) {
                 return terms.map { $0.field! + ": " + ($0.value ?? "") }
@@ -185,7 +194,21 @@ struct Hit: Hashable {
             }
         }
         if let field, let value { return field + ": " + value }
-        return line.map { String($0) } ?? ""
+        if let documentPosition { return documentPosition.title }
+        if let line { return String(line) }
+        let fields = ["name": "Name", "extension": "Endung", "relativePath": "Pfad",
+                      "content": "Inhalt", "metadata": "Metadaten", "size": "Größe",
+                      "modified": "Geändert", "created": "Erstellt", "width": "Breite", "height": "Höhe",
+                      "finderTags": "Finder-Tags", "finderComment": "Finder-Kommentar"]
+        let locations = criteriaEvidence.filter { ["content", "metadata"].contains($0.field) }
+        let facts = criteriaEvidence.filter { !["content", "metadata"].contains($0.field) }
+        var evidence = (locations + facts).prefix(3).map {
+            let place = ($0.documentPosition.map { " " + $0.title } ?? $0.line.map { " Zeile \($0)" } ?? "") + ($0.metadataField.map { " \($0)" } ?? "")
+            let absent = $0.field == "content" && $0.negated ? "ohne „" + $0.value + "“" : $0.value
+            return (fields[$0.field] ?? $0.field) + place + ": " + absent + ($0.valueTruncated ? "…" : "")
+        }
+        if criteriaEvidence.count > 3 { evidence.append("+\(criteriaEvidence.count - 3) weitere") }
+        return evidence.joined(separator: " | ")
     }
 
     /// Die Spalte „Maße": „1200×800" oder leer.
@@ -236,16 +259,24 @@ struct Hit: Hashable {
     /// außerhalb (anderer Startpfad, Übergabe aus der Schnellsuche mit
     /// anderem Ordner) behält seinen vollen Pfad, statt einen falschen
     /// relativen zu erfinden.
-    func folderText(relativeTo root: String) -> String {
+    func folderText(relativeTo root: String, showSearchRoot: Bool = false) -> String {
+        if showSearchRoot, let source = searchRoot {
+            let relative = folderText(relativeTo: source)
+            return abbreviateHome(source) + (relative.isEmpty ? "" : " → " + relative)
+        }
         let folder = folderPath
-        var base = root
+        var base = searchRoot ?? root
+        if Data(base.utf8) == Data(filesystemPath.utf8), !isDirectory {
+            base = (base as NSString).deletingLastPathComponent
+        }
         while base.count > 1 && base.hasSuffix("/") { base.removeLast() }
         if base == "/" {
             return folder == "/" ? "" : String(folder.dropFirst())
         }
-        if folder == base { return "" }
-        if folder.hasPrefix(base + "/") {
-            return String(folder.dropFirst(base.count + 1))
+        let bytes = Data(folder.utf8), prefix = Data((base + "/").utf8)
+        if bytes == Data(base.utf8) { return "" }
+        if bytes.starts(with: prefix) {
+            return String(decoding: bytes.dropFirst(prefix.count), as: UTF8.self)
         }
         return folder
     }
@@ -303,6 +334,35 @@ struct HitIdentity: Hashable {
         self.filesystemPath = filesystemPath
         self.archiveMembers = archiveMembers
         self.archiveMemberBytes = archiveMemberBytes
+    }
+
+    // Swift-Strings setzen NFC/NFD gleich; eine Dateiidentität behält ihre Originalbytes.
+    static func == (lhs: HitIdentity, rhs: HitIdentity) -> Bool {
+        lhs.filesystemPath.utf8.elementsEqual(rhs.filesystemPath.utf8)
+            && sameOriginalTexts(lhs.archiveMembers, rhs.archiveMembers)
+            && sameOriginalTexts(lhs.archiveMemberBytes, rhs.archiveMemberBytes)
+    }
+
+    private static func sameOriginalTexts(_ lhs: [String], _ rhs: [String]) -> Bool {
+        lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { $0.0.utf8.elementsEqual($0.1.utf8) }
+    }
+
+    private static func hashOriginalText(_ text: String, into hasher: inout Hasher) {
+        hasher.combine(text.utf8.count)
+        if text.utf8.withContiguousStorageIfAvailable({ bytes in
+            hasher.combine(bytes: UnsafeRawBufferPointer(bytes))
+            return true
+        }) == nil {
+            Array(text.utf8).withUnsafeBufferPointer { hasher.combine(bytes: UnsafeRawBufferPointer($0)) }
+        }
+    }
+
+    func hash(into hasher: inout Hasher) {
+        Self.hashOriginalText(filesystemPath, into: &hasher)
+        for values in [archiveMembers, archiveMemberBytes] {
+            hasher.combine(values.count)
+            for value in values { Self.hashOriginalText(value, into: &hasher) }
+        }
     }
 }
 
@@ -435,6 +495,7 @@ func materializeHitSelection(_ hits: [Hit], rows: [Int])
             unavailable.append(hit)
         }
     }
+
     return MaterializedHitSelection(rows: rows, urls: urls,
                                     unavailable: unavailable)
 }
@@ -656,6 +717,10 @@ func compareHits(_ lhs: Hit, _ rhs: Hit, key: String,
         primary = compareOptionalSeconds(lhs.modified, rhs.modified)
     case "created":
         primary = compareOptionalSeconds(lhs.created, rhs.created)
+    case "finderTags":
+        primary = (lhs.finderMetadata?.tagsText ?? "").localizedCaseInsensitiveCompare(rhs.finderMetadata?.tagsText ?? "")
+    case "finderComment":
+        primary = (lhs.finderMetadata?.commentText ?? "").localizedCaseInsensitiveCompare(rhs.finderMetadata?.commentText ?? "")
     default:
         primary = lhs.displayName.localizedCaseInsensitiveCompare(
             rhs.displayName)
@@ -691,10 +756,14 @@ func findCLI() -> String? {
 
 /// EINE Zeile des JSONL-Stroms der Suche: ein Fortschrittsobjekt
 /// (`type: progress`, der Ordner bzw. das Archiv, das der Kern gerade
-/// durchsucht) oder ein Treffer. Alles andere — Müll, fremde Zeilen, ein
+/// durchsucht), ein optionaler Bericht oder ein Treffer. Alles andere — Müll, fremde Zeilen, ein
 /// Treffer ohne `isDirectory` — ist nil.
 enum SearchLine {
     case progress(String)
+    case report(SearchReportSnapshot)
+    case invalidReport
+    case dateResolution(Data)
+    case invalidDateResolution
     case hit(Hit)
 }
 
@@ -704,21 +773,74 @@ struct TermEvidence: Hashable {
     var line: Int? = nil
     var field: String? = nil
     var value: String? = nil
+    var documentPosition: DocumentPosition? = nil
 
     var json: [String: Any] {
         var object: [String: Any] = ["term": term]
         if let line { object["line"] = line }
         if let field { object["field"] = field }
         if let value { object["value"] = value }
+        if let documentPosition { object["documentPosition"] = documentPosition.json }
         return object
     }
 
     static func parse(_ object: Any) -> TermEvidence? {
         guard let dict = object as? [String: Any],
               let term = dict["term"] as? String else { return nil }
+        let position = DocumentPosition.parse(dict["documentPosition"])
+        if dict["documentPosition"] != nil && position == nil { return nil }
         return TermEvidence(term: term, line: dict["line"] as? Int,
                             field: dict["field"] as? String,
-                            value: dict["value"] as? String)
+                            value: dict["value"] as? String, documentPosition: position)
+    }
+}
+
+struct CriterionEvidence: Hashable {
+    let id: String
+    let field: String
+    let value: String
+    var valueTruncated = false
+    var negated = false
+    var line: Int? = nil
+    var metadataField: String? = nil
+    var contentEncoding: String? = nil
+    var documentPosition: DocumentPosition? = nil
+
+    var json: [String: Any] {
+        var result: [String: Any] = ["id": id, "field": field, "value": value]
+        if valueTruncated { result["valueTruncated"] = true }
+        if negated { result["negated"] = true }
+        if let line { result["line"] = line }
+        if let metadataField { result["metadataField"] = metadataField }
+        if let contentEncoding { result["contentEncoding"] = contentEncoding }
+        if let documentPosition { result["documentPosition"] = documentPosition.json }
+        return result
+    }
+
+    static func parse(_ object: Any) -> CriterionEvidence? {
+        guard let object = object as? [String: Any],
+              let id = object["id"] as? String,
+              let field = object["field"] as? String,
+              let value = object["value"] as? String else { return nil }
+        for key in ["valueTruncated", "negated"] where object[key] != nil {
+            guard let number = object[key] as? NSNumber,
+                  CFGetTypeID(number) == CFBooleanGetTypeID() else { return nil }
+        }
+        var line: Int?
+        if let raw = object["line"] {
+            guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue > 0, number.doubleValue < Double(Int.max),
+                  number.doubleValue.rounded() == number.doubleValue else { return nil }
+            line = number.intValue
+        }
+        guard object["metadataField"] == nil || object["metadataField"] is String else { return nil }
+        let position = DocumentPosition.parse(object["documentPosition"])
+        if object["documentPosition"] != nil && position == nil { return nil }
+        return CriterionEvidence(id: id, field: field, value: value,
+                                 valueTruncated: object["valueTruncated"] as? Bool ?? false,
+                                 negated: object["negated"] as? Bool ?? false, line: line,
+                                 metadataField: object["metadataField"] as? String,
+                                 contentEncoding: object["contentEncoding"] as? String, documentPosition: position)
     }
 }
 
@@ -732,11 +854,25 @@ struct TermEvidence: Hashable {
 func parseSearchLine(_ lineData: Data) -> SearchLine? {
     guard
         let object = try? JSONSerialization.jsonObject(with: lineData),
-        let dict = object as? [String: Any],
-        let path = dict["path"] as? String,
+        var dict = object as? [String: Any],
         let kind = dict["type"] as? String
     else { return nil }
-    if kind == "progress" { return .progress(path) }
+    if kind == "searchReport" { return SearchReportSnapshot.parse(lineData).map { .report($0) } ?? .invalidReport }
+    if kind == "dateResolution" || (kind == "validation" && dict["dateResolution"] != nil) {
+        let value = kind == "dateResolution" ? dict["value"] : dict["dateResolution"]
+        return value.flatMap { DateRangeTransport.resolution($0) }.map { .dateResolution($0) } ?? .invalidDateResolution
+    }
+    if dict["finderMetadata"] != nil || DocumentPosition.readers[dict["contentEncoding"] as? String ?? ""] != nil,
+       let original = preservedJSONObject(lineData) as? [String: Any] { dict = original }
+    guard let path = dict["path"] as? String else { return nil }
+    if kind == "progress" {
+        if let stage = dict["stage"] as? String, ["pdfText", "pdfOCR"].contains(stage),
+           let page = DateRangeTransport.integer(dict["page"]), (1...128).contains(page),
+           let pages = DateRangeTransport.integer(dict["pages"]), pages >= page, pages <= 10_000_000 {
+            return .progress((stage == "pdfOCR" ? "PDF-OCR" : "PDF-Textebene") + " · Seite \(page) von \(pages) · " + path)
+        }
+        return .progress(path)
+    }
     let filesystemPath = dict["filesystemPath"] as? String
         ?? (kind == "member"
             ? path.components(separatedBy: "!/").first ?? path
@@ -753,13 +889,48 @@ func parseSearchLine(_ lineData: Data) -> SearchLine? {
     // das Feld immer; eine Zeile ohne es stammt nicht von uns und wird
     // verworfen, statt einen falschen Typ zu behaupten.
     guard let isDirectory = dict["isDirectory"] as? Bool else { return nil }
+    var rootBytes: Data?
+    if let value = dict["searchRoot"] {
+        guard let text = value as? String, text.hasPrefix("/"), !text.utf8.contains(0) else { return nil }
+        rootBytes = Data(text.utf8)
+    }
     let archiveMemberBytes = dict["archiveMemberBytes"] as? [String] ?? []
+    let documentPosition = DocumentPosition.parse(dict["documentPosition"])
+    let documentGeneration = ContentSourceGeneration.parse(dict["documentSourceGeneration"])
+    if dict["documentPosition"] != nil {
+        let reader = DocumentPosition.readers[dict["contentEncoding"] as? String ?? ""]
+        if documentPosition == nil || documentGeneration == nil || documentPosition?.reader != reader { return nil }
+    }
     guard archiveMemberBytes.isEmpty
             || archiveMemberBytes.count == archiveMembers.count else {
         return nil
     }
+    var finderMetadata: FinderMetadataSnapshot?
+    var hitSize = dict["size"] as? Int
+    var hitModified = dict["modified"] as? Double
+    var hitCreated = dict["created"] as? Double
+    if dict["finderMetadata"] != nil {
+        if let value = dict["size"], !(value is NSNull) {
+            guard let raw = JSONByteSlices.member("size", in: lineData),
+                  let size = Int(String(decoding: raw, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)),
+                  size >= 0 else { return nil }
+            hitSize = size
+        }
+        for key in ["modified", "created"] {
+            guard let value = dict[key], !(value is NSNull) else { continue }
+            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue.isFinite else { return nil }
+            if key == "modified" { hitModified = number.doubleValue }
+            else { hitCreated = number.doubleValue }
+        }
+        guard !DateRangeTransport.hasDuplicateKeys(lineData),
+              let raw = JSONByteSlices.member("finderMetadata", in: lineData),
+              let snapshot = FinderMetadataSnapshot.parse(raw, size: hitSize,
+                  modified: hitModified, inArchive: kind == "member" || !archiveMembers.isEmpty) else { return nil }
+        finderMetadata = snapshot
+    }
     return .hit(Hit(path: path, kind: kind, line: dict["line"] as? Int,
-                    size: dict["size"] as? Int,
+                    size: hitSize,
                     filesystemPath: filesystemPath,
                     archiveMembers: archiveMembers,
                     archiveMemberBytes: archiveMemberBytes,
@@ -768,10 +939,16 @@ func parseSearchLine(_ lineData: Data) -> SearchLine? {
                     value: dict["value"] as? String,
                     width: dict["width"] as? Int,
                     height: dict["height"] as? Int,
-                    modified: dict["modified"] as? Double,
-                    created: dict["created"] as? Double,
+                    modified: hitModified,
+                    created: hitCreated,
                     terms: (dict["terms"] as? [Any])?
-                        .compactMap(TermEvidence.parse) ?? []))
+                        .compactMap(TermEvidence.parse) ?? [],
+                    criteriaEvidence: (dict["criteriaEvidence"] as? [Any])?
+                        .compactMap(CriterionEvidence.parse) ?? [],
+                    contentEncoding: dict["contentEncoding"] as? String,
+                    contentPreview: ContentPreview.parse(dict["contentPreview"] == nil ? nil : (preservedContentPreview(lineData) ?? NSNull()), contentEncoding: dict["contentEncoding"] as? String),
+                    documentEvidence: documentGeneration.map { DocumentEvidence(position: documentPosition, generation: $0) },
+                    searchRootBytes: rootBytes, finderMetadata: finderMetadata))
 }
 
 /// Übersetzt EINE JSONL-Zeile in einen Hit (oder nil bei Müll und bei
@@ -954,13 +1131,14 @@ func pixelFieldSelfTest(_ fields: [NSTextField], validate: () -> Bool) -> String
 
 /// Wie das Suchmuster gelesen wird: gegen Namen, Inhalt oder Metadaten.
 enum SearchTextMode: String, CaseIterable {
-    case name, content, metadata
+    case name, content, metadata, document
 
     var title: String {
         switch self {
         case .name: return "Name"
         case .content: return "Inhalt"
         case .metadata: return "Metadaten"
+        case .document: return "Dokumenttext"
         }
     }
 }
@@ -1011,7 +1189,65 @@ struct FactFilterOption {
 
 /// Eine Quelle für CLI-Optionen und Quick-Übergaben. Maßtexte bleiben roh:
 /// Eine ungültige URL-Eingabe darf nicht zu einer leeren Grenze werden.
+enum CriteriaTransport {
+    static let maximumBytes = 65_536
+
+    static func problem(_ items: [URLQueryItem]) -> String? {
+        let values = items.filter { $0.name == "criteria" }
+        guard values.count <= 1 else { return "Kriterien dürfen nur einmal übergeben werden." }
+        if let item = values.first {
+            guard let text = item.value, !text.utf8.contains(0), text.utf8.count <= maximumBytes else {
+                return "Kriterien überschreiten 65.536 UTF-8-Bytes oder enthalten einen ungültigen Wert."
+            }
+            if let document = preservedJSONObject(Data(text.utf8)) as? [String: Any],
+               let version = document["schemaVersion"] as? NSNumber, version.doubleValue > 3 {
+                return "Diese Kriterienschemaversion wird von den Apps noch nicht unterstützt."
+            }
+        }
+        return DateRangeTransport.problem(items)
+    }
+}
+
+enum SearchTextEncoding: String, CaseIterable {
+    case utf8 = "utf-8", automatic = "auto", utf16LE = "utf-16-le", utf16BE = "utf-16-be"
+    case windows1252 = "windows-1252", latin1 = "iso-8859-1", macRoman = "mac-roman"
+
+    var title: String {
+        switch self {
+        case .utf8: return "UTF-8 (Standard)"
+        case .automatic: return "Automatisch: UTF-BOM, sonst UTF-8"
+        case .utf16LE: return "UTF-16 Little Endian"
+        case .utf16BE: return "UTF-16 Big Endian"
+        case .windows1252: return "Windows-1252"
+        case .latin1: return "ISO-8859-1 (Latin-1)"
+        case .macRoman: return "Mac Roman"
+        }
+    }
+}
+
 struct SearchConfiguration: Equatable {
+    var textEncoding: SearchTextEncoding = .utf8
+    static func supportsLocalContentCapability(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
+        return number.doubleValue == 1
+    }
+    var localOnly = false
+    static func supportsPDFOCRCapability(_ raw: Any?) -> Bool { supportsOCRCapability(raw) }
+
+    static func supportsOCRCapability(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
+        return number.doubleValue == 1
+    }
+    var pdfOCR = false
+    var ocr = false
+    var finderMetadata = false
+    var requiresFinderMetadata: Bool {
+        if finderMetadata { return true }
+        guard let criteriaJSON, let document = preservedJSONObject(Data(criteriaJSON.utf8)) as? [String: Any],
+              let version = document["schemaVersion"] as? NSNumber else { return false }
+        return version.doubleValue == 3
+    }
+    var requiresTransportVersion2: Bool { criteriaJSON != nil || textEncoding != .utf8 || mode == .document }
     var mode: SearchTextMode = .name
     var regex = false
     var caseSensitive = false
@@ -1028,13 +1264,22 @@ struct SearchConfiguration: Equatable {
     /// müssen — im selben Ziel (Name, Inhalt, Metadaten), nicht zwingend in
     /// derselben Zeile. Rohtexte, einer je Zeile des Eingabefelds.
     var terms: [String] = []
+    var criteriaJSON: String? = nil
+    var dateRanges: [String: DateRangeSpec] = [:]
+    var dateReferenceTime: String? = nil
+    var requiresDateRanges: Bool { !dateRanges.isEmpty || DateRangeTransport.criteriaHasRanges(criteriaJSON) }
+    func forNewRun(reference: String? = nil) -> SearchConfiguration {
+        var result = self
+        result.dateReferenceTime = requiresDateRanges ? (reference ?? DateRangeTransport.referenceNow()) : nil
+        return result
+    }
 
     /// Auch fehlerhafter nichtleerer Faktentext muss Python erreichen, damit
     /// der Nutzer dessen konkrete Diagnose sieht. Ausschlüsse zählen nicht;
     /// weitere Suchbegriffe zählen — sie sind selbst eine Frage, die auch
     /// ohne Muster im Suchfeld eine Suche trägt.
     var hasPositiveFilter: Bool {
-        !terms.isEmpty
+        criteriaJSON != nil || !terms.isEmpty || !dateRanges.isEmpty
             || !validatePixelTexts(pixelTexts).limits.isEmpty
             || FactFilterOption.all.contains { !(rawFacts[$0.key] ?? "").isEmpty }
     }
@@ -1051,14 +1296,40 @@ struct SearchConfiguration: Equatable {
         }
         let termList = terms.isEmpty ? ""
             : "Begriffe " + terms.map { "„\($0)“" }.joined(separator: ", ")
-        return ([pixels, termList].filter { !$0.isEmpty } + facts).joined(separator: ", ")
+        let criteria = criteriaJSON == nil ? "" : "Zusätzliche Kriterien"
+        let encoding = textEncoding == .utf8 ? "" : "Textkodierung: " + textEncoding.title
+        let dates = dateRanges.keys.sorted().map { ($0 == "modified" ? "Geändert: " : "Erstellt: ") + dateRanges[$0]!.title + " (" + dateRanges[$0]!.timeZone + ")" }
+        return ([pixels, termList, criteria, encoding, localOnly ? "Nur lokale Inhalte" : "", ocr ? "Bild-OCR im Dokumenttext (DE/EN)" : "", pdfOCR ? "Scan-PDF-OCR im Dokumenttext" : ""].filter { !$0.isEmpty } + facts + dates).joined(separator: ", ")
     }
 
     static let pixelKeys = ["minw", "maxw", "minh", "maxh"]
 
+    static func transportProblem(_ items: [URLQueryItem]) -> String? {
+        let known = Set(SearchConfiguration().queryItems.map { $0.name }
+            + ["criteria", "field", "term", "exclude", "encoding", "date-ranges", "date-reference-time", "finder-metadata", "local-only", "ocr", "pdf-ocr"] + FactFilterOption.all.map { $0.key })
+        let booleans = Set(["content", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "finder-metadata", "local-only", "ocr", "pdf-ocr"])
+        var seen = Set<String>()
+        for item in items {
+            guard known.contains(item.name), let text = item.value, !text.utf8.contains(0),
+                  ["term", "exclude"].contains(item.name) || seen.insert(item.name).inserted,
+                  !booleans.contains(item.name) || ["0", "1"].contains(text),
+                  item.name != "mode" || SearchTextMode(rawValue: text) != nil,
+                  item.name != "only" || ["both", "files", "dirs"].contains(text),
+                  item.name != "encoding" || SearchTextEncoding(rawValue: text) != nil else {
+                return "Unbekannte, doppelte oder ungültige Suchoption."
+            }
+        }
+        return DateRangeTransport.problem(items) ?? CriteriaTransport.problem(items)
+    }
+
     static func fromQueryItems(_ items: [URLQueryItem]) -> SearchConfiguration {
         func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
         var result = SearchConfiguration()
+        result.localOnly = value("local-only") == "1"
+        result.ocr = value("ocr") == "1"
+        result.pdfOCR = value("pdf-ocr") == "1"
+        result.finderMetadata = value("finder-metadata") == "1"
+        result.textEncoding = SearchTextEncoding(rawValue: value("encoding") ?? "utf-8") ?? .utf8
         result.mode = SearchTextMode(rawValue: value("mode") ?? "")
             ?? (value("content") == "1" ? .content : .name)
         result.regex = value("regex") == "1"
@@ -1076,6 +1347,9 @@ struct SearchConfiguration: Equatable {
         }
         result.exclusions = items.filter { $0.name == "exclude" }.compactMap { $0.value }
         result.terms = items.filter { $0.name == "term" }.compactMap { $0.value }
+        result.criteriaJSON = value("criteria")
+        if let text = value("date-ranges"), let ranges = DateRangeTransport.ranges(text) { result.dateRanges = ranges }
+        result.dateReferenceTime = value("date-reference-time")
         return result
     }
 
@@ -1088,6 +1362,11 @@ struct SearchConfiguration: Equatable {
                                ("exact", exact), ("literal-wildcards", literalWildcards)] {
             items.append(URLQueryItem(name: key, value: enabled ? "1" : "0"))
         }
+        if textEncoding != .utf8 { items.append(URLQueryItem(name: "encoding", value: textEncoding.rawValue)) }
+        if localOnly { items.append(URLQueryItem(name: "local-only", value: "1")) }
+        if ocr { items.append(URLQueryItem(name: "ocr", value: "1")) }
+        if pdfOCR { items.append(URLQueryItem(name: "pdf-ocr", value: "1")) }
+        if finderMetadata { items.append(URLQueryItem(name: "finder-metadata", value: "1")) }
         if let metadataField { items.append(URLQueryItem(name: "field", value: metadataField)) }
         for (key, text) in zip(Self.pixelKeys, pixelTexts) {
             items.append(URLQueryItem(name: key, value: text))
@@ -1099,10 +1378,20 @@ struct SearchConfiguration: Equatable {
         }
         items += exclusions.map { URLQueryItem(name: "exclude", value: $0) }
         items += terms.map { URLQueryItem(name: "term", value: $0) }
+        if let criteriaJSON { items.append(URLQueryItem(name: "criteria", value: criteriaJSON)) }
+        if !dateRanges.isEmpty, let text = DateRangeTransport.text(["schemaVersion": 1, "ranges": dateRanges.mapValues { $0.object }]) {
+            items.append(URLQueryItem(name: "date-ranges", value: text))
+        }
+        if let dateReferenceTime { items.append(URLQueryItem(name: "date-reference-time", value: dateReferenceTime)) }
         return items
     }
 
     func arguments(pattern: String, root: String, progress: Bool = false) -> [String]? {
+        arguments(pattern: pattern, roots: [root], progress: progress)
+    }
+
+    func arguments(pattern: String, roots: [String], progress: Bool = false, frozenDateResolution: Data? = nil) -> [String]? {
+        guard !roots.isEmpty else { return nil }
         let validation = validatePixelTexts(pixelTexts)
         guard validation.errors.allSatisfy({ $0 == nil }), let cli = findCLI() else { return nil }
         // Ohne Muster im Suchfeld tragen weitere Begriffe die Suche: Der
@@ -1110,6 +1399,16 @@ struct SearchConfiguration: Equatable {
         let hasPattern = !pattern.isEmpty || !terms.isEmpty
         guard hasPattern || hasPositiveFilter else { return nil }
         var args = ["-u", cli, "--json"]
+        if localOnly { args.append("--local-only") }
+        if ocr { args.append("--ocr") }
+        if pdfOCR { args.append("--pdf-ocr") }
+        if finderMetadata { args.append("--finder-metadata") }
+        if textEncoding != .utf8 { args.append("--encoding=" + textEncoding.rawValue) }
+        if let criteriaJSON { args.append("--criteria-json=" + criteriaJSON) }
+        if let text = queryItems.first(where: { $0.name == "date-ranges" })?.value { args.append("--date-ranges-json=" + text) }
+        args += DateRangeTransport.referenceArguments(dateReferenceTime)
+        args += DateRangeTransport.frozenArguments(frozenDateResolution)
+        if mode == .document && (hasPattern || criteriaJSON != nil) { args.append("--document-text") }
         if hasPattern {
             if mode == .content { args.append("--content") }
             if mode == .metadata {
@@ -1146,26 +1445,204 @@ struct SearchConfiguration: Equatable {
             }
         }
         args.append("--")
-        if !pattern.isEmpty { args.append(pattern) }
-        args.append(root)
+        args.append(pattern)
+        args += roots
         return args
     }
 }
 
-/// Gibt es den Suchordner (noch)? Beide Apps fragen das VOR dem Start.
-/// Ohne Muster steht der Ordner als einziges Positionsargument in der
-/// Kommandozeile, und der Kern befördert es nur zum Startpfad, wenn es
-/// existiert — einen gelöschten oder umbenannten Ordner las er still als
-/// Namensmuster und suchte im Arbeitsverzeichnis der App, für ein Bundle
-/// ist das `/`. Seit `--term` (0.34.0) betraf das jede Begriffssuche ohne
-/// Muster, nicht mehr nur die reine Maßsuche.
+/// Neue Suchen prüfen alle deklarierten Bereiche; historische Transporte
+/// bleiben ohne Quellenprüfung lesbar. Der Kern entscheidet über Lesbarkeit.
 func searchRootProblem(_ root: String) -> String? {
-    var isDirectory: ObjCBool = false
-    if FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory),
-       isDirectory.boolValue {
+    // Auf macOS 12 prüft der Kern den Pfad; die lokale Politik wird dort vor Zugriff abgewiesen.
+    guard #available(macOS 13, *) else { return nil }
+    guard let present = LocalContentAccess.withoutMaterialization(allowLegacy: false, {
+        var information = stat()
+        return stat(root, &information) == 0 || errno == EDEADLK || errno == EAGAIN
+    }) else { return "Suchbereich ohne Materialisierung nicht prüfbar: " + abbreviateHome(root) }
+    return present ? nil : "Suchbereich fehlt: " + abbreviateHome(root)
+}
+
+struct SearchRoots {
+    static let maximumCount = 16
+    static let maximumPathBytes = 4096
+    static let maximumBytes = 65_536
+    let paths: [String]
+    let bytes: [Data]
+    init(_ paths: [String]) { self.paths = paths; bytes = paths.map { Data($0.utf8) } }
+    static func problem(_ paths: [String], limited: Bool = true) -> String? {
+        guard !paths.isEmpty, paths.allSatisfy({ $0.hasPrefix("/") && !$0.utf8.contains(0) }) else {
+            return "Mindestens ein absoluter Suchbereich ist erforderlich."
+        }
+        if limited && (paths.count > maximumCount || paths.contains(where: { $0.utf8.count > maximumPathBytes })
+            || paths.reduce(0, { $0 + $1.utf8.count }) > maximumBytes) {
+            return "Suchbereiche sind auf 16 Einträge mit je 4096 und insgesamt 65.536 UTF-8-Bytes begrenzt."
+        }
+        guard Set(paths.map { Data($0.utf8) }).count == paths.count else {
+            return "Ein Suchbereich ist mehrfach angegeben."
+        }
         return nil
     }
-    return "Suchordner fehlt: " + abbreviateHome(root)
+    var liveProblem: String? { Self.problem(paths, limited: paths.count != 1) ?? paths.compactMap(searchRootProblem).first }
+    var single: String? { paths.count == 1 ? paths[0] : nil }
+    var title: String { single.map { abbreviateHome($0) } ?? "\(paths.count) Bereiche" }
+    var detail: String { paths.joined(separator: "\n") }
+    func carrying(_ hit: Hit, legacy: Bool = false) -> Hit? {
+        var result = hit
+        if let value = hit.searchRootBytes {
+            guard let index = bytes.firstIndex(of: value) else { return nil }
+            result.searchRootBytes = bytes[index]
+        } else if let first = bytes.first, bytes.count == 1 {
+            result.searchRootBytes = first
+        } else if !legacy { return nil }
+        return result
+    }
+}
+
+final class SearchRootsEditor: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    private(set) var paths: [String]
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    let table = NSTableView()
+    let status = NSTextField(wrappingLabelWithString: "")
+    let removeButton = NSButton(title: "Entfernen", target: nil, action: nil)
+    let upButton = NSButton(title: "Nach oben", target: nil, action: nil)
+    let downButton = NSButton(title: "Nach unten", target: nil, action: nil)
+    let applyButton = NSButton(title: "Übernehmen", target: nil, action: nil)
+    private var completion: (([String]?) -> Void)?
+
+    init(paths: [String]) {
+        self.paths = paths
+        super.init()
+        window.title = "Suchbereiche"
+        window.isReleasedWhenClosed = false
+        let title = NSTextField(wrappingLabelWithString: "Dateien und Ordner werden in dieser Reihenfolge durchsucht. Überlappende Treffer erscheinen einmal.")
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("path"))
+        column.title = "Datei oder Ordner"; column.width = 585
+        table.addTableColumn(column)
+        table.headerView = nil; table.allowsMultipleSelection = true
+        table.delegate = self; table.dataSource = self
+        table.rowHeight = 27
+        table.setAccessibilityIdentifier("searchRootsTable")
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
+        scroll.documentView = table
+        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+        let add = NSButton(title: "Hinzufügen…", target: self, action: #selector(add))
+        add.setAccessibilityIdentifier("searchRootsAdd")
+        removeButton.target = self; removeButton.action = #selector(remove)
+        upButton.target = self; upButton.action = #selector(up)
+        downButton.target = self; downButton.action = #selector(down)
+        applyButton.target = self; applyButton.action = #selector(apply)
+        applyButton.keyEquivalent = "\r"
+        applyButton.setAccessibilityIdentifier("searchRootsApply")
+        let cancel = NSButton(title: "Abbrechen", target: self, action: #selector(cancel))
+        cancel.keyEquivalent = "\u{1b}"
+        status.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        status.maximumNumberOfLines = 3
+        status.lineBreakMode = .byTruncatingMiddle
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let actions = NSStackView(views: [add, removeButton, upButton, downButton])
+        actions.spacing = 8
+        let footer = NSStackView(views: [cancel, applyButton]); footer.spacing = 8
+        let content = NSStackView(views: [title, scroll, actions, status, footer])
+        content.orientation = .vertical; content.alignment = .leading; content.spacing = 12
+        content.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView!.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 20),
+            content.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -20),
+            content.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 20),
+            content.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor, constant: -20),
+            scroll.widthAnchor.constraint(equalTo: content.widthAnchor),
+            title.widthAnchor.constraint(equalTo: content.widthAnchor),
+            status.widthAnchor.constraint(equalTo: content.widthAnchor)])
+        refresh()
+    }
+
+    func present(on parent: NSWindow, completion: @escaping ([String]?) -> Void) {
+        self.completion = completion
+        parent.beginSheet(window)
+    }
+    func numberOfRows(in tableView: NSTableView) -> Int { paths.count }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard paths.indices.contains(row) else { return nil }
+        let label = NSTextField(labelWithString: paths[row].replacingOccurrences(of: "\r", with: "\\r").replacingOccurrences(of: "\n", with: "\\n"))
+        label.lineBreakMode = .byTruncatingMiddle
+        label.toolTip = paths[row]
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return label
+    }
+    func tableViewSelectionDidChange(_ notification: Notification) { refresh() }
+    @discardableResult
+    func addPaths(_ incoming: [String]) -> String? {
+        var updated = paths, seen = Set(paths.map { Data($0.utf8) })
+        for path in incoming where seen.insert(Data(path.utf8)).inserted { updated.append(path) }
+        if let problem = SearchRoots.problem(updated) { status.stringValue = problem; return problem }
+        paths = updated; table.reloadData(); refresh(); return nil
+    }
+    func moveSelection(by offset: Int) {
+        let row = table.selectedRow, next = row + offset
+        guard table.selectedRowIndexes.count == 1, paths.indices.contains(row), paths.indices.contains(next) else { return }
+        paths.swapAt(row, next); table.reloadData()
+        table.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+        refresh()
+    }
+    private func refresh() {
+        let selected = table.selectedRowIndexes
+        removeButton.isEnabled = !selected.isEmpty
+        upButton.isEnabled = selected.count == 1 && table.selectedRow > 0
+        downButton.isEnabled = selected.count == 1 && table.selectedRow < paths.count - 1
+        let problem = SearchRoots.problem(paths)
+        applyButton.isEnabled = problem == nil
+        status.stringValue = problem ?? paths.compactMap(searchRootProblem).first
+            .map { $0 + " Die Liste bleibt erhalten; vor einer neuen Suche den Bereich wieder verbinden oder entfernen." }
+            ?? "\(paths.count) von 16 Suchbereichen"
+    }
+    @objc func add() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true; panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true; panel.prompt = "Hinzufügen"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            if response == .OK { self?.addPaths(panel.urls.map { $0.path }) }
+        }
+    }
+    @objc func remove() {
+        for index in table.selectedRowIndexes.reversed() where paths.indices.contains(index) { paths.remove(at: index) }
+        table.deselectAll(nil); table.reloadData(); refresh()
+    }
+    @objc func up() { moveSelection(by: -1) }
+    @objc func down() { moveSelection(by: 1) }
+    private func finish(_ value: [String]?) {
+        let callback = completion; completion = nil
+        window.sheetParent?.endSheet(window); window.orderOut(nil)
+        callback?(value)
+    }
+    @objc func apply() { guard SearchRoots.problem(paths) == nil else { return }; finish(paths) }
+    @objc func cancel() { finish(nil) }
+}
+
+func installSearchRootsMenu(target: AnyObject, action: Selector) {
+    guard let main = NSApp.mainMenu else { return }
+    let menu: NSMenu
+    if let existing = main.items.first(where: { $0.submenu?.title == "Ablage" })?.submenu {
+        menu = existing
+    } else {
+        menu = NSMenu(title: "Ablage")
+        let item = NSMenuItem(title: "Ablage", action: nil, keyEquivalent: "")
+        item.submenu = menu
+        main.insertItem(item, at: min(1, main.numberOfItems))
+    }
+    let identifier = NSUserInterfaceItemIdentifier("Favenio.SearchRoots")
+    let item = menu.items.first(where: { $0.identifier == identifier })
+        ?? NSMenuItem(title: "Suchbereiche bearbeiten…", action: action, keyEquivalent: "o")
+    item.identifier = identifier; item.target = target; item.action = action
+    item.keyEquivalentModifierMask = [.command, .shift]
+    if item.menu == nil {
+        if !menu.items.isEmpty { menu.insertItem(.separator(), at: 0) }
+        menu.insertItem(item, at: 0)
+    }
 }
 
 // ---------- Benannte Suchvorlagen ----------
@@ -1181,16 +1658,26 @@ func searchRootProblem(_ root: String) -> String? {
 struct SearchTemplate: Equatable {
     var name: String
     var pattern: String
-    /// Der ausdrücklich gewählte Suchordner; nil, wenn keiner gespeichert
-    /// ist. Fehlt er beim Laden, meldet die App das konkret
-    /// (`missingRootMessage`) und behält ihren aktuellen Ordner.
-    var root: String?
+    /// nil bedeutet: Die Vorlage speichert keinen Suchbereich.
+    var roots: [String]?
+    var root: String? { roots.flatMap { $0.count == 1 ? $0[0] : nil } }
     var configuration: SearchConfiguration
+
+    init(name: String, pattern: String, root: String?, configuration: SearchConfiguration) {
+        self.init(name: name, pattern: pattern, roots: root.map { [$0] }, configuration: configuration)
+    }
+    init(name: String, pattern: String, roots: [String]?, configuration: SearchConfiguration) {
+        self.name = name; self.pattern = pattern; self.roots = roots; self.configuration = configuration
+    }
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.name == rhs.name && lhs.pattern == rhs.pattern && lhs.configuration == rhs.configuration
+            && lhs.roots?.map { Data($0.utf8) } == rhs.roots?.map { Data($0.utf8) }
+    }
 
     /// nil, wenn kein Ordner gespeichert ist oder er existiert.
     var missingRootMessage: String? {
-        guard let root, searchRootProblem(root) != nil else { return nil }
-        return "Suchordner der Vorlage „\(name)“ fehlt: " + root
+        guard let roots, let missing = roots.first(where: { searchRootProblem($0) != nil }) else { return nil }
+        return "Suchbereich der Vorlage „\(name)“ fehlt: " + missing
     }
 }
 
@@ -1204,16 +1691,20 @@ struct SearchTemplateError: Error, CustomStringConvertible, Equatable {
 ///      "templates": [{"name": "…", "pattern": "…", "root": "/…" | null,
 ///                     "options": "mode=name&regex=1&exclude=…"}]}
 ///
-/// `options` ist die Query der Quick-URL. Unbekannte Schlüssel werden
-/// überlesen (eine spätere Fassung derselben Hauptversion darf Felder
-/// ergänzen); eine höhere `version` wird abgelehnt und genannt, statt still
+/// `options` ist die Query der Quick-URL. Format 1 überliest unbekannte
+/// Schlüssel; Format 2 mit Kriterien, Format 3 mit Wurzellisten und Format 4
+/// mit Kalenderfragen, Format 5 mit Finder-Eigenschaften und Format 6 mit
+/// lokaler Lesepolitik Format 7 mit Bild-OCR und Format 8 mit PDF-OCR weisen unbekannte Optionen ab. Eine höhere
+/// `version` wird abgelehnt und genannt, statt still
 /// falsch gelesen zu werden — ein fehlender oder falscher Wert ebenso.
 enum SearchTemplateFormat {
-    static let version = 1
+    static let version = 8
+    static let maximumBytes = 8 * 1024 * 1024
 
     static func encodeOptions(_ configuration: SearchConfiguration) -> String {
         var components = URLComponents()
-        components.queryItems = configuration.queryItems
+        var question = configuration; question.dateReferenceTime = nil
+        components.queryItems = question.queryItems
         return components.percentEncodedQuery ?? ""
     }
 
@@ -1231,24 +1722,55 @@ enum SearchTemplateFormat {
             throw SearchTemplateError(
                 description: "Optionen „\(options)“ sind keine gültige Query")
         }
-        return SearchConfiguration.fromQueryItems(components.queryItems ?? [])
+        let items = components.queryItems ?? []
+        if let problem = CriteriaTransport.problem(items) {
+            throw SearchTemplateError(description: problem)
+        }
+        if items.contains(where: { ["encoding", "local-only", "ocr", "pdf-ocr"].contains($0.name) }),
+           let problem = SearchConfiguration.transportProblem(items) {
+            throw SearchTemplateError(description: problem)
+        }
+        return SearchConfiguration.fromQueryItems(items)
     }
 
     static func encode(_ templates: [SearchTemplate]) throws -> Data {
+        let dates = templates.contains { $0.configuration.requiresDateRanges }
+        let finder = templates.contains { $0.configuration.requiresFinderMetadata }
+        let local = templates.contains { $0.configuration.localOnly }
+        let ocr = templates.contains { $0.configuration.ocr }
+        let pdfOCR = templates.contains { $0.configuration.pdfOCR }
+        let multiple = pdfOCR || ocr || local || finder || dates || templates.contains { ($0.roots?.count ?? 0) > 1 }
+        for template in templates {
+            if let roots = template.roots, let problem = SearchRoots.problem(roots, limited: multiple) {
+                throw SearchTemplateError(description: problem)
+            }
+            if let problem = CriteriaTransport.problem(template.configuration.queryItems) {
+                throw SearchTemplateError(description: problem)
+            }
+        }
         let entries: [[String: Any]] = templates.map { template in
             ["name": template.name, "pattern": template.pattern,
-             "root": template.root ?? NSNull(),
+             multiple ? "roots" : "root": multiple ? (template.roots as Any? ?? NSNull()) : (template.root as Any? ?? NSNull()),
              "options": encodeOptions(template.configuration)]
         }
-        return try JSONSerialization.data(
-            withJSONObject: ["version": version, "templates": entries],
+        let fileVersion = pdfOCR ? 8 : ocr ? 7 : local ? 6 : finder ? 5 : dates ? 4 : (multiple ? 3 : (templates.contains { $0.configuration.requiresTransportVersion2 } ? 2 : 1))
+        let data = try JSONSerialization.data(
+            withJSONObject: ["version": fileVersion, "templates": entries],
             options: [.prettyPrinted, .sortedKeys])
+        guard data.count <= maximumBytes else {
+            throw SearchTemplateError(description: "Vorlagendatei überschreitet 8 MiB.")
+        }
+        return data
     }
 
     static func decode(_ data: Data) throws -> [SearchTemplate] {
+        guard data.count <= maximumBytes else {
+            throw SearchTemplateError(description: "Vorlagendatei überschreitet 8 MiB.")
+        }
         let object: Any
         do {
-            object = try JSONSerialization.jsonObject(with: data)
+            let parsed = try JSONSerialization.jsonObject(with: data)
+            object = preservedJSONObject(data) ?? parsed
         } catch {
             // Den Grund des Parsers mitgeben (Zeile, fehlendes Komma …),
             // statt jede Syntaxpanne als „kein JSON-Objekt" zu melden.
@@ -1261,20 +1783,41 @@ enum SearchTemplateFormat {
             throw SearchTemplateError(
                 description: "Vorlagendatei ist kein JSON-Objekt")
         }
-        guard let fileVersion = dictionary["version"] as? Int else {
+        guard let number = dictionary["version"] as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite, number.doubleValue.rounded() == number.doubleValue,
+              number.doubleValue >= 0, number.doubleValue < Double(Int.max) else {
             throw SearchTemplateError(
                 description: "Vorlagendatei nennt keine Formatversion")
         }
-        guard fileVersion == version else {
+        let fileVersion = number.intValue
+        guard (1...version).contains(fileVersion) else {
             throw SearchTemplateError(
                 description: "Vorlagendatei hat Formatversion \(fileVersion), "
                     + "diese App liest Version \(version)")
+        }
+        if fileVersion >= 2 && DateRangeTransport.hasDuplicateKeys(data) {
+            throw SearchTemplateError(description: "Vorlagendatei enthält doppelte JSON-Felder.")
         }
         guard let entries = dictionary["templates"] as? [[String: Any]] else {
             throw SearchTemplateError(
                 description: "Vorlagendatei enthält keine Vorlagenliste")
         }
+        if fileVersion >= 2 && !Set(dictionary.keys).isSubset(of: ["version", "templates"]) {
+            throw SearchTemplateError(description: "Vorlagendatei enthält unbekannte Felder.")
+        }
         return try entries.enumerated().map { index, entry in
+            if fileVersion >= 2 {
+                let rootKey = fileVersion >= 3 ? "roots" : "root"
+                guard Set(entry.keys) == ["name", "pattern", rootKey, "options"],
+                      let pattern = entry["pattern"] as? String, !pattern.utf8.contains(0),
+                      entry["options"] is String,
+                      entry[rootKey] is NSNull || (fileVersion >= 3
+                          ? (entry[rootKey] as? [String]).map { SearchRoots.problem($0) == nil }
+                          : (entry[rootKey] as? String).map { $0.hasPrefix("/") && !$0.utf8.contains(0) }) == true else {
+                    throw SearchTemplateError(description: "Vorlage \(index + 1) enthält unbekannte oder ungültige Felder.")
+                }
+            }
             guard let name = entry["name"] as? String, !name.isEmpty else {
                 throw SearchTemplateError(
                     description: "Vorlage \(index + 1) hat keinen Namen")
@@ -1282,6 +1825,31 @@ enum SearchTemplateFormat {
             let configuration: SearchConfiguration
             do {
                 configuration = try decodeOptions(entry["options"] as? String ?? "")
+                if configuration.pdfOCR && fileVersion < 8 { throw SearchTemplateError(description: "PDF-OCR benötigt Vorlagenformat 8.") }
+                if configuration.ocr && fileVersion < 7 {
+                    throw SearchTemplateError(description: "OCR benötigt Vorlagenformat 7.")
+                }
+                if configuration.localOnly && fileVersion < 6 {
+                    throw SearchTemplateError(description: "Lokale Inhalte benötigen Vorlagenformat 6.")
+                }
+                if configuration.requiresDateRanges && fileVersion < 4 {
+                    throw SearchTemplateError(description: "Kalenderbereiche benötigen Vorlagenformat 4.")
+                }
+                if configuration.requiresFinderMetadata && fileVersion < 5 {
+                    throw SearchTemplateError(description: "Finder-Eigenschaften benötigen Vorlagenformat 5.")
+                }
+                if configuration.dateReferenceTime != nil {
+                    throw SearchTemplateError(description: "Vorlagen speichern die Datumsfrage ohne Laufzeitpunkt.")
+                }
+                if fileVersion == 1 && configuration.textEncoding != .utf8 {
+                    throw SearchTemplateError(description: "Textkodierung benötigt Vorlagenformat 2.")
+                }
+                if fileVersion >= 2 {
+                    let items = URLComponents(string: "?" + (entry["options"] as? String ?? ""))?.queryItems ?? []
+                    if let problem = SearchConfiguration.transportProblem(items) {
+                        throw SearchTemplateError(description: problem)
+                    }
+                }
             } catch let error as SearchTemplateError {
                 throw SearchTemplateError(
                     description: "Vorlage \(index + 1): " + error.description)
@@ -1289,7 +1857,7 @@ enum SearchTemplateFormat {
             return SearchTemplate(
                 name: name,
                 pattern: entry["pattern"] as? String ?? "",
-                root: entry["root"] as? String,
+                roots: fileVersion >= 3 ? entry["roots"] as? [String] : (entry["root"] as? String).map { [$0] },
                 configuration: configuration)
         }
     }
@@ -1322,7 +1890,15 @@ final class SearchTemplateStore {
         }
         let data: Data
         do {
-            data = try Data(contentsOf: fileURL)
+            let descriptor = open(fileURL.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+            guard descriptor >= 0 else { throw CocoaError(.fileReadUnknown) }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? handle.close() }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else {
+                throw SearchTemplateError(description: "Vorlagendatei muss eine reguläre Datei sein.")
+            }
+            data = try handle.read(upToCount: SearchTemplateFormat.maximumBytes + 1) ?? Data()
         } catch {
             throw SearchTemplateError(
                 description: "Vorlagendatei nicht lesbar: "
@@ -1400,17 +1976,52 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
         get { literalWildcardsCheckbox.state == .on }
         set { literalWildcardsCheckbox.state = newValue ? .on : .off }
     }
+    let encodingPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    var textEncoding: SearchTextEncoding {
+        get { SearchTextEncoding(rawValue: encodingPopup.selectedItem?.representedObject as? String ?? "") ?? .utf8 }
+        set { encodingPopup.selectItem(at: SearchTextEncoding.allCases.firstIndex(of: newValue)!) }
+    }
     let exclusionsEditor = PlaceholderTextView()
     /// Weitere Suchbegriffe, einer je Zeile — alle müssen zusätzlich zum
     /// Suchfeld zutreffen (Mehrwortsuche, `--term`).
     let termsEditor = PlaceholderTextView()
+    let localOnlyCheckbox = NSButton(checkboxWithTitle: "Nur lokal vorhandene Inhalte lesen", target: nil, action: nil)
+    let pdfOCRCheckbox = NSButton(checkboxWithTitle: "Textlose PDF-Seiten per OCR lesen (Deutsch/Englisch)", target: nil, action: nil)
+    var pdfOCR: Bool {
+        get { pdfOCRCheckbox.state == .on }
+        set { pdfOCRCheckbox.state = newValue ? .on : .off }
+    }
+    let ocrCheckbox = NSButton(checkboxWithTitle: "Bild-OCR im Dokumenttext (Deutsch/Englisch)", target: nil, action: nil)
+    var ocr: Bool {
+        get { ocrCheckbox.state == .on }
+        set { ocrCheckbox.state = newValue ? .on : .off }
+    }
+    var localOnly: Bool {
+        get { localOnlyCheckbox.state == .on }
+        set { localOnlyCheckbox.state = newValue ? .on : .off }
+    }
+    let finderMetadataCheckbox = NSButton(checkboxWithTitle: "Finder-Eigenschaften erfassen", target: nil, action: nil)
+    var finderMetadata: Bool {
+        get { finderMetadataCheckbox.state == .on }
+        set { finderMetadataCheckbox.state = newValue ? .on : .off }
+    }
     let helpButton = NSButton()
     private(set) var factFields: [String: NSTextField] = [:]
     private var helpPopover: NSPopover?
+    private var dateEditor: DateRangeEditor?
+    var dateRanges: [String: DateRangeSpec] = [:] {
+        didSet {
+            for key in oldValue.keys where dateRanges[key] == nil {
+                factFields[key + "-from"]?.stringValue = ""; factFields[key + "-to"]?.stringValue = ""
+            }
+            refreshDateRanges()
+        }
+    }
     var rawFacts: [String: String] {
-        get { factFields.mapValues { $0.stringValue }.filter { !$0.value.isEmpty } }
+        get { factFields.mapValues { $0.stringValue }.filter { !$0.value.isEmpty && dateRanges[String($0.key.split(separator: "-").first ?? "")] == nil } }
         set {
             for (key, field) in factFields { field.stringValue = newValue[key] ?? "" }
+            refreshDateRanges()
         }
     }
     var onChange: (() -> Void)?
@@ -1439,7 +2050,9 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
     /// Von/Bis-Feld, jedes Ausschlussmuster und jeder weitere Begriff zählt
     /// eins; wörtliche Platzhalter zählen ebenfalls. Beide Apps zeigen die
     /// Zahl am zugeklappten Aufklapp-Schalter.
-    var activeFilterCount: Int { rawFacts.count + exclusions.count + terms.count + (literalWildcards ? 1 : 0) }
+    var activeFilterCount: Int { rawFacts.count + dateRanges.count + exclusions.count + terms.count + (literalWildcards ? 1 : 0) + (textEncoding == .utf8 ? 0 : 1) + (finderMetadata ? 1 : 0) + (localOnly ? 1 : 0) + (ocr ? 1 : 0) + (pdfOCR ? 1 : 0) }
+
+    @objc private func encodingChanged() { onChange?() }
 
     @objc private func literalWildcardsChanged() { onChange?() }
 
@@ -1506,12 +2119,63 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
             row.orientation = .horizontal
             row.alignment = .centerY
             row.spacing = 6
+            if let key = options.first?.key.split(separator: "-").first.map(String.init), ["modified", "created"].contains(key) {
+                let button = NSButton(title: "", target: self, action: #selector(editDateRange(_:)))
+                button.image = NSImage(systemSymbolName: "calendar", accessibilityDescription: "Kalender")
+                button.imagePosition = .imageOnly
+                button.toolTip = "Kalender, Uhrzeit oder relativen Zeitraum für \(group.name) wählen. Die tatsächlich verwendeten Grenzen stehen im Suchbericht."
+                button.setAccessibilityLabel("Datumsbereich für " + group.name)
+                button.identifier = NSUserInterfaceItemIdentifier("date-range-edit-" + key)
+                button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+                row.addArrangedSubview(button)
+            }
             factColumn.addArrangedSubview(row)
         }
         let hint = NSTextField(labelWithString: "Grenzen inklusive · Zeitpunkte mit Z oder Offset · leer = keine Grenze")
         hint.font = .systemFont(ofSize: 10)
         hint.textColor = .secondaryLabelColor
         factColumn.addArrangedSubview(hint)
+        let encodingLabel = NSTextField(labelWithString: "Textkodierung")
+        encodingLabel.font = .systemFont(ofSize: 11)
+        encodingPopup.font = .systemFont(ofSize: 11)
+        encodingPopup.controlSize = .small
+        encodingPopup.setAccessibilityLabel("Textkodierung für Inhaltsbedingungen")
+        encodingPopup.toolTip = "Gilt für Inhalt und Inhaltsbedingungen. Automatik erkennt nur UTF-8-/UTF-16-BOM, sonst UTF-8; ohne BOM die Byteordnung ausdrücklich wählen. Keine Erkennung älterer Kodierungen."
+        for encoding in SearchTextEncoding.allCases {
+            encodingPopup.addItem(withTitle: encoding.title)
+            encodingPopup.lastItem?.representedObject = encoding.rawValue
+        }
+        encodingPopup.target = self
+        encodingPopup.action = #selector(encodingChanged)
+        let encodingRow = NSStackView(views: [encodingLabel, encodingPopup])
+        encodingRow.orientation = .horizontal
+        encodingRow.alignment = .centerY
+        encodingRow.spacing = 6
+        factColumn.addArrangedSubview(encodingRow)
+        finderMetadataCheckbox.font = .systemFont(ofSize: 11)
+        finderMetadataCheckbox.target = self
+        finderMetadataCheckbox.action = #selector(encodingChanged)
+        finderMetadataCheckbox.setAccessibilityIdentifier("finder-metadata-capture")
+        finderMetadataCheckbox.toolTip = "Tags und Kommentar für passende Dateien und Ordner beim nächsten Suchlauf erfassen. Vorschau, Spalten und Ansichtsfilter verwenden danach diesen Suchstand ohne erneutes Lesen."
+        factColumn.addArrangedSubview(finderMetadataCheckbox)
+        localOnlyCheckbox.font = .systemFont(ofSize: 11)
+        localOnlyCheckbox.target = self
+        localOnlyCheckbox.action = #selector(encodingChanged)
+        localOnlyCheckbox.setAccessibilityIdentifier("local-only-content")
+        localOnlyCheckbox.toolTip = "Namen und bekannte Eigenschaften bleiben suchbar. Noch nicht lokal lesbare Inhalte und nicht belegbare Providerzustände werden ausgelassen. Ausdrückliches Öffnen darf herunterladen. Einzelheiten und Grenzen stehen im Suchbericht und in der Hilfe."
+        factColumn.addArrangedSubview(localOnlyCheckbox)
+        ocrCheckbox.font = .systemFont(ofSize: 11)
+        ocrCheckbox.target = self
+        ocrCheckbox.action = #selector(encodingChanged)
+        ocrCheckbox.setAccessibilityIdentifier("image-ocr")
+        ocrCheckbox.toolTip = "Im Suchziel Dokumenttext zusätzlich Bildtext lokal erkennen. Deutsch/Englisch, einzelne Bildframes, begrenzte Pixel/Zeit/Textmenge. Erkannter Text kann vom Original abweichen; eine fehlende Erkennung beweist keine Abwesenheit. In Name, Inhalt und Metadaten ohne Wirkung."
+        factColumn.addArrangedSubview(ocrCheckbox)
+        pdfOCRCheckbox.font = .systemFont(ofSize: 11)
+        pdfOCRCheckbox.target = self
+        pdfOCRCheckbox.action = #selector(encodingChanged)
+        pdfOCRCheckbox.setAccessibilityIdentifier("pdf-ocr")
+        pdfOCRCheckbox.toolTip = "Nur im Dokumenttext: vorhandene Textebenen bevorzugen, textlose Seiten begrenzt rendern und lokal erkennen. Erkannter Text und Seitenbereiche sind ungefähr. Fortschritt und Grenzen stehen im Suchbericht."
+        factColumn.addArrangedSubview(pdfOCRCheckbox)
         // Darunter die weiteren Suchbegriffe: UND zum Suchfeld, einer je
         // Zeile. Unter der linken Spalte statt als dritte Spalte, damit die
         // Ansicht nicht breiter wird — die Schnellsuche hat eine feste Breite.
@@ -1600,6 +2264,38 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
     required init?(coder: NSCoder) { fatalError("init(coder:) wird nicht verwendet") }
     func textDidChange(_ notification: Notification) { onChange?() }
     func controlTextDidChange(_ notification: Notification) { onChange?() }
+    private func refreshDateRanges() {
+        for key in ["modified", "created"] {
+            for suffix in ["from", "to"] {
+                guard let field = factFields[key + "-" + suffix] else { continue }
+                field.isEnabled = dateRanges[key] == nil
+                if let spec = dateRanges[key] {
+                    field.stringValue = suffix == "from" ? spec.title : spec.timeZone
+                    field.toolTip = "\(spec.title) · \(spec.timeZone). Verwendete ISO-Grenzen: Suchbericht. Kalenderknopf → Rohe ISO-Eingabe stellt die Textfelder wieder her."
+                }
+            }
+        }
+    }
+    @objc private func editDateRange(_ sender: NSButton) {
+        guard let window, window.attachedSheet == nil, dateEditor == nil,
+              let identifier = sender.identifier?.rawValue else { return }
+        let key = String(identifier.dropFirst("date-range-edit-".count))
+        guard ["modified", "created"].contains(key) else { return }
+        var spec = dateRanges[key]
+        if spec == nil, let lower = rawFacts[key + "-from"], let upper = rawFacts[key + "-to"] {
+            spec = DateRangeSpec(kind: "fixed", timeZone: TimeZone.current.identifier, lower: lower, upper: upper)
+        }
+        let editor = DateRangeEditor(spec: spec, title: key == "modified" ? "Geändert im Zeitraum" : "Erstellt im Zeitraum")
+        dateEditor = editor
+        editor.present(on: window) { [weak self] result in
+            guard let self else { return }; self.dateEditor = nil
+            guard let result else { return }
+            self.factFields[key + "-from"]?.stringValue = ""; self.factFields[key + "-to"]?.stringValue = ""
+            self.dateRanges[key] = result.0
+            self.onChange?()
+        }
+    }
+    func stopDateEditorForTermination() { dateEditor?.stopForTermination() }
 
     /// Zeigt die Erklärung als Popover am ?-Knopf; ein zweiter Klick schließt.
     @objc func showHelp(_ sender: Any?) {
@@ -1860,7 +2556,7 @@ final class SearchDiagnostics {
         return firstError ?? firstForeignLine
     }
 
-    /// Wie viele Objekte der Lauf überspringen musste.
+    /// Zahl der stderr-Warnmeldungen, keine eindeutige Objektzahl.
     var warningCount: Int {
         lock.lock()
         defer { lock.unlock() }
@@ -1875,6 +2571,7 @@ struct SearchExit {
     var errorMessage: String? = nil
     /// Wie viele Objekte der Lauf überspringen musste.
     var warningCount: Int = 0
+    var report: SearchReportSnapshot? = nil
 }
 
 /// Der Satz, den die Oberfläche bei einem gescheiterten Lauf zeigt.
@@ -1902,8 +2599,8 @@ func searchFailureText(_ exit: SearchExit) -> String {
 func skippedNote(_ count: Int) -> String {
     switch count {
     case 0: return ""
-    case 1: return " · 1 Objekt übersprungen"
-    default: return " · \(count) Objekte übersprungen"
+    case 1: return " · 1 Warnung"
+    default: return " · \(count) Warnungen"
     }
 }
 
@@ -1981,8 +2678,20 @@ final class SearchRunner {
         }
     }
 
+    /// Nur beim App-Ende: Danach laufen Dispatch-Completions nicht mehr
+    /// verlässlich. Kein normaler Such-/Filterwechsel wartet hier.
+    func stopForTermination(deadline: TimeInterval) {
+        cancel()
+        while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+    }
+
     func start(arguments: [String], executable: String = pythonPath,
                onBatch: @escaping ([Hit], String?) -> Void,
+               onReport: @escaping (SearchReportSnapshot) -> Void = { _ in },
+               onDateResolution: @escaping (Data) -> Void = { _ in },
                completion: @escaping (SearchExit) -> Void) {
         lock.lock()
         precondition(!started)
@@ -1990,7 +2699,7 @@ final class SearchRunner {
         lock.unlock()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let result = read(arguments: arguments, executable: executable,
-                              onBatch: onBatch)
+                              onBatch: onBatch, onReport: onReport, onDateResolution: onDateResolution)
             // Alle Pakete wurden vorher in dieselbe serielle Main-Queue
             // gestellt. completion sieht daher auch die letzte übernommene Zeile.
             DispatchQueue.main.async { completion(result) }
@@ -1998,7 +2707,9 @@ final class SearchRunner {
     }
 
     private func read(arguments: [String], executable: String,
-                      onBatch: @escaping ([Hit], String?) -> Void) -> SearchExit {
+                      onBatch: @escaping ([Hit], String?) -> Void,
+                      onReport: @escaping (SearchReportSnapshot) -> Void,
+                      onDateResolution: @escaping (Data) -> Void) -> SearchExit {
         let pipe = Pipe()
         let errPipe = Pipe()
         let diagnostics = SearchDiagnostics()
@@ -2026,10 +2737,13 @@ final class SearchRunner {
         var hits: [Hit] = []
         var bytes = 0
         var progress: String?
+        var report: SearchReportSnapshot?
+        var latestReport: SearchReportSnapshot?
+        var dateResolution: Data?
         var protocolError: String?
         var lastDelivery = ProcessInfo.processInfo.systemUptime
         func deliver() {
-            guard !hits.isEmpty || progress != nil else { return }
+            guard !hits.isEmpty || progress != nil || report != nil || dateResolution != nil else { return }
             // Ein voller Verbraucher bremst den Erzeuger über dessen Pipe.
             // Das kurze Warten prüft Abbruch auch bei blockierter Main-Queue.
             while slots.wait(timeout: .now() + 0.05) != .success {
@@ -2038,19 +2752,25 @@ final class SearchRunner {
             if isCancelled { slots.signal(); return }
             let packet = hits
             let latestProgress = progress
+            let packetReport = report
+            let packetDateResolution = dateResolution
             lock.lock()
             outstanding += 1
             maximumOutstanding = max(maximumOutstanding, outstanding)
             maximumBatchBytes = max(maximumBatchBytes, bytes)
             lock.unlock()
-            hits = []; bytes = 0; progress = nil
+            hits = []; bytes = 0; progress = nil; report = nil; dateResolution = nil
             lastDelivery = ProcessInfo.processInfo.systemUptime
             DispatchQueue.main.async { [self] in
                 defer {
                     lock.lock(); outstanding -= 1; lock.unlock()
                     slots.signal()
                 }
-                if !isCancelled { onBatch(packet, latestProgress) }
+                if !isCancelled {
+                    if let packetReport { onReport(packetReport) }
+                    if let packetDateResolution { onDateResolution(packetDateResolution) }
+                    onBatch(packet, latestProgress)
+                }
             }
         }
         func consume(_ line: Data) {
@@ -2068,6 +2788,14 @@ final class SearchRunner {
             switch parsed {
             case .hit(let hit)?: hits.append(hit); bytes += line.count
             case .progress(let path)?: progress = path; bytes += line.count
+            case .report(let value)?: report = value; latestReport = value; bytes += line.count
+            case .dateResolution(let value)?: dateResolution = value; bytes += line.count
+            case .invalidDateResolution?:
+                protocolError = "Datumsbeleg: ungültiges Schema oder überschrittene Beleggrenze."
+                cancel()
+            case .invalidReport?:
+                protocolError = "Suchbericht: ungültiges Schema oder überschrittene Berichtsgrenze."
+                cancel()
             case nil: break
             }
             if hits.count >= Self.batchHitLimit || bytes >= Self.batchByteLimit {
@@ -2115,7 +2843,7 @@ final class SearchRunner {
         return SearchExit(status: protocolError == nil ? process.terminationStatus : 2,
                           reason: protocolError == nil ? process.terminationReason : .exit,
                           errorMessage: protocolError ?? diagnostics.errorMessage,
-                          warningCount: diagnostics.warningCount)
+                          warningCount: diagnostics.warningCount, report: latestReport)
     }
 }
 
@@ -2158,6 +2886,8 @@ final class MaterializationRequest {
     // Ausschließlich unter MaterializationManager.lock lesen und ändern.
     fileprivate var cancelled = false
     fileprivate var delivered = false
+    fileprivate var leaseCleanup: (() -> Void)?
+    fileprivate var ephemeral = false
     private weak var manager: MaterializationManager?
 
     fileprivate init(hit: Hit, epoch: Int, manager: MaterializationManager) {
@@ -2167,6 +2897,7 @@ final class MaterializationRequest {
     }
 
     func cancel() { manager?.cancel(self) }
+    func release() { manager?.release(self) }
 }
 
 /// Appweiter Cache: jede Aktion auf denselben Archivtreffer verwendet dieselbe
@@ -2208,7 +2939,20 @@ final class MaterializationManager {
     // Cache-Einträge und zwei Unterprozesse in zwei Temp-Ordner — gegen die
     // Zusage, dass gleichzeitige Anforderungen desselben Treffers EINEN
     // Unterprozess und dieselbe Datei teilen.
-    private var cache: [HitIdentity: URL] = [:]
+    private final class CachedFile {
+        let url: URL
+        let source: ContentSourceGeneration?
+        let leaf: ContentSourceGeneration?
+        var retained: Bool
+        var pins = 0
+        init(url: URL, source: ContentSourceGeneration?, leaf: ContentSourceGeneration?, retained: Bool) {
+            self.url = url
+            self.source = source
+            self.leaf = leaf
+            self.retained = retained
+        }
+    }
+    private var cache: [HitIdentity: CachedFile] = [:]
     private var jobs: [HitIdentity: Job] = [:]
     private var root: URL?
     private var epoch = 0
@@ -2242,12 +2986,17 @@ final class MaterializationManager {
     private final class Job {
         let hit: Hit
         let epoch: Int
+        let source: ContentSourceGeneration?
+        let localOnly: Bool
         var waiters: [(MaterializationRequest, (MaterializationOutcome) -> Void)] = []
         var process: Process?
         var cancelled = false
-        init(hit: Hit, epoch: Int) {
+        var retained = true
+        init(hit: Hit, epoch: Int, source: ContentSourceGeneration?, localOnly: Bool) {
+            self.localOnly = localOnly
             self.hit = hit
             self.epoch = epoch
+            self.source = source
         }
     }
 
@@ -2276,36 +3025,74 @@ final class MaterializationManager {
     func knownURL(for hit: Hit) -> URL? {
         lock.lock()
         defer { lock.unlock() }
-        return knownURLLocked(for: hit)
+        let source = cache[hit.identity] != nil || hit.contentPreview?.sourceGeneration != nil
+            ? ContentSourceGeneration.current(hit.filesystemPath) : nil
+        let url = knownURLLocked(for: hit, source: source)
+        if url != nil { cache[hit.identity]?.retained = true }
+        return url
     }
 
     /// Nur mit gehaltenem Lock: request() verbindet dieselbe Cacheprüfung
     /// mit der Auftragswahl. Dazwischen darf finish() keinen Job entfernen.
-    private func knownURLLocked(for hit: Hit) -> URL? {
+    private func knownURLLocked(for hit: Hit, source: ContentSourceGeneration?) -> URL? {
+        if let expected = hit.contentPreview?.sourceGeneration,
+           source != expected { return nil }
         if !hit.isMember {
             return URL(fileURLWithPath: hit.filesystemPath)
         }
         if hit.isDirectory { return nil }
-        if let cached = cache[hit.identity],
-           FileManager.default.fileExists(atPath: cached.path) {
-            return cached
+        if let cached = cache[hit.identity] {
+            guard source == cached.source, let leaf = cached.leaf,
+                  ContentSourceGeneration.current(cached.url.path) == leaf else {
+                cache.removeValue(forKey: hit.identity)
+                return nil
+            }
+            return cached.url
         }
         return nil
+    }
+
+    func generationSnapshot(for hit: Hit, url: URL) -> (source: ContentSourceGeneration, leaf: ContentSourceGeneration)? {
+        lock.lock(); defer { lock.unlock() }
+        guard let cached = cache[hit.identity], cached.url.path.utf8.elementsEqual(url.path.utf8),
+              let source = cached.source, let leaf = cached.leaf else { return nil }
+        return (source, leaf)
     }
 
     /// Fordert die Datei hinter einem Treffer an.
     ///
     /// Steht sie schon fest (`knownURL`), kommt die Completion SOFORT und
-    /// synchron auf dem rufenden Thread, und es gibt keinen Griff (nil).
+    /// synchron auf dem rufenden Thread. Normale Abrufe liefern dabei nil;
+    /// befristete Abrufe liefern eine Lease, die nach jedem Ausgang mit
+    /// release() freigegeben werden muss.
     /// Sonst läuft der Kern im Hintergrund, die Completion kommt auf der
     /// Main-Queue, und der Griff erlaubt den Abbruch. Läuft für denselben
     /// Treffer schon ein Auftrag, hängt sich die Anforderung an ihn.
     @discardableResult
-    func request(_ hit: Hit,
+    func request(_ hit: Hit, localOnly: Bool = false,
+                 ephemeral: Bool = false,
                  completion: @escaping (MaterializationOutcome) -> Void)
         -> MaterializationRequest? {
         lock.lock()
-        if let url = knownURLLocked(for: hit) {
+        let source = hit.isMember || hit.contentPreview?.sourceGeneration != nil
+            ? ContentSourceGeneration.current(hit.filesystemPath, localOnly: localOnly) : nil
+        if let expected = hit.contentPreview?.sourceGeneration,
+           source != expected {
+            lock.unlock()
+            completion(.failed("Quelle stimmt nicht mehr mit der Fundstellenvorschau überein. Bitte neu suchen."))
+            return nil
+        }
+        if let url = knownURLLocked(for: hit, source: source) {
+            if ephemeral, let cached = cache[hit.identity] {
+                let request = MaterializationRequest(hit: hit, epoch: epoch, manager: self)
+                request.ephemeral = true
+                request.delivered = true
+                pin(request, cached: cached)
+                lock.unlock()
+                completion(.ready(url))
+                return request
+            }
+            cache[hit.identity]?.retained = true
             lock.unlock()
             completion(.ready(url))
             return nil
@@ -2320,14 +3107,17 @@ final class MaterializationManager {
             return nil
         }
         let request = MaterializationRequest(hit: hit, epoch: epoch, manager: self)
+        request.ephemeral = ephemeral
         // Ein Auftrag, den alle verlassen haben, stirbt gerade; ihm darf
         // sich niemand mehr anschließen — er endete mit `.cancelled`.
         if let job = jobs[hit.identity], !job.cancelled {
+            if !ephemeral { job.retained = true }
             job.waiters.append((request, completion))
             lock.unlock()
             return request
         }
-        let job = Job(hit: hit, epoch: epoch)
+        let job = Job(hit: hit, epoch: epoch, source: source, localOnly: localOnly)
+        job.retained = !ephemeral
         job.waiters.append((request, completion))
         jobs[hit.identity] = job
         lock.unlock()
@@ -2338,11 +3128,35 @@ final class MaterializationManager {
         return request
     }
 
+    // Miniaturen halten dieselbe Datei nur während des Decodierens fest.
+    // Ein ausdrücklicher Dateiabruf behält sie weiterhin bis zum App-Ende.
+    private func pin(_ request: MaterializationRequest, cached: CachedFile) {
+        cached.pins += 1
+        let identity = request.hit.identity
+        request.leaseCleanup = { [weak self] in self?.releaseCached(cached, identity: identity) }
+    }
+    fileprivate func release(_ request: MaterializationRequest) {
+        lock.lock()
+        let cleanup = request.leaseCleanup
+        request.leaseCleanup = nil
+        lock.unlock()
+        cleanup?()
+    }
+    private func releaseCached(_ cached: CachedFile, identity: HitIdentity) {
+        lock.lock()
+        cached.pins -= 1
+        let discardFile = cached.pins == 0 && !cached.retained
+        if discardFile && cache[identity] === cached { cache[identity] = nil }
+        lock.unlock()
+        if discardFile { DispatchQueue.global(qos: .utility).async { self.discard(cached.url) } }
+    }
+
     /// Nimmt einen Anforderer vom Auftrag. Der letzte beendet den Prozess.
     fileprivate func cancel(_ request: MaterializationRequest) {
         lock.lock()
         guard !request.cancelled && !request.delivered else {
             lock.unlock()
+            release(request)
             return
         }
         // finish() kann den Job bereits entfernt haben. Die eingereihte
@@ -2352,11 +3166,13 @@ final class MaterializationManager {
               let index = job.waiters.firstIndex(where: { $0.0 === request })
         else {
             lock.unlock()
+            release(request)
             return
         }
         let (_, completion) = job.waiters.remove(at: index)
         if job.waiters.isEmpty { terminateLocked(job) }
         lock.unlock()
+        release(request)
         DispatchQueue.main.async { self.deliver(request, .cancelled, completion) }
     }
 
@@ -2414,8 +3230,14 @@ final class MaterializationManager {
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: interpreter)
+        var limits: [String] = []
+        if let budget = job.hit.contentPreview?.archiveLimits {
+            limits = ["--max-archive-member-bytes", String(budget.memberBytes),
+                      "--max-archive-total-bytes", String(budget.totalBytes),
+                      "--max-archive-ratio", String(budget.ratio)]
+        }
         process.arguments = [cli, "--extract-json", jsonText,
-                             "--extract-root", root.path] + extraArguments
+                             "--extract-root", root.path] + (job.localOnly ? ["--local-only"] : []) + limits + extraArguments
         let output = Pipe()
         let errors = Pipe()
         process.standardOutput = output
@@ -2475,13 +3297,23 @@ final class MaterializationManager {
     /// Trägt das Ergebnis ein und benachrichtigt alle Wartenden auf Main.
     private func finish(_ job: Job, with result: MaterializationOutcome) {
         var outcome = result
+        let changed: Bool
+        if case .ready = result { changed = ContentSourceGeneration.current(job.hit.filesystemPath, localOnly: job.localOnly) != job.source }
+        else { changed = false }
         lock.lock()
         if job.cancelled || job.epoch != epoch {
             // Abbruch kann zwischen execute() und diesem Lock eintreffen.
             if case .ready(let url) = outcome { discard(url) }
             outcome = .cancelled
         } else if case .ready(let url) = outcome {
-            cache[job.hit.identity] = url
+            if changed {
+                discard(url)
+                outcome = .failed("Quelle wurde während des Auspackens verändert. Bitte erneut anfordern.")
+            } else {
+                let cached = CachedFile(url: url, source: job.source, leaf: ContentSourceGeneration.current(url.path), retained: job.retained)
+                cache[job.hit.identity] = cached
+                for (request, _) in job.waiters where request.ephemeral && !request.cancelled { pin(request, cached: cached) }
+            }
         }
         if jobs[job.hit.identity] === job { jobs[job.hit.identity] = nil }
         let waiters = job.waiters
@@ -2548,9 +3380,14 @@ func jsonlData(for hits: [Hit]) -> Data {
                                          "isDirectory": hit.isDirectory]
             object["filesystemPath"] = hit.filesystemPath
             object["archiveMembers"] = hit.archiveMembers
+            if let searchRoot = hit.searchRoot { object["searchRoot"] = searchRoot }
             if !hit.archiveMemberBytes.isEmpty {
                 object["archiveMemberBytes"] = hit.archiveMemberBytes
             }
+            if let contentEncoding = hit.contentEncoding { object["contentEncoding"] = contentEncoding }
+            if let contentPreview = hit.contentPreview { object["contentPreview"] = contentPreview.json }
+            if let documentPosition = hit.documentPosition { object["documentPosition"] = documentPosition.json }
+            if let documentSourceGeneration = hit.documentSourceGeneration { object["documentSourceGeneration"] = documentSourceGeneration.json }
             if let line = hit.line { object["line"] = line }
             if let size = hit.size { object["size"] = size }
             if let field = hit.field, let value = hit.value {
@@ -2564,7 +3401,16 @@ func jsonlData(for hits: [Hit]) -> Data {
             if let modified = hit.modified { object["modified"] = modified }
             if let created = hit.created { object["created"] = created }
             if !hit.terms.isEmpty { object["terms"] = hit.terms.map { $0.json } }
-            if let encoded = try? JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes) {
+            if !hit.criteriaEvidence.isEmpty {
+                object["criteriaEvidence"] = hit.criteriaEvidence.map { $0.json }
+            }
+            if var encoded = try? JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes) {
+                if let snapshot = hit.finderMetadata {
+                    encoded.removeLast()
+                    encoded.append(Data(",\"finderMetadata\":".utf8))
+                    encoded.append(snapshot.json)
+                    encoded.append(125)
+                }
                 data.append(encoded)
                 data.append(0x0A)
             }
@@ -2577,6 +3423,7 @@ let quickHandoffPrefix = "favenio-quick-"
 let quickHandoffSuffix = ".jsonl"
 let maximumHandoffBytes = 8 * 1024 * 1024
 let maximumHandoffLineBytes = 1024 * 1024
+let maximumQuickURLBytes = 262_144
 
 func quickHandoffInputProblem(query: String, root: String) -> String? {
     if query.utf8.count > 4096 {
@@ -2589,8 +3436,53 @@ func quickHandoffInputProblem(query: String, root: String) -> String? {
 }
 
 /// Schreibt die Quick→Haupt-App-Übergabe atomar und nur für den Besitzer.
-func writeQuickHandoff(_ hits: [Hit]) throws -> URL {
-    let data = jsonlData(for: hits)
+func writeQuickHandoff(_ hits: [Hit], selection: Set<HitIdentity> = [], version: Int = 1, roots: [String]? = nil,
+                       configuration: SearchConfiguration? = nil, dateResolution: Data? = nil) throws -> URL {
+    guard [1, 2, 3, 4, 5, 6, 7, 8].contains(version), selection.count <= 20,
+          selection.isSubset(of: Set(hits.map { $0.identity })),
+          version >= 2 || selection.isEmpty else { throw CocoaError(.fileWriteUnknown) }
+    guard version >= 7 || configuration?.ocr != true else { throw CocoaError(.fileWriteUnknown) }
+    guard !hits.contains(where: { $0.contentEncoding == "vision-ocr-text-v1" }) || configuration?.ocr == true else { throw CocoaError(.fileWriteUnknown) }
+    guard version == 8 || configuration?.pdfOCR != true else { throw CocoaError(.fileWriteUnknown) }
+    guard version >= 8 || !hits.contains(where: { $0.contentEncoding == "pdfkit-vision-text-v1" }) else { throw CocoaError(.fileWriteUnknown) }
+    guard version >= 7 || !hits.contains(where: { $0.contentEncoding == "vision-ocr-text-v1" }) else { throw CocoaError(.fileWriteUnknown) }
+    guard version >= 6 || configuration?.localOnly != true else { throw CocoaError(.fileWriteUnknown) }
+    guard version >= 5 || (!hits.contains { $0.finderMetadata != nil } && configuration?.requiresFinderMetadata != true) else { throw CocoaError(.fileWriteUnknown) }
+    if version >= 3 {
+        guard let roots, SearchRoots.problem(roots) == nil,
+              Set(hits.map { $0.identity }).count == hits.count,
+              hits.allSatisfy({ $0.searchRootBytes != nil && SearchRoots(roots).carrying($0) != nil }) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    } else if roots != nil { throw CocoaError(.fileWriteUnknown) }
+    if version >= 4 {
+        guard let configuration, SearchConfiguration.transportProblem(configuration.queryItems) == nil,
+              version == 8 ? configuration.pdfOCR : version == 7 ? configuration.ocr : version == 6 ? configuration.localOnly : version == 5 ? (configuration.requiresFinderMetadata || hits.contains { $0.finderMetadata != nil }) : configuration.requiresDateRanges else { throw CocoaError(.fileWriteUnknown) }
+        if configuration.requiresDateRanges {
+            guard configuration.dateReferenceTime != nil,
+                  dateResolution.map({ DateRangeTransport.bound($0, to: configuration) }) ?? hits.isEmpty else { throw CocoaError(.fileWriteUnknown) }
+        } else if dateResolution != nil { throw CocoaError(.fileWriteUnknown) }
+    } else if configuration != nil || dateResolution != nil { throw CocoaError(.fileWriteUnknown) }
+    var data = Data()
+    if version >= 2 {
+        let identities = hits.filter { selection.contains($0.identity) }.map { hit in
+            ["filesystemPath": hit.filesystemPath, "archiveMembers": hit.archiveMembers,
+             "archiveMemberBytes": hit.archiveMemberBytes] as [String: Any]
+        }
+        var header: [String: Any] = ["type": "quickHandoff", "schemaVersion": version, "selection": identities]
+        if version >= 3 { header["roots"] = roots! }
+        if version >= 4 {
+            header["options"] = configuration!.queryItems.map { ["name": $0.name, "value": $0.value ?? ""] }
+            header["dateResolution"] = dateResolution.flatMap { preservedJSONObject($0) } ?? NSNull()
+        }
+        if version >= 5 { header["finderMetadataCapability"] = 1 }
+        if version >= 6 { header["localContentCapability"] = 1 }
+        if version >= 7 { header["ocrCapability"] = 1 }
+        if version == 8 { header["pdfOCRCapability"] = 1 }
+        data = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
+        data.append(10)
+    }
+    data.append(jsonlData(for: hits))
     guard data.count <= maximumHandoffBytes,
           data.split(separator: 0x0A).allSatisfy({ $0.count <= maximumHandoffLineBytes }) else {
         throw CocoaError(.fileWriteOutOfSpace)
@@ -2630,14 +3522,116 @@ func validatedQuickHandoff(_ candidate: URL) -> URL? {
 
 /// Liest begrenzt und zeilenweise; eine validierte Übergabedatei wird bei
 /// Erfolg wie Fehler exakt einmal verbraucht und anschließend gelöscht.
+struct QuickHandoffPayload {
+    var hits: [Hit] = []
+    var selection: Set<HitIdentity> = []
+    var version = 1
+    var roots: [String]?
+    var configuration: SearchConfiguration?
+    var dateResolution: Data?
+
+    func bound(to paths: [String]) -> QuickHandoffPayload? {
+        let scope = SearchRoots(paths)
+        guard SearchRoots.problem(paths, limited: paths.count != 1) == nil,
+              roots == nil || roots!.map({ Data($0.utf8) }) == scope.bytes else { return nil }
+        guard !hits.contains(where: { $0.contentEncoding == "vision-ocr-text-v1" }) || configuration?.ocr == true else { return nil }
+        if version >= 4 {
+            guard let configuration,
+                  version == 8 ? configuration.pdfOCR : version == 7 ? configuration.ocr : version == 6 ? configuration.localOnly : version == 5 ? (configuration.requiresFinderMetadata || hits.contains { $0.finderMetadata != nil }) : configuration.requiresDateRanges else { return nil }
+            if configuration.requiresDateRanges {
+                guard configuration.dateReferenceTime != nil,
+                      dateResolution.map({ DateRangeTransport.bound($0, to: configuration) }) ?? hits.isEmpty else { return nil }
+            } else if dateResolution != nil { return nil }
+        } else if configuration != nil || dateResolution != nil { return nil }
+        var result = self
+        result.roots = paths; result.hits = []
+        var seen: Set<HitIdentity> = []
+        for hit in hits {
+            guard let bound = scope.carrying(hit) else { return nil }
+            if seen.insert(bound.identity).inserted { result.hits.append(bound) }
+        }
+        return result
+    }
+}
+
 func consumeQuickHandoff(_ candidate: URL) -> [Hit]? {
+    consumeQuickHandoffPayload(candidate)?.hits
+}
+
+private func quickHandoffHeaderKeys(_ version: Int) -> Set<String> {
+    var keys: Set<String> = ["type", "schemaVersion", "selection"]
+    if version >= 3 { keys.insert("roots") }
+    if version >= 4 { keys.formUnion(["options", "dateResolution"]) }
+    if version >= 5 { keys.insert("finderMetadataCapability") }
+    if version >= 6 { keys.insert("localContentCapability") }
+    if version >= 7 { keys.insert("ocrCapability") }
+    if version >= 8 { keys.insert("pdfOCRCapability") }
+    return keys
+}
+
+func consumeQuickHandoffPayload(_ candidate: URL) -> QuickHandoffPayload? {
     guard let url = validatedQuickHandoff(candidate) else { return nil }
     defer { try? FileManager.default.removeItem(at: url) }
     guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
     defer { try? handle.close() }
     var total = 0
     var buffer = Data()
-    var hits: [Hit] = []
+    var payload = QuickHandoffPayload()
+    var firstLine = true
+    func accept(_ line: Data) -> Bool {
+        defer { firstLine = false }
+        if firstLine, let object = preservedJSONObject(line) as? [String: Any],
+           object["type"] as? String == "quickHandoff" {
+            guard let version = object["schemaVersion"] as? NSNumber,
+                  CFGetTypeID(version) != CFBooleanGetTypeID(), [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0].contains(version.doubleValue),
+                  !DateRangeTransport.hasDuplicateKeys(line),
+                  Set(object.keys) == quickHandoffHeaderKeys(version.intValue),
+                  version.intValue < 5 || FinderMetadataSnapshot.supportsCapability(object["finderMetadataCapability"]),
+                  version.intValue < 6 || SearchConfiguration.supportsLocalContentCapability(object["localContentCapability"]),
+                  version.intValue < 7 || SearchConfiguration.supportsOCRCapability(object["ocrCapability"]),
+                  version.intValue != 8 || SearchConfiguration.supportsPDFOCRCapability(object["pdfOCRCapability"]),
+                  let rows = object["selection"] as? [[String: Any]], rows.count <= 20 else { return false }
+            if version.intValue >= 3 {
+                guard let roots = object["roots"] as? [String], SearchRoots.problem(roots) == nil else { return false }
+                payload.roots = roots
+            }
+            if version.intValue >= 4 {
+                guard let pairs = object["options"] as? [[String: String]], pairs.allSatisfy({ Set($0.keys) == ["name", "value"] }) else { return false }
+                let items = pairs.map { URLQueryItem(name: $0["name"]!, value: $0["value"]!) }
+                guard SearchConfiguration.transportProblem(items) == nil else { return false }
+                let configuration = SearchConfiguration.fromQueryItems(items)
+                guard version.intValue == 8 ? configuration.pdfOCR : version.intValue == 7 ? configuration.ocr : version.intValue == 6 ? configuration.localOnly : version.intValue == 5 || configuration.requiresDateRanges,
+                      !configuration.ocr || version.intValue >= 7,
+                      !configuration.pdfOCR || version.intValue == 8,
+                      !configuration.localOnly || version.intValue >= 6,
+                      !configuration.requiresFinderMetadata || version.intValue >= 5,
+                      !configuration.requiresDateRanges || configuration.dateReferenceTime != nil else { return false }
+                payload.configuration = configuration
+                if !(object["dateResolution"] is NSNull) {
+                    guard let raw = object["dateResolution"], let proof = DateRangeTransport.resolution(raw), DateRangeTransport.bound(proof, to: configuration) else { return false }
+                    payload.dateResolution = proof
+                }
+            }
+            for row in rows {
+                guard Set(row.keys) == ["filesystemPath", "archiveMembers", "archiveMemberBytes"],
+                      let path = row["filesystemPath"] as? String,
+                      let members = row["archiveMembers"] as? [String],
+                      let bytes = row["archiveMemberBytes"] as? [String],
+                      bytes.isEmpty || bytes.count == members.count,
+                      bytes.allSatisfy({ Data(base64Encoded: $0) != nil }),
+                      payload.selection.insert(HitIdentity(filesystemPath: path,
+                          archiveMembers: members, archiveMemberBytes: bytes)).inserted else { return false }
+            }
+            payload.version = version.intValue
+            return true
+        }
+        guard let hit = parseHit(line), payload.version >= 5 || hit.finderMetadata == nil,
+              payload.version >= 7 || hit.contentEncoding != "vision-ocr-text-v1",
+              hit.contentEncoding != "vision-ocr-text-v1" || payload.configuration?.ocr == true,
+              payload.version >= 8 || hit.contentEncoding != "pdfkit-vision-text-v1" else { return false }
+        payload.hits.append(hit)
+        return true
+    }
     do {
         while let chunk = try handle.read(upToCount: 64 * 1024),
               !chunk.isEmpty {
@@ -2647,9 +3641,7 @@ func consumeQuickHandoff(_ candidate: URL) -> [Hit]? {
             while let newline = buffer.firstIndex(of: 0x0A) {
                 let line = buffer.subdata(in: buffer.startIndex..<newline)
                 buffer.removeSubrange(buffer.startIndex...newline)
-                guard line.count <= maximumHandoffLineBytes,
-                      let hit = parseHit(line) else { return nil }
-                hits.append(hit)
+                guard line.count <= maximumHandoffLineBytes, accept(line) else { return nil }
             }
             guard buffer.count <= maximumHandoffLineBytes else { return nil }
         }
@@ -2657,10 +3649,18 @@ func consumeQuickHandoff(_ candidate: URL) -> [Hit]? {
         return nil
     }
     if !buffer.isEmpty {
-        guard let hit = parseHit(buffer) else { return nil }
-        hits.append(hit)
+        guard accept(buffer) else { return nil }
     }
-    return hits
+    guard payload.selection.isSubset(of: Set(payload.hits.map { $0.identity })) else { return nil }
+    guard payload.version != 4 || payload.dateResolution != nil || payload.hits.isEmpty else { return nil }
+    if let roots = payload.roots {
+        guard Set(payload.hits.map { $0.identity }).count == payload.hits.count,
+              payload.hits.allSatisfy({ $0.searchRootBytes != nil && SearchRoots(roots).carrying($0) != nil }) else { return nil }
+    }
+    if payload.version >= 4 {
+        guard let roots = payload.roots, payload.bound(to: roots) != nil else { return nil }
+    }
+    return payload
 }
 
 /// Nur die echten Zusatztasten eines Tastendrucks.
@@ -3411,7 +4411,7 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
             formatter.string(from: Date(timeIntervalSince1970: seconds))
         }
         var text = "path,type,isDirectory,size,line,filesystemPath,"
-            + "field,value,width,height,modified,created\n"
+            + "field,value,width,height,modified,created,contentEncoding,documentPage,documentLine,documentPart,documentPartKind,documentParagraph,documentChapter,documentSheet,documentSheetIndex,documentCell,documentValueKind,documentSlide,documentObjectID,documentObjectKind,documentRow,documentColumn,finderTags,finderTagColors,finderComment,finderTagsStatus,finderCommentStatus,ocrBlock,ocrConfidence,ocrRegion\n"
         for hit in hits {
             // In Teilschritten: Ein Array-Literal mit zehn gemischten
             // Ausdrücken bringt den Typprüfer an seine Zeitgrenze.
@@ -3428,6 +4428,34 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
             // Tabellenkalkulation, eine nackte Sekundenzahl nicht.
             cells.append(hit.modified.map(isoTimestamp) ?? "")
             cells.append(hit.created.map(isoTimestamp) ?? "")
+            cells.append(csvField(hit.contentEncoding ?? ""))
+            cells.append(hit.documentPosition.flatMap { ["pdfPage", "pdfTextPage", "pdfOCR"].contains($0.kind) ? String($0.page) : nil } ?? "")
+            cells.append(hit.documentPosition.map { String($0.line) } ?? "")
+            cells.append(csvField(hit.documentPosition?.part ?? ""))
+            cells.append(csvField(hit.documentPosition?.partKind ?? ""))
+            cells.append(hit.documentPosition?.paragraph.map(String.init) ?? "")
+            cells.append(hit.documentPosition?.chapter.map(String.init) ?? "")
+            cells.append(csvField(hit.documentPosition?.sheet ?? ""))
+            cells.append(hit.documentPosition?.sheetIndex.map(String.init) ?? "")
+            cells.append(csvField(hit.documentPosition?.cell ?? ""))
+            cells.append(csvField(hit.documentPosition?.valueKind ?? ""))
+            cells.append(hit.documentPosition?.slide.map(String.init) ?? "")
+            cells.append(csvField(hit.documentPosition?.objectID ?? ""))
+            cells.append(csvField(hit.documentPosition?.objectKind ?? ""))
+            cells.append(hit.documentPosition?.row.map(String.init) ?? "")
+            cells.append(hit.documentPosition?.column.map(String.init) ?? "")
+            func jsonText(_ value: Any?) -> String {
+                guard let value, let data = try? JSONSerialization.data(withJSONObject: value, options: [.withoutEscapingSlashes]) else { return "" }
+                return String(decoding: data, as: UTF8.self)
+            }
+            cells.append(csvField(jsonText(hit.finderMetadata?.tags?.map { $0.name })))
+            cells.append(csvField(jsonText(hit.finderMetadata?.tags?.map { $0.color.map { $0 as Any } ?? NSNull() })))
+            cells.append(csvField(hit.finderMetadata?.comment ?? ""))
+            cells.append(csvField(hit.finderMetadata?.tagStatus ?? "notCaptured"))
+            cells.append(csvField(hit.finderMetadata?.commentStatus ?? "notCaptured"))
+            cells.append(hit.documentPosition?.ocrBlock.map(String.init) ?? "")
+            cells.append(hit.documentPosition?.ocrConfidence.map { String($0) } ?? "")
+            cells.append(csvField(hit.documentPosition?.ocrRegion.map { $0.map { String($0) }.joined(separator: ";") } ?? ""))
             text += cells.joined(separator: ",")
             text += "\n"
         }
@@ -3439,7 +4467,7 @@ func exportData(for hits: [Hit], format: HitExportFormat) -> Data {
 
 /// Ein Export pro Instanz. Steuerung und Completion gehören auf Main;
 /// Serialisierung und atomarer Dateiaustausch laufen auf einer Worker-Queue.
-/// Der unveränderliche Array-Wert hält genau die beim Start gewählten Treffer.
+/// Der unveränderliche Wert hält genau den beim Start gewählten Treffer-/Berichtsstand.
 final class ExportWriter {
     private(set) var isWriting = false
     private let operation: ([Hit], HitExportFormat, URL) throws -> Void
@@ -3455,15 +4483,25 @@ final class ExportWriter {
     @discardableResult
     func write(_ hits: [Hit], format: HitExportFormat, to destination: URL,
                completion: @escaping (Result<Void, Error>) -> Void) -> Bool {
+        enqueue({ [self] in try operation(hits, format, destination) }, completion: completion)
+    }
+
+    @discardableResult
+    func writeJSON(_ object: [String: Any], to destination: URL,
+                   completion: @escaping (Result<Void, Error>) -> Void) -> Bool {
+        enqueue({
+            let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: destination, options: .atomic)
+        }, completion: completion)
+    }
+
+    private func enqueue(_ operation: @escaping () throws -> Void,
+                         completion: @escaping (Result<Void, Error>) -> Void) -> Bool {
         precondition(Thread.isMainThread)
         guard !isWriting else { return false }
         isWriting = true
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            let result: Result<Void, Error> = Result {
-                try autoreleasepool {
-                    try operation(hits, format, destination)
-                }
-            }
+            let result: Result<Void, Error> = Result { try autoreleasepool { try operation() } }
             DispatchQueue.main.async { [self] in
                 isWriting = false
                 completion(result)
@@ -3626,6 +4664,673 @@ func installMainMenu(appName: String, includeClose: Bool = false) {
 
 // ---------- Gemeinsamer Unterbau beider Trefferlisten ----------
 
+enum ResultGroupingMode: String, CaseIterable {
+    case none, folder, fileExtension, archive
+    var title: String {
+        switch self {
+        case .none: return "Keine"
+        case .folder: return "Ordner"
+        case .fileExtension: return "Endung"
+        case .archive: return "Quellarchiv"
+        }
+    }
+}
+
+struct ResultGroupKey: Hashable {
+    let components: [Data]
+    func precedes(_ other: ResultGroupKey) -> Bool {
+        for (left, right) in zip(components, other.components) where left != right {
+            return left.lexicographicallyPrecedes(right)
+        }
+        return components.count < other.components.count
+    }
+}
+
+struct ResultGroup {
+    let key: ResultGroupKey
+    let title: String
+    var hitIndices: [Int]
+}
+
+enum ResultTableRow {
+    case group(Int), hit(Int)
+}
+
+/// Darstellung ohne Suchauswertung: Trefferindices bleiben auf die unveränderte
+/// gefilterte Liste bezogen. Rohbytes trennen auch gleich aussehende Archivordner.
+struct ResultProjection {
+    let mode: ResultGroupingMode
+    let hitCount: Int
+    private(set) var groups: [ResultGroup] = []
+    private(set) var rows: [ResultTableRow] = []
+    private var inverse: [Int?] = []
+    private(set) var displayedHitCount: Int
+    var rowCount: Int { mode == .none ? hitCount : rows.count }
+
+    init(hits: [Hit], mode: ResultGroupingMode, collapsed: Set<ResultGroupKey> = [], root: String = "/") {
+        self.mode = mode
+        hitCount = hits.count
+        displayedHitCount = mode == .none ? hits.count : 0
+        guard mode != .none else { return }
+        var byKey: [ResultGroupKey: Int] = [:]
+        for (index, hit) in hits.enumerated() {
+            let (key, title) = Self.group(for: hit, mode: mode, root: root)
+            if let group = byKey[key] { groups[group].hitIndices.append(index) }
+            else {
+                byKey[key] = groups.count
+                groups.append(ResultGroup(key: key, title: title, hitIndices: [index]))
+            }
+        }
+        groups.sort {
+            let order = $0.title.localizedStandardCompare($1.title)
+            return order == .orderedSame ? $0.key.precedes($1.key) : order == .orderedAscending
+        }
+        inverse = Array(repeating: nil, count: hits.count)
+        for (index, group) in groups.enumerated() {
+            rows.append(.group(index))
+            guard !collapsed.contains(group.key) else { continue }
+            for hitIndex in group.hitIndices {
+                inverse[hitIndex] = rows.count
+                rows.append(.hit(hitIndex))
+                displayedHitCount += 1
+            }
+        }
+    }
+
+    func hitIndex(at row: Int) -> Int? {
+        guard row >= 0, row < rowCount else { return nil }
+        if mode == .none { return row }
+        if case .hit(let index) = rows[row] { return index }
+        return nil
+    }
+
+    func tableRow(for hitIndex: Int) -> Int? {
+        guard hitIndex >= 0, hitIndex < hitCount else { return nil }
+        return mode == .none ? hitIndex : inverse[hitIndex]
+    }
+
+    func group(at row: Int) -> ResultGroup? {
+        guard mode != .none, rows.indices.contains(row), case .group(let index) = rows[row] else { return nil }
+        return groups[index]
+    }
+
+    static func group(for hit: Hit, mode: ResultGroupingMode, root: String) -> (ResultGroupKey, String) {
+        let outer = Data(hit.filesystemPath.utf8)
+        let members = hit.archiveMembers.enumerated().map { index, text in
+            hit.archiveMemberBytes.indices.contains(index)
+                ? Data(base64Encoded: hit.archiveMemberBytes[index]) ?? Data(text.utf8) : Data(text.utf8)
+        }
+        switch mode {
+        case .none: return (ResultGroupKey(components: []), "")
+        case .archive:
+            return members.isEmpty
+                ? (ResultGroupKey(components: []), "Außerhalb von Archiven")
+                : (ResultGroupKey(components: [outer]), abbreviateHome(hit.filesystemPath))
+        case .folder:
+            if var last = members.last {
+                while last.last == 47 { last.removeLast() }
+                let parent = last.lastIndex(of: 47).map { Data(last[..<$0]) } ?? Data()
+                let key = ResultGroupKey(components: [outer] + members.dropLast() + [parent])
+                let parts = [abbreviateHome(hit.filesystemPath)] + hit.archiveMembers.dropLast()
+                    + (parent.isEmpty ? [] : [String(decoding: parent, as: UTF8.self)])
+                return (key, parts.joined(separator: " → "))
+            }
+            let parent = (hit.filesystemPath as NSString).deletingLastPathComponent
+            let title = hit.searchRoot == nil ? hit.folderText(relativeTo: root) : parent
+            return (ResultGroupKey(components: [Data(parent.utf8)]), title.isEmpty ? "Suchordner" : abbreviateHome(title))
+        case .fileExtension:
+            if hit.isDirectory { return (ResultGroupKey(components: []), "Ordner") }
+            let name = (members.last ?? outer).split(separator: 47).last.map(Data.init) ?? Data()
+            guard let dot = name.lastIndex(of: 46), dot > name.startIndex, dot + 1 < name.endIndex else {
+                return (ResultGroupKey(components: [Data()]), "Ohne Endung")
+            }
+            let raw = Data(name[(dot + 1)...])
+            let folded = String(data: raw, encoding: .utf8).map { Data($0.lowercased().utf8) }
+                ?? Data(raw.map { (65...90).contains($0) ? $0 + 32 : $0 })
+            return (ResultGroupKey(components: [folded]), "." + String(decoding: folded, as: UTF8.self))
+        }
+    }
+}
+
+final class ResultGroupButton: NSButton {
+    var groupKey: ResultGroupKey?
+}
+
+final class ResultGroupHeaderView: NSView {
+    private weak var table: NSTableView?
+    private var leading: NSLayoutConstraint!
+    private var width: NSLayoutConstraint!
+    private var observers: [NSObjectProtocol] = []
+    private var parentObservers: [NSObjectProtocol] = []
+
+    init(table: NSTableView, content: NSStackView) {
+        self.table = table
+        content.translatesAutoresizingMaskIntoConstraints = false
+        super.init(frame: .zero)
+        addSubview(content)
+        leading = content.leadingAnchor.constraint(equalTo: leadingAnchor)
+        width = content.widthAnchor.constraint(equalToConstant: max(120, table.visibleRect.width))
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor), leading, width])
+        // Der Tabelleninhalt darf breiter als der Ausschnitt sein. Kopf und
+        // Trefferzahl folgen gemeinsam dem sichtbaren Ausschnitt.
+        if let clip = table.enclosingScrollView?.contentView {
+            clip.postsBoundsChangedNotifications = true
+            clip.postsFrameChangedNotifications = true
+            for name in [NSView.boundsDidChangeNotification, NSView.frameDidChangeNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: clip, queue: .main) { [weak self] _ in
+                    self?.needsLayout = true
+                })
+            }
+        }
+        if let scroller = table.enclosingScrollView?.verticalScroller {
+            scroller.postsFrameChangedNotifications = true
+            observers.append(NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: scroller, queue: .main) { [weak self] _ in
+                self?.needsLayout = true
+            })
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) nicht unterstützt") }
+    deinit { (observers + parentObservers).forEach(NotificationCenter.default.removeObserver) }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        parentObservers.forEach(NotificationCenter.default.removeObserver)
+        parentObservers = []
+        if let parent = superview {
+            parent.postsFrameChangedNotifications = true
+            parent.postsBoundsChangedNotifications = true
+            for name in [NSView.frameDidChangeNotification, NSView.boundsDidChangeNotification] {
+                parentObservers.append(NotificationCenter.default.addObserver(forName: name, object: parent, queue: .main) { [weak self] _ in
+                    self?.needsLayout = true
+                })
+            }
+        }
+        needsLayout = true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = frame.size != newSize
+        super.setFrameSize(newSize)
+        if changed { needsLayout = true }
+    }
+
+    override func layout() {
+        let visible = table.map { convert($0.visibleRect, from: $0) } ?? bounds
+        let offset = max(bounds.minX, visible.minX)
+        var right = min(bounds.maxX, visible.maxX)
+        if let scroll = table?.enclosingScrollView, scroll.hasVerticalScroller,
+           let scroller = scroll.verticalScroller, !scroller.isHidden {
+            let edge = convert(scroller.bounds, from: scroller)
+            if edge.width > 0 && edge.minX > offset { right = min(right, edge.minX) }
+        }
+        let available = max(0, right - offset)
+        if leading.constant != offset + 2 { leading.constant = offset + 2 }
+        if width.constant != max(0, available - 4) { width.constant = max(0, available - 4) }
+        super.layout()
+    }
+}
+
+final class ResultGroupingController: NSObject {
+    weak var owner: HitListController?
+    let view = NSStackView()
+    let popup = NSPopUpButton()
+    let expandButton = NSButton(title: "Alle aufklappen", target: nil, action: nil)
+    let collapseButton = NSButton(title: "Alle einklappen", target: nil, action: nil)
+    private(set) var mode: ResultGroupingMode = .none
+    private(set) var collapsed = Set<ResultGroupKey>()
+    private(set) var projection = ResultProjection(hits: [], mode: .none)
+    var isActive: Bool { mode != .none }
+    var state: [String: Any] {
+        ["mode": mode.rawValue, "groupCount": projection.groups.count,
+         "collapsedGroupCount": projection.groups.filter { collapsed.contains($0.key) }.count,
+         "matchedCount": owner?.hits.count ?? 0, "displayedHitCount": projection.displayedHitCount,
+         "resultsIncludeCollapsed": true]
+    }
+
+    init(owner: HitListController) {
+        self.owner = owner
+        super.init()
+        popup.addItems(withTitles: ResultGroupingMode.allCases.map { $0.title })
+        popup.target = self
+        popup.action = #selector(changed)
+        popup.setAccessibilityIdentifier("resultGroupingMode")
+        popup.setAccessibilityLabel("Treffer gruppieren nach")
+        expandButton.target = self
+        expandButton.action = #selector(expandAll)
+        expandButton.setAccessibilityIdentifier("resultGroupingExpandAll")
+        collapseButton.target = self
+        collapseButton.action = #selector(collapseAll)
+        collapseButton.setAccessibilityIdentifier("resultGroupingCollapseAll")
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        for child in [NSTextField(labelWithString: "Gruppieren:"), popup, expandButton, collapseButton, spacer] {
+            view.addArrangedSubview(child)
+        }
+        view.orientation = .horizontal
+        view.alignment = .centerY
+        view.spacing = 6
+        rebuild()
+    }
+
+    func rebuild() {
+        projection = ResultProjection(hits: owner?.hits ?? [], mode: mode, collapsed: collapsed,
+                                      root: owner?.resultFilterRoot ?? "/")
+        expandButton.isEnabled = isActive && projection.groups.contains { collapsed.contains($0.key) }
+        collapseButton.isEnabled = isActive && projection.groups.contains { !collapsed.contains($0.key) }
+    }
+
+    func clearForSearch() { collapsed.removeAll() }
+
+    func setMode(_ mode: ResultGroupingMode) {
+        guard mode != self.mode else { return }
+        owner?.flushResultFilterPending()
+        self.mode = mode
+        popup.selectItem(at: ResultGroupingMode.allCases.firstIndex(of: mode)!)
+        collapsed.removeAll()
+        reproject()
+    }
+    @objc private func changed() { setMode(ResultGroupingMode.allCases[popup.indexOfSelectedItem]) }
+    @objc func expandAll() { collapsed.removeAll(); reproject() }
+    @objc func collapseAll() {
+        owner?.flushResultFilterPending()
+        collapsed = Set(projection.groups.map { $0.key })
+        reproject()
+    }
+    @objc private func toggle(_ sender: ResultGroupButton) {
+        guard let key = sender.groupKey, projection.groups.contains(where: { $0.key == key }) else { return }
+        if collapsed.contains(key) { collapsed.remove(key) } else { collapsed.insert(key) }
+        reproject()
+    }
+    func expand(hitIndex: Int) {
+        guard let owner, owner.hits.indices.contains(hitIndex), isActive else { return }
+        let key = ResultProjection.group(for: owner.hits[hitIndex], mode: mode, root: owner.resultFilterRoot ?? "/").0
+        if collapsed.remove(key) != nil { reproject() }
+    }
+    private func reproject() {
+        guard let owner else { return }
+        let selected = owner.selectedHitIdentities()
+        owner.resultViewWillChange()
+        owner.replaceFilteredHits(owner.hits, keepingSelection: selected)
+    }
+
+    func headerContent(_ group: ResultGroup) -> NSStackView {
+        let button = ResultGroupButton(title: (collapsed.contains(group.key) ? "▸ " : "▾ ") + group.title,
+                                       target: self, action: #selector(toggle(_:)))
+        button.groupKey = group.key
+        button.isBordered = false
+        button.alignment = .left
+        button.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+        button.lineBreakMode = .byTruncatingMiddle
+        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        button.toolTip = group.title
+        button.setAccessibilityLabel("Gruppe " + group.title)
+        button.setAccessibilityValue("\(group.hitIndices.count) Treffer, " + (collapsed.contains(group.key) ? "eingeklappt" : "aufgeklappt"))
+        let count = NSTextField(labelWithString: "\(groupedNumber(group.hitIndices.count)) Treffer")
+        count.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        count.textColor = .secondaryLabelColor
+        count.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let header = NSStackView(views: [button, count])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 8
+        button.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return header
+    }
+    func header(at row: Int) -> NSView? {
+        guard let owner, let group = projection.group(at: row) else { return nil }
+        return ResultGroupHeaderView(table: owner.tableView, content: headerContent(group))
+    }
+
+}
+
+func sourceArchiveURLs(for hits: [Hit]) -> [URL] {
+    var seen = Set<Data>()
+    return hits.filter { $0.isMember && seen.insert(Data($0.filesystemPath.utf8)).inserted }
+        .map { URL(fileURLWithPath: $0.filesystemPath) }
+}
+
+func archiveChainText(for hit: Hit) -> String {
+    func label(_ text: String) -> String {
+        let bytes = text.utf8
+        return String(decoding: bytes.prefix(4096), as: UTF8.self)
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r") + (bytes.count > 4096 ? "…" : "")
+    }
+    var lines = ["Quellarchiv: " + label(hit.filesystemPath)]
+    for (index, member) in hit.archiveMembers.prefix(32).enumerated() {
+        lines.append((index == hit.archiveMembers.count - 1 ? "Treffer: " : "Archivstufe \(index + 1): ") + label(member))
+    }
+    if hit.archiveMembers.count > 32 { lines.append("Weitere Archivstufen sind gekürzt.") }
+    return lines.joined(separator: "\n\n")
+}
+
+func makeArchiveChainAlert(for hit: Hit) -> NSAlert {
+    let visible = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1000, height: 800)
+    let size = NSSize(width: min(640, max(280, visible.width - 120)),
+                      height: min(300, max(120, visible.height - 260)))
+    let scroll = NSScrollView(frame: NSRect(origin: .zero, size: size))
+    scroll.hasVerticalScroller = true
+    scroll.borderType = .bezelBorder
+    scroll.setAccessibilityIdentifier("archiveChainScroll")
+    let text = NSTextView(frame: NSRect(origin: .zero, size: size))
+    text.isEditable = false
+    text.isSelectable = true
+    text.isHorizontallyResizable = false
+    text.isVerticallyResizable = true
+    text.autoresizingMask = [.width]
+    text.textContainer?.widthTracksTextView = true
+    text.textContainer?.containerSize = NSSize(width: size.width, height: .greatestFiniteMagnitude)
+    text.textContainerInset = NSSize(width: 8, height: 8)
+    text.font = .systemFont(ofSize: NSFont.systemFontSize)
+    text.string = archiveChainText(for: hit)
+    text.setAccessibilityIdentifier("archiveChainText")
+    scroll.documentView = text
+    let alert = NSAlert()
+    alert.messageText = "Archivkette"
+    alert.informativeText = "Quellarchiv und innere Stufen. Lange Namen sind ausdrücklich gekürzt."
+    alert.accessoryView = scroll
+    alert.addButton(withTitle: "Schließen")
+    alert.window.initialFirstResponder = text
+    return alert
+}
+
+final class ResultFilterRun {
+    let runner = SearchRunner()
+    private let workspace = FileManager.default.temporaryDirectory
+        .appendingPathComponent("favenio-result-filter-\(ProcessInfo.processInfo.processIdentifier)-" + UUID().uuidString)
+    private let workspaceLock = NSLock()
+    private var closing = false
+
+    func cancel() { runner.cancel() }
+
+    private func createWorkspace() throws {
+        workspaceLock.lock(); defer { workspaceLock.unlock() }
+        if closing || runner.isCancelled { throw CocoaError(.userCancelled) }
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: false,
+                                                 attributes: [.posixPermissions: 0o700])
+    }
+
+    private func cleanupWorkspace() {
+        workspaceLock.lock(); defer { workspaceLock.unlock() }
+        closing = true
+        try? FileManager.default.removeItem(at: workspace)
+    }
+
+    func stopForTermination(deadline: TimeInterval) {
+        runner.stopForTermination(deadline: deadline)
+        cleanupWorkspace()
+    }
+
+    func start(_ hits: [Hit], query: String, root: String?, dateReferenceTime: String? = nil, frozenDateResolution: Data? = nil,
+               onDateResolution: @escaping (Data) -> Void = { _ in },
+               completion: @escaping (Set<HitIdentity>?, String?) -> Void) {
+        let runner = self.runner
+        var timedOut = false
+        let timeout = DispatchWorkItem { timedOut = true; runner.cancel() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 25, execute: timeout)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            func finish(_ accepted: Set<HitIdentity>?, _ error: String?) {
+                DispatchQueue.global().async {
+                    self.cleanupWorkspace()
+                    DispatchQueue.main.async {
+                        timeout.cancel()
+                        completion(accepted, timedOut ? "Ansichtsfilter überschreitet sein Zeitbudget." : error)
+                    }
+                }
+            }
+            do {
+                guard let cli = findCLI() else { throw NSError(domain: "Favenio", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Der Suchkern wurde nicht gefunden."]) }
+                try createWorkspace()
+                let file = workspace.appendingPathComponent("results.jsonl")
+                guard FileManager.default.createFile(atPath: file.path, contents: nil,
+                                                       attributes: [.posixPermissions: 0o600]) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                let handle = try FileHandle(forWritingTo: file)
+                do {
+                    for hit in hits {
+                        if runner.isCancelled { throw CocoaError(.userCancelled) }
+                        let known = Hit(path: hit.path, kind: hit.kind, line: nil, size: hit.size,
+                            filesystemPath: hit.filesystemPath, archiveMembers: hit.archiveMembers,
+                            archiveMemberBytes: hit.archiveMemberBytes, isDirectory: hit.isDirectory,
+                            width: hit.width, height: hit.height, modified: hit.modified, created: hit.created,
+                            contentEncoding: hit.contentEncoding, searchRootBytes: hit.searchRootBytes,
+                            finderMetadata: hit.finderMetadata)
+                        let data = jsonlData(for: [known])
+                        guard data.count <= SearchRunner.recordByteLimit else { throw NSError(domain: "Favenio", code: 2,
+                            userInfo: [NSLocalizedDescriptionKey: "Ein Treffer überschreitet die Filter-Recordgrenze."]) }
+                        try handle.write(contentsOf: data)
+                    }
+                    try handle.close()
+                } catch { try? handle.close(); throw error }
+                if runner.isCancelled { throw CocoaError(.userCancelled) }
+                var accepted: Set<HitIdentity> = []
+                var proofError: String?
+                let arguments = ["-u", cli, "--filter-results=" + file.path, "--criteria-json=" + query]
+                    + (root.map { ["--results-root=" + $0] } ?? []) + DateRangeTransport.referenceArguments(dateReferenceTime) + DateRangeTransport.frozenArguments(frozenDateResolution)
+                runner.start(arguments: arguments,
+                    onBatch: { matches, _ in accepted.formUnion(matches.map { $0.identity }) },
+                    onDateResolution: { data in
+                        var configuration = SearchConfiguration(); configuration.criteriaJSON = query; configuration.dateReferenceTime = dateReferenceTime
+                        if DateRangeTransport.bound(data, to: configuration) { onDateResolution(data) }
+                        else { proofError = "Datumsbeleg passt nicht zum Ansichtsfilter."; runner.cancel() }
+                    },
+                    completion: { exit in
+                        if proofError == nil && exit.reason == .exit && [0, 1].contains(exit.status) {
+                            finish(accepted, nil)
+                        } else {
+                            finish(nil, proofError ?? exit.errorMessage ?? "Ansichtsfilter abgebrochen oder fehlgeschlagen.")
+                        }
+                    })
+            } catch { finish(nil, error.localizedDescription) }
+        }
+    }
+}
+
+final class ResultFilterController: NSObject {
+    weak var owner: HitListController?
+    let criteria = CriteriaControl()
+    let resetButton = NSButton(title: "Zurücksetzen", target: nil, action: nil)
+    let countLabel = NSTextField(labelWithString: "")
+    let view = NSStackView()
+    private(set) var sourceHits: [Hit]?
+    private var sourceIdentities: Set<HitIdentity> = []
+    private var pending: [Hit] = []
+    private var activeRun: ResultFilterRun?
+    private var retiringRuns: [ResultFilterRun] = []
+    private var query: String?
+    private var dateReferenceTime: String?
+    private var dateResolution: Data?
+    private var needsDateProof = false
+    private var root: String?
+    private var firstSelection: Set<HitIdentity>?
+    private(set) var errorMessage: String?
+    var isActive: Bool { sourceHits != nil }
+    var isFiltering: Bool { activeRun != nil || !pending.isEmpty }
+    var runningProcessIdentifier: pid_t? {
+        guard let process = activeRun?.runner.process, process.isRunning else { return nil }
+        return process.processIdentifier
+    }
+    var sourceCount: Int { sourceHits?.count ?? owner?.hits.count ?? 0 }
+    var unfilteredHits: [Hit] { sourceHits ?? owner?.hits ?? [] }
+    var state: [String: Any] {
+        var result: [String: Any] = ["active": isActive, "loading": isFiltering,
+            "sourceCount": sourceCount, "visibleCount": owner?.hits.count ?? 0]
+        if let query { result["criteriaJSON"] = query }
+        if let dateReferenceTime { result["dateReferenceTime"] = dateReferenceTime }
+        if let dateResolution { result["dateResolution"] = preservedJSONObject(dateResolution) }
+        if let errorMessage { result["error"] = errorMessage }
+        return result
+    }
+
+    init(owner: HitListController) {
+        self.owner = owner
+        super.init()
+        criteria.isResultFilter = true
+        criteria.enabledButton.title = "Trefferliste filtern"
+        criteria.enabledButton.identifier = NSUserInterfaceItemIdentifier("result-filter-enabled")
+        criteria.editButton.identifier = NSUserInterfaceItemIdentifier("result-filter-edit")
+        criteria.onChange = { [weak self] in self?.apply() }
+        resetButton.target = self
+        resetButton.action = #selector(reset)
+        resetButton.identifier = NSUserInterfaceItemIdentifier("result-filter-reset")
+        countLabel.identifier = NSUserInterfaceItemIdentifier("result-filter-count")
+        countLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        countLabel.textColor = .secondaryLabelColor
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        [criteria, resetButton, spacer, countLabel].forEach { view.addArrangedSubview($0) }
+        view.orientation = .horizontal
+        view.alignment = .centerY
+        view.spacing = 8
+        refresh()
+    }
+    deinit { activeRun?.cancel(); retiringRuns.forEach { $0.cancel() } }
+
+    func compact() {
+        for child in view.arrangedSubviews {
+            view.removeArrangedSubview(child)
+            child.removeFromSuperview()
+        }
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let status = NSStackView(views: [resetButton, spacer, countLabel])
+        status.orientation = .horizontal
+        status.spacing = 8
+        status.alignment = .centerY
+        view.orientation = .vertical
+        view.alignment = .leading
+        view.spacing = 4
+        view.addArrangedSubview(criteria)
+        view.addArrangedSubview(status)
+        criteria.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
+        status.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
+    }
+
+    func stopForTermination() {
+        criteria.stopForTermination()
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.5
+        activeRun?.stopForTermination(deadline: deadline)
+        retiringRuns.forEach { $0.stopForTermination(deadline: deadline) }
+        activeRun = nil
+        retiringRuns = []
+        pending = []
+    }
+
+    private func cancelWork() {
+        if let activeRun { retiringRuns.append(activeRun); activeRun.cancel() }
+        activeRun = nil
+        pending = []
+        firstSelection = nil
+    }
+
+    func clearForSearch() {
+        cancelWork()
+        owner?.resultGrouping.clearForSearch()
+        sourceHits = nil
+        sourceIdentities = []
+        query = nil
+        dateReferenceTime = nil; dateResolution = nil; needsDateProof = false
+        errorMessage = nil
+        criteria.applyJSON(nil)
+        refresh()
+    }
+
+    @objc func reset() {
+        criteria.applyJSON(nil)
+        apply()
+    }
+
+    func apply() {
+        guard let owner else { return }
+        owner.flushResultFilterPending()
+        let selection = owner.selectedHitIdentities()
+        owner.resultViewWillChange()
+        let source = sourceHits ?? owner.hits
+        cancelWork()
+        errorMessage = nil
+        query = criteria.queryJSON
+        dateReferenceTime = DateRangeTransport.criteriaHasRanges(query) ? DateRangeTransport.referenceNow() : nil
+        dateResolution = nil; needsDateProof = dateReferenceTime != nil && source.isEmpty
+        guard query != nil else {
+            sourceHits = nil
+            sourceIdentities = []
+            owner.replaceFilteredHits(source, keepingSelection: selection)
+            refresh()
+            return
+        }
+        root = owner.resultFilterRoot
+        sourceHits = source
+        sourceIdentities = Set(source.map { $0.identity })
+        firstSelection = selection
+        owner.replaceFilteredHits([], keepingSelection: [])
+        pending = source
+        startNext()
+        refresh()
+    }
+
+    func append(_ incoming: [Hit]) {
+        precondition(isActive)
+        sourceHits?.append(contentsOf: incoming)
+        sourceIdentities.formUnion(incoming.map { $0.identity })
+        if errorMessage == nil { pending.append(contentsOf: incoming); startNext() }
+        refresh()
+    }
+
+    func remove(where predicate: (Hit) -> Bool) {
+        guard sourceHits != nil else { return }
+        let removed = Set(sourceHits!.filter(predicate).map { $0.identity })
+        sourceHits?.removeAll(where: predicate)
+        sourceIdentities.subtract(removed)
+        pending.removeAll { removed.contains($0.identity) }
+        refresh()
+    }
+
+    private func startNext() {
+        guard let query, activeRun == nil, errorMessage == nil, !pending.isEmpty || needsDateProof else { return }
+        needsDateProof = false
+        let batch = pending
+        pending = []
+        let job = ResultFilterRun()
+        activeRun = job
+        job.start(batch, query: query, root: root, dateReferenceTime: dateReferenceTime, frozenDateResolution: dateResolution,
+                  onDateResolution: { [weak self, weak job] data in
+            guard let self, let job, self.activeRun === job else { return }; self.dateResolution = data
+        }) { [weak self, weak job] accepted, error in
+            guard let self, let job else { return }
+            self.retiringRuns.removeAll { $0 === job }
+            guard self.activeRun === job, let owner = self.owner else { return }
+            self.activeRun = nil
+            if let accepted, error == nil {
+                let matches = batch.filter { accepted.contains($0.identity) && self.sourceIdentities.contains($0.identity) }
+                let selection = self.firstSelection ?? owner.selectedHitIdentities()
+                self.firstSelection = nil
+                owner.appendFilteredHits(matches, keepingSelection: selection)
+                self.startNext()
+            } else {
+                self.errorMessage = error ?? "Ansichtsfilter fehlgeschlagen."
+                self.pending = []
+                self.firstSelection = nil
+                owner.replaceFilteredHits(owner.hits, keepingSelection: owner.selectedHitIdentities())
+            }
+            self.refresh()
+        }
+    }
+
+    func refresh() {
+        let count = "\(groupedNumber(owner?.hits.count ?? 0)) von \(groupedNumber(sourceCount)) Treffern"
+        let grouping = owner.map { $0.resultGrouping.isActive ? " · \(groupedNumber($0.resultGrouping.projection.displayedHitCount)) aufgeklappt" : "" } ?? ""
+        countLabel.stringValue = count + grouping + (isFiltering ? " · Filter läuft…" : errorMessage == nil ? "" : " · Filterfehler")
+        countLabel.toolTip = errorMessage ?? "Ansichtsfilter lesen ausschließlich bereits bekannte Trefferwerte."
+        countLabel.textColor = errorMessage == nil ? .secondaryLabelColor : .systemRed
+        resetButton.isEnabled = isActive
+    }
+}
+
 /// Was Haupt-App und Schnellsuche an ihrer Trefferliste GLEICH tun: die
 /// wirksame Zeilenmenge bestimmen, Treffer materialisieren, Quick Look
 /// zeigen und blättern, „Öffnen mit", „Im Finder zeigen" und „Pfad kopieren".
@@ -3642,11 +5347,118 @@ func installMainMenu(appName: String, includeClose: Bool = false) {
 /// deshalb bewusst nicht `final`, und `presentActionIssue` ist der eine
 /// Punkt, den jede App selbst füllt (Fußzeile bzw. Infozeile).
 class HitListController: NSObject, QLPreviewPanelDataSource,
-                         QLPreviewPanelDelegate {
+                         QLPreviewPanelDelegate, NSMenuItemValidation, NSFilePromiseProviderDelegate {
+    let exportWriter = ExportWriter()
+    lazy var searchReportController = SearchReportController(owner: self)
+    lazy var duplicateCheckController = DuplicateCheckController(owner: self)
+    lazy var contentPreviewController = ContentPreviewController(owner: self)
+    var localOnlyContent: Bool { false }
+    let finderMetadataView = FinderMetadataView()
+    var windowViewport: SearchWindowViewport?
+    var onFinderColumnsShown: (() -> Void)?
+    var finderColumnsVisible: Bool {
+        tableView.tableColumns.contains { ["finderTags", "finderComment"].contains($0.identifier.rawValue) && !$0.isHidden }
+    }
+    lazy var resultFilter = ResultFilterController(owner: self)
+    lazy var resultGrouping = ResultGroupingController(owner: self)
+    var resultFilterRoot: String? { "/" }
+    // Zwischenzustände beim Wiederherstellen derselben Auswahl dürfen eine
+    // bereits navigierte Fundstelle nicht als abgewählt behandeln.
+    var isRestoringSelection = false
+    func flushResultFilterPending() {}
+    func resultViewWillChange() {
+        thumbnailController?.loader.cancelAll()
+        cancelMaterializations(reportCancellation: false)
+        closeOpenPreview()
+        contextRow = -1
+    }
+    func replaceFilteredHits(_ incoming: [Hit], keepingSelection selection: Set<HitIdentity>) {
+        hits = incoming
+        isRestoringSelection = true
+        resultGrouping.rebuild()
+        tableView.deselectAll(nil)
+        tableView.reloadData()
+        tableView.selectRowIndexes(tableRows(for: selection), byExtendingSelection: false)
+        isRestoringSelection = false
+        contextRow = -1
+        refreshContentPreview()
+    }
+    func appendFilteredHits(_ incoming: [Hit], keepingSelection selection: Set<HitIdentity>) {
+        replaceFilteredHits(hits + incoming, keepingSelection: selection)
+    }
+    var contentPreviewView: ContentPreviewView { contentPreviewController.view }
+    func refreshContentPreview() {
+        thumbnailController?.selectionFromTable()
+        contentPreviewController.selectionChanged()
+        finderMetadataView.render(selectedHitIndices.first.map { hits[$0] })
+    }
+    func configureFinderColumns() {
+        let menu = tableView.headerView?.menu ?? NSMenu(title: "Spalten")
+        for (key, title) in [("finderTags", "Finder-Tags"), ("finderComment", "Finder-Kommentar")] {
+            let column = NSTableColumn(identifier: .init(key))
+            column.title = title; column.width = 180; column.minWidth = 80
+            column.isHidden = true
+            column.sortDescriptorPrototype = NSSortDescriptor(key: key, ascending: true)
+            tableView.addTableColumn(column)
+            let item = NSMenuItem(title: title, action: #selector(toggleFinderColumn(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = key; menu.addItem(item)
+        }
+        tableView.headerView?.menu = menu
+    }
+    func restoreFinderColumnVisibility() {
+        for key in ["finderTags", "finderComment"] {
+            tableView.tableColumn(withIdentifier: .init(key))?.isHidden = !UserDefaults.standard.bool(forKey: "finderColumn." + key)
+        }
+        if finderColumnsVisible { onFinderColumnsShown?() }
+    }
+    @objc private func toggleFinderColumn(_ item: NSMenuItem) {
+        guard let key = item.representedObject as? String, let column = tableView.tableColumn(withIdentifier: .init(key)) else { return }
+        column.isHidden.toggle()
+        UserDefaults.standard.set(!column.isHidden, forKey: "finderColumn." + key)
+        if !column.isHidden { onFinderColumnsShown?() }
+    }
+    func renderFinderColumn(_ column: NSTableColumn, cell: NSTableCellView, hit: Hit) -> Bool {
+        switch column.identifier.rawValue {
+        case "finderTags":
+            (cell as? FinderTagsCellView)?.snapshot = hit.finderMetadata
+            cell.textField?.toolTip = hit.finderMetadata?.tags?.map { $0.name + " · " + FinderMetadataView.colorNames[$0.color ?? 0] }.joined(separator: "\n") ?? hit.finderMetadata?.tagsText ?? "Nicht erfasst"
+        case "finderComment":
+            let original = hit.finderMetadata?.commentText ?? "Nicht erfasst"
+            cell.textField?.stringValue = FinderMetadataView.singleLineSummary(original)
+            cell.textField?.toolTip = original
+        default: return false
+        }
+        cell.textField?.alignment = .left
+        cell.textField?.lineBreakMode = .byTruncatingTail
+        return true
+    }
+    func contentPreviewArguments(_ arguments: [String]) -> [String] {
+        guard contentPreviewView.enabled else { return arguments }
+        var result = arguments
+        result.insert("--content-preview", at: result.firstIndex(of: "--") ?? result.endIndex)
+        return result
+    }
+    func searchOutputArguments(_ arguments: [String]) -> [String] {
+        var result = contentPreviewArguments(arguments)
+        result.insert("--search-report", at: result.firstIndex(of: "--") ?? result.endIndex)
+        return result
+    }
     var window: NSWindow!
-    let tableView = NSTableView()
+    let tableView = HitResultTableView()
+    var thumbnailController: ThumbnailGridController?
+    var activeResultView: NSView {
+        if let grid = thumbnailController, grid.isGrid { return grid.collection }
+        return tableView
+    }
+    var resultListHasFocus: Bool {
+        window?.firstResponder === tableView
+            || (thumbnailController?.isGrid == true && window?.firstResponder === thumbnailController?.collection)
+    }
+    func installThumbnails(in scroll: NSScrollView, compact: Bool) {
+        thumbnailController = ThumbnailGridController(owner: self, scroll: scroll, compact: compact)
+    }
 
-    var hits: [Hit] = []            // was die Tabelle zeigt
+    var hits: [Hit] = []            // gefilterte Treffer, auch in eingeklappten Gruppen
     var pending: [Hit] = []         // frisch gestreamte, noch nicht gezeigte
     var contextRow = -1             // Zeile, auf die der Rechtsklick ging
     var previewURLs: [URL] = []     // gerade in der QuickLook-Vorschau
@@ -3671,9 +5483,40 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
 
     // ---------- Wirksame Zeilenmenge ----------
 
+    var resultTableRowCount: Int {
+        resultGrouping.projection.mode == .none ? hits.count : resultGrouping.projection.rowCount
+    }
+
+    func hitIndex(forTableRow row: Int) -> Int? {
+        let index = resultGrouping.projection.mode == .none ? row : resultGrouping.projection.hitIndex(at: row)
+        return index.flatMap { hits.indices.contains($0) ? $0 : nil }
+    }
+
+    func tableRow(forHitIndex index: Int) -> Int? {
+        guard hits.indices.contains(index) else { return nil }
+        return resultGrouping.projection.mode == .none ? index : resultGrouping.projection.tableRow(for: index)
+    }
+
+    func revealTableRow(for identity: HitIdentity) -> Int? {
+        guard let index = hits.firstIndex(where: { $0.identity == identity }) else { return nil }
+        resultGrouping.expand(hitIndex: index)
+        DispatchQueue.main.async { [weak self] in self?.thumbnailController?.reveal(identity) }
+        return hits.firstIndex(where: { $0.identity == identity }).flatMap { tableRow(forHitIndex: $0) }
+    }
+
+    var selectedHitIndices: [Int] {
+        tableView.selectedRowIndexes.compactMap { hitIndex(forTableRow: $0) }
+    }
+
+    func tableRows(for identities: Set<HitIdentity>) -> IndexSet {
+        IndexSet(hits.indices.filter { identities.contains(hits[$0].identity) }.compactMap { tableRow(forHitIndex: $0) })
+    }
+
     func actionRows() -> [Int] {
-        hitActionRows(selectedRows: tableView.selectedRowIndexes,
-                      contextRow: contextRow)
+        // Ein Header-Rechtsklick darf nie auf eine alte Dateiauswahl zurückfallen.
+        if contextRow >= 0, hitIndex(forTableRow: contextRow) == nil { return [] }
+        return hitActionRows(selectedRows: tableView.selectedRowIndexes,
+                             contextRow: contextRow).compactMap { hitIndex(forTableRow: $0) }
     }
 
     /// Materialisiert die wirksame Zeilenmenge und ruft `body` mit dem
@@ -3718,7 +5561,9 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
         // Vor der Leerprüfung: Ein früherer Escape-Abbruch kann seine
         // Completion bereits eingereiht und die Auftragsliste geleert haben.
         if !reportCancellation { actionGeneration += 1 }
-        guard isMaterializing else { return false }
+        let loadingContent = contentPreviewController.isLoading
+        if loadingContent { contentPreviewController.cancelLoad(message: reportCancellation ? "Nachladen abgebrochen." : nil) }
+        guard isMaterializing else { return loadingContent }
         previewRequest?.cancel()
         previewRequest = nil
         actionRequests.forEach { $0.cancel() }
@@ -3734,9 +5579,7 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     /// Die ausgewählten Treffer als Identitäten — modellbezogen statt über
     /// Zeilennummern, die ein `reloadData()` nicht überlebt.
     func selectedHitIdentities() -> Set<HitIdentity> {
-        Set(tableView.selectedRowIndexes.compactMap {
-            $0 < hits.count ? hits[$0].identity : nil
-        })
+        Set(selectedHitIndices.map { hits[$0].identity })
     }
 
     /// Nennt, was sich an der Auswahl NICHT öffnen ließ (Ordner im Archiv).
@@ -3749,6 +5592,80 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     /// Von jeder App überschrieben: Die Haupt-App schreibt in die Fußzeile,
     /// die Schnellsuche in ihre Infozeile. Die Basis zeigt nichts an.
     func presentActionIssue(summary: String, detail: String?) {}
+
+    func hitPasteboardWriter(_ index: Int) -> NSPasteboardWriting? {
+        guard hits.indices.contains(index) else { return nil }
+        let hit = hits[index]
+        guard hit.hasOpenableFile else { return nil }
+        if let url = MaterializationManager.shared.knownURL(for: hit) { return url as NSURL }
+        let type = UTType(filenameExtension: (hit.path as NSString).pathExtension) ?? .data
+        let provider = NSFilePromiseProvider(fileType: type.identifier, delegate: self)
+        provider.userInfo = hit
+        return provider
+    }
+
+    // ---------- Dateiversprechen für Archiv-Einträge ----------
+
+    /// Eigene Queue: Die Delegate-Aufrufe des Versprechens laufen dort,
+    /// nicht auf Main.
+    let promiseQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "favenio.file-promise"
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+
+    func filePromiseProvider(_ provider: NSFilePromiseProvider,
+                             fileNameForType fileType: String) -> String {
+        guard let hit = provider.userInfo as? Hit else { return "Datei" }
+        return (hit.archiveMembers.last.map { ($0 as NSString).lastPathComponent }
+                ?? (hit.path as NSString).lastPathComponent)
+    }
+
+    /// Der Empfänger löst das Versprechen ein: auspacken (oder aus dem
+    /// Cache nehmen) und an die gewünschte Stelle KOPIEREN — die Temp-Datei
+    /// bleibt für weitere Aktionen erhalten, aufgeräumt wird beim App-Ende.
+    /// Fehler und Abbruch gehen als Error an den Empfänger, der sie nennt.
+    /// Bewusst NICHT in `actionRequests`/⎋ eingebunden: Der Auftrag gehört
+    /// dem Finder, der auf die versprochene Datei wartet; ein Abbruch aus
+    /// unserem Fenster ließe seinen Ablegevorgang mit einem Fehler enden.
+    /// Deshalb auch kein „Packe aus…" in der Fußzeile.
+    func filePromiseProvider(_ provider: NSFilePromiseProvider,
+                             writePromiseTo url: URL,
+                             completionHandler: @escaping (Error?) -> Void) {
+        guard let hit = provider.userInfo as? Hit else {
+            completionHandler(promiseError("Treffer nicht mehr bekannt"))
+            return
+        }
+        DispatchQueue.main.async {
+            MaterializationManager.shared.request(hit) { outcome in
+                switch outcome {
+                case .ready(let source):
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        do {
+                            try FileManager.default.copyItem(at: source, to: url)
+                            completionHandler(nil)
+                        } catch {
+                            completionHandler(error)
+                        }
+                    }
+                case .failed(let reason):
+                    completionHandler(self.promiseError(reason))
+                case .cancelled:
+                    completionHandler(self.promiseError("Auspacken abgebrochen"))
+                }
+            }
+        }
+    }
+
+    func operationQueue(for provider: NSFilePromiseProvider) -> OperationQueue {
+        promiseQueue
+    }
+
+    private func promiseError(_ reason: String) -> NSError {
+        NSError(domain: "Favenio", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: reason])
+    }
 
     // ---------- QuickLook-Vorschau ----------
 
@@ -3799,9 +5716,9 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
             panel.delegate = self
             panel.orderFront(nil)
             panel.reloadData()
-            // Der Fokus gehört in die Tabelle — von dort blättern die
+            // Der Fokus gehört in die aktive Trefferansicht — von dort blättern die
             // Pfeiltasten.
-            window.makeFirstResponder(tableView)
+            window.makeFirstResponder(activeResultView)
         }
     }
 
@@ -3854,9 +5771,14 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
 
     // QuickLook fragt diese Methoden über die Responder-Kette + den
     // App-Delegate ab (informelles Protokoll auf NSResponder).
-    @objc override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!)
-        -> Bool { true }
+    @objc override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        guard let panel else { return false }
+        // Andere Trefferfenster dürfen die ausdrücklich gesetzte Datenquelle nicht übernehmen.
+        if let owner = panel.dataSource as? HitListController { return owner === self }
+        return window?.isKeyWindow == true
+    }
     @objc override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        guard acceptsPreviewPanelControl(panel) else { return }
         panel.dataSource = self
         panel.delegate = self
         refreshPreview()
@@ -3882,7 +5804,7 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     /// Am 2026-09-02 am laufenden Fenster gemessen wurde es nach der Leertaste
     /// trotzdem Tastaturfenster (Auswahl grau, Pfeiltasten wirkungslos), erst
     /// ein Klick ins Hauptfenster holte den Fokus zurück. Deshalb der Weg, den
-    /// auch der Finder geht: Pfeil hoch/runter blättern die Trefferliste, ⎋
+    /// auch der Finder geht: Pfeil hoch/runter blättern die Trefferansicht, ⎋
     /// schließt — egal, welches Fenster gerade die Tastatur hat. Den anderen
     /// Fall (das App-Fenster ist Tastaturfenster) deckt der Tastaturmonitor
     /// der jeweiligen App ab.
@@ -3891,7 +5813,7 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
         guard event.type == .keyDown else { return false }
         switch event.keyCode {
         case 125, 126:                                   // ↓ ↑
-            tableView.keyDown(with: event)
+            activeResultView.keyDown(with: event)
             return true
         case 53 where plainModifiers(of: event).isEmpty: // ⎋
             closeOpenPreview()
@@ -3929,27 +5851,31 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     ///
     /// Steht EINMAL hier statt zweimal in den Apps: Bis 0.34.16 waren die
     /// 19 Zeilen in beiden `tableView(_:viewFor:row:)` wörtlich gleich.
-    /// Die Prüfung `row < hits.count` gehört dazu und ist Pflicht, nicht
+    /// Die Prüfung der projizierten Trefferzeile gehört dazu und ist Pflicht, nicht
     /// Vorsicht: `applyHitsToTable` verkleinert `hits` VOR dem
     /// `reloadData()`, und NSTableView hält solange die alte Zeilenzahl.
     /// Fragt AppKit dann eine Zelle jenseits des Endes an, beendete sich
     /// die App mit „Index out of range" — die Schnellsuche hatte die
     /// Prüfung an dieser Stelle immer, die Haupt-App nicht.
     ///
-    /// nil heißt: nichts anzuzeigen. Das BEFÜLLEN bleibt Sache der App;
-    /// die beiden Spaltensätze haben nichts gemeinsam.
+    /// nil heißt: nichts anzuzeigen. Das Befüllen übernimmt die App;
+    /// Finder-Spalten benutzen dabei den gemeinsamen Renderer.
     func hitCell(_ tableView: NSTableView, column: NSTableColumn,
                  row: Int) -> NSTableCellView? {
-        guard row < hits.count else { return nil }
+        guard hitIndex(forTableRow: row) != nil else { return nil }
         if let cell = tableView.makeView(withIdentifier: column.identifier,
                                          owner: nil) as? NSTableCellView {
             return cell
         }
         // Zellen einmal bauen, danach werden sie recycelt.
-        let cell = NSTableCellView()
+        let cell = column.identifier.rawValue == "finderTags" ? FinderTagsCellView() : NSTableCellView()
         cell.identifier = column.identifier
         let label = NSTextField(labelWithString: "")
         label.lineBreakMode = .byTruncatingMiddle
+        if ["finderTags", "finderComment"].contains(column.identifier.rawValue) {
+            label.maximumNumberOfLines = 1
+            (label.cell as? NSTextFieldCell)?.usesSingleLineMode = true
+        }
         label.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(label)
         cell.textField = label
@@ -3967,7 +5893,7 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     ///
     /// Steht EINMAL hier statt zweimal in den Apps: Bis 0.34.16 waren die
     /// beiden `menuNeedsUpdate` bis auf die zwei Zeilen der Haupt-App
-    /// wörtlich gleich — samt der Bereichsprüfung `contextRow < hits.count`,
+    /// wörtlich gleich — samt der Bereichsprüfung der Kontextzeile,
     /// die vorher nur in der Schnellsuche stand. Was eine App zusätzlich
     /// anbietet, hängt sie hinter dem `true` selbst an.
     ///
@@ -3976,8 +5902,9 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     @discardableResult
     func populateHitMenu(_ menu: NSMenu) -> Bool {
         menu.removeAllItems()
-        contextRow = tableView.clickedRow
-        guard contextRow >= 0, contextRow < hits.count else { return false }
+        contextRow = thumbnailController?.isGrid == true
+            ? (thumbnailController?.contextTableRow ?? -1) : tableView.clickedRow
+        guard hitIndex(forTableRow: contextRow) != nil else { return false }
         // ALLE öffnenbaren Treffer, nicht nur der erste: `ctxOpenWith`
         // übergibt später sämtliche materialisierten URLs an die gewählte App,
         // also muss das Menü über dieselbe Menge entscheiden.
@@ -3991,6 +5918,14 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
                 openWith: #selector(ctxOpenWith(_:)),
                 reveal: #selector(ctxReveal),
                 copyPath: #selector(ctxCopyPath)))
+        let archived = actionRows().map { hits[$0] }.filter { $0.isMember }
+        if !archived.isEmpty {
+            menu.addItem(withTitle: "Quellarchiv im Finder zeigen", action: #selector(ctxRevealSourceArchive),
+                         keyEquivalent: "").target = self
+            let chain = menu.addItem(withTitle: "Archivkette anzeigen…", action: #selector(ctxArchiveChain), keyEquivalent: "")
+            chain.target = self
+            chain.isEnabled = archived.count == 1 && actionRows().count == 1
+        }
         return true
     }
 
@@ -4022,6 +5957,35 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
         }
     }
 
+    @objc func ctxRevealSourceArchive() {
+        let urls = sourceArchiveURLs(for: actionRows().map { hits[$0] })
+        if !urls.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+    }
+
+    @objc func ctxArchiveChain() {
+        let selected = actionRows().map { hits[$0] }
+        guard selected.count == 1, let hit = selected.first, hit.isMember else { return }
+        let alert = makeArchiveChainAlert(for: hit)
+        if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(toggleFinderColumn(_:)):
+            if let key = item.representedObject as? String, let column = tableView.tableColumn(withIdentifier: .init(key)) {
+                item.state = column.isHidden ? .off : .on
+                return true
+            }
+            return false
+        case #selector(ctxArchiveChain):
+            let rows = actionRows()
+            return rows.count == 1 && hits[rows[0]].isMember
+        case #selector(ctxRevealSourceArchive):
+            return actionRows().contains { hits[$0].isMember }
+        default: return true
+        }
+    }
+
     /// „Öffnen" auf der wirksamen Zeilenmenge — mit der Standard-App.
     func openActionRows() {
         withActionSelection { [weak self] selection in
@@ -4042,4 +6006,205 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
         pasteboard.clearContents()
         pasteboard.setString(paths.joined(separator: "\n"), forType: .string)
     }
+}
+
+// Nur ein ausdrücklich gestarteter UI-Prüflauf setzt eine prozesslokale
+// Appearance. Globale Benutzereinstellungen bleiben dabei unberührt.
+func applyUITestAppearance(_ app: NSApplication) {
+    guard let requested = ProcessInfo.processInfo.environment["FAVENIO_TEST_APPEARANCE"],
+          ["light", "dark"].contains(requested) else { return }
+    app.appearance = NSAppearance(named: requested == "dark" ? .darkAqua : .aqua)
+    let actual = app.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])?.rawValue ?? "unknown"
+    fputs("FAVENIO TEST APPEARANCE: \(actual)\n", stderr)
+}
+
+func resultFilterListSelfTest(_ owner: HitListController, terminate: () -> Void) -> String? {
+    func wait(_ condition: () -> Bool) -> Bool {
+        let until = ProcessInfo.processInfo.systemUptime + 8
+        while !condition(), ProcessInfo.processInfo.systemUptime < until {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        return condition()
+    }
+    defer { owner.resultFilter.stopForTermination() }
+    let first = Hit(path: "/missing/keep-a.txt", kind: "file", line: 7, size: 8,
+        filesystemPath: "/missing/keep-a.txt", archiveMembers: [], isDirectory: false)
+    let other = Hit(path: "/missing/other.txt", kind: "file", line: nil, size: nil,
+        filesystemPath: "/missing/other.txt", archiveMembers: [], isDirectory: false)
+    owner.replaceFilteredHits([first, other], keepingSelection: [first.identity])
+    let filter = owner.resultFilter
+    filter.criteria.applyJSON(CriteriaNode(field: "name", value: "keep-").json)
+    filter.apply()
+    guard wait({ !filter.isFiltering }), owner.hits == [first],
+          owner.selectedHitIdentities() == [first.identity], filter.sourceCount == 2 else {
+        return "Ansichtsfilter verliert Quellmenge, Belege oder Auswahl"
+    }
+    let incoming = Hit(path: "/missing/keep-stream.txt", kind: "file", line: 9, size: 10,
+        filesystemPath: "/missing/keep-stream.txt", archiveMembers: [], isDirectory: false)
+    owner.pending = [incoming]
+    owner.flushResultFilterPending()
+    guard wait({ !filter.isFiltering }), owner.hits.count == 2, filter.sourceCount == 3,
+          owner.selectedHitIdentities() == [first.identity] else { return "Filter-Nachschub verändert Auswahl oder Quelle" }
+    filter.reset()
+    guard owner.hits.count == 3, !filter.isActive, owner.selectedHitIdentities() == [first.identity] else {
+        return "Filterreset verliert Originaltreffer oder Auswahl"
+    }
+    filter.clearForSearch()
+    let name = String(repeating: "a", count: 100) + "X.txt"
+    let slow = Hit(path: "/missing/" + name, kind: "file", line: nil, size: 0,
+        filesystemPath: "/missing/" + name, archiveMembers: [], isDirectory: false)
+    owner.replaceFilteredHits([slow], keepingSelection: [])
+    filter.criteria.applyJSON(CriteriaNode(field: "name", matchOperator: "regex", value: "(a+)+$").json)
+    filter.apply()
+    guard wait({ filter.runningProcessIdentifier != nil }), let pid = filter.runningProcessIdentifier else {
+        return "Filter-Lifecycle-Gegenprobe startet keinen eigenen Prozess"
+    }
+    terminate()
+    guard wait({ kill(pid, 0) != 0 }), !filter.isFiltering else { return "App-Ende lässt Filterprozess zurück" }
+    return nil
+}
+
+func resultGroupingListSelfTest(_ owner: HitListController) -> String? {
+    let a = Hit(path: "/missing/a/keep-first.txt", kind: "file", line: 7, size: 8,
+        filesystemPath: "/missing/a/keep-first.txt", archiveMembers: [], isDirectory: false)
+    let b = Hit(path: "/missing/b/other.md", kind: "file", line: nil, size: 9,
+        filesystemPath: "/missing/b/other.md", archiveMembers: [], isDirectory: false)
+    let c = Hit(path: "/missing/a/keep-last.txt", kind: "file", line: 11, size: 10,
+        filesystemPath: "/missing/a/keep-last.txt", archiveMembers: [], isDirectory: false)
+    let source = [a, b, c]
+    owner.replaceFilteredHits(source, keepingSelection: [a.identity, b.identity])
+    let groups = owner.resultGrouping
+    defer {
+        owner.resultFilter.stopForTermination()
+        groups.setMode(.none)
+        owner.resultFilter.clearForSearch()
+        owner.replaceFilteredHits([], keepingSelection: [])
+    }
+    groups.setMode(.folder)
+    guard owner.resultTableRowCount == 5, owner.selectedHitIdentities() == [a.identity, b.identity],
+          owner.actionRows().count == 2 else { return "Ordnergruppen verlieren Auswahl oder Trefferabbildung" }
+    guard let header = (0..<owner.resultTableRowCount).first(where: { groups.projection.group(at: $0) != nil }) else {
+        return "Gruppenüberschrift fehlt"
+    }
+    owner.contextRow = header
+    guard owner.actionRows().isEmpty, owner.hitCell(owner.tableView,
+        column: owner.tableView.tableColumns[0], row: header) == nil else { return "Gruppenüberschrift wird als Datei behandelt" }
+    owner.contextRow = -1
+    groups.collapseAll()
+    guard owner.hits.count == 3, groups.projection.displayedHitCount == 0,
+          owner.selectedHitIdentities().isEmpty, owner.resultTableRowCount == 2 else {
+        return "Einklappen verliert Treffer oder behält unsichtbare Auswahl"
+    }
+    let incoming = Hit(path: "/missing/a/keep-stream.txt", kind: "file", line: 13, size: 12,
+        filesystemPath: "/missing/a/keep-stream.txt", archiveMembers: [], isDirectory: false)
+    owner.appendFilteredHits([incoming], keepingSelection: [])
+    guard owner.hits.count == 4, groups.projection.displayedHitCount == 0,
+          let row = owner.revealTableRow(for: a.identity), owner.hitIndex(forTableRow: row).map({ owner.hits[$0].identity }) == a.identity else {
+        return "Nachschub oder ausdrückliches Aufklappen verliert Gruppenidentität"
+    }
+    owner.tableView.selectRowIndexes([row], byExtendingSelection: false)
+    groups.setMode(.fileExtension)
+    guard owner.selectedHitIdentities() == [a.identity] else { return "Gruppierungswechsel wählt eine andere Datei" }
+    groups.collapseAll()
+    owner.resultFilter.criteria.applyJSON(CriteriaNode(field: "name", value: "keep-").json)
+    owner.resultFilter.apply()
+    let until = ProcessInfo.processInfo.systemUptime + 8
+    while owner.resultFilter.isFiltering && ProcessInfo.processInfo.systemUptime < until {
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+    }
+    guard !owner.resultFilter.isFiltering, owner.resultFilter.errorMessage == nil,
+          owner.hits.count == 3, owner.resultFilter.sourceCount == 4,
+          groups.projection.displayedHitCount == 0 else { return "Ansichtsfilter und Klappzustand verlieren Quellmenge oder Darstellung" }
+    owner.resultFilter.reset()
+    groups.expandAll()
+    guard owner.hits.count == 4, groups.projection.displayedHitCount == 4 else {
+        return "Filterreset/Aufklappen verliert Originaltreffer"
+    }
+    groups.collapseAll()
+    owner.resultFilter.clearForSearch()
+    owner.replaceFilteredHits(source, keepingSelection: [])
+    guard groups.projection.displayedHitCount == 3 else { return "Neue Suche behält alte eingeklappte Gruppen" }
+    let archived = Hit(path: "/missing/outer!/source.zip!/folder!/a.txt", kind: "member", line: nil, size: 1,
+        filesystemPath: "/missing/outer!/source.zip", archiveMembers: ["folder!/a.txt"], isDirectory: false)
+    owner.replaceFilteredHits([a, archived], keepingSelection: [a.identity, archived.identity])
+    let menu = NSMenu()
+    let chain = menu.addItem(withTitle: "Archivkette anzeigen…", action: #selector(HitListController.ctxArchiveChain), keyEquivalent: "")
+    chain.target = owner
+    menu.update()
+    guard !chain.isEnabled else { return "Menüautomatik aktiviert Archivkette für mehrere Treffer" }
+    owner.tableView.selectRowIndexes(owner.tableRows(for: [archived.identity]), byExtendingSelection: false)
+    menu.update()
+    guard chain.isEnabled,
+          sourceArchiveURLs(for: [a, archived, archived]).map({ $0.path }) == [archived.filesystemPath],
+          archiveChainText(for: archived).contains("Treffer: folder!/a.txt") else {
+        return "Archivketten-Menü oder Quellarchiv verwendet falsche Identität"
+    }
+    if let scroll = owner.tableView.enclosingScrollView {
+        let long = String(repeating: "long-", count: 100)
+        let layoutHits = (0..<20).map { index in
+            Hit(path: "/missing/group-\(index)-\(long)/a.txt", kind: "file", line: nil, size: 1,
+                filesystemPath: "/missing/group-\(index)-\(long)/a.txt", archiveMembers: [], isDirectory: false)
+        }
+        owner.replaceFilteredHits(layoutHits, keepingSelection: [])
+        groups.setMode(.folder)
+        owner.window?.contentView?.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        guard let row = owner.tableView.rowView(atRow: 0, makeIfNecessary: true),
+              let header = descendants(row).first(where: { $0 is ResultGroupHeaderView }),
+              let count = descendants(header).compactMap({ $0 as? NSTextField }).first(where: { $0.stringValue == "1 Treffer" }),
+              let scroller = scroll.verticalScroller else { return "Native Gruppen-Geometrie fehlt" }
+        func headerFits() -> Bool {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
+            header.layoutSubtreeIfNeeded()
+            let frame = count.convert(count.bounds, to: owner.tableView)
+            let right = min(owner.tableView.visibleRect.maxX, scroller.convert(scroller.bounds, to: owner.tableView).minX)
+            return frame.minX >= owner.tableView.visibleRect.minX && abs(frame.maxX - right) < 1
+        }
+        guard headerFits() else {
+            return "Gruppentrefferzahl liegt außerhalb des freien nativen Tabellenbereichs"
+        }
+        scroll.contentView.scroll(to: NSPoint(x: 100, y: scroll.contentView.bounds.minY))
+        guard scroll.contentView.bounds.minX == 100, headerFits() else {
+            return "Native Gruppenzeile verliert ihre Ausrichtung nach Scrollen und Ereignisschleife"
+        }
+        print("RESULT GROUP HEADER OK: native window, scroller, scroll and count geometry")
+    }
+    return nil
+}
+
+func finderColumnsSelfTest(_ owner: HitListController) -> String? {
+    let keys = ["finderTags", "finderComment"]
+    let saved = keys.map { ($0, UserDefaults.standard.object(forKey: "finderColumn." + $0)) }
+    let hidden = keys.map { owner.tableView.tableColumn(withIdentifier: .init($0))?.isHidden }
+    let callback = owner.onFinderColumnsShown
+    var shown = 0
+    owner.onFinderColumnsShown = { shown += 1; callback?() }
+    defer {
+        owner.onFinderColumnsShown = callback
+        for (index, key) in keys.enumerated() {
+            if let value = saved[index].1 { UserDefaults.standard.set(value, forKey: "finderColumn." + key) }
+            else { UserDefaults.standard.removeObject(forKey: "finderColumn." + key) }
+            if let value = hidden[index] { owner.tableView.tableColumn(withIdentifier: .init(key))?.isHidden = value }
+        }
+    }
+    guard let menu = owner.tableView.headerView?.menu else { return "Finder-Spaltenmenü fehlt" }
+    for key in keys {
+        guard let column = owner.tableView.tableColumn(withIdentifier: .init(key)),
+              let index = menu.items.firstIndex(where: { $0.representedObject as? String == key }) else { return "Finder-Spalteneintrag fehlt: " + key }
+        column.isHidden = true
+        menu.update()
+        guard menu.items[index].isEnabled, menu.items[index].state == .off else { return "Versteckte Finder-Spalte hat falschen Menüzustand" }
+        menu.performActionForItem(at: index)
+        menu.update()
+        guard !column.isHidden, menu.items[index].state == .on,
+              UserDefaults.standard.bool(forKey: "finderColumn." + key) else { return "Native Menüaktion blendet Finder-Spalte nicht ein: " + key }
+        menu.performActionForItem(at: index)
+        menu.update()
+        guard column.isHidden, menu.items[index].state == .off,
+              !UserDefaults.standard.bool(forKey: "finderColumn." + key) else { return "Native Menüaktion blendet Finder-Spalte nicht aus: " + key }
+    }
+    guard shown == 2 else { return "Finder-Spalten aktivieren die Erfassung nicht genau beim Einblenden" }
+    print("FINDER COLUMNS OK: native NSMenu actions, checkmarks, visibility, capture callback")
+    return nil
 }

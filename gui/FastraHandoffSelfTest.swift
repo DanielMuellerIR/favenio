@@ -36,6 +36,9 @@ func checkFastraHandoff(sandbox: URL) -> String? {
     var accepted: [String: Any] = [:]
     var leafPath = ""
     var adoptedBytes = Data()
+    var supportedEncodings: [String] = []
+    var acceptedRequests = 0
+    var wrongTextHash = false
     var adopted = true
     var loading = false
     var mismatchedSession = false
@@ -50,13 +53,30 @@ func checkFastraHandoff(sandbox: URL) -> String? {
         case "capabilities":
             reply["capabilities"] = ["sourceSnapshotSchemaVersion": 1, "readOnly": true,
                 "operations": ["sourceSnapshot"], "maximumSnapshotBytes": 262_144, "maximumOuterArchiveBytes": 67_108_864]
+            if !supportedEncodings.isEmpty {
+                (reply["capabilities"] as? [String: Any]).map { capabilities in
+                    var value = capabilities; value["sourceSnapshotTextEncodings"] = supportedEncodings
+                    reply["capabilities"] = value
+                }
+            }
         case "sourceSnapshot":
+            acceptedRequests += 1
             leafPath = request["path"] as? String ?? ""
             adoptedBytes = (try? Data(contentsOf: URL(fileURLWithPath: leafPath))) ?? Data()
             let payload = adoptedBytes.starts(with: [0xef, 0xbb, 0xbf]) ? Data(adoptedBytes.dropFirst(3)) : adoptedBytes
+            var textHash = FastraHandoffController.hash(payload)
+            if let encoding = request["textEncoding"] as? String {
+                let encodings: [String: String.Encoding] = ["utf-8": .utf8, "utf-16-le": .utf16LittleEndian,
+                    "utf-16-be": .utf16BigEndian, "windows-1252": .windowsCP1252,
+                    "iso-8859-1": .isoLatin1, "mac-roman": .macOSRoman]
+                var body = adoptedBytes
+                if body.starts(with: [0xff, 0xfe]) || body.starts(with: [0xfe, 0xff]) { body = Data(body.dropFirst(2)) }
+                let text = String(data: body, encoding: encodings[encoding]!)!
+                textHash = FastraHandoffController.hash(Data(text.utf8))
+            }
             accepted = ["id": remoteID, "requestID": request["id"]!, "sessionID": sessionID,
                 "windowID": windowID, "documentID": documentID, "byteCount": adoptedBytes.count,
-                "sha256": request["sha256"]!, "textSHA256": FastraHandoffController.hash(payload),
+                "sha256": request["sha256"]!, "textSHA256": wrongTextHash ? String(repeating: "0", count: 64) : textHash,
                 "selection": ["location": request["location"]!, "length": request["length"]!],
                 "provenance": request["provenance"]!, "state": "accepted"]
             reply["job"] = accepted
@@ -80,7 +100,6 @@ func checkFastraHandoff(sandbox: URL) -> String? {
         return job.terminal
     }
     do {
-        host.modeControl.segmentCount = SearchTextMode.allCases.count
         host.typeControl.segmentCount = 3
         host.fieldPopup.addItem(withTitle: "Alle")
         host.setSearchRoot(sandbox)
@@ -147,6 +166,58 @@ func checkFastraHandoff(sandbox: URL) -> String? {
               ((nested.receipt?["provenance"] as? [String: Any])?["hitIdentity"] as? [String: Any])?["archiveMembers"] as? [String] == nestedHit.archiveMembers else {
             return "Geschachtelte Archivkette wird am Anzeigenamen getrennt oder falsch materialisiert"
         }
+        let text = "vor\r\nJahresbericht für Köln\r\n"
+        for (choice, codec) in [(SearchTextEncoding.automatic, String.Encoding.utf16LittleEndian),
+                                (.utf16BE, .utf16BigEndian), (.windows1252, .windowsCP1252),
+                                (.latin1, .isoLatin1), (.macRoman, .macOSRoman)] {
+            var bytes = text.data(using: codec)!
+            if choice == .automatic { bytes = Data([0xff, 0xfe]) + bytes }
+            try bytes.write(to: source)
+            var options = SearchConfiguration(); options.mode = .content; options.textEncoding = choice
+            let encodedInput = ControlSearchInput(pattern: "Jahresbericht", root: sandbox.path, options: options)
+            host.replaceSearchResults([normal]); controller.begin(encodedInput)
+            let before = acceptedRequests
+            let unsupported = try handoff.start(hit: normal, run: controller.run!)
+            guard wait(unsupported), unsupported.error?.code == "unsupported", acceptedRequests == before else {
+                return "Alter Fastra-Empfänger ignoriert Textkodierung oder mutiert vor Fähigkeitsprüfung"
+            }
+            supportedEncodings = SearchTextEncoding.allCases.filter { $0 != .automatic }.map { $0.rawValue }
+            let encoded = try handoff.start(hit: normal, run: controller.run!)
+            guard wait(encoded), encoded.state == "ready", adoptedBytes == bytes,
+                  encoded.receipt?["textSHA256"] as? String == FastraHandoffController.hash(Data(text.utf8)),
+                  (encoded.receipt?["selection"] as? [String: Int]) == ["location": 5, "length": 22],
+                  ((encoded.receipt?["provenance"] as? [String: Any])?["searchEvidence"] as? String)?.contains("verwendet:") == true else {
+                return "Gewählte Textkodierung verliert Originalbytes, Texthash oder Auswahl (\(encoded.error?.message ?? encoded.state))"
+            }
+            wrongTextHash = true
+            let wrong = try handoff.start(hit: normal, run: controller.run!)
+            guard wait(wrong), wrong.error?.code == "delivery" else { return "Abweichend dekodierter Empfängertext wird bestätigt" }
+            wrongTextHash = false; supportedEncodings = []
+        }
+        try first.write(to: source)
+        guard let previewCLI = findCLI() else { return "Vorschaubeleg: Python-Kern fehlt" }
+        let previewResult = runSearchSync(arguments: [previewCLI, "--json", "--content-preview", "--content", "needle", source.path])
+        guard let previewHit = previewResult.first, previewHit.contentPreview?.status == "ready" else { return "Vorschaubeleg aus Kern fehlt" }
+        host.replaceSearchResults([previewHit]); controller.begin(input)
+        let previewBound = try handoff.start(hit: previewHit, run: controller.run!)
+        guard wait(previewBound), previewBound.state == "ready" else { return "Gebundene Vorschau kann nicht übergeben werden" }
+        let acceptedBeforeChange = acceptedRequests
+        try later.write(to: source)
+        let previewChanged = try handoff.start(hit: previewHit, run: controller.run!)
+        guard wait(previewChanged), previewChanged.error?.code == "stale", acceptedRequests == acceptedBeforeChange else {
+            return "Geänderte Vorschauquelle erreicht Fastra oder erhält alten Bereich"
+        }
+        try first.write(to: source)
+        guard let freshPreview = runSearchSync(arguments: [previewCLI, "--json", "--content-preview", "--content", "needle", source.path]).first else {
+            return "Frischer Vorschaubeleg aus Kern fehlt"
+        }
+        var wrongDecoder = input.options; wrongDecoder.textEncoding = .macRoman
+        host.replaceSearchResults([freshPreview]); controller.begin(ControlSearchInput(pattern: "needle", root: sandbox.path, options: wrongDecoder))
+        let mismatchedDecoder = try handoff.start(hit: freshPreview, run: controller.run!)
+        guard wait(mismatchedDecoder), mismatchedDecoder.error?.code == "stale", acceptedRequests == acceptedBeforeChange else {
+            return "Abweichender Vorschaudecoder erreicht Fastra"
+        }
+        host.replaceSearchResults([normal, archived, nestedHit]); controller.begin(input)
         adopted = false
         let unconfirmed = try handoff.start(hit: normal, run: controller.run!)
         guard wait(unconfirmed), unconfirmed.state == "failed", unconfirmed.error?.code == "delivery" else {
@@ -182,12 +253,6 @@ func checkFastraHandoff(sandbox: URL) -> String? {
         }
         guard shutDown, observedClose.wait(timeout: .now()) == .success else {
             return "App-Ende bestätigt vor der Bereinigung der eigenen unbestätigten Empfängersitzung"
-        }
-        guard !FastraHandoffController.characterRange(location: 1, length: 1, text: "é"),
-              !FastraHandoffController.characterRange(location: 1, length: 0, text: "😀"),
-              !FastraHandoffController.characterRange(location: 1, length: 0, text: "\r\n"),
-              FastraHandoffController.characterRange(location: 0, length: 2, text: "é") else {
-            return "UTF-16-Bereich zerschneidet vollständige Zeichen"
         }
     } catch { return "Übergabe-Selbsttest: \(error)" }
     return nil

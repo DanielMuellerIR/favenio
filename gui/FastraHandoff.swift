@@ -128,6 +128,10 @@ final class FastraHandoffController {
         }
         work.async { [self] in
             do {
+                if let expected = hit.contentPreview?.sourceGeneration,
+                   ContentSourceGeneration.current(hit.filesystemPath) != expected {
+                    throw SearchControlFailure(code: "stale", message: "Quelle stimmt nicht mehr mit der Fundstellenvorschau überein. Bitte neu suchen.")
+                }
                 let url = URL(fileURLWithPath: hit.filesystemPath)
                 let (source, _) = try HandoffSourceState.read(url, limit: nil, check: job.check)
                 let (_, bytes) = try HandoffSourceState.read(url, limit: hit.isMember && source.size <= Self.maximumOuterBytes ? Self.maximumOuterBytes : nil, check: job.check)
@@ -165,20 +169,35 @@ final class FastraHandoffController {
                 let bytes = raw!
                 let hash = Self.hash(bytes)
                 let position = try position(job, leaf: leaf)
+                if let expected = job.hit.contentPreview?.sourceGeneration,
+                   ContentSourceGeneration.current(job.hit.filesystemPath) != expected {
+                    throw SearchControlFailure(code: "stale", message: "Quelle stimmt nicht mehr mit der Fundstellenvorschau überein. Bitte neu suchen.")
+                }
+                if let encoding = job.hit.contentPreview?.encoding,
+                   position["contentEncoding"] as? String != encoding {
+                    throw SearchControlFailure(code: "stale", message: "Decoder des aktuellen Blattinhalts ist nicht fehlerfrei wie in der Fundstellenvorschau bestätigt.")
+                }
                 guard position["sha256"] as? String == hash else { throw SearchControlFailure(code: "stale", message: "Blattinhalt wurde während der Positionsprüfung verändert.") }
                 let (source, outer) = try HandoffSourceState.read(URL(fileURLWithPath: job.hit.filesystemPath), limit: job.outerHash == nil ? nil : Self.maximumOuterBytes, check: job.check)
                 guard source == job.source, outer.map(Self.hash) == job.outerHash else { throw SearchControlFailure(code: "stale", message: "Quelle wurde während der Materialisierung verändert.") }
-                var location = SearchControlWire.integer(position["location"]) ?? 0
-                var length = SearchControlWire.integer(position["length"]) ?? 0
-                var binding = position["positionBinding"] as? String ?? "unboundHit"
-                let payload = bytes.starts(with: [0xef, 0xbb, 0xbf]) ? Data(bytes.dropFirst(3)) : bytes
-                let text = String(data: payload, encoding: .utf8)
-                if binding == "exactUTF16" && !Self.characterRange(location: location, length: length, text: text) {
-                    binding = "unboundHit"; location = 0; length = 0
+                let location = SearchControlWire.integer(position["location"]) ?? 0
+                let length = SearchControlWire.integer(position["length"]) ?? 0
+                let binding = position["positionBinding"] as? String ?? "unboundHit"
+                let textHash = position["textSHA256"] as? String
+                if binding == "exactUTF16" {
+                    guard let textLength = SearchControlWire.integer(position["textUTF16Length"]),
+                          textHash != nil, location <= textLength, length <= textLength - location else {
+                        throw SearchControlFailure(code: "delivery", message: "Python-Kern hat keine gültige Textbindung geliefert.")
+                    }
                 }
                 var evidence = "Ursprünglicher Suchinhalt nicht gespeichert. Aktueller Blattinhalt: "
-                if binding == "exactUTF16" { evidence += "Inhaltsbegriffe erneut geprüft; UTF-8/Python splitlines, Fundzeile \(position["line"] ?? "?")." }
+                if job.run.input.options.textEncoding != .utf8 && textHash == nil {
+                    throw SearchControlFailure(code: "sourceUnavailable", message: "Der aktuelle Blattinhalt kann in der gewählten Textkodierung nicht fehlerfrei gebunden werden.")
+                }
+                if binding == "exactUTF16" { evidence += "Inhaltsbegriffe erneut geprüft; \(position["contentEncoding"] ?? "?")/Python splitlines, Fundzeile \(position["line"] ?? "?")." }
                 else { evidence += "keine belegte Fundposition; Ansicht beginnt am Anfang." }
+                evidence += "\nTextkodierung: " + job.run.input.options.textEncoding.rawValue
+                    + "; verwendet: " + (position["contentEncoding"] as? String ?? "unbestätigt")
                 let terms = ([job.run.input.pattern] + job.run.input.options.terms).filter { !$0.isEmpty }.joined(separator: " · ")
                 evidence += "\nSuchbegriffe: " + terms
                 if evidence.utf8.count > 4096 { evidence = String(decoding: evidence.utf8.prefix(4000), as: UTF8.self) + "…" }
@@ -188,8 +207,11 @@ final class FastraHandoffController {
                     "archiveBinding": job.hit.isMember ? (job.outerHash == nil ? "generation" : "sha256") : "notApplicable",
                     "positionBinding": binding, "searchEvidence": evidence]
                 if let outerHash = job.outerHash { provenance["outerSHA256"] = outerHash }
-                let request: [String: Any] = ["path": leaf.path, "sha256": hash, "location": location, "length": length, "provenance": provenance]
-                let textHash = text.map { Self.hash(Data($0.utf8)) }
+                var request: [String: Any] = ["path": leaf.path, "sha256": hash, "location": location, "length": length, "provenance": provenance]
+                if job.run.input.options.textEncoding != .utf8,
+                   let encoding = position["contentEncoding"] as? String {
+                    request["textEncoding"] = encoding
+                }
                 DispatchQueue.main.async {
                     guard self.current(job) else { return }
                     job.state = "opening"
@@ -203,22 +225,12 @@ final class FastraHandoffController {
         }
     }
 
-    static func characterRange(location: Int, length: Int, text: String?) -> Bool {
-        guard let text, location >= 0, length >= 0, location <= text.utf16.count, length <= text.utf16.count - location else { return false }
-        var boundary = 0; var start = location == 0; var end = location + length == 0
-        for character in text {
-            boundary += String(character).utf16.count
-            if boundary == location { start = true }; if boundary == location + length { end = true }
-        }
-        return start && end
-    }
-
     private func position(_ job: Job, leaf: URL) throws -> [String: Any] {
         guard let cli = findCLI() else { throw SearchControlFailure(code: "sourceUnavailable", message: "Python-Kern fehlt.") }
         let input = job.run.input; let options = input.options
         let query: [String: Any] = ["path": leaf.path, "mode": options.mode.rawValue,
             "pattern": input.pattern.trimmingCharacters(in: .whitespaces), "terms": options.terms,
-            "regex": options.regex, "caseSensitive": options.caseSensitive, "exact": options.exact, "literalWildcards": options.literalWildcards]
+            "regex": options.regex, "caseSensitive": options.caseSensitive, "exact": options.exact, "literalWildcards": options.literalWildcards, "encoding": options.textEncoding.rawValue]
         let data = SearchControlWire.encode(query)
         guard data.count <= SearchControlWire.maximumRequestBytes else { throw SearchControlFailure(code: "capacity", message: "Positionsauftrag ist zu groß.") }
         let process = Process(); let output = Pipe(); let errors = Pipe(); let diagnostics = SearchDiagnostics()
@@ -277,6 +289,10 @@ final class FastraHandoffController {
                       SearchControlWire.integer(value["maximumOuterArchiveBytes"]) == Self.maximumOuterBytes,
                       let identifier = capabilities["runtimeID"] as? String, UUID(uuidString: identifier) != nil else {
                     throw SearchControlFailure(code: "unsupported", message: "Fastra braucht den geprüften Herkunftsvertrag sourceSnapshot Version 1.")
+                }
+                if let encoding = fields["textEncoding"] as? String,
+                   (value["sourceSnapshotTextEncodings"] as? [String])?.contains(encoding) != true {
+                    throw SearchControlFailure(code: "unsupported", message: "Fastra unterstützt die gewählte Textkodierung noch nicht; bitte Fastra aktualisieren.")
                 }
                 runtime = identifier
                 let accepted = try call(job, operation: "sourceSnapshot", endpoint: endpoint, runtime: identifier, fields: fields)

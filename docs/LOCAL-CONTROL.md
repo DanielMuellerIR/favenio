@@ -20,7 +20,8 @@ Jeder JSON-Auftrag enthält `version: 1`, eine UUID in `id`, `operation` und
 `deadline` als Unix-Sekunden: aktuelle Zeit plus höchstens zehn Sekunden.
 Unbekannte Felder und `null` werden abgewiesen. Ändernde Aufträge verlangen
 zusätzlich die aktuelle `runtimeID` und `windowID` aus `capabilities`.
-Nach App-Neustart gelten die alten Kennungen nicht mehr.
+Nach App-Neustart gelten die alten Kennungen nicht mehr. Ab 0.41.0 beträgt die
+Auftragsgrenze 262.144 Byte; `maximumRequestBytes` nennt den aktuellen Wert.
 
 | Operation | Weitere Felder | Verhalten |
 | --- | --- | --- |
@@ -31,6 +32,7 @@ Nach App-Neustart gelten die alten Kennungen nicht mehr.
 | `replace` | keine | laufende Suche ausdrücklich ersetzen |
 | `cancel` | `runID` | abbrechen und bereits empfangene Treffer erhalten |
 | `status` | keine | Laufzustand, Fortschritt, Warnungszahl und Trefferanzahl |
+| `report` | `runID` | begrenzter JSON-Suchbericht des aktuellen Laufs, auch vorläufig; [Vertrag](SEARCH_REPORT.md) |
 | `results` | `runID`, `offset`, `limit`, optional `generation` | begrenzte Ergebnisseite |
 | `select` | `runID`, `identity` | genau diesen Treffer in der Tabelle zeigen |
 | `handoff` | `runID`, `identity` | ab 0.37.0: begrenzte asynchrone Fastra-Übernahme starten |
@@ -42,12 +44,22 @@ Nach App-Neustart gelten die alten Kennungen nicht mehr.
 Die Konfiguration enthält `pattern`, einen absoluten `root` und `options`
 als Liste von Objekten mit `name` und `value` (beides Strings). Optionen
 verwenden denselben Katalog wie Quick-Übergabe und Suchvorlagen: `mode`
-(`name`, `content`, `metadata`), `only` (`both`, `files`, `dirs`), die
+(`name`, `content`, `metadata`, `document`), `only` (`both`, `files`, `dirs`), die
 Schalter `regex`, `case`, `archives`, `hidden`, `exact`, `literal-wildcards`
 (`0` oder `1`), `field`, `minw`, `maxw`, `minh`, `maxh`, die sechs Größen-/
-Datumsfilter sowie wiederholbare `term` und `exclude`. Werte bleiben roh;
+Datumsfilter sowie wiederholbare `term` und `exclude`. Ab 0.40.0 enthält
+`criteria` optional einen JSON-Kriterienbaum als String; die Fähigkeitsabfrage
+nennt `criteriaSchemaVersion: 1`. Werte bleiben roh;
 Python validiert Größen, Daten und Suchmuster. GUI-Maßfehler verhindern wie
 beim manuellen Start die Suche.
+
+Ab 0.55.0 wird alternativ die strikte Form
+`{"schemaVersion":2,"pattern":"Beispiel","roots":["/tmp/docs","/tmp/project"],"options":[]}`
+gelesen. Die geordnete Liste, Herkunft je Treffer, Versionsmigration und Grenzen
+stehen im [Suchbereichsvertrag](SEARCH_ROOTS.md). Capabilities nennen
+`configurationSchemaVersions: [1,2]` und `recordingSchemaVersion: 3` mit
+`recordingSchemaVersions: [1,2,3]`. Historisches Öffnen prüft die Wurzelliste nicht
+auf Vorhandensein; ein neuer Gesamtstart prüft alle Bereiche.
 
 ```json
 {
@@ -89,7 +101,7 @@ bis zu 300 Sekunden wiederholbar, auch nach Ablauf ihrer ursprünglichen Frist.
 Eine ID mit anderem Inhalt wird abgewiesen. Danach muss der Client den aktuellen
 Zustand prüfen; ein neuer Start mit neuer ID erzeugt einen neuen Lauf.
 
-Requests sind auf 64 KiB und Antworten auf 1 MiB begrenzt. Der Helfer beendet
+Requests sind auf 256 KiB und Antworten auf 1 MiB begrenzt. Der Helfer beendet
 auch eine nicht abgeschlossene Standardeingabe nach zehn Sekunden.
 Aufruf-/Transport-/Controllerfehler ergeben Exit 1 und ein JSON-Fehlerobjekt,
 erfolgreiche Antworten mit Exit 0. Ein erfolgreich abgefragter `failed`-Status
@@ -128,9 +140,9 @@ Der frühere Suchinhalt wurde nicht gespeichert. Das steht im sichtbaren
 `searchEvidence`; die Übergabe verspricht keine historische Inhaltsidentität.
 Für Inhaltstreffer prüft derselbe Python-Kern die Begriffe erneut am aktuellen
 Blatt. Die aktuelle erste Fundzeile wird vollständig ausgewählt. Geänderte Positionen erhalten neue UTF-16-Offsets; verschwundene Begriffe
-werden abgewiesen. Gültiges UTF-8 ohne Nullbytes kann exakt navigiert werden,
-einschließlich UTF-8-BOM und Python-Zeilentrennern. Der Bereich muss auch auf
-vollständigen Swift-Characters liegen. Andere Modi/Encodings oder nicht belegbare
+werden abgewiesen. Gültiges UTF-8, UTF-16 und ausdrücklich gewählte Legacy-Kodierungen ohne Nullbytes
+können exakt navigiert werden, einschließlich Datei-BOM und Python-Zeilentrennern. Der Bereich muss auch auf
+vollständigen Swift-Characters liegen. Andere Modi oder nicht belegbare
 Zeichengrenzen verwenden `positionBinding: unboundHit`, Position/Länge null und
 eine sichtbare Erklärung; es wird kein mehrdeutiger Textanker geraten.
 
@@ -149,20 +161,32 @@ bestätigte eigene Kopie bleibt unabhängig vom Sender erhalten.
 Die interne CLI-Positionsprüfung `--snapshot-position-json JSON` verwendet
 exakt `path` (absoluter Blattpfad), `mode` (`name`, `content`, `metadata`),
 `pattern`, `terms` (Stringliste) und die Bool-Felder `regex`, `caseSensitive`,
-`exact`, `literalWildcards`. Sie liest höchstens 262144 Bytes einer regulären
+`exact`, `literalWildcards` sowie optional `encoding` aus der dokumentierten
+Positivliste (fehlend: `utf-8`). Sie liest höchstens 262144 Bytes einer regulären
 Datei. Erfolg liefert ein JSON-Objekt mit `sha256`, `location`, `length` und
-`positionBinding`; eine belegte Inhaltsposition zusätzlich `line` und `decoder`.
+`positionBinding`; bei fehlerfreier Dekodierung zusätzlich `contentEncoding`,
+`textSHA256` (UTF-8 des ursprünglichen Texts, ohne die Datei-BOM), `textUTF16Length`
+und `consumedBOMBytes` des Suchdecoders. Eine belegte Inhaltsposition trägt
+zusätzlich `line` und `decoder`. Es gibt keine NFC- oder Zeilenendumschreibung.
+Nichtstandardkodierungen erfordern Fastras Capability `sourceSnapshotTextEncodings`
+und übergeben den aufgelösten Decoder als optionales `textEncoding`. Das
+Herkunftsschema bleibt 1; alte Empfänger werden vor der Übernahme abgewiesen.
+Ein in der Nichtstandardkodierung nicht fehlerfrei dekodierbarer Blattinhalt
+wird vor der Übergabe mit `sourceUnavailable` erklärt.
 Fehler ergeben Exit 2 mit Favenio-Diagnose. Es entsteht keine zweite Suchlogik.
 
 ## Suchaufzeichnungen (ab 0.38.0)
 
 `captureRecording` braucht die aktuelle `runID` und einen beendeten eigenen
-Suchlauf. Die Antwort enthält `recording`: Schema 1, Konfiguration, ursprüngliche
+Suchlauf. Die Antwort enthält `recording`: Schema 1 (ohne Kriterien und mit UTF-8) oder 2 (mit Kriterien oder Nichtstandardkodierung), Konfiguration, ursprüngliche
 Laufkennung und Startzeit, Aufnahmezeit, Abschlusszustand, Warnungszahl, gegebenenfalls
-Fehler, vollständige Treffer und Auswahl. Maximal 128 Treffer und 48.000 Byte;
+Fehler, vollständige Treffer und Auswahl. Maximal 128 Treffer und 196.608 Byte;
 Überschreitung ist `capacity`, niemals eine still gekürzte vollständige Liste.
+Schema-1-Aufnahmen aus 0.40.0 mit Kriterien bleiben verlustfrei lesbar und
+werden bei erneuter Aufnahme als Schema 2 ausgegeben.
 Eine laufende Suche muss zuerst ausdrücklich mit `cancel` beendet werden.
-Fähigkeiten nennen `recordingSchemaVersion: 1`, `maximumRecordingBytes: 48000`
+Fähigkeiten nennen `recordingSchemaVersion: 2`, `recordingSchemaVersions: [1, 2]`,
+`maximumRecordingBytes: 196608`
 und `maximumRecordingHits: 128`. Warnungen bewahren wie die bisherige GUI
 die Anzahl übersprungener Objekte, keine einzelnen Diagnosetexte.
 
@@ -196,5 +220,90 @@ Wiedergabe dieser Aktionen braucht ausdrücklich `open ... --actions` oder
 stoppt die Folge. Jeder Aufruf bindet sich an die aktuelle Laufzeit und das
 aktuelle Fenster. Die standardmäßige Neusuche-Zeitgrenze beträgt 60 Sekunden,
 mit `--timeout` maximal 300; bei Überschreitung wird nur der eigene noch aktuelle
-Suchlauf abgebrochen. Die Eingabedatei ist auf 60.000 Byte begrenzt und muss
+Suchlauf abgebrochen. Die Eingabedatei ist auf 262.144 Byte begrenzt und muss
 regulär sein; Aktionsidentitäten auf 48.000 Byte.
+
+Textkodierung ist die optionale Suchoption `encoding`; die Capability `textEncodings`
+nennt die zulässigen Werte. Fehlende Option bleibt `utf-8`. Unbekannte oder doppelte
+Werte werden vor jeder Konfigurationsänderung abgewiesen.
+
+Im Suchziel `document` beziehen sich Muster und Inhaltskriterien auf logischen
+PDF-Text. Seitenlokatoren und Quellbindung bleiben in Ergebnissen, Aufnahmen und
+Schema-2-Übergaben erhalten; siehe [Dokumenttext](DOCUMENT_TEXT.md). Die
+Rohtext-Positionsübergabe an Fastra erhält dadurch keinen PDF-Seitenoffset.
+
+## Ansichtsfilter ab 0.53.0
+
+Ergebnisseiten beziehen sich auf die durch den Ansichtsfilter zugelassene Liste.
+Auswahl und Übergabeaktionen verwenden echte Trefferidentitäten.
+`status.resultFilter` und `results.resultFilter` nennen aktive Kriterien, Lade-/
+Fehlerzustand sowie Quellzahl und durch den Filter zugelassene Trefferzahl
+(`visibleCount`; unabhängig von eingeklappten Gruppen). Ausstehende oder gescheiterte
+Filterauswertung verhindert `complete`. Filterwechsel entwerten Cursor-Generationen.
+`captureRecording` erhält den gesamten Quellstand; beim Öffnen wird der Ansichtsfilter
+zurückgesetzt. [Vertrag und CLI](RESULT_FILTER.md).
+
+## Gruppierung ab 0.54.0
+
+`status.resultGrouping` und `results.resultGrouping` unterscheiden gefilterte
+Treffer und aufgeklappte Trefferzeilen; Gruppenüberschriften sind keine Dateien.
+Ergebnisseiten enthalten auch eingeklappte gefilterte Treffer und nennen
+`resultsIncludeCollapsed: true`. Explizites `select` und `handoff` klappen die
+Gruppe des angefragten Treffers auf und scrollen ihn sichtbar. Gruppierungs-/
+Klappwechsel entwerten Cursor sowie alte Vorschau-/Fastra-Aufträge. Aufzeichnungen
+und Quick-Übergaben bewahren den Quellstand ohne Gruppierungsdarstellung.
+[Vertrag und Archivnavigation](RESULT_GROUPS.md).
+
+## Kalenderfragen und Laufbezug
+
+Kalenderfragen verwenden Konfigurationsformat 3 (`roots` als Liste),
+Aufzeichnungsformat 4 und Kriterienschema 2. `dateRangeSchemaVersion: 1` meldet die
+Fähigkeit. Die Optionen heißen `date-ranges` und gegebenenfalls
+`date-reference-time`. `configure` übernimmt eine Frage; `start`/`replace`
+erfassen einen neuen Bezug oder nehmen einen ausdrücklich angegebenen
+`dateReferenceTime` mit Z/Offset an. `status.configuration` enthält den gefrorenen
+Laufauftrag, `report.dateResolution` dessen konkrete Grenzen.
+
+Aufzeichnungen tragen diese Grenzen separat als `dateResolution`. Beim Öffnen
+werden Frage, Referenztext und explizite ISO-/Epochwerte vollständig geprüft;
+es findet keine neue Kalenderauflösung statt. `rerun` startet die relative Frage
+mit einem neuen Bezug. Aufnahmeaktionen vergleichen auch den eingefrorenen
+Laufkontext. [Vollständiger Datumsvertrag](DATE_RANGES.md).
+
+## Finder-Eigenschaften
+
+Die Steuerung meldet `finderMetadataSchemaVersion: 1`,
+`criteriaSchemaVersions: [1,2,3]`, `configurationSchemaVersions: [1,2,3,4,5,6,7]` und
+`recordingSchemaVersions: [1,2,3,4,5,6,7,8]`. Finder-Fragen oder die Erfassungsoption
+`finder-metadata=1` benötigen Konfigurationsformat 4 mit `roots` als Liste.
+Aufnahmen mit Finder-Fragen oder erfassten Snapshots verwenden Format 5 und
+`finderMetadataCapability: 1`, auch bei einer ursprünglichen reinen Namenssuche.
+
+Ergebnisseiten, Aufnahmen und der CLI-Helfer erhalten führendes U+FEFF, NFD,
+Tagfarben und Kommentarumbrüche. Eingehende Snapshots werden auf Originalbytes
+geprüft, bevor Dictionary-Roundtrips Zahlenlexeme ändern könnten. Unbekannte
+Formate und widersprüchliche Werte werden vor UI-/Laufänderung abgewiesen.
+Der Aufnahmehelfer prüft die tatsächlich benötigten Fähigkeiten vor configure/open.
+Kombinierte Kalenderfragen behalten Referenz und separat geprüfte Grenzen.
+Historisches Öffnen und Ansichtsfilter lesen die Finder-Quelle nicht erneut.
+[Datenvertrag und Bedienung](FINDER_METADATA.md).
+
+## Lokal vorhandene Inhalte
+
+`local-only=1` benötigt Konfigurationsformat 5, `localContentSchemaVersion: 1`
+und Aufzeichnung 6 mit `localContentCapability: 1`. Die Option ist standardmäßig
+aus. Kombinationen bewahren Finder-/Kalenderbelege und deren bisherige
+Fähigkeiten. Ältere Konfigurationen oder Aufnahmen dürfen die aktive Politik
+nicht verlieren und werden vor Mutation abgewiesen. [Lesepolitik und Grenzen](LOCAL_CONTENT.md).
+
+## Bild-OCR
+
+`ocr=1` benötigt Konfiguration 6, `ocrSchemaVersion: 1` und Aufnahme 7 mit
+`ocrCapability: 1`. Die Option wirkt ausschließlich im Suchziel Dokumenttext;
+Default ist aus. Quick und Vorlagen verwenden Format 7. OCR-Belege mit
+`contentEncoding: "vision-ocr-text-v1"` und `documentPosition.kind: "imageOCR"`
+bleiben über die bestehenden Treffer-/Exportpfade erhalten. Alter Transport mit
+aktiver OCR wird vor Übernahme abgewiesen. Cloud-, Finder- und Kalenderfähigkeiten
+werden bei gemeinsamer Verwendung unabhängig geprüft. [Vertrag und Grenzen](OCR.md).
+
+PDF-OCR: aktives `pdf-ocr=1` benötigt Konfiguration 7, Aufnahme 8 mit `pdfOCRCapability: 1` sowie Quick-/Vorlagenformat 8. Controller/Bundles nennen `pdfOCRSchemaVersion` beziehungsweise `FavenioPDFOCRSchemaVersion` 1. Alte aktive Formate werden abgewiesen; Bild-OCR bleibt unabhängig. [Vollständiger Vertrag](PDF_OCR.md).
