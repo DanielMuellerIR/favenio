@@ -19,7 +19,7 @@ enum ContentPreviewProbe {
         _ = NSApplication.shared
         defer { MaterializationManager.shared.cleanup() }
         let data = FileHandle.standardInput.readDataToEndOfFile()
-        let lines = data.split(separator: 10).map(Data.init)
+        let lines: [Data] = data.split(separator: 10)
         let hits = lines.compactMap(parseHit)
         guard !hits.isEmpty else { exit(2) }
         let mode = arguments.dropFirst().first ?? "parse"
