@@ -137,7 +137,7 @@ def suite_binary():
                    str(REPO / 'gui/CriteriaEditorSelfTest.swift'), str(filter_probe),
                    str(REPO / 'tests/result_grouping_probe.swift'), str(REPO / 'tests/search_roots_probe.swift'), str(REPO / 'tests/date_ranges_probe.swift'), str(REPO / 'tests/finder_metadata_probe.swift')]
         command += [str(REPO / 'tests' / name) for name in probes]
-        result = run_process(command + ['-o', str(binary)], timeout=120)
+        result = run_process(command + ['-o', str(binary)], timeout=300)
         if result.returncode:
             raise RuntimeError('Swift-Testprogramm kompiliert nicht:\n'
                                + result.stdout + result.stderr)

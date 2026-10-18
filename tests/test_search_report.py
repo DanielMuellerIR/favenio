@@ -189,7 +189,7 @@ class SearchReportTest(unittest.TestCase):
     def test_unknown_criteria_and_archive_creation_date_are_not_complete(self):
         (self.root / 'needle-note.txt').write_text('needle')
         criteria = {'schemaVersion': 1, 'root': {'id': 'n', 'field': 'metadata', 'operator': 'contains', 'value': 'absent', 'negate': True}}
-        with mock.patch.object(favenio, 'external_archive_tools', return_value=(None, None, '/fixture/exiftool')):
+        with mock.patch.object(favenio, 'find_exiftool', return_value='/fixture/exiftool'):
             _, records, _ = self.search('--criteria-json', json.dumps(criteria))
         self.assertEqual({r['id'] for r in records[-1]['reasons']}, {'metadataUnsupported', 'criterionUnknown'})
         self.assertEqual(records[-1]['coverage'], 'incomplete')

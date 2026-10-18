@@ -55,7 +55,7 @@ class LocalContentTests(unittest.TestCase):
             source = Path(root) / 'wolke.png'; source.write_bytes(b'not an image')
             for options in [['--content', 'needle'], ['--min-width', '10'], ['--metadata', 'needle']]:
                 with mock.patch.object(f, 'open_regular_file', side_effect=AssertionError('Inhalt geöffnet')), \
-                     mock.patch.object(f.shutil, 'which', return_value='/unused/exiftool'), \
+                     mock.patch.object(f, 'find_exiftool', return_value='/unused/exiftool'), \
                      mock.patch.object(f.Search, 'exiftool_stream', side_effect=AssertionError('Helfer gestartet')):
                     status, hits, report, _ = self.run_core(options + [str(source)], 'localContentUnknown')
                 self.assertEqual(status, 1)

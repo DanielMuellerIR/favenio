@@ -118,7 +118,9 @@ class PDFOCRTests(TempTreeTest):
 
     def test_huge_page_and_rendered_page_and_total_pixel_budgets(self):
         for name in ['huge.pdf', 'many.pdf', 'large-many.pdf']:
-            with self.subTest(name=name):
+            # Hier werden Pixel-/Seitenbudgets geprüft, unabhängig von der
+            # Geschwindigkeit der Vision-Erkennung auf dem Testrechner.
+            with self.subTest(name=name), mock.patch.object(favenio, 'PDF_OCR_SECONDS', 60):
                 code, hits, report, errors = self.search(name, pattern='absent')
                 self.assertEqual((code, hits), (1, []), errors)
                 self.assertIn('pdfOCRLimit', [r['id'] for r in report['reasons']])
