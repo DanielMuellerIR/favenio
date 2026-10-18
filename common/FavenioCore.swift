@@ -4780,7 +4780,8 @@ struct ResultProjection {
             return (ResultGroupKey(components: [Data(parent.utf8)]), title.isEmpty ? "Suchordner" : abbreviateHome(title))
         case .fileExtension:
             if hit.isDirectory { return (ResultGroupKey(components: []), "Ordner") }
-            let name = (members.last ?? outer).split(separator: 47).last.map(Data.init) ?? Data()
+            let pathComponents: [Data] = (members.last ?? outer).split(separator: 47)
+            let name = pathComponents.last ?? Data()
             guard let dot = name.lastIndex(of: 46), dot > name.startIndex, dot + 1 < name.endIndex else {
                 return (ResultGroupKey(components: [Data()]), "Ohne Endung")
             }
