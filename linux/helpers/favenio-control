@@ -1,0 +1,83 @@
+#!/usr/bin/python3 -B
+"""Begrenzter CLI-Client der sichtbaren Linux-Haupt-App, Protokollversion 1."""
+import argparse
+import json
+import os
+from pathlib import Path
+import socket
+import stat
+import struct
+import subprocess
+import sys
+import time
+
+
+def endpoint():
+    root=Path(os.environ.get('XDG_RUNTIME_DIR','/tmp/favenio-control-'+str(os.getuid())))
+    info=root.lstat()
+    if not root.is_absolute() or not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077:
+        raise ValueError('Unsicherer Laufzeitordner.')
+    return root/'org.favenio.Main.search-control.v1.sock'
+
+
+def receive(stream,size,deadline):
+    result=bytearray()
+    while len(result)<size:
+        remaining=deadline-time.monotonic()
+        if remaining<=0:raise TimeoutError('Steuerungsfrist abgelaufen.')
+        stream.settimeout(remaining)
+        chunk=stream.recv(size-len(result))
+        if not chunk:raise OSError('Verbindung vorzeitig beendet.')
+        result.extend(chunk)
+    return bytes(result)
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--capabilities',action='store_true')
+    parser.add_argument('--json',action='store_true')
+    parser.add_argument('--no-launch',action='store_true')
+    parser.add_argument('--request',metavar='DATEI')
+    args=parser.parse_args()
+    folder=Path(__file__).resolve().parent.parent
+    if args.capabilities:
+        result=subprocess.run([str(folder/'launch'),'--control-capabilities'],check=False)
+        return result.returncode
+    if not args.request:parser.error('--request DATEI oder --capabilities erforderlich')
+    with (sys.stdin.buffer if args.request=='-' else open(args.request,'rb')) as source:
+        data=source.read(262145)
+    if not 0<len(data)<=262144:raise ValueError('Auftrag überschreitet 262.144 Byte.')
+    value=json.loads(data)
+    deadline=value.get('deadline')
+    now=time.time()
+    if type(deadline) not in (int,float) or not now<deadline<=now+10:raise ValueError('Auftrag braucht eine zukünftige Frist von höchstens zehn Sekunden.')
+    stop=time.monotonic()+deadline-now
+    launched=False
+    while True:
+        try:
+            path=endpoint();info=path.lstat()
+            if not stat.S_ISSOCK(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077:raise ValueError('Unsicherer Steuerungsendpunkt.')
+            stream=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+            stream.settimeout(max(.01,stop-time.monotonic()));stream.connect(str(path))
+            credentials=stream.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12)
+            if struct.unpack('3i',credentials)[1]!=os.getuid():raise ValueError('Fremder Empfänger.')
+            break
+        except (FileNotFoundError,ConnectionRefusedError):
+            if args.no_launch:raise ValueError('Keine laufende Favenio-Haupt-App.')
+            if not launched:
+                subprocess.Popen([str(folder/'launch')],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True);launched=True
+            if time.monotonic()>=stop:raise TimeoutError('Favenio wurde nicht rechtzeitig bereit.')
+            time.sleep(.05)
+    with stream:
+        stream.sendall(struct.pack('!I',len(data))+data)
+        size=struct.unpack('!I',receive(stream,4,stop))[0]
+        if not 0<size<=1048576:raise ValueError('Ungültige Antwortgröße.')
+        response=receive(stream,size,stop)
+    sys.stdout.buffer.write(response+b'\n')
+    return 2 if 'error' in json.loads(response) else 0
+
+
+if __name__=='__main__':
+    try:sys.exit(main())
+    except (OSError,ValueError,TimeoutError) as error:
+        print('favenio-control: '+str(error),file=sys.stderr);sys.exit(2)

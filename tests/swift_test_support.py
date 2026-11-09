@@ -105,7 +105,7 @@ def suite_binary():
         core.write_text('import AppKit\nimport Darwin\nimport Quartz\n'
                         'import UniformTypeIdentifiers\n'
                         'let pythonPath = "/usr/bin/python3"\n'
-                        + source[source.index('struct Hit:'):], encoding='utf-8')
+                        + source[source.index('final class TypeDescriptionCache {'):], encoding='utf-8')
         quick = (REPO / 'quick/FavenioQuick.swift').read_text(encoding='utf-8')
         harness = (REPO / 'tests/quick_scope_probe.swift.in').read_text(encoding='utf-8')
         for marker, signature in (
@@ -130,6 +130,7 @@ def suite_binary():
         probes = ['runner_probe.swift', 'materialization_probe.swift',
                   'configuration_probe.swift', 'thumbnail_probe.swift', 'duplicate_probe.swift', 'export_probe.swift', 'search_report_probe.swift', 'content_preview_probe.swift', 'test_probe.swift']
         command = ['swiftc', '-O', '-D', 'FAVENIO_TEST_SUITE', str(core), str(scope),
+                   *[str(REPO / ('common/' + name + '.swift')) for name in ('DuplicateModel', 'ResultFilterModel', 'CriteriaModel', 'SearchModel', 'SearchConfiguration', 'SearchProcess', 'ContentModel', 'ContentPreviewLoad', 'DateRangeModel', 'SearchReportModel')],
                    str(REPO / 'common/ContentPreview.swift'), str(REPO / 'common/Thumbnails.swift'),
                    str(REPO / 'common/SearchReport.swift'), str(REPO / 'common/DuplicateCheck.swift'),
                    str(REPO / 'common/CriteriaEditor.swift'),

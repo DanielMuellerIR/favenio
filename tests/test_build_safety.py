@@ -256,8 +256,8 @@ class BuildSafetyTest(unittest.TestCase):
         ungeprüft."""
         build = (REPO / "build-app.sh").read_text(encoding="utf-8")
         library = (REPO / "notarize-lib.sh").read_text(encoding="utf-8")
-        self.assertIn('SPARKLE_PUBLIC_KEY="%s"' % InstallFromDmgTest.SPARKLE_KEY,
-                      build)
+        self.assertEqual((REPO / "common/update-public-key.txt").read_text().strip(), InstallFromDmgTest.SPARKLE_KEY)
+        self.assertIn('SPARKLE_PUBLIC_KEY=$(cat common/update-public-key.txt)', build)
         self.assertIn(
             'FAVENIO_SPARKLE_PUBLIC_KEY="%s"' % InstallFromDmgTest.SPARKLE_KEY,
             library)

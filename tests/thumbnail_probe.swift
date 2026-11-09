@@ -253,10 +253,10 @@ struct ThumbnailProbe {
         var largeAction: MaterializationOutcome?
         renderer.request(largeMember) { largeThumbnail = $0 }
         thumbnailWait { FileManager.default.fileExists(atPath: extractionStarted.path) }
-        shared.request(largeMember) { largeAction = $0 }
+        shared.request(largeMember, localOnly: true) { largeAction = $0 }
         thumbnailWait { largeThumbnail != nil && largeAction != nil }
         guard case .ready(let largeURL)? = largeAction else {
-            thumbnailCheck(false, "Thumbnail must not tighten explicit action budgets")
+            thumbnailCheck(false, "Thumbnail must not tighten explicit action budgets: \(String(describing: largeAction))")
             return
         }
         thumbnailCheck(largeThumbnail?.image == nil, "Own image byte limit remains")

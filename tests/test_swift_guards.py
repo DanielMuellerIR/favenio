@@ -9,7 +9,7 @@ from swift_test_support import run_probe, swift_function
 # Gegen das Repo, nicht gegen das Arbeitsverzeichnis: Ein Lauf aus einem
 # anderen Ordner brach sonst schon beim Import ab, statt zu prüfen.
 REPO = Path(__file__).resolve().parent.parent
-COMMON = (REPO / "common/FavenioCore.swift").read_text(encoding="utf-8")
+COMMON = "\n".join((REPO / "common" / (name + ".swift")).read_text(encoding="utf-8") for name in ("FavenioCore", "SearchModel", "SearchConfiguration", "SearchProcess", "ResultFilterModel", "DuplicateModel"))
 GUI = (REPO / "gui/FavenioGUI.swift").read_text(encoding="utf-8")
 QUICK = (REPO / "quick/FavenioQuick.swift").read_text(encoding="utf-8")
 
@@ -181,7 +181,7 @@ class SwiftGuardTests(unittest.TestCase):
         applyConfiguration() in die Oberflaeche; Laden startet KEINE Suche
         und erhält fehlende gespeicherte Suchbereiche sichtbar."""
         self.assertIn("struct SearchTemplate: Equatable", COMMON)
-        self.assertIn("static let version = 8", COMMON)
+        self.assertIn("static let version = 9", COMMON)
         self.assertIn('"search-templates.json"', COMMON)
         handoff = swift_function(GUI, "func handleFavenioURL(")
         self.assertIn("let configuration = SearchConfiguration.fromQueryItems(items)", handoff)
@@ -193,7 +193,7 @@ class SwiftGuardTests(unittest.TestCase):
         for forbidden in ("startSearch()", "launchSearch("):
             self.assertNotIn(forbidden, apply_template)
         # Die Regex-Vorlagen bleiben eine getrennte Einfuegehilfe.
-        self.assertIn("let regexTemplates: [RegexTemplate]", GUI)
+        self.assertIn("let regexTemplates: [RegexTemplate]", (REPO / "common/RegexTemplates.swift").read_text())
         self.assertIn("@objc func insertTemplate(_ sender: NSMenuItem)", GUI)
 
     def test_a_new_hit_list_cancels_extractions_and_checks_the_root(self):
@@ -468,7 +468,7 @@ class SwiftGuardTests(unittest.TestCase):
         an `xargs -0`."""
         self.assertIn("case pathsNUL", COMMON)
         export = swift_function(COMMON, "func exportData(")
-        self.assertIn('$0.path + "\\0"', export)
+        self.assertIn("$0.append($1.exportedPathBytes); $0.append(0)", export)
         self.assertIn("return jsonlData(for: hits)", export)
         # Die BOM ist kein Schmuck: ohne sie liest Excel UTF-8 als Latin-1.
         self.assertIn("Data([0xEF, 0xBB, 0xBF])", export)
@@ -1209,7 +1209,8 @@ class MainAppResultListTest(unittest.TestCase):
         merge = swift_function(GUI, "func mergeSortedHits(")
         # Linear zusammenfuehren, nicht wieder sortieren.
         self.assertNotIn("hits.sort", merge)
-        self.assertIn("while links < hits.endIndex", merge)
+        self.assertIn("mergingSortedValues(hits, fresh, using: comparator)", merge)
+        self.assertIn("while left < existing.endIndex", swift_function(COMMON, "func mergingSortedValues"))
 
     def test_a_double_click_on_nothing_uses_the_selection(self):
         """`clickedRow` ist -1 bei einem Doppelklick unter der letzten

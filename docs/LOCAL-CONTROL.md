@@ -9,6 +9,15 @@ Konfigurationsformate 1–7 und Aufzeichnungsformat 8 (lesbar: 1–8).
 Neue Fragen verwenden das kleinste passende Format; die Abschnitte unten
 beschreiben die Erweiterungen und ihre zusätzlichen Fähigkeiten.
 
+Die portable Erweiterung ergänzt Konfiguration 8 und Aufzeichnung 9 für
+bytegenaue äußere POSIX-Pfade und Linux-Leserkennungen. Frühere Formate bleiben
+lesbar; die tatsächlich angebotenen Versionen stehen in `capabilities`.
+Unter Linux liegt der Helfer in `helpers/favenio-control` und verwendet einen
+mit Benutzerkennung und Rechten geprüften Unix-Socket mit begrenzten,
+längenpräfigierten JSON-Nachrichten. Die Haupt-App muss für mutierende
+Aufträge dieselben aktuellen Laufzeit-/Fensterkennungen liefern. Finder-Abfragen
+und die Cloud-Nachladesperre sind dort ausdrücklich nicht verfügbar.
+
 ```sh
 /Applications/Favenio.app/Contents/Helpers/favenio-control --capabilities --json
 /Applications/Favenio.app/Contents/Helpers/favenio-control --request request.json

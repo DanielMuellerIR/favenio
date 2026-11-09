@@ -54,6 +54,23 @@ class MaterializationTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    def test_different_local_policy_cannot_join_an_inflight_extraction(self):
+        for local_only in ('true', 'false'):
+            with self.subTest(local_only=local_only):
+                release = self.root / ('local-policy-' + local_only + '.release')
+                cli = self.fake_cli('local-policy-' + local_only, '''
+                    wait_for_file(%r)
+                    emit()
+                    ''' % str(release))
+                report = self.run_probe('local-policy', cli, self.archive, 'x.txt', release, local_only)
+                self.assertTrue(report['finished'])
+                self.assertTrue(report['opposite_synchronous'])
+                self.assertEqual(report['opposite']['state'], 'failed')
+                self.assertIn('Zugriffsregel', report['opposite']['reason'])
+                self.assertEqual(report['first']['state'], 'ready')
+                self.assertEqual(report['same']['path'], report['first']['path'])
+                self.assertEqual(report['callbacks'], 3)
+
     def test_changed_materialized_leaf_gets_fresh_copy(self):
         report = json.loads(run_probe('materialization', 'leaf-generation', self.archive).stdout)
         self.assertTrue(all(report.values()), report)

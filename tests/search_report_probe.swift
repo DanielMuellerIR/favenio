@@ -3,6 +3,13 @@ import AppKit
 struct SearchReportProbe {
     static func run(_ arguments: [String]) throws {
         let mode = arguments[1]
+        if mode == "pdf-ocr" {
+            let texts = [false, true].map { enabled in
+                SearchReportSnapshot.pending(configuration: ["paths": [], "pdf_ocr": enabled]).displayText
+            }
+            print(String(decoding: try JSONSerialization.data(withJSONObject: texts), as: UTF8.self))
+            return
+        }
         let owner = HitListController()
         let controller = owner.searchReportController
         let runner = SearchRunner()

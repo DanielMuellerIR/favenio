@@ -21,6 +21,8 @@ concurrency:
 
 jobs:
   appcast:
+    # Linux-Releases enthalten kein DMG und verwenden ihren eigenen signierten Kanal.
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(join(github.event.release.assets.*.name, ' '), '.dmg') }}
     runs-on: macos-15
     environment:
       name: github-pages

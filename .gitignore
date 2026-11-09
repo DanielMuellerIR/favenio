@@ -9,3 +9,5 @@ icons/*.iconset/
 common/Version.swift
 .commit-lock
 dist/
+
+linux/target/

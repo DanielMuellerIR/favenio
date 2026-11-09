@@ -82,6 +82,22 @@ struct MaterializationProbe {
         }
         let start = ProcessInfo.processInfo.systemUptime
         switch mode {
+        case "local-policy":
+            manager.cliPath = arguments[2]
+            let target = hit(arguments[3], [arguments[4]])
+            let localOnly = arguments[6] == "true"
+            var first: MaterializationOutcome?
+            var opposite: MaterializationOutcome?
+            var same: MaterializationOutcome?
+            manager.request(target, localOnly: localOnly) { received(); first = $0 }
+            let rejected = manager.request(target, localOnly: !localOnly) { received(); opposite = $0 }
+            manager.request(target, localOnly: localOnly) { received(); same = $0 }
+            report["opposite_synchronous"] = rejected == nil && opposite != nil
+            try! Data().write(to: URL(fileURLWithPath: arguments[5]))
+            report["finished"] = spin(until: { first != nil && opposite != nil && same != nil })
+            report["first"] = describe(first)
+            report["opposite"] = describe(opposite)
+            report["same"] = describe(same)
         case "leaf-generation":
             let target = hit(arguments[2], ["inner/geheim.txt"])
             var outcome: MaterializationOutcome?

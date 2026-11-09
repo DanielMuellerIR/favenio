@@ -2785,6 +2785,17 @@ for line in sys.stdin:
 """
 
 
+class ExifToolDiscoveryTest(unittest.TestCase):
+    def test_arch_vendor_perl_is_found_without_shell_profile(self):
+        candidate='/usr/bin/vendor_perl/exiftool'
+        with mock.patch.object(favenio,'_EXIFTOOL_PATH',None), mock.patch.object(favenio.sys,'platform','linux'), mock.patch.object(favenio.shutil,'which',return_value=None), mock.patch.object(favenio.os,'access',side_effect=lambda path,mode:path==candidate):
+            self.assertEqual(favenio.find_exiftool(),candidate)
+
+    def test_macos_does_not_adopt_linux_vendor_perl(self):
+        with mock.patch.object(favenio,'_EXIFTOOL_PATH',None), mock.patch.object(favenio.sys,'platform','darwin'), mock.patch.object(favenio.shutil,'which',return_value=None), mock.patch.object(favenio.os,'access',side_effect=lambda path,mode:path=='/usr/bin/vendor_perl/exiftool'):
+            self.assertIsNone(favenio.find_exiftool())
+
+
 class ExifToolArgumentTest(TempTreeTest):
     """Die Argumentdatei von `-stay_open` ist zeilenweise, und exiftool
     deutet den Zeilenanfang. Jede Zeile, die der Kern dorthin schreibt,

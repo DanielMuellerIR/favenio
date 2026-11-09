@@ -228,6 +228,11 @@ class SearchReportSwiftTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
+    def test_pdf_ocr_is_explicit_in_the_readable_configuration(self):
+        disabled, enabled = self.probe('pdf-ocr')
+        self.assertIn('PDF-OCR für textlose Seiten (Deutsch/Englisch): Nein', disabled)
+        self.assertIn('PDF-OCR für textlose Seiten (Deutsch/Englisch): Ja', enabled)
+
     def test_warning_flood_drains_both_pipes_and_keeps_counts(self):
         report = self.probe('flood')
         self.assertEqual(report['warnings'], 12000)

@@ -1,0 +1,5 @@
+FROM favenio-linux-builder:6.2.1-1.99.1
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    poppler-utils tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng \
+    libimage-exiftool-perl libarchive-tools zstd libxtst6 \
+    && rm -rf /var/lib/apt/lists/*

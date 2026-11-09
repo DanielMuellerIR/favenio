@@ -12,6 +12,9 @@ class ResultGroupingTests(unittest.TestCase):
         self.assertTrue(all(value for value in report.values() if isinstance(value, bool)), report)
         return report
 
+    def test_incremental_merge_matches_full_sort_and_retains_equal_key_order(self):
+        self.probe('merge')
+
     def test_all_group_modes_collapse_and_inverse_mapping(self):
         self.probe('roundtrip')
 

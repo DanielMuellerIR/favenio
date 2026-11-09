@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Begrenzte Suchstände sichern, sichtbar öffnen oder ausdrücklich neu suchen."""
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
@@ -27,19 +28,27 @@ def configuration_key(value):
         raise ValueError('Ungültige Suchkonfiguration.')
     if set(value) == {'pattern', 'root', 'options'} and isinstance(value['root'], str):
         roots = [value['root']]
-    elif (set(value) == {'schemaVersion', 'pattern', 'roots', 'options'}
-          and type(value['schemaVersion']) is int and value['schemaVersion'] in (2, 3, 4, 5, 6, 7)
+    elif (set(value).difference({'rootBytes'} if value.get('schemaVersion') == 8 else set()) == {'schemaVersion', 'pattern', 'roots', 'options'}
+          and type(value['schemaVersion']) is int and value['schemaVersion'] in (2, 3, 4, 5, 6, 7, 8)
           and isinstance(value['roots'], list) and 1 <= len(value['roots']) <= 16
           and all(isinstance(root, str) and len(root.encode('utf-8')) <= 4096 for root in value['roots'])
           and sum(len(root.encode('utf-8')) for root in value['roots']) <= 65536):
         roots = value['roots']
     else:
         raise ValueError('Unbekannte Suchkonfiguration.')
+    raw_roots = roots
+    if value.get('schemaVersion') == 8:
+        values = value.get('rootBytes')
+        if not isinstance(values, list) or len(values) != len(roots):
+            raise ValueError('POSIX-Suchwurzeln fehlen.')
+        raw_roots = [base64.b64decode(raw, validate=True) for raw in values]
+        if any(not raw.startswith(b'/') or b'\0' in raw or len(raw) > 4096 or raw.decode('utf8', 'replace') != path or base64.b64encode(raw).decode() != encoded for raw, path, encoded in zip(raw_roots, roots, values)):
+            raise ValueError('Ungültige POSIX-Suchwurzeln.')
     if (not all(root.startswith('/') and '\0' not in root for root in roots)
-            or len(set(roots)) != len(roots)
+            or len(set(raw_roots)) != len(roots)
             or not isinstance(value['pattern'], str) or not isinstance(value['options'], list)):
         raise ValueError('Ungültige Suchbereiche.')
-    return value['pattern'], roots, value['options']
+    return value['pattern'], raw_roots, value['options']
 
 
 def read_regular(path, limit):
@@ -93,7 +102,7 @@ class Controller:
         caps = self.send('capabilities')
         self.binding = {key: caps[key] for key in ('runtimeID', 'windowID')}
         self.capabilities = caps['capabilities']
-        if not set(self.recording_versions()).intersection((1, 2, 3, 4, 5, 6, 7, 8)):
+        if not set(self.recording_versions()).intersection((1, 2, 3, 4, 5, 6, 7, 8, 9)):
             raise ValueError('Favenio unterstützt das Aufnahmeformat nicht.')
 
     def recording_versions(self):
@@ -103,11 +112,13 @@ class Controller:
         value = self.capabilities.get(key)
         return type(value) is int and value == 1
 
-    def require_configuration(self, configuration):
+    def require_configuration(self, configuration, historical=False):
         configuration_key(configuration)
         version = configuration.get('schemaVersion', 1)
         if not any(type(value) is int and value == version for value in self.capabilities.get('configurationSchemaVersions', [1])):
             raise ValueError(f'Favenio unterstützt Konfigurationsformat {version} nicht; gemeinsam aktualisieren.')
+        if historical and self.supports_capability('portableRecordingSchemaVersion'):
+            return
         for option in configuration['options']:
             if option['name'] == 'pdf-ocr' and option['value'] == '1' and not self.supports_capability('pdfOCRSchemaVersion'):
                 raise ValueError('Favenio unterstützt PDF-OCR nicht; gemeinsam aktualisieren.')
@@ -142,14 +153,14 @@ class Controller:
     def require_recording(self, recording):
         if type(recording.get('schemaVersion')) is not int or recording['schemaVersion'] not in self.recording_versions():
             raise ValueError('Favenio unterstützt dieses Aufnahmeformat nicht; gemeinsam aktualisieren.')
-        self.require_configuration(recording['configuration'])
+        self.require_configuration(recording['configuration'], historical=True)
         if recording['schemaVersion'] == 8 and not self.supports_capability('pdfOCRSchemaVersion'):
             raise ValueError('Favenio unterstützt PDF-OCR nicht; gemeinsam aktualisieren.')
         if any(option['name'] == 'ocr' and option['value'] == '1' for option in recording['configuration']['options']) and not self.supports_capability('ocrSchemaVersion'):
             raise ValueError('Favenio unterstützt OCR nicht; gemeinsam aktualisieren.')
-        if any(option['name'] == 'local-only' and option['value'] == '1' for option in recording['configuration']['options']) and not self.supports_capability('localContentSchemaVersion'):
+        if any(option['name'] == 'local-only' and option['value'] == '1' for option in recording['configuration']['options']) and not self.supports_capability('localContentSchemaVersion') and not self.supports_capability('portableRecordingSchemaVersion'):
             raise ValueError('Favenio unterstützt lokale Inhalte nicht; gemeinsam aktualisieren.')
-        if recording['schemaVersion'] == 5 or any('finderMetadata' in hit for hit in recording.get('hits', [])):
+        if (recording['schemaVersion'] == 5 or any('finderMetadata' in hit.get('hit', hit) for hit in recording.get('hits', []))) and not self.supports_capability('finderMetadataSnapshotSchemaVersion'):
             if not self.supports_capability('finderMetadataSchemaVersion'):
                 raise ValueError('Favenio unterstützt erfasste Finder-Eigenschaften nicht; gemeinsam aktualisieren.')
 
@@ -228,8 +239,13 @@ def main():
             raise ValueError('Aufnahme ist auf 32 Aktionen begrenzt.')
         identity_data = read_regular(args.identity, 48000)
         identity = json.loads(identity_data)
-        if identity not in [dict(filesystemPath=h['filesystemPath'], archiveMembers=h['archiveMembers'],
-                                 archiveMemberBytes=h.get('archiveMemberBytes', [])) for h in value['recording']['hits']]:
+        def hit_identity(raw):
+            hit = raw.get('hit', raw)
+            result = dict(filesystemPath=hit['filesystemPath'], archiveMembers=hit['archiveMembers'], archiveMemberBytes=hit.get('archiveMemberBytes', []))
+            if 'filesystemPathBytes' in hit:
+                result['filesystemPathBytes'] = hit['filesystemPathBytes']
+            return result
+        if identity not in [hit_identity(h) for h in value['recording']['hits']]:
             raise ValueError('Treffer fehlt im aufgezeichneten Stand.')
         status = controller.current()
         if configuration_key(status.get('configuration')) != configuration_key(value['recording']['configuration']):

@@ -1,5 +1,10 @@
 # Textlose PDF-Seiten per OCR lesen
 
+Linux verwendet denselben Suchkern und gemeinsame Anwendungsmodelle. Die
+plattformabhängigen Leser, Vorschau- und Transportgrenzen stehen in
+[LINUX.md](LINUX.md) und [PORTABLE_CORE.md](PORTABLE_CORE.md).
+
+
 `--document-text --pdf-ocr` beziehungsweise „Weitere Filter → Textlose PDF-Seiten per OCR lesen“ ergänzt den bestehenden PDF-Textebenenleser. Die Option ist standardmäßig aus und wirkt nur im Dokumenttextziel. Bild-OCR (`--ocr`) bleibt eine eigene Option; alte Bildsuchen beginnen dadurch keine Scan-PDF-Erkennung.
 
 ```sh

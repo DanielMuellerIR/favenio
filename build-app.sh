@@ -23,7 +23,7 @@ VERSION=$(/usr/bin/python3 -c "import favenio; print(favenio.__version__)")
 DATE=$(/usr/bin/python3 -c "import favenio; print(getattr(favenio, '__date__', ''))")
 BUNDLE_VERSION="${FAVENIO_SPARKLE_TEST_VERSION:-$VERSION}"
 SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://danielmuellerir.github.io/favenio/appcast.xml}"
-SPARKLE_PUBLIC_KEY="H504COadHZVAKo+/XD0jzXT5PJzghkS2t/DDYmuHPDg="
+SPARKLE_PUBLIC_KEY=$(cat common/update-public-key.txt)
 echo "Baue Favenio $VERSION ($DATE), Bundle-Version $BUNDLE_VERSION …"
 
 # Sparkle exakt gemäß Package.resolved auflösen. SwiftPM verpackt Binär-Targets
@@ -128,8 +128,8 @@ mkdir -p Favenio.app/Contents/MacOS Favenio.app/Contents/Resources \
     Favenio.app/Contents/Frameworks
 swiftc -O -target "$TARGET" -F "$SPARKLE_SEARCH_PATH" -framework Sparkle \
     -Xlinker -rpath -Xlinker @loader_path/../Frameworks \
-    common/FavenioCore.swift common/SearchReport.swift common/ContentPreview.swift common/Thumbnails.swift common/DuplicateCheck.swift common/Version.swift common/CriteriaEditor.swift common/DateRanges.swift common/FinderMetadata.swift control/ControlProtocol.swift \
-    gui/SearchControl.swift gui/SearchRecording.swift gui/FastraHandoff.swift gui/FastraHandoffSelfTest.swift gui/SearchControlSelfTest.swift gui/CriteriaEditorSelfTest.swift gui/FavenioGUI.swift \
+    common/DuplicateModel.swift common/ResultFilterModel.swift common/CriteriaModel.swift common/SearchModel.swift common/SearchConfiguration.swift common/SearchProcess.swift common/ContentModel.swift common/ContentPreviewLoad.swift common/DateRangeModel.swift common/SearchReportModel.swift common/RegexTemplates.swift common/FavenioCore.swift common/SearchReport.swift common/ContentPreview.swift common/Thumbnails.swift common/DuplicateCheck.swift common/Version.swift common/CriteriaEditor.swift common/DateRanges.swift common/FinderMetadata.swift control/ControlProtocol.swift \
+    common/ControlModel.swift common/RecordingModel.swift common/FastraHandoffModel.swift gui/SearchControl.swift gui/SearchRecording.swift gui/FastraHandoff.swift gui/FastraHandoffSelfTest.swift gui/SearchControlSelfTest.swift gui/CriteriaEditorSelfTest.swift gui/FavenioGUI.swift \
     -o Favenio.app/Contents/MacOS/Favenio
 mkdir -p Favenio.app/Contents/Helpers
 swiftc -O -target "$TARGET" control/ControlProtocol.swift control/main.swift \
@@ -203,7 +203,7 @@ mkdir -p FavenioQuick.app/Contents/MacOS \
     FavenioQuick.app/Contents/Frameworks
 swiftc -O -target "$TARGET" -F "$SPARKLE_SEARCH_PATH" -framework Sparkle \
     -Xlinker -rpath -Xlinker @loader_path/../Frameworks \
-    common/FavenioCore.swift common/SearchReport.swift common/ContentPreview.swift common/Thumbnails.swift common/DuplicateCheck.swift common/Version.swift common/CriteriaEditor.swift common/DateRanges.swift common/FinderMetadata.swift quick/FavenioQuick.swift \
+    common/DuplicateModel.swift common/ResultFilterModel.swift common/CriteriaModel.swift common/SearchModel.swift common/SearchConfiguration.swift common/SearchProcess.swift common/ContentModel.swift common/ContentPreviewLoad.swift common/DateRangeModel.swift common/SearchReportModel.swift common/RegexTemplates.swift common/FavenioCore.swift common/SearchReport.swift common/ContentPreview.swift common/Thumbnails.swift common/DuplicateCheck.swift common/Version.swift common/CriteriaEditor.swift common/DateRanges.swift common/FinderMetadata.swift quick/FavenioQuick.swift \
     -o FavenioQuick.app/Contents/MacOS/FavenioQuick
 mkdir -p FavenioQuick.app/Contents/Helpers
 cp .build/favenio-pdf FavenioQuick.app/Contents/Helpers/favenio-pdf

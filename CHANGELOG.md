@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.66.2 — 2026-11-08
+
+- Linux: Leertaste öffnet die Vorschau aus Liste und Miniaturen, bevor GTK die Taste verarbeitet; eine weitere Leertaste schließt die Vorschau auch bei fokussiertem Knopf.
+- Kopierte Trefferpfade behalten abschließende Leerzeichen.
+- Updates, Rücknahmen und Wiederherstellungen erneuern die Dateimanager-Anbindung aus dem jeweils verifizierten Paket.
+- Der Nemo-Adapter meldet seine offenen Ansichten selbst, wenn Nemos allgemeine Ordnerliste leer bleibt.
+- Bildvorschau und OCR erlauben den von aktuellen Glycin-Ladern benötigten virtuellen Adressraum weiterhin mit fester Grenze. Decoderfehler nennen einen verständlichen Grund statt eines internen Programmaufrufs.
+- Fastra-Übergaben verwenden den bestehenden Herkunftsvertrag ohne das neue Favenio-Bytepfadfeld; nicht als UTF-8 lesbare äußere Pfade bleiben ausdrücklich gesperrt.
+
+## 0.66.1 — 2026-11-08
+
+- Archivmaterialisierung erhält die äußeren POSIX-Pfadbytes auch bei nicht als UTF-8 lesbaren Namen; Öffnen, Vorschau, Drag-and-drop und Dubletten verwenden weiterhin denselben Materialisierer.
+- ExifTool unter Arch/CachyOS auch dann finden, wenn der Desktop den Vendor-Perl-Pfad nicht im PATH führt. Die bisherigen macOS-Fundorte bleiben erhalten.
+
+## 0.66.0 — 2026-11-08
+
+- Rust/GTK-Oberflächen für Haupt-App und Quick unter Linux mit gemeinsamem Swift-Unterbau für Aufzeichnungen, Dubletten, Ansichtsfilter, Fundstellen und Quellenübergaben. Keine zweite Suchlogik.
+- Lokale PDF-/OCR-Adapter mit Poppler/Tesseract und Komponentenbindung; PDFKit/Vision unter macOS bleiben erhalten. Integrierte Text-/Bild-/PDF-Vorschau und logischer Office-Dokumenttext unter Linux.
+- Nemo-Ortsknopf und Dolphin-Kontextaktion starten Quick im jeweiligen Ordner; Quick übergibt die vollständige Frage, Kalenderbelege und Auswahl an die Haupt-App.
+- Benutzerlokale Linux-Pakete mit privater Swift-Laufzeit, signierter Updatekoordination, atomarem Versionswechsel, Wiederherstellung und Rücknahme. Die Desktop-Abnahme und die erste öffentliche Linux-Auslieferung stehen noch aus.
+- Gemeinsame Lebensdauersperre verhindert die Deinstallation laufender Apps oder Updates, ohne geschützte Prozesse anderer Anwendungen abzufragen.
+- Bytegenaue Suchwurzeln und versionierte portable Konfigurationen, Vorlagen, Aufzeichnungen, Dubletten- und Nachladeaufträge; ältere Formate bleiben lesbar.
+
+## 0.65.0 — 2026-11-08
+
+- Datenmodelle, Kriterien, Konfigurationen, Prozessleser, Materialisierung und Export als gemeinsamen Swift-Unterbau von AppKit getrennt. Dieselben Quelldateien lassen sich unter macOS und Linux verwenden; der Python-Kern bleibt die einzige Suchlogik.
+- Optionaler versionierter JSONL-Transport `--json-path-bytes` erhält äußere POSIX-Dateinamen bytegenau. Gleich angezeigte ungültige UTF-8-Namen bleiben unterscheidbar; Extraktion und Ansichtsfilter übernehmen die echte Identität.
+- Linux-C-Schnittstelle zum gemeinsamen Unterbau einschließlich begrenzter Ereigniszustellung und Abbruch. Die Linux-Oberflächen befinden sich noch im Aufbau.
+
+## 0.64.1 — 2026-10-19
+
+- Gleichzeitige Archivabrufe mit unterschiedlicher Lokalzugriffsregel teilen keinen laufenden Auftrag mehr. Der zweite Abruf meldet den Konflikt und kann nach Abschluss erneut angefordert werden.
+- Die lesbare Auftragszusammenfassung nennt PDF-OCR für textlose Seiten ausdrücklich mit Ja oder Nein.
+
 ## 0.64.0 — 2026-10-18
 
 - README-Überblick über die Neuerungen seit 0.38.5 ergänzt; PDF-OCR, Suchzielmenü, Kriterienumfang, Dublettenaufruf, Controller-/Aufzeichnungsformate, Dokumentationslinks und optionale macOS-13-Funktionen abgeglichen.

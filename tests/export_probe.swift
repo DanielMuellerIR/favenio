@@ -42,6 +42,10 @@ struct ExportProbe {
             Hit(path: "/fixture/archive.zip!/a.txt", kind: "member", line: nil, size: nil,
                 filesystemPath: "/fixture/archive.zip", archiveMembers: ["a.txt"], isDirectory: false)
         ]
+        let raw = Data([47, 116, 109, 112, 47, 98, 97, 100, 45, 255])
+        let byteHit = Hit(path: String(decoding: raw, as: UTF8.self), kind: "file", line: nil, size: nil,
+            filesystemPath: String(decoding: raw, as: UTF8.self), archiveMembers: [], isDirectory: false, filesystemPathBytes: raw)
+        precondition(exportData(for: [byteHit], format: .pathsNUL) == raw + Data([0]), "NUL-Export verliert POSIX-Namensbytes")
         let writer = ExportWriter()
         for format in HitExportFormat.allCases {
             let expected = exportData(for: fixture, format: format)

@@ -2,6 +2,9 @@
 
 # Favenio
 
+Linux: Rust/GTK frontends share the Swift application models and Python search engine. Signed packages are available through the [Linux release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.2) and a separate GitHub update channel. Desktop integration has been tested on X11 and Wayland. See [Linux build and installation](docs/LINUX.md).
+
+
 **"facile invenio" — Latin for "I find with ease".**
 
 Favenio is an index-free file search for macOS in the spirit of EasyFind: it
@@ -23,7 +26,21 @@ The search core is pure Python 3 (standard library only), a single file, no
 installation. Two native macOS apps are built on top of it: a full search
 window and a small quick-search panel for the Finder toolbar.
 
-## What's new in 0.64.0
+## What’s new in 0.66.2
+
+Linux result previews now open and close with Space in both list and thumbnail views. Copied paths preserve trailing spaces, newer image loaders work within a fixed memory limit, and the Nemo adapter supplies its open views when Nemo’s general folder list is empty.
+
+## What’s new in 0.66.1
+
+ExifTool is now found in Arch/CachyOS’s vendor Perl directory even when the desktop PATH omits it. Archive actions also preserve outer POSIX paths with invalid UTF-8.
+
+## What’s new in 0.66.0
+
+Linux frontends now share the existing Python engine and portable Swift application models. Rust/GTK provides both windows, with Poppler/Tesseract readers, integrated previews, file-manager adapters and signed update coordination. Desktop acceptance and the first public Linux delivery are pending; see [Linux](docs/LINUX.md).
+
+## What's new in 0.65.0
+
+Version 0.65.0 separates the shared application models and process code from AppKit. The optional `--json-path-bytes` transport preserves outer POSIX filenames exactly, including invalid UTF-8. Linux frontends are under development; this version does not claim a complete Linux port.
 
 Since the previous GitHub release, 0.38.5, both apps have gained:
 
@@ -41,6 +58,9 @@ Since the previous GitHub release, 0.38.5, both apps have gained:
 - Explicit duplicate checks across files and archive members, confirmed by
   full byte comparison, plus search reports explaining omissions and limits.
   Duplicate checks never delete files or modify archives and claim no space savings.
+
+Version 0.64.1 prevents a local-only archive request from joining an ongoing
+request with a different access policy and lists PDF OCR explicitly in search reports.
 
 Existing templates and recordings remain readable; newer features carry explicit
 format versions and reject older receivers. Details are in the sections below
@@ -262,6 +282,8 @@ missing-folder warning visible beside the recorded-state label.
 | `--content-preview` | capture bounded original excerpts and highlight ranges in JSONL; requires `--json` |
 | `--preview-request JSON` | load a bounded occurrence or extra context for one preview hit; see [contract](docs/CONTENT_PREVIEW.md) |
 | `--json` | JSONL output for scripts/agents (with `size` in bytes where the format states it) |
+| `--json-path-bytes` | Versioned JSONL hit envelopes with lossless POSIX path bytes; requires `--json` |
+| `--search-roots-bytes JSON` | Absolute POSIX search roots as a canonical Base64 JSON list; preserves paths that are not valid UTF-8 |
 | `--search-report` | with `--json`, emit bounded structured search reports; [contract](docs/SEARCH_REPORT.md) |
 | `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
 | `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |

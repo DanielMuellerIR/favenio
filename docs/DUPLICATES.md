@@ -1,5 +1,10 @@
 # Explizite Dublettenprüfung
 
+Linux verwendet denselben Suchkern und gemeinsame Anwendungsmodelle. Die
+plattformabhängigen Leser, Vorschau- und Transportgrenzen stehen in
+[LINUX.md](LINUX.md) und [PORTABLE_CORE.md](PORTABLE_CORE.md).
+
+
 Die Prüfung startet ausschließlich auf Anforderung in beiden Apps oder über
 `--duplicates-file JSON`. Sie vergleicht Originalbytes normaler Dateien.
 Namen und Suchbelege beeinflussen die Gleichheit nicht. Archivdateien gelten als

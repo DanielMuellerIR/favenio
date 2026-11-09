@@ -1,5 +1,10 @@
 # Lokale Texterkennung für Bilder
 
+Linux verwendet denselben Suchkern und gemeinsame Anwendungsmodelle. Die
+plattformabhängigen Leser, Vorschau- und Transportgrenzen stehen in
+[LINUX.md](LINUX.md) und [PORTABLE_CORE.md](PORTABLE_CORE.md).
+
+
 **Dokumenttext → Weitere Filter → Bild-OCR im Dokumenttext** beziehungsweise
 `--document-text --ocr` liest zusätzlich Text aus einzelnen Bildframes. OCR ist
 standardmäßig aus. In den Suchzielen Name, Inhalt und Metadaten bleibt `--ocr`

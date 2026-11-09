@@ -25,6 +25,17 @@ enum ResultGroupingProbe {
         let mode = arguments.dropFirst().first ?? "roundtrip"
         var report: [String: Any] = [:]
         switch mode {
+        case "merge":
+            for ascending in [true, false] {
+                let compare: ((Int, Int), (Int, Int)) -> Bool = { ascending ? $0.0 < $1.0 : $0.0 > $1.0 }
+                var values: [(Int, Int)] = []
+                let all = (0..<1000).map { (($0 * 37) % 41, $0) }
+                for start in stride(from: 0, to: all.count, by: 23) {
+                    values = mergingSortedValues(values, Array(all[start..<min(start+23, all.count)]), using: compare)
+                }
+                let expected = all.sorted { $0.0 == $1.0 ? $0.1 < $1.1 : compare($0, $1) }
+                report[ascending ? "ascendingStable" : "descendingStable"] = zip(values, expected).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 }
+            }
         case "header-layout":
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.prohibited)

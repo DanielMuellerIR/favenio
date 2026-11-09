@@ -1,5 +1,10 @@
 # Dokumenttext: PDF, DOCX, ODT, EPUB, XLSX und PPTX
 
+Linux verwendet denselben Suchkern und gemeinsame Anwendungsmodelle. Die
+plattformabhängigen Leser, Vorschau- und Transportgrenzen stehen in
+[LINUX.md](LINUX.md) und [PORTABLE_CORE.md](PORTABLE_CORE.md).
+
+
 `--document-text` beziehungsweise das Suchziel **Dokumenttext** in beiden Apps
 liest die logische PDF-Textebene oder zusammenhängenden DOCX-, ODT-, EPUB-, XLSX- und PPTX-Text. `--content` / **Inhalt** bleibt Rohbytesuche
 mit der gewählten Textkodierung. Komprimierte PDF-Textströme sind damit erstmals

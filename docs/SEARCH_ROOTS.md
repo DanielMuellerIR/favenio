@@ -1,5 +1,10 @@
 # Mehrere Suchbereiche
 
+Linux verwendet denselben Suchkern und gemeinsame Anwendungsmodelle. Die
+plattformabhängigen Leser, Vorschau- und Transportgrenzen stehen in
+[LINUX.md](LINUX.md) und [PORTABLE_CORE.md](PORTABLE_CORE.md).
+
+
 Beide Apps können Dateien und Ordner gemeinsam durchsuchen. **Ablage → Suchbereiche
 bearbeiten…** (⇧⌘O) öffnet dieselbe native Liste ohne Finder-Abfrage.
 Der Befehl ist auch in der Bereichsauswahl verfügbar. **Hinzufügen…** wählt mehrere

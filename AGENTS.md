@@ -16,8 +16,11 @@ verarbeiten seinen JSONL-Strom. Suchsemantik nicht in Swift nachbauen.
 
 - `favenio.py`: Suchverhalten, CLI, Exit-Codes und `__version__`.
 - `tests/test_favenio.py`: ausführbare Spezifikation des Python-Kerns.
-- `common/FavenioCore.swift`: gemeinsame Prozess-, JSONL- und
-  Materialisierungslogik der Apps.
+- `common/SearchModel.swift`, `SearchConfiguration.swift`, `SearchProcess.swift`,
+  `ContentModel.swift`, `CriteriaModel.swift`, `DateRangeModel.swift` und
+  `SearchReportModel.swift`: gemeinsamer portabler Swift-Unterbau; dieselben
+  Quellen für AppKit und die Linux-C-Schnittstelle.
+- `common/FavenioCore.swift`: gemeinsame AppKit-Darstellung und macOS-Dateiaktionen.
 - `common/DuplicateCheck.swift`: gemeinsame Auftragssteuerung und Darstellung der ausdrücklich angeforderten Dublettenprüfung; Vergleich ausschließlich in `favenio.py`; Archivmitglieder über befristete Leases des gemeinsamen MaterializationManager und dessen unveränderte Quell-/Inhaltsgenerationen, Vertrag in `docs/DUPLICATES.md`.
 - `common/ContentPreview.swift`: begrenzte Fundstellendarstellung, Prüfung der
   Quellengeneration und Validierung der vom Kern gelieferten Ausschnittbereiche.
@@ -450,6 +453,18 @@ Verbindliches CLI-Verhalten:
   längere `-tvf`-Liste `MAX_ARCHIVE_LISTING_BYTES`, gilt mit Warnung die
   alte Heuristik (Schrägstrich am Ende oder Einträge darunter).
 
+## Linux-Frontends
+
+`linux/src` enthält die Rust/GTK-Oberflächen beider Apps. Suchsemantik bleibt in
+`favenio.py`, gemeinsame Anwendungsregeln in `common`; keine parallele Rust-
+Implementierung von Kriterien, Dubletten, Aufzeichnungen oder Fundstellen.
+`linux/shared/Bridge.swift` ist die private, begrenzte C-Schnittstelle. Bibliothek,
+Swift-Laufzeit und Helfer werden pro Version gemeinsam ausgeliefert. Native
+Dateiaktionen verwenden die transportierten POSIX-Bytes, niemals Ersatzzeichenpfade.
+PDF/OCR-Daten liefern unter Linux Poppler/Tesseract, unter macOS weiterhin
+PDFKit/Vision. Linux-Leserfingerabdrücke binden nachgeladene Belege an Komponenten.
+Bau, Installation, signierte Updates und Plattformgrenzen: `docs/LINUX.md`.
+
 ## Swift-Frontends
 
 Beide Apps sind programmatische AppKit-Frontends ohne Xcode-Projekt.
@@ -475,8 +490,10 @@ Namenssuche und aus einer Inhaltssuche zwei Cache-Einträge, zwei
 Unterprozesse und zwei Temp-Ordner — gegen die Zusage, dass gleichzeitige
 Anforderungen desselben Treffers EINEN Unterprozess und dieselbe Datei
 teilen. Anzeige und Export behalten ihren bisherigen Pfadtext.
-`common/FavenioCore.swift` enthält das Hit-Modell, JSONL-Parsing,
-Unterprozessaufrufe und den `MaterializationManager`. Änderungen am
+`common/SearchModel.swift` enthält Hit-Modell und JSONL-Parsing;
+`common/SearchProcess.swift` enthält Unterprozessaufrufe und den
+`MaterializationManager`. `common/FavenioCore.swift` behält die AppKit-Darstellung
+und Dateiaktionen. Änderungen am
 JSONL-Schema zuerst im Kern und in gemeinsamen Tests spezifizieren, dann beide
 Frontends anpassen.
 Finder-Snapshots werden ausschließlich im Python-Kern erfasst. Swift prüft den

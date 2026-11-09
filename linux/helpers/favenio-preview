@@ -1,0 +1,111 @@
+#!/usr/bin/python3 -B
+"""Vorschauen in einem begrenzten Kindprozess erzeugen, keine Suche ausführen."""
+import json
+import ctypes
+import signal
+import os
+from pathlib import Path
+import resource
+import shutil
+import stat
+import subprocess
+import sys
+from favenio_linux_limits import DECODER_ADDRESS_SPACE_BYTES
+
+
+def main():
+    resource.setrlimit(resource.RLIMIT_AS, (DECODER_ADDRESS_SPACE_BYTES, DECODER_ADDRESS_SPACE_BYTES))
+    resource.setrlimit(resource.RLIMIT_CPU, (8, 8))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (16 * 1024**2, 16 * 1024**2))
+    ctypes.CDLL(None).prctl(1, signal.SIGKILL, 0, 0, 0)
+    if os.getppid() == 1:
+        raise SystemExit(2)
+    path, workspace, encoding, page, edge = sys.argv[1:]
+    if not edge.isdigit() or not 64 <= int(edge) <= 1800:
+        raise ValueError('Ungültige Vorschaugröße.')
+    workspace = Path(workspace)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    with os.fdopen(descriptor, 'rb') as source:
+        information = os.fstat(source.fileno())
+        if not stat.S_ISREG(information.st_mode):
+            return dict(kind='info', text='Keine reguläre Datei.')
+        head = source.read(4096)
+        image = head.startswith((b'\x89PNG\r\n', b'\xff\xd8\xff', b'GIF8', b'BM', b'II*\0', b'MM\0*')) or (head.startswith(b'RIFF') and head[8:12] == b'WEBP') or (head[4:8] == b'ftyp' and head[8:12] in (b'heic', b'heix', b'hevc', b'hevx', b'mif1', b'msf1', b'avif'))
+        pdf = head.startswith(b'%PDF-')
+        if image or pdf:
+            if information.st_size > 64 * 1024**2:
+                return dict(kind='info', text='Datei überschreitet die Vorschaugrenze von 64 MiB.')
+            snapshot = workspace / ('source.pdf' if pdf else 'source.image')
+            source.seek(0)
+            with snapshot.open('xb') as output:
+                remaining = 64 * 1024**2 + 1
+                while remaining:
+                    chunk = source.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    output.write(chunk)
+                    remaining -= len(chunk)
+                if not remaining:
+                    raise ValueError('Datei ist während des Lesens zu groß geworden.')
+            target = workspace / 'preview.png'
+            if pdf:
+                program = shutil.which('pdftoppm', path='/usr/bin:/bin')
+                args = [program, '-f', page, '-l', page, '-singlefile', '-scale-to', edge, '-png', str(snapshot), str(workspace / 'preview')]
+            else:
+                program = str(Path(__file__).resolve().parent.parent / 'favenio')
+                args = [program, '--render-image', str(snapshot), str(target), edge]
+            if not program:
+                return dict(kind='info', text='Der passende Vorschauhelfer ist nicht installiert.')
+            def child_policy():
+                ctypes.CDLL(None).prctl(1, signal.SIGKILL, 0, 0, 0)
+                if os.getppid() == 1:
+                    os._exit(2)
+            try:
+                subprocess.run(args, preexec_fn=child_policy, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=True)
+            except subprocess.TimeoutExpired:
+                raise ValueError('Die Vorschau hat die Zeitgrenze überschritten.') from None
+            except subprocess.CalledProcessError:
+                raise ValueError('Die PDF-Seite konnte innerhalb der Vorschaugrenzen nicht dargestellt werden.' if pdf else 'Das Bild konnte innerhalb der Vorschaugrenzen nicht decodiert werden.') from None
+            if not target.is_file() or target.stat().st_size > 16 * 1024**2:
+                raise ValueError('Ungültige Vorschauausgabe.')
+            return dict(kind='image', path=str(target), page=int(page), pdf=pdf)
+        extension = Path(path).suffix.lower()
+        if extension in ('.docx', '.odt', '.epub', '.xlsx', '.pptx'):
+            import time
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            import favenio
+            reader = favenio.PACKAGE_DOCUMENT_READERS[extension](favenio.ArchiveBudget(
+                favenio.DEFAULT_MAX_ARCHIVE_MEMBER_BYTES, favenio.DEFAULT_MAX_ARCHIVE_TOTAL_BYTES,
+                favenio.DEFAULT_MAX_ARCHIVE_RATIO))
+            parts = []
+            size = 0
+            truncated = False
+            for position, text in favenio.document_sections(reader, path, time.monotonic()+5):
+                value = json.dumps(position, ensure_ascii=False) + '\n' + text + '\n\n'
+                encoded = value.encode('utf-8')
+                if size + len(encoded) > 262144:
+                    parts.append(encoded[:262144-size].decode('utf-8', 'ignore'))
+                    truncated = True
+                    break
+                parts.append(value)
+                size += len(encoded)
+            return dict(kind='text', text='Logischer Dokumenttext · Originalformatierung in der Standardanwendung anzeigen.\n\n' + ''.join(parts), truncated=truncated)
+        source.seek(0)
+        data = source.read(262145)
+        truncated = len(data) > 262144
+        data = data[:262144]
+        codecs = {'auto': 'utf-8-sig', 'mac-roman': 'mac_roman', 'windows-1252': 'cp1252'}
+        codec = codecs.get(encoding, encoding)
+        if encoding == 'auto' and data.startswith((b'\xff\xfe', b'\xfe\xff')):
+            codec = 'utf-16'
+        if b'\0' in data and not codec.startswith('utf-16'):
+            return dict(kind='info', text='Für dieses Binärformat ist keine integrierte Vorschau verfügbar. Die Datei lässt sich mit ihrer Standardanwendung öffnen.')
+        return dict(kind='text', text=data.decode(codec, errors='replace'), truncated=truncated)
+
+
+if __name__ == '__main__':
+    try:
+        value = main()
+    except Exception as error:
+        value = dict(kind='error', text='Vorschau fehlgeschlagen: ' + str(error))
+    print(json.dumps(value, ensure_ascii=True))

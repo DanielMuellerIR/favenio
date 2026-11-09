@@ -1,0 +1,9 @@
+[Nemo Action]
+Name=Hier mit FavenioQuick suchen
+Comment=Den aktuellen Ordner in FavenioQuick durchsuchen
+Exec=favenio-quick --directory %P
+Icon-Name=system-search
+Selection=any
+Extensions=any;
+UriScheme=file
+Dependencies=favenio-quick;

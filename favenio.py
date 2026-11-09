@@ -67,10 +67,10 @@ import zipfile
 import zlib
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-__version__ = "0.64.0"
+__version__ = "0.66.2"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-10-18"
+__date__ = "2026-11-08"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -1590,6 +1590,38 @@ class PreviewLoadLimit(Exception):
     pass
 
 
+def unwrap_hit(record):
+    if isinstance(record, dict) and record.get("type") == "hitV2":
+        if set(record) != {"type", "schemaVersion", "hit"} or type(record["schemaVersion"]) is not int or record["schemaVersion"] != 2:
+            raise ValueError("ungültiger Treffertransport")
+        record = record["hit"]
+    if not isinstance(record, dict):
+        raise ValueError("Treffer muss ein Objekt sein")
+    return record
+
+
+def hit_filesystem_path(record):
+    record = unwrap_hit(record)
+    visible = record.get("filesystemPath")
+    if not isinstance(visible, str) or not visible or "\0" in visible:
+        raise ValueError("ungültiger Dateisystempfad")
+    raw = record.get("filesystemPathBytes")
+    if raw is None:
+        return visible
+    if not isinstance(raw, str):
+        raise ValueError("ungültige rohe Pfadidentität")
+    try:
+        value = base64.b64decode(raw, validate=True)
+    except (ValueError, TypeError):
+        raise ValueError("ungültige rohe Pfadidentität") from None
+    if not value or b"\0" in value or base64.b64encode(value).decode("ascii") != raw:
+        raise ValueError("ungültige rohe Pfadidentität")
+    path = os.fsdecode(value)
+    if json_safe_text(path) != visible:
+        raise ValueError("Pfadanzeige widerspricht der rohen Identität")
+    return path
+
+
 def load_content_preview(request, local_only=False):
     """Gezieltes Wiederlesen eines bereits gewählten Blatts, keine Suche im Baum.
 
@@ -1597,12 +1629,13 @@ def load_content_preview(request, local_only=False):
     Sie ist kein Byteoffset: Auch Decoder und künftige Dokumentleser können
     denselben Vertrag bedienen. Wiederlesen bleibt pro Auftrag gedeckelt.
     """
-    if not isinstance(request, dict) or type(request.get("schemaVersion")) is not int or request["schemaVersion"] != 1:
-        raise ValueError("Nachladeauftrag braucht Schema 1")
-    hit = request.get("hit")
+    if not isinstance(request, dict) or type(request.get("schemaVersion")) is not int or request["schemaVersion"] not in (1, 2):
+        raise ValueError("Nachladeauftrag braucht Schema 1/2")
+    hit = unwrap_hit(request.get("hit"))
     if not isinstance(hit, dict) or not isinstance(hit.get("filesystemPath"), str) \
             or not isinstance(hit.get("archiveMembers"), list) or hit.get("isDirectory") is not False:
         raise ValueError("ungültige Trefferidentität")
+    actual_path = hit_filesystem_path(hit)
     preview = hit.get("contentPreview")
     if not isinstance(preview, dict) or preview.get("status") != "ready":
         raise ValueError("kein positiver Vorschaubeleg")
@@ -1629,6 +1662,8 @@ def load_content_preview(request, local_only=False):
     encoding = preview.get("contentEncoding")
     document_reader = query.get("documentReader")
     document = document_reader in DOCUMENT_READERS
+    if document_reader in ("pdfkit-v1", "poppler-v1", "pdfkit-vision-v1", "poppler-tesseract-v1", "vision-image-v1", "tesseract-image-v1") and DOCUMENT_READERS[document_reader] not in (DOCUMENT_ENCODING, PDF_OCR_ENCODING, OCR_ENCODING):
+        raise ValueError("Originaler Dokument-/OCR-Leser ist auf dieser Plattform nicht verfügbar")
     if query.get("documentReader") is not None and not document:
         raise ValueError("unbekannter Dokumentleser")
     if not isinstance(encoding, str) or (encoding != DOCUMENT_READERS[document_reader] if document else encoding not in TEXT_ENCODINGS):
@@ -1637,13 +1672,19 @@ def load_content_preview(request, local_only=False):
     if not isinstance(requested_encoding, str) or (requested_encoding not in TEXT_ENCODINGS and requested_encoding != "auto"):
         raise ValueError("ungültige angeforderte Kodierung")
     path = request.get("filePath")
+    if request["schemaVersion"] == 2:
+        if "filePathBytes" not in request:
+            raise ValueError("Nachladeauftrag Schema 2 braucht POSIX-Blattbytes")
+        path = hit_filesystem_path(dict(filesystemPath=path, filesystemPathBytes=request["filePathBytes"]))
+    elif "filePathBytes" in request:
+        raise ValueError("POSIX-Blattbytes brauchen Nachladeschema 2")
     if not isinstance(path, str) or not path:
         raise ValueError("Blattdatei fehlt")
     expected = preview.get("sourceGeneration")
     leaf_expected = request.get("fileGeneration")
     if not isinstance(expected, dict) or not isinstance(leaf_expected, dict):
         raise ValueError("Quellengeneration fehlt")
-    if not hit["archiveMembers"] and os.path.abspath(path) != os.path.abspath(hit["filesystemPath"]):
+    if not hit["archiveMembers"] and os.path.abspath(path) != os.path.abspath(actual_path):
         raise ValueError("Blattdatei passt nicht zum Treffer")
     matcher = build_matcher(pattern, query["regex"], query["caseSensitive"],
                             query["exact"], query["literalWildcards"], True)
@@ -1653,12 +1694,12 @@ def load_content_preview(request, local_only=False):
                    contentEncoding=encoding, snippets=[], omitted=0, navigation=state)
     result["contentPreview"] = updated
     def unchanged():
-        return source_generation(hit["filesystemPath"]) == expected and source_generation(path) == leaf_expected
+        return source_generation(actual_path) == expected and source_generation(path) == leaf_expected
     def changed():
         updated.update(status="sourceChanged", snippets=[])
         state.update(reason="sourceChanged", contextLines=[])
     if local_only:
-        reason = local_content_reason(hit["filesystemPath"]) or local_content_reason(path)
+        reason = local_content_reason(actual_path) or local_content_reason(path)
         if reason is not None:
             updated.update(status="noContentEvidence", snippets=[])
             state.update(reason="documentUnavailable", documentMessage=REPORT_REASONS[reason][1])
@@ -1726,9 +1767,9 @@ def load_content_preview(request, local_only=False):
                         min(DEFAULT_MAX_ARCHIVE_MEMBER_BYTES, limits.get("memberBytes", DEFAULT_MAX_ARCHIVE_MEMBER_BYTES)),
                         min(DEFAULT_MAX_ARCHIVE_TOTAL_BYTES, limits.get("totalBytes", DEFAULT_MAX_ARCHIVE_TOTAL_BYTES)),
                         min(DEFAULT_MAX_ARCHIVE_RATIO, limits.get("ratio", DEFAULT_MAX_ARCHIVE_RATIO))))
-                elif document_reader == "pdfkit-vision-v1":
+                elif document_reader in ("pdfkit-vision-v1", "poppler-tesseract-v1"):
                     reader = PDFOCRTextReader(find_pdf_helper())
-                elif document_reader == "vision-image-v1":
+                elif document_reader in ("vision-image-v1", "tesseract-image-v1"):
                     reader = OCRTextReader(find_ocr_helper())
                 else:
                     reader = PDFTextReader(find_pdf_helper())
@@ -1738,6 +1779,8 @@ def load_content_preview(request, local_only=False):
                 pieces = ((number, raw, complete, ends_line, None) for number, raw, complete, ends_line in
                     iter_line_pieces(chunks(handle), text_encoding=requested_encoding, decoder_info=info, **options))
             for number, raw, complete, ends_line, position in pieces:
+                if document_reader in ("poppler-v1", "tesseract-image-v1", "poppler-tesseract-v1") and (not isinstance(original.get("documentPosition"), dict) or original["documentPosition"].get("readerFingerprint") != position.get("readerFingerprint")):
+                    raise DocumentReadError("documentReaderChanged")
                 if time.monotonic() >= deadline:
                     raise PreviewLoadLimit()
                 if found is not None:
@@ -2331,7 +2374,9 @@ def find_exiftool():
     if _EXIFTOOL_PATH is None:
         found = shutil.which("exiftool")
         if found is None:
-            for candidate in EXIFTOOL_FALLBACK_CANDIDATES:
+            # Arch-Desktops erben den Vendor-Perl-Pfad nicht zuverlässig.
+            candidates = EXIFTOOL_FALLBACK_CANDIDATES + (("/usr/bin/vendor_perl/exiftool",) if sys.platform.startswith("linux") else ())
+            for candidate in candidates:
                 if os.access(candidate, os.X_OK):
                     found = candidate
                     break
@@ -2854,7 +2899,7 @@ DOCUMENT_TEXT_BYTES = 8 * 1024 * 1024
 DOCUMENT_PAGE_BYTES = 256 * 1024
 DOCUMENT_PAGES = 512
 DOCUMENT_SECONDS = 5.0
-DOCUMENT_ENCODING = "pdfkit-text-v1"
+DOCUMENT_ENCODING = "poppler-text-v1" if sys.platform.startswith("linux") else "pdfkit-text-v1"
 ODT_ENCODING = "odt-text-v1"
 EPUB_ENCODING = "epub-text-v1"
 DOCX_ENCODING = "docx-text-v1"
@@ -2876,23 +2921,41 @@ DOCUMENT_METADATA_BYTES = 256 * 1024
 DOCUMENT_ZIP_ENTRIES = 4096
 DOCUMENT_CATALOG_BYTES = 1024 * 1024
 DOCUMENT_XML_DEPTH = 128
-PDF_OCR_ENCODING = "pdfkit-vision-text-v1"
+PDF_OCR_ENCODING = "poppler-tesseract-text-v1" if sys.platform.startswith("linux") else "pdfkit-vision-text-v1"
 PDF_OCR_SECONDS = 10
 PDF_OCR_PAGES = 128
-OCR_ENCODING = "vision-ocr-text-v1"
+OCR_ENCODING = "tesseract-ocr-text-v1" if sys.platform.startswith("linux") else "vision-ocr-text-v1"
 OCR_EXTENSIONS = frozenset((".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".heic", ".heif"))
 OCR_PIXELS = 12_000_000
 OCR_EDGE = 8192
 OCR_BLOCKS = 4096
 OCR_TEXT_BYTES = 1024 * 1024
 OCR_REASONS = frozenset(("ocrHelperUnavailable", "ocrDamaged", "ocrLimit", "ocrReadError", "ocrMultipleFrames", "ocrNoText", "ocrTimeout"))
-DOCUMENT_READERS = {"pdfkit-v1": DOCUMENT_ENCODING, "docx-v1": DOCX_ENCODING, "odt-v1": ODT_ENCODING, "epub-v1": EPUB_ENCODING, "xlsx-v1": XLSX_ENCODING, "pptx-v1": PPTX_ENCODING, "vision-image-v1": OCR_ENCODING, "pdfkit-vision-v1": PDF_OCR_ENCODING}
+DOCUMENT_READERS = {"pdfkit-v1": "pdfkit-text-v1", "poppler-v1": "poppler-text-v1", "docx-v1": DOCX_ENCODING, "odt-v1": ODT_ENCODING, "epub-v1": EPUB_ENCODING, "xlsx-v1": XLSX_ENCODING, "pptx-v1": PPTX_ENCODING, "vision-image-v1": "vision-ocr-text-v1", "tesseract-image-v1": "tesseract-ocr-text-v1", "pdfkit-vision-v1": "pdfkit-vision-text-v1", "poppler-tesseract-v1": "poppler-tesseract-text-v1"}
+
+
+def linux_document_helper():
+    if not sys.platform.startswith("linux"):
+        return None
+    root = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (os.path.join(root, "helpers", "favenio-document"), os.path.join(root, "linux", "helpers", "favenio-document")):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def document_position_reader(position, reader):
+    if reader in ("poppler-v1", "tesseract-image-v1", "poppler-tesseract-v1"):
+        return dict(position, reader=reader)
+    return position
 
 
 def find_pdf_helper():
     override = os.environ.get("FAVENIO_PDF_HELPER")
     if override is not None:
         return override if override and os.path.isfile(override) and os.access(override, os.X_OK) else None
+    if sys.platform.startswith("linux"):
+        return linux_document_helper()
     root = os.path.dirname(os.path.abspath(__file__))
     for candidate in (os.path.join(root, "..", "Helpers", "favenio-pdf"),
                       os.path.join(root, ".build", "favenio-pdf")):
@@ -2905,6 +2968,8 @@ def find_ocr_helper():
     override = os.environ.get("FAVENIO_OCR_HELPER")
     if override is not None:
         return override if override and os.path.isfile(override) and os.access(override, os.X_OK) else None
+    if sys.platform.startswith("linux"):
+        return linux_document_helper()
     root = os.path.dirname(os.path.abspath(__file__))
     for candidate in (os.path.join(root, "..", "Helpers", "favenio-ocr"),
                       os.path.join(root, ".build", "favenio-ocr")):
@@ -4075,6 +4140,11 @@ class PDFTextReader:
                 if reason not in self.accepted_reasons:
                     reason = self.read_error_reason
                 raise DocumentReadError(reason)
+            if sys.platform.startswith("linux"):
+                fingerprint = response.get("readerFingerprint")
+                if not isinstance(fingerprint, str) or re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None:
+                    raise DocumentReadError(self.read_error_reason)
+                self.reader_fingerprint = fingerprint
             return response
         except (OSError, ValueError):
             self.close()
@@ -4173,10 +4243,10 @@ class OCRTextReader(PDFTextReader):
         try:
             response = self.exchange(dict(operation="image", path=os.path.abspath(path)), deadline)
             blocks = response.get("blocks")
-            if set(response) != {"schemaVersion", "ok", "reader", "blocks"} or response["reader"] != "vision-image-v1" \
+            if (set(response) - ({"readerFingerprint"} if sys.platform.startswith("linux") else set())) != {"schemaVersion", "ok", "reader", "blocks"} or response["reader"] != ("tesseract-image-v1" if sys.platform.startswith("linux") else "vision-image-v1") \
                     or not isinstance(blocks, list) or len(blocks) > OCR_BLOCKS:
                 raise DocumentReadError("ocrReadError")
-            sections = validated_ocr_blocks(blocks, dict(kind="imageOCR"))
+            sections = validated_ocr_blocks(blocks, document_position_reader(dict(kind="imageOCR"), "tesseract-image-v1" if sys.platform.startswith("linux") else "vision-image-v1"))
             if not blocks:
                 raise DocumentReadError("ocrNoText")
             yield from sections
@@ -4224,16 +4294,16 @@ class PDFOCRTextReader(PDFTextReader):
                         raise DocumentReadError("documentReadError")
                     if size > DOCUMENT_PAGE_BYTES:
                         raise DocumentReadError("documentLimit")
-                    sections = [(dict(kind="pdfTextPage", page=index + 1), text)]
+                    sections = [(document_position_reader(dict(kind="pdfTextPage", page=index + 1), "poppler-tesseract-v1" if sys.platform.startswith("linux") else "pdfkit-vision-v1"), text)]
                 else:
                     progress("pdfOCR", index + 1, count)
                     try:
                         response = self.exchange(dict(operation="ocrPage", index=index), deadline)
-                        if set(response) != {"schemaVersion", "ok", "reader", "page", "blocks"} or response["reader"] != "pdfkit-vision-v1" \
+                        if (set(response) - ({"readerFingerprint"} if sys.platform.startswith("linux") else set())) != {"schemaVersion", "ok", "reader", "page", "blocks"} or response["reader"] != ("poppler-tesseract-v1" if sys.platform.startswith("linux") else "pdfkit-vision-v1") \
                                 or type(response["page"]) is not int or response["page"] != index + 1 \
                                 or not isinstance(response["blocks"], list) or len(response["blocks"]) > OCR_BLOCKS:
                             raise DocumentReadError("ocrReadError")
-                        sections = validated_ocr_blocks(response["blocks"], dict(kind="pdfOCR", page=index + 1))
+                        sections = validated_ocr_blocks(response["blocks"], document_position_reader(dict(kind="pdfOCR", page=index + 1), "poppler-tesseract-v1" if sys.platform.startswith("linux") else "pdfkit-vision-v1"))
                         if not sections:
                             issue("ocrNoText")
                     except DocumentReadError as error:
@@ -4259,10 +4329,16 @@ class PDFOCRTextReader(PDFTextReader):
 
 def document_sections(reader, path, deadline):
     if isinstance(reader, (ZIPDocumentReader, OCRTextReader, PDFOCRTextReader)):
-        yield from reader.sections(path, deadline)
+        sections = reader.sections(path, deadline)
     else:
-        for page, text in reader.pages(path, deadline):
-            yield dict(kind="pdfPage", page=page), text
+        sections = ((document_position_reader(dict(kind="pdfPage", page=page), "poppler-v1" if sys.platform.startswith("linux") else "pdfkit-v1"), text) for page, text in reader.pages(path, deadline))
+    for position, text in sections:
+        if position.get("reader") in ("poppler-v1", "tesseract-image-v1", "poppler-tesseract-v1"):
+            fingerprint = getattr(reader, "reader_fingerprint", None)
+            if not isinstance(fingerprint, str) or re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None:
+                raise DocumentReadError("documentReadError")
+            position = dict(position, readerFingerprint=fingerprint)
+        yield position, text
 
 
 def document_line_pieces(reader, path, deadline, **options):
@@ -5287,14 +5363,13 @@ class KnownResultProbe:
     """Nur übergebene Trefferwerte; dieser Probe besitzt keinen Quellenleser."""
 
     def __init__(self, record, root=None):
-        if not isinstance(record, dict):
-            raise ValueError("Treffer muss ein JSON-Objekt sein")
+        record = unwrap_hit(record)
         if "searchRoot" in record:
             provenance = record["searchRoot"]
             if not isinstance(provenance, str) or not provenance.startswith("/") or "\0" in provenance:
                 raise ValueError("ungültige Suchwurzel des Treffers")
-            root = provenance
-        path = record.get("filesystemPath")
+            root = hit_filesystem_path(dict(filesystemPath=provenance, filesystemPathBytes=record['searchRootPathBytes'])) if 'searchRootPathBytes' in record else provenance
+        path = hit_filesystem_path(record)
         members = record.get("archiveMembers")
         raw_members = record.get("archiveMemberBytes", [])
         self.is_dir = record.get("isDirectory")
@@ -5601,7 +5676,7 @@ REPORT_REASONS = {
     "pdfOCRProjection": ("intentional", "Textebenen bevorzugt, OCR nur für textlose PDF-Seiten; Originalabdeckung nicht garantiert"),
     "pdfOCRLimit": ("budget", "Seiten- oder Renderpixelgrenze für PDF-OCR erreicht"),
     "ocrProjection": ("intentional", "OCR-Text ist erkannt und kann vom Original abweichen; keine Abwesenheit bewiesen"),
-    "ocrHelperUnavailable": ("readError", "Lokaler OCR-Helfer oder Deutsch/Englisch-Erkennung fehlt (macOS 13+)"),
+    "ocrHelperUnavailable": ("readError", "Lokaler OCR-Helfer oder Deutsch/Englisch-Erkennung fehlt"),
     "ocrDamaged": ("readError", "Bild für OCR nicht lesbar oder nicht unterstützt"),
     "ocrReadError": ("readError", "OCR-Leser oder sein begrenzter Datenvertrag fehlgeschlagen"),
     "ocrLimit": ("budget", "OCR-Bild-, Pixel- oder Textgrenze erreicht"),
@@ -5610,6 +5685,7 @@ REPORT_REASONS = {
     "ocrNoText": ("intentional", "Kein ausreichend sicherer OCR-Text erkannt"),
     "localContentNotLocal": ("intentional", "Inhalt noch nicht lokal lesbar"),
     "localContentUnknown": ("readError", "Lokaler Inhalt / Providerzustand nicht sicher belegbar"),
+    "documentReaderChanged": ("readError", "Dokument-/OCR-Leser oder seine Komponenten wurden geändert; bitte neu suchen"),
     "documentUnsupported": ("intentional", "Dateityp ohne Dokumenttextleser"),
     "documentHelperUnavailable": ("readError", "PDF-Texthelfer fehlt oder ist nicht startbar"),
     "documentEncrypted": ("readError", "Verschlüsseltes Dokument nicht gelesen"),
@@ -5743,6 +5819,38 @@ def report_error_reason(error):
     return getattr(error, "reason", "readError")
 
 
+def linux_birthtime(path, expected):
+    """statx-btime gilt nur, wenn beide Abfragen dieselbe Quellengeneration sehen."""
+    import ctypes
+
+    class Timestamp(ctypes.Structure):
+        _fields_ = [("seconds", ctypes.c_int64), ("nanos", ctypes.c_uint32), ("reserved", ctypes.c_int32)]
+
+    class Statx(ctypes.Structure):
+        _fields_ = [("mask", ctypes.c_uint32), ("blksize", ctypes.c_uint32), ("attributes", ctypes.c_uint64),
+                    ("nlink", ctypes.c_uint32), ("uid", ctypes.c_uint32), ("gid", ctypes.c_uint32),
+                    ("mode", ctypes.c_uint16), ("spare", ctypes.c_uint16), ("ino", ctypes.c_uint64),
+                    ("size", ctypes.c_uint64), ("blocks", ctypes.c_uint64), ("attribute_mask", ctypes.c_uint64),
+                    ("atime", Timestamp), ("btime", Timestamp), ("ctime", Timestamp), ("mtime", Timestamp),
+                    ("rdev_major", ctypes.c_uint32), ("rdev_minor", ctypes.c_uint32),
+                    ("dev_major", ctypes.c_uint32), ("dev_minor", ctypes.c_uint32), ("remaining", ctypes.c_ubyte * 112)]
+
+    try:
+        function = ctypes.CDLL(None, use_errno=True).statx
+        function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_uint, ctypes.POINTER(Statx)]
+        function.restype = ctypes.c_int
+        value = Statx()
+        if function(-100, os.fsencode(path), 0, 0xfff, ctypes.byref(value)) or not value.mask & 0x800:
+            return None
+        if (os.makedev(value.dev_major, value.dev_minor), value.ino, value.size,
+            value.mtime.seconds * 10**9 + value.mtime.nanos, value.ctime.seconds * 10**9 + value.ctime.nanos) != (
+                expected.st_dev, expected.st_ino, expected.st_size, expected.st_mtime_ns, expected.st_ctime_ns):
+            return None
+        return value.btime.seconds + value.btime.nanos / 10**9
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
 class Search:
     """Kapselt eine Suche: Muster, Optionen und das Einsammeln der Treffer.
 
@@ -5763,13 +5871,14 @@ class Search:
                  modified_from=None, modified_to=None,
                  created_from=None, created_to=None, extra_matchers=(),
                  criteria_query=None, text_encoding="utf-8", content_preview=False, search_report=None,
-                 document_mode=False, include_finder_metadata=False, local_only=False, ocr=False, pdf_ocr=False):
+                 document_mode=False, include_finder_metadata=False, local_only=False, ocr=False, pdf_ocr=False, json_path_bytes=False):
         self.report = search_report
         self.local_only = local_only
         self.search_root = None
         self.document_mode = document_mode
         self.ocr = ocr
         self.pdf_ocr = pdf_ocr
+        self.json_path_bytes = json_path_bytes
         self.include_finder_metadata = include_finder_metadata
         self.pdf_reader = (PDFOCRTextReader if pdf_ocr else PDFTextReader)(find_pdf_helper()) if document_mode else None
         self.ocr_reader = OCRTextReader(find_ocr_helper()) if document_mode and ocr else None
@@ -5979,6 +6088,12 @@ class Search:
                 record["documentSourceGeneration"] = document_generation
             if document_position is not None:
                 record["documentPosition"] = document_position
+            if self.json_path_bytes:
+                record["filesystemPathBytes"] = base64.b64encode(os.fsencode(raw_filesystem_path)).decode("ascii")
+                if self.search_root is not None:
+                    record["searchRootPathBytes"] = base64.b64encode(os.fsencode(self.search_root)).decode("ascii")
+                # Alte Leser sehen keinen Pfad und können keine verlustbehaftete Aktion ausführen.
+                record = {"type": "hitV2", "schemaVersion": 2, "hit": record}
             text = json.dumps(record, ensure_ascii=False)
         elif document_position is not None:
             positions = [item["documentPosition"] for item in terms or [] if "documentPosition" in item] or [document_position]
@@ -6424,6 +6539,8 @@ class Search:
                 onerror(err)
             return None, None, None
         birth = getattr(status, "st_birthtime", None)
+        if birth is None and sys.platform.startswith("linux"):
+            birth = linux_birthtime(path, status)
         return status.st_size, status.st_mtime, birth
 
     def visit_file(self, path, root=None):
@@ -7393,9 +7510,9 @@ DUPLICATE_MAX_SECONDS = 300
 def duplicate_request(document):
     if (not isinstance(document, dict) or not {"schemaVersion", "items"} <= set(document)
             or set(document) - {"schemaVersion", "items", "limits"}
-            or type(document["schemaVersion"]) is not int or document["schemaVersion"] not in (1, 2)
+            or type(document["schemaVersion"]) is not int or document["schemaVersion"] not in (1, 2, 3)
             or not isinstance(document["items"], list) or len(document["items"]) > DUPLICATE_MAX_ITEMS):
-        raise ValueError("Dublettenauftrag braucht Schema 1/2 und höchstens 50000 Dateitreffer")
+        raise ValueError("Dublettenauftrag braucht Schema 1/2/3 und höchstens 50000 Dateitreffer")
     limits = document.get("limits", {})
     if not isinstance(limits, dict) or set(limits) - {"maxReadBytes", "maxSeconds"}:
         raise ValueError("Unbekannte Dublettengrenzen")
@@ -7425,18 +7542,20 @@ def duplicate_request(document):
     items, identifiers, paths = [], set(), set()
     for item in document["items"]:
         allowed = {"id", "filesystemPath"}
-        if document["schemaVersion"] == 2:
+        if document["schemaVersion"] >= 2:
             allowed |= {"expectedGeneration", "sourceGuard", "unavailable"}
+        if document["schemaVersion"] == 3:
+            allowed.add("filesystemPathBytes")
         if not isinstance(item, dict) or not {"id", "filesystemPath"} <= set(item) or set(item) - allowed:
             raise ValueError("Ungültige Dublettenobjekte; Archividentitäten werden ausschließlich vom gemeinsamen Materialisierer aufgelöst")
         identifier = item["id"]
         if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", identifier) or identifier in identifiers:
             raise ValueError("Ungültige/doppelte Objekt-ID")
-        path = path_value(item["filesystemPath"])
+        path = path_value(hit_filesystem_path(item))
         record = dict(id=identifier, filesystemPath=path)
         if "unavailable" in item:
             value = item["unavailable"]
-            if (set(item) != {"id", "filesystemPath", "unavailable"} or not isinstance(value, dict)
+            if (set(item) - {"filesystemPathBytes"} != {"id", "filesystemPath", "unavailable"} or not isinstance(value, dict)
                     or set(value) != {"reason", "message"} or value["reason"] not in ("archiveError", "archiveLimit")
                     or not isinstance(value["message"], str) or not value["message"] or len(value["message"]) > 1024):
                 raise ValueError("Ungültiger Materialisierungsfehler")
@@ -7450,9 +7569,9 @@ def duplicate_request(document):
                 record["expectedGeneration"] = generation(item["expectedGeneration"])
             if "sourceGuard" in item:
                 value = item["sourceGuard"]
-                if not isinstance(value, dict) or set(value) != {"filesystemPath", "generation"} or "expectedGeneration" not in item:
+                if not isinstance(value, dict) or (set(value) - ({"filesystemPathBytes"} if document["schemaVersion"] == 3 else set())) != {"filesystemPath", "generation"} or "expectedGeneration" not in item:
                     raise ValueError("Quellwache braucht Pfad, Generation und erwartete Inhaltsgeneration")
-                record["sourceGuard"] = dict(filesystemPath=path_value(value["filesystemPath"]), generation=generation(value["generation"]))
+                record["sourceGuard"] = dict(filesystemPath=path_value(hit_filesystem_path(value)), generation=generation(value["generation"]))
         identifiers.add(identifier)
         items.append(record)
     return items, byte_limit, float(seconds)
@@ -7886,6 +8005,9 @@ def main(argv=None):
                         help="maximales ZIP-Kompressionsverhältnis")
     parser.add_argument("--json", action="store_true",
                         help="Treffer als JSON-Zeilen ausgeben (JSONL)")
+    parser.add_argument("--search-roots-bytes", metavar="JSON", help="verlustfreie absolute POSIX-Suchwurzeln als Base64-JSON-Liste")
+    parser.add_argument("--json-path-bytes", action="store_true",
+                        help="versionierter JSONL-Treffertransport mit verlustfreien POSIX-Pfadbytes (benötigt --json)")
     parser.add_argument("--progress", action="store_true",
                         help="laufend melden, wo gerade gesucht wird "
                              "(mit --json als JSONL-Objekte type=progress "
@@ -7945,6 +8067,8 @@ def main(argv=None):
 
 
 def run_parsed(args, parser):
+    if args.json_path_bytes and not args.json:
+        parser.error("--json-path-bytes benötigt --json")
     if args.duplicates_file is not None:
         allowed = {"duplicates_file", "local_only", "json"}
         defaults = vars(parser.parse_args([]))
@@ -8023,6 +8147,8 @@ def run_parsed(args, parser):
             result = load_content_preview(json.loads(args.preview_request), local_only=args.local_only)
         except (ValueError, OSError, UnicodeError, re.error, RecursionError) as error:
             parser.error("Nachladen: %s" % error)
+        if "filesystemPathBytes" in result:
+            result = dict(type="hitV2", schemaVersion=2, hit=result)
         write_result([json.dumps(result, ensure_ascii=True)])
         return 0
 
@@ -8092,8 +8218,8 @@ def run_parsed(args, parser):
         return extract_result(args.extract, **extract_options)
     if args.extract_json:
         try:
-            record = json.loads(args.extract_json)
-            filesystem_path = record["filesystemPath"]
+            record = unwrap_hit(json.loads(args.extract_json))
+            filesystem_path = hit_filesystem_path(record)
             archive_members = record.get("archiveMembers", [])
             archive_member_bytes = record.get("archiveMemberBytes")
             if not isinstance(filesystem_path, str) \
@@ -8213,14 +8339,25 @@ def run_parsed(args, parser):
     exiftool_path = find_exiftool()
     if (metadata_mode or (criteria_query is not None and criteria_query.metadata_fields)) and exiftool_path is None:
         request = "--metadata braucht" if metadata_mode else "Metadatenkriterien brauchen"
+        installation_hint = "z. B. `brew install exiftool`" if sys.platform == "darwin" else "ExifTool-Systempaket installieren"
         print("favenio: fehler: %s exiftool, das nicht "
-              "gefunden wurde (z. B. `brew install exiftool`). Die "
-              "Maßfilter kommen ohne aus." % request, file=sys.stderr)
+              "gefunden wurde (%s). Die Maßfilter kommen ohne aus." % (request, installation_hint), file=sys.stderr)
         return 2
 
     # argparse setzt den Default für nargs="*" nur, wenn GAR NICHTS kommt —
     # deshalb hier noch einmal absichern.
     paths = args.paths if args.paths else ["."]
+    if args.search_roots_bytes is not None:
+        try:
+            values = json.loads(args.search_roots_bytes)
+            if not isinstance(values, list) or not 1 <= len(values) <= 16:
+                raise ValueError("16 absolute Bytepfade sind erlaubt")
+            raw_paths = [base64.b64decode(value, validate=True) for value in values]
+            if any(not raw.startswith(b"/") or b"\0" in raw or len(raw) > 4096 or base64.b64encode(raw).decode("ascii") != value for raw, value in zip(raw_paths, values)) or len(set(raw_paths)) != len(raw_paths):
+                raise ValueError("ungültiger oder doppelter Bytepfad")
+            paths = [os.fsdecode(raw) for raw in raw_paths]
+        except (TypeError, ValueError) as error:
+            parser.error("--search-roots-bytes: " + str(error))
 
     try:
         # Ohne Muster gibt es kein Textkriterium; Search kommt mit None aus.
@@ -8307,7 +8444,7 @@ def run_parsed(args, parser):
                     exiftool_path=exiftool_path, extra_matchers=extra_matchers,
                     criteria_query=criteria_query, text_encoding=args.encoding,
                     content_preview=args.content_preview, search_report=report, document_mode=args.document_text,
-                    include_finder_metadata=args.finder_metadata, local_only=args.local_only, ocr=args.ocr, pdf_ocr=args.pdf_ocr,
+                    include_finder_metadata=args.finder_metadata, local_only=args.local_only, ocr=args.ocr, pdf_ocr=args.pdf_ocr, json_path_bytes=args.json_path_bytes,
                     **dimension_limits, **fact_limits)
 
     # Erst alle Startpfade prüfen, dann suchen: sonst stünden bei mehreren

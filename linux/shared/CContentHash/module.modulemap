@@ -1,0 +1,4 @@
+module CContentHash [system] {
+    header "shim.h"
+    export *
+}

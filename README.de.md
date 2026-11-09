@@ -2,6 +2,9 @@
 
 # Favenio
 
+Linux: Rust/GTK-Oberflächen verwenden die gemeinsamen Swift-Anwendungsmodelle und den Python-Suchkern. Signierte Pakete stehen im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.2) und über einen eigenen GitHub-Updatekanal bereit. Die Desktop-Anbindung ist unter X11 und Wayland geprüft. Siehe [Linux-Bau und Installation](docs/LINUX.md).
+
+
 **„facile invenio", Latein für „ich finde mit Leichtigkeit".**
 
 Favenio ist eine indexlose Dateisuche für macOS im Stil von EasyFind: Sie
@@ -22,7 +25,21 @@ Der Suchkern ist pures Python 3 (nur Standardbibliothek), eine Datei, keine
 Installation. Darauf aufbauend gibt es zwei native macOS-Apps: ein großes
 Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
 
-## Neu in 0.64.0
+## Neu in 0.66.2
+
+Unter Linux öffnet und schließt die Leertaste die Vorschau in Liste und Miniaturraster. Kopierte Pfade behalten abschließende Leerzeichen; aktuelle Bildlader funktionieren mit fester Speichergrenze. Der Nemo-Adapter liefert seine offenen Ansichten auch bei leerer allgemeiner Ordnerliste.
+
+## Neu in 0.66.1
+
+ExifTool wird unter Arch/CachyOS auch dann gefunden, wenn der Desktop-PATH das Vendor-Perl-Verzeichnis auslässt. Archivaktionen erhalten äußere POSIX-Pfade auch bei ungültigem UTF-8.
+
+## Neu in 0.66.0
+
+Die Linux-Oberflächen verwenden den bestehenden Python-Suchkern und gemeinsame Swift-Anwendungsmodelle. Rust/GTK stellt beide Fenster bereit, ergänzt durch Poppler/Tesseract, integrierte Vorschauen, Dateimanager-Adapter und signierte Updatekoordination. Die Desktop-Abnahme und die erste öffentliche Linux-Auslieferung stehen noch aus; siehe [Linux](docs/LINUX.md).
+
+## Neu in 0.65.0
+
+Version 0.65.0 trennt gemeinsame Anwendungsmodelle und Prozesscode von AppKit. Der optionale Transport `--json-path-bytes` erhält äußere POSIX-Dateinamen einschließlich ungültigem UTF-8 bytegenau. Die Linux-Oberflächen befinden sich im Aufbau; diese Version ist noch kein vollständiger Linux-Port.
 
 Seit dem letzten GitHub-Release 0.38.5 sind in beiden Apps hinzugekommen:
 
@@ -41,6 +58,9 @@ Seit dem letzten GitHub-Release 0.38.5 sind in beiden Apps hinzugekommen:
 - Ausdrückliche Dublettenprüfung über Dateien und Archivmitglieder mit
   vollständigem Bytevergleich sowie Suchberichte zu Auslassungen und Grenzen.
   Die Prüfung löscht keine Dateien, verändert keine Archive und behauptet keine Speicherersparnis.
+
+Version 0.64.1 verhindert, dass ein nur lokaler Archivabruf einen laufenden
+Auftrag mit anderer Zugriffsregel übernimmt, und nennt PDF-OCR ausdrücklich im Suchbericht.
 
 Bestehende Vorlagen und Aufzeichnungen bleiben lesbar; neue Fähigkeiten tragen
 ausdrückliche Formatversionen und weisen ältere Empfänger ab. Details stehen
@@ -272,6 +292,8 @@ Aufnahmeherkunft sichtbar.
 | `--content-preview` | begrenzte Originalausschnitte und Hervorhebungsbereiche im JSONL erfassen; braucht `--json` |
 | `--preview-request JSON` | begrenzt eine Fundstelle oder mehr Kontext eines Vorschautreffers laden; siehe [Vertrag](docs/CONTENT_PREVIEW.md) |
 | `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` in Bytes, soweit das Format sie nennt) |
+| `--json-path-bytes` | Versionierte JSONL-Treffer mit verlustfreien POSIX-Pfadbytes; benötigt `--json` |
+| `--search-roots-bytes JSON` | Absolute POSIX-Suchwurzeln als kanonische Base64-JSON-Liste; erhält nicht als UTF-8 lesbare Pfade |
 | `--search-report` | mit `--json` begrenzte strukturierte Suchberichte ausgeben; [Vertrag](docs/SEARCH_REPORT.md) |
 | `--progress` | laufend melden, wo gerade gesucht wird (mit `--json` als JSONL-Objekte, sonst auf stderr) |
 | `--extract TREFFER` | Treffer-Pfad (`!/`-Notation) in einen Temp-Ordner auspacken und den nutzbaren Pfad ausgeben |

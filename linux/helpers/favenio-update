@@ -1,0 +1,106 @@
+#!/usr/bin/python3 -B
+"""Bedienung des signierten Linux-Updatekoordinators."""
+import argparse
+import fcntl
+import math
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'update'))
+from coordinator import UpdateError, check, download, install, installation_root, rollback, recover, version_key, installation_lease
+
+
+def message(text, question=False):
+    if shutil.which('kdialog'):
+        args=['kdialog','--title','Favenio', '--yesno' if question else '--msgbox',text]
+    elif shutil.which('zenity'):
+        args=['zenity','--title=Favenio','--question' if question else '--info','--text='+text,'--no-wrap']
+    else:
+        print(text, file=sys.stderr)
+        return False
+    return subprocess.run(args,stdin=subprocess.DEVNULL).returncode==0
+
+
+def reserve_daily_check(state, now=None):
+    now=time.time() if now is None else now
+    state.mkdir(parents=True,exist_ok=True,mode=0o700)
+    descriptor=os.open(state/'daily-update-check',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    with os.fdopen(descriptor,'r+') as record:
+        try:fcntl.flock(record,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:return False
+        raw=record.read(65)
+        try:last=float(raw)
+        except ValueError:last=0
+        if math.isfinite(last) and 0<=now-last<86400:return False
+        record.seek(0);record.truncate();record.write(str(now));record.flush();os.fsync(record.fileno())
+        return True
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--gui',action='store_true')
+    parser.add_argument('--check',action='store_true')
+    parser.add_argument('--notify',action='store_true')
+    parser.add_argument('--rollback',action='store_true')
+    parser.add_argument('--recover',action='store_true')
+    args=parser.parse_args()
+    folder=Path(__file__).resolve().parent.parent
+    key=(folder/'update/public-key.txt').read_bytes()
+    root=installation_root()
+    with installation_lease(root,create=False):
+        return perform(args,folder,key,root)
+
+
+def perform(args,folder,key,root):
+    if args.recover:
+        print('Wiederhergestellt: '+str(recover(root,key)));return
+    if args.rollback:
+        print('Wiederhergestellt: '+rollback(root,key));return
+    if args.notify:
+        state=Path(os.environ.get('XDG_STATE_HOME',Path.home()/'.local/state'))/'favenio'
+        if not reserve_daily_check(state):return
+    manifest,data,signature=check(key)
+    current=(folder/'VERSION').read_text().strip()
+    installed=root/'current'/'VERSION'
+    if installed.is_file():
+        candidate=installed.read_text().strip()
+        if version_key(candidate)>version_key(current):current=candidate
+    journal=root/'update-state.json'
+    if journal.is_file():
+        highest=json.loads(journal.read_text()).get('highestVersion')
+        if highest and version_key(current)<version_key(highest) and version_key(manifest['version'])<=version_key(highest):
+            text='Die Version '+highest+' wurde zurückgenommen. Für den Linux-Kanal ist keine neuere Version verfügbar.'
+            if args.gui:message(text)
+            elif not args.notify:print(json.dumps(dict(updateAvailable=False,version=current,reason='rolledBack')))
+            return
+    if version_key(manifest['version'])<=version_key(current):
+        if args.gui:message('Favenio '+current+' ist aktuell.')
+        else:print(json.dumps(dict(updateAvailable=False,version=current)))
+        return
+    if args.notify:
+        if shutil.which('notify-send'):
+            subprocess.run(['notify-send','Favenio-Update verfügbar','Version '+manifest['version']+' ist verfügbar. Zum Installieren in Favenio „Updates …“ öffnen.'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        return
+    if not args.gui:
+        print(json.dumps(dict(updateAvailable=True,version=manifest['version'])));return
+    if not message('Favenio '+manifest['version']+' herunterladen und für beide Apps installieren?\nLaufende Fenster bleiben auf ihrer bisherigen Version. Nach der Installation beide Apps schließen und neu starten.',question=True):return
+    with tempfile.TemporaryDirectory(prefix='favenio-download-') as directory:
+        package=Path(directory)/'package.tar.gz'
+        download(manifest['url'],package,manifest['size'])
+        installed=install(root,package,data,signature,key)
+    message('Favenio '+installed+' wurde installiert. Beide Apps schließen und neu starten, um die neue Version zu verwenden. Die Dateimanager-Erweiterungen werden beim nächsten regulären Start von Nemo/Dolphin neu geladen.')
+
+
+if __name__=='__main__':
+    try:main()
+    except (UpdateError,OSError,ValueError,subprocess.SubprocessError) as error:
+        text='Für den Linux-Kanal ist noch kein Update veröffentlicht.' if isinstance(error,urllib.error.HTTPError) and error.code==404 else 'Update nicht installiert: '+str(error)
+        if '--gui' in sys.argv:message(text)
+        elif '--notify' not in sys.argv:print(text,file=sys.stderr)
+        sys.exit(2)

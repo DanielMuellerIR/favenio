@@ -1,0 +1,412 @@
+#!/usr/bin/python3 -B
+"""Begrenzte Linux-Datenextraktion. Kriterien und Matching bleiben im Python-Kern."""
+import csv
+import hashlib
+import ctypes
+import io
+import json
+import math
+import os
+from pathlib import Path
+import resource
+import selectors
+import shutil
+import signal
+import stat
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+from favenio_linux_limits import DECODER_ADDRESS_SPACE_BYTES
+
+MAX_BYTES = 64 * 1024 * 1024
+PAGE_BYTES = 256 * 1024
+OCR_PIXELS = 12_000_000
+PDF_READER = 'poppler-v1'
+OCR_READER = 'tesseract-image-v1'
+PDF_OCR_READER = 'poppler-tesseract-v1'
+
+
+class ReadFailure(Exception):
+    pass
+
+
+_fingerprints = {}
+_dependencies = {}
+
+
+def component_hash(path):
+    path = Path(path)
+    before = path.stat()
+    identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+    cached = _fingerprints.get(str(path))
+    if cached and cached[0] == identity:
+        return cached[1]
+    if not stat.S_ISREG(before.st_mode) or before.st_size > 128 * 1024**2:
+        raise ReadFailure('documentReadError')
+    digest = hashlib.sha256()
+    with path.open('rb') as source:
+        for chunk in iter(lambda: source.read(65536), b''):
+            digest.update(chunk)
+    after = path.stat()
+    if identity != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+        raise ReadFailure('documentReadError')
+    result = digest.digest()
+    _fingerprints[str(path)] = (identity, result)
+    return result
+
+
+def reader_fingerprint():
+    files = [str(Path(__file__).resolve()), str(Path(__file__).with_name('favenio_linux_limits.py').resolve())]
+    executable = Path(__file__).resolve().parent.parent / 'favenio'
+    programs = [str(executable)] if executable.is_file() else []
+    for name in ('pdftotext', 'pdfinfo', 'pdftoppm', 'tesseract'):
+        program = shutil.which(name, path='/usr/bin:/bin')
+        if program:
+            programs.append(program)
+    for directory in (Path('/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders'), Path('/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders')):
+        programs.extend(str(path) for path in directory.glob('libpixbufloader-*.so'))
+    for program in programs:
+        stamp = component_hash(program)
+        key = (program, stamp)
+        dependencies = _dependencies.get(key)
+        if dependencies is None:
+            raw = subprocess.run(['/usr/bin/ldd', program], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3, check=False).stdout
+            if len(raw) > 65536:
+                raise ReadFailure('documentReadError')
+            dependencies = []
+            for line in raw.decode('utf-8', 'strict').splitlines():
+                candidate = line.split('=>', 1)[-1].strip().split(' ', 1)[0]
+                if candidate.startswith(('/lib/', '/usr/lib/')):
+                    dependencies.append(candidate)
+            _dependencies[key] = dependencies
+        files.extend([program, *dependencies])
+    directory = tessdata_directory()
+    if directory:
+        files.extend(str(directory / (language + '.traineddata')) for language in ('deu', 'eng'))
+    hashes = sorted({component_hash(path).hex() for path in files})
+    return hashlib.sha256(('favenio-linux-document-v1\n' + '\n'.join(hashes)).encode()).hexdigest()
+
+
+def tessdata_directory():
+    for directory in (Path('/usr/share/tesseract-ocr/5/tessdata'), Path('/usr/share/tessdata')):
+        if all((directory / (language + '.traineddata')).is_file() for language in ('deu', 'eng')):
+            return directory
+    return None
+
+
+def child_limits():
+    resource.setrlimit(resource.RLIMIT_AS, (DECODER_ADDRESS_SPACE_BYTES, DECODER_ADDRESS_SPACE_BYTES))
+    resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (64 * 1024**2, 64 * 1024**2))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+    ctypes.CDLL(None).prctl(1, signal.SIGKILL, 0, 0, 0)
+    if os.getppid() == 1:
+        os._exit(2)
+
+
+def run(arguments, maximum=PAGE_BYTES, timeout=4):
+    program = arguments[0] if os.path.isabs(arguments[0]) else shutil.which(arguments[0], path='/usr/bin:/bin')
+    if not program:
+        raise ReadFailure('ocrHelperUnavailable' if 'tesseract' in arguments[0] else 'documentHelperUnavailable')
+    environment = dict(os.environ, LC_ALL='C', LANG='C', OMP_THREAD_LIMIT='1')
+    with subprocess.Popen([program, *arguments[1:]], stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          preexec_fn=child_limits, env=environment) as process:
+        selector = selectors.DefaultSelector()
+        output, errors = bytearray(), bytearray()
+        for stream in (process.stdout, process.stderr):
+            selector.register(stream, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout
+        try:
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ReadFailure('documentTimeout')
+                for key, _ in selector.select(min(.1, remaining)):
+                    chunk = os.read(key.fd, 8192)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    target = output if key.fileobj is process.stdout else errors
+                    target.extend(chunk)
+                    if len(target) > (maximum if target is output else 65536):
+                        raise ReadFailure('documentLimit')
+            process.wait(timeout=max(.01, deadline - time.monotonic()))
+            if process.returncode != 0:
+                reason = bytes(errors).decode('utf-8', 'replace').strip()
+                if 'password' in reason.lower():
+                    raise ReadFailure('documentEncrypted')
+                if 'Failed loading language' in reason:
+                    raise ReadFailure('ocrHelperUnavailable')
+                if reason in {'ocrMultipleFrames', 'ocrLimit', 'ocrDamaged'}:
+                    raise ReadFailure(reason)
+                raise ReadFailure('documentReadError')
+            return bytes(output)
+        finally:
+            selector.close()
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+
+
+def snapshot(path, directory):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    with os.fdopen(descriptor, 'rb') as source:
+        information = os.fstat(source.fileno())
+        if not stat.S_ISREG(information.st_mode):
+            raise ReadFailure('documentReadError')
+        if information.st_size > MAX_BYTES:
+            raise ReadFailure('documentLimit')
+        suffix = Path(path).suffix.lower()
+        target = Path(directory, 'source' + (suffix if suffix in {'.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif', '.heic', '.heif'} else '.bin'))
+        with target.open('wb') as destination:
+            remaining = MAX_BYTES + 1
+            while remaining:
+                chunk = source.read(min(65536, remaining))
+                if not chunk:
+                    break
+                destination.write(chunk)
+                remaining -= len(chunk)
+            if not remaining:
+                raise ReadFailure('documentLimit')
+        after = os.fstat(source.fileno())
+        if (information.st_dev, information.st_ino, information.st_size, information.st_mtime_ns, information.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ReadFailure('documentReadError')
+        return target
+
+
+def pdf_information(path, page=None):
+    arguments = ['pdfinfo'] + (['-f', str(page), '-l', str(page), '-box'] if page else []) + [str(path)]
+    raw = run(arguments, maximum=65536).decode('utf-8', 'strict')
+    result = {}
+    for line in raw.splitlines():
+        if ':' in line:
+            key, value = line.split(':', 1)
+            result[key.strip()] = value.strip()
+    return result
+
+
+def recognize(path, work):
+    if not shutil.which('tesseract', path='/usr/bin:/bin'):
+        raise ReadFailure('ocrHelperUnavailable')
+    directory = tessdata_directory()
+    if directory is None:
+        raise ReadFailure('ocrHelperUnavailable')
+    raw = run(['tesseract', str(path), 'stdout', '--tessdata-dir', str(directory), '-l', 'deu+eng', 'tsv'], maximum=2 * 1024**2, timeout=8)
+    groups = {}
+    reader = csv.DictReader(io.StringIO(raw.decode('utf-8', 'strict')), delimiter='\t')
+    width = height = None
+    for row in reader:
+        if row['level'] == '1':
+            width, height = int(row['width']), int(row['height'])
+        if row['level'] != '5' or not row['text'].strip():
+            continue
+        confidence = float(row['conf']) / 100
+        if not math.isfinite(confidence) or confidence < .5:
+            continue
+        key = tuple(row[name] for name in ('page_num', 'block_num', 'par_num', 'line_num'))
+        words = groups.setdefault(key, [])
+        words.append((row['text'], confidence, int(row['left']), int(row['top']), int(row['width']), int(row['height'])))
+        if len(groups) > 4096:
+            raise ReadFailure('ocrLimit')
+    if not width or not height or width > 8192 or height > 8192 or width * height > OCR_PIXELS:
+        raise ReadFailure('ocrLimit')
+    blocks = []
+    total = 0
+    for words in groups.values():
+        text = ' '.join(word[0] for word in words)
+        total += len(text.encode())
+        if total > 1024**2 or len(text.encode()) > 65536:
+            raise ReadFailure('ocrLimit')
+        left = min(word[2] for word in words)
+        top = min(word[3] for word in words)
+        right = max(word[2] + word[4] for word in words)
+        bottom = max(word[3] + word[5] for word in words)
+        blocks.append(dict(block=len(blocks)+1, text=text, confidence=min(word[1] for word in words),
+                           region=[left/width, (height-bottom)/height, (right-left)/width, (bottom-top)/height]))
+    return blocks
+
+
+def inspect_heif(path):
+    class Error(ctypes.Structure):
+        _fields_ = [('code', ctypes.c_int), ('subcode', ctypes.c_int), ('message', ctypes.c_char_p)]
+    try:
+        library = ctypes.CDLL('libheif.so.1')
+        library.heif_context_alloc.restype = ctypes.c_void_p
+        library.heif_context_free.argtypes = [ctypes.c_void_p]
+        library.heif_context_read_from_file.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
+        library.heif_context_read_from_file.restype = Error
+        library.heif_context_get_number_of_top_level_images.argtypes = [ctypes.c_void_p]
+        library.heif_context_get_number_of_top_level_images.restype = ctypes.c_int
+    except (OSError, AttributeError):
+        raise ReadFailure('ocrDamaged')
+    context = library.heif_context_alloc()
+    if not context:
+        raise ReadFailure('ocrLimit')
+    try:
+        if library.heif_context_read_from_file(context, os.fsencode(path), None).code:
+            raise ReadFailure('ocrDamaged')
+        count = library.heif_context_get_number_of_top_level_images(context)
+        if count != 1:
+            raise ReadFailure('ocrMultipleFrames' if count > 1 else 'ocrDamaged')
+    finally:
+        library.heif_context_free(context)
+
+
+def preflight_image(path):
+    with open(path, 'rb') as source:
+        head = source.read(8)
+        if head[4:8] == b'ftyp':
+            source.seek(0)
+            size = path.stat().st_size
+            offset = 0
+            while offset < size:
+                header = source.read(8)
+                if len(header) != 8: raise ReadFailure('ocrDamaged')
+                length, kind = struct.unpack('>I4s', header)
+                header_size = 8
+                if length == 1:
+                    length = struct.unpack('>Q', source.read(8))[0]
+                    header_size = 16
+                if length == 0: length = size - offset
+                if length < header_size or length > size - offset: raise ReadFailure('ocrDamaged')
+                if kind == b'moov': raise ReadFailure('ocrMultipleFrames')
+                offset += length
+                source.seek(offset)
+            run([sys.executable, '-B', str(Path(__file__).resolve()), '--inspect-heif', str(path)], maximum=1024)
+        elif head[:4] in (b'II+\0', b'MM\0+'):
+            raise ReadFailure('ocrDamaged')
+        elif head[:4] in (b'II*\0', b'MM\0*'):
+            order = '<' if head[:2] == b'II' else '>'
+            offset = struct.unpack(order+'I', head[4:8])[0]
+            if offset < 8 or offset > MAX_BYTES-2:
+                raise ReadFailure('ocrDamaged')
+            source.seek(offset)
+            count = struct.unpack(order+'H', source.read(2))[0]
+            source.seek(offset+2+12*count)
+            if struct.unpack(order+'I', source.read(4))[0]:
+                raise ReadFailure('ocrMultipleFrames')
+        elif head == b'\x89PNG\r\n\x1a\n':
+            for _ in range(65536):
+                raw=source.read(8)
+                if len(raw)!=8:raise ReadFailure('ocrDamaged')
+                length, kind=struct.unpack('>I4s',raw)
+                if kind==b'acTL':raise ReadFailure('ocrMultipleFrames')
+                if kind==b'IDAT':return
+                if length>MAX_BYTES:raise ReadFailure('ocrLimit')
+                source.seek(length+4,1)
+            raise ReadFailure('ocrLimit')
+
+
+class Document:
+    def __init__(self):
+        self.temporary = None
+        self.path = None
+        self.pages = 0
+        self.rendered_pages = self.rendered_pixels = 0
+
+    def close(self):
+        if self.temporary is not None:
+            self.temporary.cleanup()
+        self.temporary = None
+        self.path = None
+        self.pages = 0
+        self.rendered_pages = self.rendered_pixels = 0
+
+    def request(self, request):
+        operation = request.get('operation')
+        if operation == 'close':
+            self.close()
+            return {}
+        if operation in ('open', 'image'):
+            self.close()
+            self.temporary = tempfile.TemporaryDirectory(prefix='favenio-document-')
+            self.path = snapshot(request['path'], self.temporary.name)
+            if operation == 'image':
+                try:
+                    preflight_image(self.path)
+                    normalized = Path(self.temporary.name, 'normalized.png')
+                    run([str(Path(__file__).resolve().parent.parent / 'favenio'), '--normalize-ocr', str(self.path), str(normalized), '8192'], maximum=1024, timeout=8)
+                    return dict(reader=OCR_READER, blocks=recognize(normalized, self.temporary.name))
+                finally:
+                    self.close()
+            info = pdf_information(self.path)
+            if info.get('Encrypted', '').startswith('yes'):
+                self.close()
+                raise ReadFailure('documentEncrypted')
+            self.pages = int(info.get('Pages', '0'))
+            if not 0 < self.pages <= 10_000_000:
+                raise ReadFailure('documentDamaged')
+            return dict(pageCount=self.pages, pdfOCRCapability=1)
+        index = request.get('index')
+        if type(index) is not int or not self.path or not 0 <= index < min(self.pages, 512):
+            raise ReadFailure('documentDamaged')
+        if operation == 'page':
+            output = run(['pdftotext', '-f', str(index+1), '-l', str(index+1), '-enc', 'UTF-8', '-eol', 'unix', '-nopgbrk', '-layout', str(self.path), '-'])
+            return dict(page=index+1, text=output.decode('utf-8', 'strict'))
+        if operation == 'ocrPage':
+            if index >= 128 or self.rendered_pages >= 16:
+                raise ReadFailure('pdfOCRLimit')
+            info = pdf_information(self.path, index+1)
+            box = next((value for key, value in info.items() if key.endswith('CropBox')), '')
+            bounds = [float(value) for value in box.split()]
+            if len(bounds) != 4 or not all(math.isfinite(value) for value in bounds):
+                raise ReadFailure('documentDamaged')
+            width, height = (math.ceil(abs(bounds[i+2]-bounds[i]) * 150 / 72) for i in (0, 1))
+            pixels = width * height
+            if width <= 0 or height <= 0 or max(width,height)>4096 or pixels>6_000_000 or self.rendered_pixels+pixels>32_000_000:
+                raise ReadFailure('pdfOCRLimit')
+            prefix = Path(self.temporary.name, 'page')
+            run(['pdftoppm', '-f', str(index+1), '-l', str(index+1), '-singlefile', '-cropbox', '-r', '150', '-png', str(self.path), str(prefix)], maximum=1024)
+            self.rendered_pages += 1
+            self.rendered_pixels += pixels
+            return dict(reader=PDF_OCR_READER, page=index+1, blocks=recognize(prefix.with_suffix('.png'), self.temporary.name))
+        raise ReadFailure('documentReadError')
+
+
+def main():
+    ctypes.CDLL(None).prctl(1, signal.SIGKILL, 0, 0, 0)
+    if os.getppid() == 1:
+        return
+    document = Document()
+    try:
+        while True:
+            line = sys.stdin.buffer.readline(65538)
+            if not line:
+                return
+            if len(line) > 65536 or not line.endswith(b'\n'):
+                return
+            try:
+                value = json.loads(line)
+                if not isinstance(value, dict):
+                    raise ReadFailure('documentReadError')
+                fingerprint = reader_fingerprint()
+                result = document.request(value)
+                if fingerprint != reader_fingerprint():
+                    raise ReadFailure('documentReadError')
+                response = dict(result, ok=True, schemaVersion=1, readerFingerprint=fingerprint)
+            except ReadFailure as error:
+                response = dict(ok=False, schemaVersion=1, reason=str(error))
+            except (ValueError, KeyError, OSError, UnicodeError, subprocess.SubprocessError, struct.error):
+                response = dict(ok=False, schemaVersion=1, reason='documentReadError')
+            data = json.dumps(response, ensure_ascii=True)
+            if len(data.encode()) > 2 * 1024**2:
+                data = json.dumps(dict(ok=False, schemaVersion=1, reason='documentLimit'))
+            sys.stdout.write(data + '\n')
+            sys.stdout.flush()
+    finally:
+        document.close()
+
+
+if __name__ == '__main__':
+    if len(sys.argv) == 3 and sys.argv[1] == '--inspect-heif':
+        try:
+            child_limits()
+            inspect_heif(Path(sys.argv[2]))
+        except ReadFailure as error:
+            print(str(error), file=sys.stderr)
+            sys.exit(2)
+    else:
+        main()

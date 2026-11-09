@@ -1,96 +1,5 @@
 import AppKit
 
-struct ControlSearchInput {
-    let pattern: String
-    let roots: [String]
-    var root: String { roots.count == 1 ? roots[0] : "" }
-    let options: SearchConfiguration
-    init(pattern: String, root: String, options: SearchConfiguration) {
-        self.init(pattern: pattern, roots: [root], options: options)
-    }
-    init(pattern: String, roots: [String], options: SearchConfiguration) {
-        self.pattern = pattern; self.roots = roots; self.options = options
-    }
-    var object: [String: Any] {
-        var value: [String: Any] = ["pattern": pattern,
-            "options": options.queryItems.map { ["name": $0.name, "value": $0.value ?? ""] }]
-        if options.pdfOCR { value["schemaVersion"] = 7; value["roots"] = roots }
-        else if options.ocr { value["schemaVersion"] = 6; value["roots"] = roots }
-        else if options.localOnly { value["schemaVersion"] = 5; value["roots"] = roots }
-        else if options.requiresFinderMetadata { value["schemaVersion"] = 4; value["roots"] = roots }
-        else if options.requiresDateRanges { value["schemaVersion"] = 3; value["roots"] = roots }
-        else if roots.count == 1 { value["root"] = roots[0] }
-        else { value["schemaVersion"] = 2; value["roots"] = roots }
-        return value
-    }
-    static func decode(_ value: Any?) throws -> ControlSearchInput {
-        guard let object = value as? [String: Any],
-              let pattern = object["pattern"] as? String, !pattern.utf8.contains(0),
-              let pairs = object["options"] as? [[String: String]] else {
-            throw SearchControlFailure(code: "invalidRequest", message: "Konfiguration braucht Muster, Suchbereiche und Optionen.")
-        }
-        let roots: [String]
-        if Set(object.keys) == ["pattern", "root", "options"], let root = object["root"] as? String {
-            roots = [root]
-            if let problem = SearchRoots.problem(roots, limited: false) {
-                throw SearchControlFailure(code: "invalidRequest", message: problem)
-            }
-        } else if Set(object.keys) == ["schemaVersion", "pattern", "roots", "options"],
-                  [2, 3, 4, 5, 6, 7].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0), let paths = object["roots"] as? [String],
-                  SearchRoots.problem(paths) == nil { roots = paths }
-        else { throw SearchControlFailure(code: "invalidRequest", message: "Ungültige oder zu große Suchbereichsliste (Konfigurationsformat 2).") }
-        let known = Set(["mode", "content", "only", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "field", "exclude", "term", "criteria", "encoding", "date-ranges", "date-reference-time", "finder-metadata", "local-only", "ocr", "pdf-ocr"] + SearchConfiguration.pixelKeys + FactFilterOption.all.map { $0.key })
-        let booleans = Set(["content", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "finder-metadata", "local-only", "ocr", "pdf-ocr"])
-        var seen = Set<String>()
-        var items: [URLQueryItem] = []
-        for pair in pairs {
-            guard Set(pair.keys) == ["name", "value"], let name = pair["name"], let text = pair["value"], !text.utf8.contains(0), known.contains(name),
-                  name == "exclude" || name == "term" || seen.insert(name).inserted,
-                  !booleans.contains(name) || ["0", "1"].contains(text),
-                  name != "mode" || SearchTextMode(rawValue: text) != nil,
-                  name != "only" || ["both", "files", "dirs"].contains(text),
-                  name != "field" || metadataFieldList().contains(text),
-                  name != "encoding" || SearchTextEncoding(rawValue: text) != nil,
-                  !["term", "exclude"].contains(name) || (!text.isEmpty && !text.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) })) else {
-                throw SearchControlFailure(code: "invalidRequest", message: "Unbekannte, doppelte oder ungültige Suchoption.")
-            }
-            items.append(URLQueryItem(name: name, value: text))
-        }
-        let options = SearchConfiguration.fromQueryItems(items)
-        guard !options.requiresDateRanges || [3, 4, 5, 6, 7].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0),
-              options.dateReferenceTime == nil || options.requiresDateRanges else {
-            throw SearchControlFailure(code: "invalidRequest", message: "Kalenderbereiche benötigen Konfigurationsformat 3.")
-        }
-        guard !options.requiresFinderMetadata || [4, 5, 6, 7].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0) else {
-            throw SearchControlFailure(code: "invalidRequest", message: "Finder-Eigenschaften benötigen Konfigurationsformat 4.")
-        }
-        guard !options.localOnly || [5, 6, 7].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0) else {
-            throw SearchControlFailure(code: "invalidRequest", message: "Lokale Inhalte benötigen Konfigurationsformat 5.")
-        }
-        guard !options.pdfOCR || SearchControlWire.integer(object["schemaVersion"]) == 7 else { throw SearchControlFailure(code: "invalidRequest", message: "PDF-OCR benötigt Konfigurationsformat 7.") }
-        guard !options.ocr || (SearchControlWire.integer(object["schemaVersion"]) ?? 0) >= 6 else {
-            throw SearchControlFailure(code: "invalidRequest", message: "OCR benötigt Konfigurationsformat 6.")
-        }
-        if let problem = CriteriaTransport.problem(items) {
-            throw SearchControlFailure(code: "invalidRequest", message: problem)
-        }
-        guard options.metadataField == nil || options.mode == .metadata else {
-            throw SearchControlFailure(code: "invalidRequest", message: "Ein Metadatenfeld braucht den Metadatenmodus.")
-        }
-        return ControlSearchInput(pattern: pattern, roots: roots, options: options)
-    }
-}
-
-struct ControlledSearchRun {
-    let id = UUID().uuidString
-    let startedAt = Date().timeIntervalSince1970
-    let input: ControlSearchInput
-    var state = "running"
-    var warningCount = 0
-    var error: String?
-    var origin = "live"
-}
-
 final class LocalSearchController {
     weak var host: MainController?
     let runtimeID = UUID().uuidString
@@ -163,20 +72,8 @@ final class LocalSearchController {
         if let path = host.progressPath { object["progressPath"] = path }
         return object
     }
-    static func identityObject(_ identity: HitIdentity) -> [String: Any] {
-        ["filesystemPath": identity.filesystemPath, "archiveMembers": identity.archiveMembers,
-         "archiveMemberBytes": identity.archiveMemberBytes]
-    }
-    static func identity(_ value: Any?) throws -> HitIdentity {
-        guard let object = value as? [String: Any], Set(object.keys) == ["filesystemPath", "archiveMembers", "archiveMemberBytes"],
-              let path = object["filesystemPath"] as? String,
-              let members = object["archiveMembers"] as? [String], let bytes = object["archiveMemberBytes"] as? [String],
-              bytes.isEmpty || bytes.count == members.count,
-              bytes.allSatisfy({ Data(base64Encoded: $0) != nil }) else {
-            throw SearchControlFailure(code: "invalidRequest", message: "Ungültige Trefferidentität.")
-        }
-        return HitIdentity(filesystemPath: path, archiveMembers: members, archiveMemberBytes: bytes)
-    }
+    static func identityObject(_ identity: HitIdentity) -> [String: Any] { ControlIdentity.object(identity) }
+    static func identity(_ value: Any?) throws -> HitIdentity { try ControlIdentity.parse(value) }
     func requireRun(_ request: [String: Any]) throws {
         guard let id = request["runID"] as? String, id == run?.id else {
             throw SearchControlFailure(code: "stale", message: "Suchlauf ist nicht mehr aktuell.")

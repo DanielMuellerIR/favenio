@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Service
+MimeType=inode/directory;
+Actions=FavenioQuick;
+X-KDE-Protocols=file
+
+[Desktop Action FavenioQuick]
+Name=Mit FavenioQuick durchsuchen
+Icon=system-search
+Exec=favenio-quick --directory %f

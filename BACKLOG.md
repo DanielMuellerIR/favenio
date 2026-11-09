@@ -3,6 +3,17 @@
 Vor jedem Punkt gegen Code und Git verifizieren. Erledigte Punkte in Changelog
 oder Release Notes verschieben, nicht im AGENTS-Dauerprompt belassen.
 
+## Linux-Port
+
+Der portable Swift-Unterbau, Rust/GTK-Oberflächen, Dateimanager-Adapter,
+PDF/OCR-Adapter, integrierte Vorschau und signierte Updatekoordination sind
+implementiert. Die echte Desktopprüfung mit Nemo/X11 und Dolphin/Wayland sowie
+signierte lokale Paketupdates sind bestanden. Die Datei-/Archivübergabe an den korrigierten Fastra-Linux-Empfänger ist unter
+Cinnamon/X11 und Plasma/Wayland bestanden. Fastra und seine Laufzeitpakete sind eine separate optionale
+Installation.
+Die Linux-Auslieferung besitzt einen eigenen signierten GitHub-Updatekanal.
+[Stand und Grenzen](docs/LINUX.md).
+
 ## Umgesetzter Funktionsausbau
 
 Der umgesetzte Ausbau steht in [docs/ROADMAP.md](docs/ROADMAP.md): ein grafischer

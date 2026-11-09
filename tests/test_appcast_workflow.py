@@ -151,7 +151,8 @@ class WorkflowShellSyntaxTest(unittest.TestCase):
 
     def test_expected_update_key_matches_build_script(self):
         build = BUILD_SCRIPT.read_text(encoding="utf-8")
-        self.assertIn('SPARKLE_PUBLIC_KEY="%s"' % PRODUCTION_KEY, build)
+        self.assertEqual((BUILD_SCRIPT.parent / "common/update-public-key.txt").read_text().strip(), PRODUCTION_KEY)
+        self.assertIn('SPARKLE_PUBLIC_KEY=$(cat common/update-public-key.txt)', build)
         self.assertIn('SPARKLE_PUBLIC_KEY: "%s"' % PRODUCTION_KEY,
                       WORKFLOW.read_text(encoding="utf-8"))
 

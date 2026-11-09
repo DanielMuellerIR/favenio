@@ -1,5 +1,10 @@
 # Begrenzte Fundstellenvorschau
 
+Linux verwendet denselben Suchkern und gemeinsame Anwendungsmodelle. Die
+plattformabhängigen Leser, Vorschau- und Transportgrenzen stehen in
+[LINUX.md](LINUX.md) und [PORTABLE_CORE.md](PORTABLE_CORE.md).
+
+
 `--json --content-preview` ergänzt Treffer um das optionale Objekt
 `contentPreview` (Schema 1). Die GUI-Schaltfläche „Fundstellenvorschau“ wählt
 diesen Lesepfad für den nächsten Suchlauf. Ein bereits abgeschlossener Lauf
