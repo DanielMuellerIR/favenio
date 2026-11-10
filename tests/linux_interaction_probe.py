@@ -148,6 +148,16 @@ def main():
             if evidence:
                 subprocess.run(['import','-window','root',str(Path(evidence)/'result-context.png')],check=True,timeout=5)
             key('Escape',1);key('Escape',0);time.sleep(.1)
+            # Echte Sortierauswahl und anschließende Ergebnisabfrage gemeinsam prüfen.
+            for sort_index in [6, 7, 8, 0]:
+                before=call('results',runID=state['runID'],offset=0,limit=128)
+                xt.XTestFakeMotionEvent(display,-1,250,180,0)
+                xt.XTestFakeButtonEvent(display,1,1,0);xt.XTestFakeButtonEvent(display,1,0,0);x.XFlush(display)
+                for name in ['Home']+['Down']*sort_index+['Return']:key(name,1);key(name,0)
+                time.sleep(.3)
+                page=call('results',runID=state['runID'],offset=0,limit=128)
+                assert 'error' not in page and len(page['hits'])==2,page
+                assert page['generation']!=before['generation'],'Sort widget must change the projection'
             xt.XTestFakeMotionEvent(display,-1,245,112,0)
             xt.XTestFakeButtonEvent(display,1,1,0);xt.XTestFakeButtonEvent(display,1,0,0);x.XFlush(display)
             time.sleep(.3)
@@ -172,10 +182,14 @@ def main():
             if require_scope:assert config.get('roots',[config.get('root')])==[str(fixture)],config
             print('X11 INPUT OK: Quick search and handoff, selection, Space preview open/close, exact clipboard path, criteria editor')
         finally:
-            os.killpg(process.pid,signal.SIGTERM)
+            try:os.killpg(process.pid,signal.SIGTERM)
+            except ProcessLookupError:pass
             try:process.wait(timeout=5)
             except subprocess.TimeoutExpired:os.killpg(process.pid,signal.SIGKILL);process.wait()
             log.close()
+            if os.environ.get('FAVENIO_EVIDENCE_DIR'):
+                target=Path(os.environ['FAVENIO_EVIDENCE_DIR']);target.mkdir(parents=True,exist_ok=True)
+                (target/'interaction-app.log').write_bytes((root/'app.log').read_bytes())
 
 
 if __name__=='__main__':main()

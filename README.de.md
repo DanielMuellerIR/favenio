@@ -2,7 +2,7 @@
 
 # Favenio
 
-Linux: Rust/GTK-Oberflächen verwenden die gemeinsamen Swift-Anwendungsmodelle und den Python-Suchkern. Signierte Pakete stehen im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.2) und über einen eigenen GitHub-Updatekanal bereit. Die Desktop-Anbindung ist unter X11 und Wayland geprüft. Siehe [Linux-Bau und Installation](docs/LINUX.md).
+Linux: Rust/GTK-Oberflächen verwenden die gemeinsamen Swift-Anwendungsmodelle und den Python-Suchkern. Signierte Pakete stehen im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.3) und über einen eigenen GitHub-Updatekanal bereit. Die Desktop-Anbindung ist unter X11 und Wayland geprüft. Siehe [Linux-Bau und Installation](docs/LINUX.md).
 
 
 **„facile invenio", Latein für „ich finde mit Leichtigkeit".**
@@ -24,6 +24,10 @@ die Dateien einfach normale Dateien — wie bisher.
 Der Suchkern ist pures Python 3 (nur Standardbibliothek), eine Datei, keine
 Installation. Darauf aufbauend gibt es zwei native macOS-Apps: ein großes
 Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
+
+## Neu in 0.66.3
+
+Linux-Ergebnisabfragen unterstützen alle Sortierungen. Metadatenkriterien behalten „Alle Textfelder“ beim Bearbeiten bei. Ordnergruppen unterscheiden auch gleich dargestellte Namen mit unterschiedlichen ursprünglichen Pfadbytes.
 
 ## Neu in 0.66.2
 

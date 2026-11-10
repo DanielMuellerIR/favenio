@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.66.3 — 2026-11-09
+
+- Linux: Ergebnisabfragen bleiben bei den Sortierungen Bildmaße, Finder-Tags und Finder-Kommentar stabil.
+- Linux: Metadatenkriterien behalten beim Öffnen und Übernehmen die Auswahl „Alle Textfelder“.
+- Ordnergruppen unterscheiden ursprüngliche Pfadbytes auch bei gleich dargestellten, nicht als UTF-8 lesbaren Namen.
+
 ## 0.66.2 — 2026-11-08
 
 - Linux: Leertaste öffnet die Vorschau aus Liste und Miniaturen, bevor GTK die Taste verarbeitet; eine weitere Leertaste schließt die Vorschau auch bei fokussiertem Knopf.

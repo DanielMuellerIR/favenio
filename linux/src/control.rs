@@ -294,7 +294,7 @@ impl Ui {
                     {
                         return Err("stale".into());
                     }
-                    let page=self.model.call(json!({"operation":"page","runID":self.run.borrow().as_deref().unwrap_or(""),"offset":offset,"limit":limit,"sort":(["name","size","path","type","modified","created"][self.sorting.selected()as usize]),"ascending":self.ascending.is_active()}))?;
+                    let page=self.model.call(json!({"operation":"page","runID":self.run.borrow().as_deref().unwrap_or(""),"offset":offset,"limit":limit,"sort":(SORT_KEYS[self.sorting.selected()as usize]),"ascending":self.ascending.is_active()}))?;
                     for key in ["hits", "count", "nextOffset", "hasMore"] {
                         reply[key] = page[key].clone();
                     }

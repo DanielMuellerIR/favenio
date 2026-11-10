@@ -699,9 +699,14 @@ struct ResultProjection {
                     + (parent.isEmpty ? [] : [String(decoding: parent, as: UTF8.self)])
                 return (key, parts.joined(separator: " → "))
             }
-            let parent = (hit.filesystemPath as NSString).deletingLastPathComponent
+            var path = outer
+            while path.count > 1 && path.last == 47 { path.removeLast() }
+            let parentBytes = path.lastIndex(of: 47).map {
+                $0 == path.startIndex ? Data([47]) : Data(path[..<$0])
+            } ?? Data()
+            let parent = String(decoding: parentBytes, as: UTF8.self)
             let title = hit.searchRoot == nil ? hit.folderText(relativeTo: root) : parent
-            return (ResultGroupKey(components: [Data(parent.utf8)]), title.isEmpty ? "Suchordner" : abbreviateHome(title))
+            return (ResultGroupKey(components: [parentBytes]), title.isEmpty ? "Suchordner" : abbreviateHome(title))
         case .fileExtension:
             if hit.isDirectory { return (ResultGroupKey(components: []), "Ordner") }
             let pathComponents: [Data] = (members.last ?? outer).split(separator: 47)

@@ -163,6 +163,20 @@ enum ResultGroupingProbe {
             let archives = ResultProjection(hits: hits + [hit("/root/outside.txt")], mode: .archive)
             report["structuredOuter"] = archives.groups.count == 2
                 && archives.groups.first { $0.key.components == [Data("/root/source.zip".utf8)] }?.hitIndices.count == 8
+            let rawPaths = [Data("/tmp/".utf8) + Data([255]) + Data("/a.txt".utf8),
+                            Data("/tmp/".utf8) + Data([254]) + Data("/b.txt".utf8)]
+            let rawHits = rawPaths.map { raw -> Hit in
+                var value = hit(String(decoding: raw, as: UTF8.self))
+                value.filesystemPathBytes = raw
+                return value
+            } + [hit("/tmp/é/a.txt"), hit("/tmp/e\u{301}/b.txt"), hit("/a.txt")]
+            let rawFolders = ResultProjection(hits: rawHits, mode: .folder)
+            report["rawFilesystemFolders"] = rawFolders.groups.count == rawHits.count
+            report["rootFolderKey"] = rawFolders.groups.contains { $0.key.components == [Data("/".utf8)] }
+            let collapsedKey = rawFolders.groups.first { $0.hitIndices.contains(0) }!.key
+            let collapsedRaw = ResultProjection(hits: rawHits, mode: .folder, collapsed: [collapsedKey])
+            report["independentRawCollapse"] = collapsedRaw.tableRow(for: 0) == nil
+                && (1..<rawHits.count).allSatisfy { collapsedRaw.tableRow(for: $0) != nil }
         case "large":
             let hits = (0..<100_000).map { hit("/root/folder-\($0 % 100)/file-\($0).txt") }
             let start = ProcessInfo.processInfo.systemUptime

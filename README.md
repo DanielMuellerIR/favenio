@@ -2,7 +2,7 @@
 
 # Favenio
 
-Linux: Rust/GTK frontends share the Swift application models and Python search engine. Signed packages are available through the [Linux release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.2) and a separate GitHub update channel. Desktop integration has been tested on X11 and Wayland. See [Linux build and installation](docs/LINUX.md).
+Linux: Rust/GTK frontends share the Swift application models and Python search engine. Signed packages are available through the [Linux release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.3) and a separate GitHub update channel. Desktop integration has been tested on X11 and Wayland. See [Linux build and installation](docs/LINUX.md).
 
 
 **"facile invenio" — Latin for "I find with ease".**
@@ -25,6 +25,10 @@ regular files, exactly as before.
 The search core is pure Python 3 (standard library only), a single file, no
 installation. Two native macOS apps are built on top of it: a full search
 window and a small quick-search panel for the Finder toolbar.
+
+## What’s new in 0.66.3
+
+Linux result queries support every sort option. Editing metadata criteria preserves “All text fields”. Folder groups also distinguish identically displayed names whose original path bytes differ.
 
 ## What’s new in 0.66.2
 

@@ -129,13 +129,12 @@ fn node(value: Value, catalog: &Value, depth: usize) -> Node {
         controls.append(&entry);
         controls.append(&case);
         container.append(&controls);
-        let metadata = gtk::DropDown::from_strings(
-            &strings(&catalog["metadataFields"])
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-        );
-        let metadata_fields = strings(&catalog["metadataFields"]);
+        let mut metadata_fields = vec![String::new()];
+        metadata_fields.extend(strings(&catalog["metadataFields"]));
+        let metadata_titles: Vec<_> = metadata_fields.iter().map(|field| {
+            if field.is_empty() { "Alle Textfelder" } else { field.as_str() }
+        }).collect();
+        let metadata = gtk::DropDown::from_strings(&metadata_titles);
         metadata.set_visible(selected == "metadata");
         if let Some(i) = metadata_fields
             .iter()
@@ -232,7 +231,7 @@ fn node(value: Value, catalog: &Value, depth: usize) -> Node {
                     result["caseSensitive"] = json!(true);
                 }
                 if f == "metadata" {
-                    if let Some(v) = metadata_fields.get(metadata.selected() as usize) {
+                    if let Some(v) = metadata_fields.get(metadata.selected() as usize).filter(|v| !v.is_empty()) {
                         result["metadataField"] = json!(v);
                     }
                 }
@@ -461,6 +460,33 @@ pub(super) fn date_dialog(value: &Rc<RefCell<Option<Value>>>, entry: &gtk::Entry
     window.set_child(Some(&body));
     window.present();
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_field_roundtrip() {
+        gtk::init().expect("GTK-Test benötigt eine private Anzeige (z. B. Xvfb)");
+        let catalog = json!({"fields":["metadata"], "labels":{"metadata":"Metadaten"},
+            "operators":{"metadata":["contains"]},
+            "operatorTitles":{"metadata":{"contains":"enthält"}},
+            "metadataFields":["Title","Comment"]});
+        for explicit in [None, Some("Title"), Some("Comment")] {
+            let mut input = json!({"id":"meta","field":"metadata","operator":"contains","value":"needle"});
+            if let Some(field) = explicit { input["metadataField"] = json!(field); }
+            let tree = node(input.clone(), &catalog, 0);
+            assert_eq!((tree.value)(), input);
+            let menu = tree.widget.first_child().unwrap().next_sibling().unwrap()
+                .downcast::<gtk::DropDown>().unwrap();
+            assert_eq!(menu.model().unwrap().n_items(), 3);
+            menu.set_selected(2);
+            assert_eq!((tree.value)()["metadataField"], "Comment");
+            menu.set_selected(0);
+            assert!((tree.value)().get("metadataField").is_none());
+        }
+    }
+}
+
 pub(super) fn open(ui: &Rc<Ui>) {
     edit(ui, false)
 }

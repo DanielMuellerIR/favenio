@@ -8,7 +8,7 @@ Die Desktop-Anbindung wurde unter Cinnamon/X11 und Plasma/Wayland mit Nemo und
 Dolphin geprüft, einschließlich Quick-Übergabe, Vorschau, Zwischenablage und
 Drag-and-drop. Die Datei- und Archivübergabe an einen korrigierten Fastra-Linux-Empfänger ist
 unter Cinnamon/X11 und Plasma/Wayland geprüft. Das signierte Linux-Paket steht
-im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.2)
+im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.3)
 bereit.
 
 ## Voraussetzungen
