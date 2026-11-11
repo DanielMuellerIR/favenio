@@ -7,7 +7,7 @@ Linux: Rust/GTK frontends share the Swift application models and Python search e
 
 **"facile invenio" — Latin for "I find with ease".**
 
-Favenio is an index-free file search for macOS in the spirit of EasyFind: it
+Favenio is an index-free file search for macOS and Linux in the spirit of EasyFind: it
 scans the file system directly (no index, no Spotlight) for file names or file
 contents. What sets it apart: **Favenio also looks inside archives.** Supported
 are the zip family (zip, jar, whl, epub, docx, xlsx, pptx, odt, ods, odp,

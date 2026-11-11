@@ -7,7 +7,7 @@ Linux: Rust/GTK-Oberflächen verwenden die gemeinsamen Swift-Anwendungsmodelle u
 
 **„facile invenio", Latein für „ich finde mit Leichtigkeit".**
 
-Favenio ist eine indexlose Dateisuche für macOS im Stil von EasyFind: Sie
+Favenio ist eine indexlose Dateisuche für macOS und Linux im Stil von EasyFind: Sie
 durchsucht das Dateisystem direkt (ohne Index, ohne Spotlight) nach Dateinamen
 oder Dateiinhalten. Die Besonderheit: **Favenio schaut auch in Archive
 hinein.** Unterstützt werden die Zip-Familie (zip, jar, whl, epub, docx, xlsx,
