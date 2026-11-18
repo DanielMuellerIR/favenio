@@ -181,7 +181,7 @@ class SwiftGuardTests(unittest.TestCase):
         applyConfiguration() in die Oberflaeche; Laden startet KEINE Suche
         und erhält fehlende gespeicherte Suchbereiche sichtbar."""
         self.assertIn("struct SearchTemplate: Equatable", COMMON)
-        self.assertIn("static let version = 9", COMMON)
+        self.assertIn("static let version = 10", COMMON)
         self.assertIn('"search-templates.json"', COMMON)
         handoff = swift_function(GUI, "func handleFavenioURL(")
         self.assertIn("let configuration = SearchConfiguration.fromQueryItems(items)", handoff)
