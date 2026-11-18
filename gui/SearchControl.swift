@@ -5,7 +5,10 @@ final class LocalSearchController {
     let runtimeID = UUID().uuidString
     let windowID = UUID().uuidString
     var run: ControlledSearchRun?
-    var recordedSource: [String: Any]?
+    var openedRecording: SearchRecording?
+    var recordedSource: [String: Any]? {
+        openedRecording.map { ["runID": $0.runID, "startedAt": $0.startedAt, "capturedAt": $0.capturedAt] }
+    }
     private(set) var generation = 0
     private struct Replay { let request: Data; let reply: Data; let at: TimeInterval }
     private var replays: [String: Replay] = [:]
@@ -24,7 +27,7 @@ final class LocalSearchController {
         if candidate.isListening { server = candidate }
         else { host?.presentActionIssue(summary: "Lokale Suchsteuerung ist bereits belegt.", detail: nil) }
     }
-    func begin(_ input: ControlSearchInput) { recordedSource = nil; handoff.cancelPending(); run = ControlledSearchRun(input: input); changed() }
+    func begin(_ input: ControlSearchInput) { openedRecording = nil; handoff.cancelPending(); run = ControlledSearchRun(input: input); changed() }
     func changed() { generation += 1 }
     func cancelled() { if run?.state == "running" { run?.state = "cancelled" } }
     func finished(_ exit: SearchExit) {

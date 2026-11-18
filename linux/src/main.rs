@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use std::os::unix::ffi::OsStringExt;
 use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 
-const SORT_KEYS: [&str; 9] = [
+const SORT_KEYS: [&str; 10] = [
     "name",
     "size",
     "path",
@@ -29,6 +29,7 @@ const SORT_KEYS: [&str; 9] = [
     "dims",
     "finderTags",
     "finderComment",
+    "arrival",
 ];
 
 struct Ui {
@@ -80,6 +81,7 @@ struct Ui {
     grid: gtk::GridView,
     result_stack: gtk::Stack,
     projection_dirty: std::cell::Cell<bool>,
+    arrival_prefix: std::cell::Cell<bool>,
     last_projection: RefCell<std::time::Instant>,
     ended: std::cell::Cell<bool>,
     run_state: RefCell<String>,
@@ -275,6 +277,9 @@ impl Ui {
                 *self.last_configuration.borrow_mut() = Some(snapshot);
                 self.store.remove_all();
                 self.all_hits.borrow_mut().clear();
+                self.arrival_prefix.set(true);
+                self.result_count.set(0);
+                self.result_generation.set(self.result_generation.get() + 1);
                 self.collapsed.borrow_mut().clear();
                 self.ended.set(false);
                 *self.run_state.borrow_mut() = "running".into();
@@ -334,14 +339,16 @@ impl Ui {
                         "limitReached" => "20-Treffer-Grenze · Alle in Favenio öffnen",
                         _ => event["error"].as_str().unwrap_or("Suche fehlgeschlagen"),
                     };
-                    self.status.set_text(&format!(
+                    let summary = format!(
                         "{} Treffer · {} · {} Warnungen",
                         event["count"]
                             .as_u64()
                             .unwrap_or(self.all_hits.borrow().len() as u64),
                         description,
                         event["warnings"]
-                    ));
+                    );
+                    self.status
+                        .set_text(event["emptyResultText"].as_str().unwrap_or(&summary));
                     *self.report.borrow_mut() = event.get("report").cloned();
                     *self.report_text.borrow_mut() = event["reportText"]
                         .as_str()
@@ -399,6 +406,7 @@ impl Ui {
                 Some("preview") => self.preview_event(event),
                 Some("handoffIssue") => self.status.set_text(event["text"].as_str().unwrap_or("")),
                 Some("filtered") => {
+                    self.arrival_prefix.set(false);
                     self.projection_dirty.set(true);
                     if let Some(e) = event["error"].as_str() {
                         self.status.set_text(e);
@@ -422,7 +430,7 @@ impl Ui {
                 || self.last_projection.borrow().elapsed() >= Duration::from_millis(500))
         {
             self.projection_dirty.set(false);
-            self.refresh_projection();
+            self.refresh_streaming_results();
             *self.last_projection.borrow_mut() = std::time::Instant::now();
         }
         self.refresh_scope_caption();
@@ -948,6 +956,7 @@ fn build(
         ("literal-wildcards", "Platzhalter wörtlich"),
         ("ocr", "Bild-OCR (DE/EN)"),
         ("pdf-ocr", "Scan-PDF-OCR"),
+        ("pptx-ocr", "PPTX-Bild-OCR"),
     ] {
         let c = gtk::CheckButton::with_label(title);
         extras.append(&c);
@@ -1060,6 +1069,7 @@ fn build(
         "Bildmaße",
         "Finder-Tags",
         "Finder-Kommentar",
+        "Eingangsreihenfolge",
     ]);
     let ascending = gtk::CheckButton::with_label("Aufsteigend");
     ascending.set_active(true);
@@ -1267,6 +1277,7 @@ fn build(
         grid,
         result_stack,
         projection_dirty: std::cell::Cell::new(false),
+        arrival_prefix: std::cell::Cell::new(false),
         last_projection: RefCell::new(std::time::Instant::now()),
         ended: std::cell::Cell::new(true),
         run_state: RefCell::new("idle".into()),
@@ -1515,6 +1526,8 @@ fn build(
     let weak = Rc::downgrade(&ui);
     ui.sorting.connect_selected_notify(move |_| {
         if let Some(ui) = weak.upgrade() {
+            ui.ascending
+                .set_sensitive(SORT_KEYS[ui.sorting.selected() as usize] != "arrival");
             ui.refresh_projection();
         }
     });

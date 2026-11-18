@@ -413,7 +413,7 @@ Objekte oder Folien erfüllen. Ein einzelner Zeilenmatcher verbindet sie nicht.
 **Notizen sind ausgeschlossen** und werden weder gelesen noch in Folientext
 vermischt. Ebenfalls ausgeschlossen: Master-/Layout-/Handouttexte, Kommentare,
 a:fld-Felder einschließlich gespeicherter Datums-/Foliennummerntexte, Diagramme,
-SmartArt, Bilder/OCR, eingebettete Fremdobjekte und AlternateContent-/Erweiterungs-
+SmartArt, Bilder bei ausgeschalteter PPTX-Bild-OCR, eingebettete Fremdobjekte und AlternateContent-/Erweiterungs-
 material. Form-/Textkastentext gehört dagegen zum unterstützten Umfang.
 Attribute, Objektnamen, Tags, Formatbefehle und technische Paketdaten erzeugen
 keinen Texttreffer. Ausgeblendete Folien und Textformen sind enthalten; Schrift,
@@ -470,5 +470,34 @@ Formatgrundlagen: [Präsentation und Folienliste](https://learn.microsoft.com/en
 [getrennte Notizenteile](https://learn.microsoft.com/en-us/office/open-xml/presentation/working-with-notes-slides).
 
 Objekt-ID-Typ: [ST_DrawingElementId, unsigned 32-bit](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/9746bb87-3dd0-4c7d-ae43-e3547589def1). Numerisch gleiche ID-Schreibweisen dürfen innerhalb einer Folie nicht kollidieren.
+
+### PPTX-Bild-OCR
+
+**Dokumenttext → Weitere Filter → Eingebettete PPTX-Bilder per OCR lesen**
+beziehungsweise `--document-text --pptx-ocr` ergänzt die normalen Folientexte
+um erkannten Bildtext. Die Option ist standardmäßig aus. Der PPTX-Leser
+verwendet interne Bildbeziehungen von Bildobjekten (`p:pic`) und deren
+gespeicherte Objekt-ID. Die OCR verwendet das eingebettete Originalbild.
+Verknüpfte externe Bilder bleiben ausgelassen. Der Suchkern verwendet den
+bestehenden lokalen Bildhelfer für Deutsch und Englisch.
+
+Je Präsentation gelten acht Bildversuche, 8 MiB entpackte Bytes je Bild,
+24 MiB insgesamt und drei Sekunden für Bildmaterialisierung und OCR
+innerhalb der fünf Sekunden des PPTX-Lesers. Die gemeinsamen Dokument-,
+Archiv-, Pixel- und Helfergrenzen gelten zusätzlich. Suchbericht und
+Fundstellenvorschau nennen Grenzen und Herkunft. Eine fehlende Erkennung
+lässt die Abwesenheit im Original offen.
+
+Der kombinierte Leser verwendet auf macOS `pptx-vision-v1` und
+`pptx-vision-text-v1`, unter Linux `pptx-tesseract-v1` und
+`pptx-tesseract-text-v1`. Normale Absätze behalten `pptxParagraph`.
+`pptxOCR` trägt Folienteil, Foliennummer, Bildobjekt, Block, Zeile, Modellwert
+und die ungefähr erkannte Region im Bild. Linux bindet OCR-Belege zusätzlich
+an den Fingerabdruck des Helfers. Die Vorschau verwendet beim Nachladen dieselbe
+Leserkennung und Quellengeneration.
+
+Aktives `pptx-ocr=1` verwendet Konfigurationsformat 9, Quick-Übergabe 9,
+Vorlagenformat 10 und Aufzeichnungsformat 10. Die Aufzeichnung sowie die
+Quick-Übergabe tragen `pptxOCRCapability: 1`.
 
 Textlose PDF-Seiten können ausdrücklich mit `--pdf-ocr` ergänzt werden. Vorhandene Textebenen werden bevorzugt; Regeln, Mischbelege und Grenzen stehen unter [PDF-OCR](PDF_OCR.md). Ohne die Option bleibt der bisherige PDF-Textebenenpfad erhalten.

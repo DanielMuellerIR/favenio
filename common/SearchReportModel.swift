@@ -48,6 +48,26 @@ struct SearchReportSnapshot {
         state == "finished" && reasons.isEmpty && object["coverage"] as? String == "withinRequestedScope"
             ? "withinRequestedScope" : "incomplete"
     }
+    static func emptyResultText(for report: Self?) -> String {
+        let prefix = "Keine Treffer. "
+        guard let report, report.state == "finished" else {
+            return prefix + "Abdeckung unbekannt."
+        }
+        if report.coverage == "withinRequestedScope" {
+            return prefix + "Im angefragten Umfang gesucht."
+        }
+        for (category, title) in [("readError", "Eingeschränkte Suche"), ("budget", "Suchgrenze erreicht"),
+                                  ("intentional", "Auslassung")] {
+            if let reason = report.reasons.first(where: { $0["category"] as? String == category }),
+               let label = reason["label"] as? String {
+                return prefix + "\(title) – \(label)."
+            }
+        }
+        if (report.object["warningCount"] as? Int ?? 0) > 0 {
+            return prefix + "Der Suchlauf meldet Warnungen."
+        }
+        return prefix + "Abdeckung unbekannt."
+    }
     var summary: String {
         switch state {
         case "running": return "Suche läuft – vorläufiger Bericht"
@@ -97,7 +117,7 @@ struct SearchReportSnapshot {
                      "Muster: " + quoted(config["pattern"] ?? NSNull()), "Weitere Begriffe (UND): " + quoted(config["term"] ?? []),
                      "Kodierung: " + quoted(config["encoding"] ?? "utf-8"), "Ausschlüsse: " + quoted(config["exclude"] ?? [])]
         for (key, label) in [("regex", "Regulärer Ausdruck"), ("case_sensitive", "Groß-/Kleinschreibung"),
-                             ("exact", "Ganzes Ziel"), ("literal_wildcards", "Platzhalter wörtlich"), ("hidden", "Versteckte Bereiche einbeziehen"), ("local_only", "Nur lokal vorhandene Inhalte lesen"), ("ocr", "Bild-OCR im Dokumenttext (Deutsch/Englisch)"), ("pdf_ocr", "PDF-OCR für textlose Seiten (Deutsch/Englisch)")] {
+                             ("exact", "Ganzes Ziel"), ("literal_wildcards", "Platzhalter wörtlich"), ("hidden", "Versteckte Bereiche einbeziehen"), ("local_only", "Nur lokal vorhandene Inhalte lesen"), ("ocr", "Bild-OCR im Dokumenttext (Deutsch/Englisch)"), ("pdf_ocr", "PDF-OCR für textlose Seiten (Deutsch/Englisch)"), ("pptx_ocr", "OCR für eingebettete PPTX-Bilder (Deutsch/Englisch)")] {
             lines.append(label + ": " + (config[key] as? Bool == true ? "Ja" : "Nein"))
         }
         for (key, label) in [("only", "Datei-/Ordnertyp"), ("max_depth", "Ordner-Tiefengrenze"), ("effectiveArchiveDepth", "Archiv-Tiefengrenze"),

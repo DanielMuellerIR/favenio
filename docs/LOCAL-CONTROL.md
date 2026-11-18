@@ -12,6 +12,8 @@ beschreiben die Erweiterungen und ihre zusätzlichen Fähigkeiten.
 Die portable Erweiterung ergänzt Konfiguration 8 und Aufzeichnung 9 für
 bytegenaue äußere POSIX-Pfade und Linux-Leserkennungen. Frühere Formate bleiben
 lesbar; die tatsächlich angebotenen Versionen stehen in `capabilities`.
+PPTX-Bild-OCR ergänzt Konfiguration 9, Aufzeichnung 10 und
+`pptxOCRSchemaVersion: 1`. [PPTX-Bild-OCR](DOCUMENT_TEXT.md#pptx-bild-ocr)
 Unter Linux liegt der Helfer in `helpers/favenio-control` und verwendet einen
 mit Benutzerkennung und Rechten geprüften Unix-Socket mit begrenzten,
 längenpräfigierten JSON-Nachrichten. Die Haupt-App muss für mutierende
@@ -191,6 +193,31 @@ wird vor der Übergabe mit `sourceUnavailable` erklärt.
 Fehler ergeben Exit 2 mit Favenio-Diagnose. Es entsteht keine zweite Suchlogik.
 
 ## Suchaufzeichnungen (ab 0.38.0)
+
+### Vergleich in der macOS-Haupt-App
+
+Über **Ablage → Suchstand aufzeichnen…** speichert die Haupt-App einen beendeten
+Suchlauf. **Suchaufzeichnung öffnen…** zeigt seine damaligen Treffer.
+**Suche erneut ausführen und vergleichen** startet die gespeicherte Suchfrage
+und zeigt die beiden Gruppen **Neu gefunden** und **Nur früher gefunden**.
+Die App schreibt dasselbe Aufzeichnungsformat wie unter Linux. Sie akzeptiert
+auch die Dateien des vorhandenen Aufzeichnungshelfers.
+Beim Öffnen bleiben darin gespeicherte Auswahl- und Übergabeaktionen inaktiv.
+
+Der Vergleich verwendet die ursprünglichen Pfadbytes und die vollständige
+Archivkette. Er prüft die geordneten Suchbereiche, Kriterien und effektiven
+Kalendergrenzen. Wenn die Aufzeichnung gültige Kalenderbelege enthält, verwendet
+der neue Lauf dieselben konkreten Grenzen. Fehlende oder abweichende
+Kalenderbelege verhindern den Vergleich. Abbrüche und eingeschränkte Läufe
+werden gekennzeichnet. Wenn eine Suchwurzel fehlt, zeigt der Vergleich den
+Fehler ohne Treffergruppen. Frühere Aufzeichnungen bewahren den Abschlussstatus
+und die Warnungszahl. Ihre genaue Abdeckung bleibt unbekannt.
+
+Ein nur früher gefundener Treffer kann weiter existieren, inzwischen ein
+Kriterium verfehlen oder heute unlesbar sein. Die Aufzeichnungsgrenzen gelten
+für die gespeicherte Seite des Vergleichs.
+
+### Lokaler Steuervorgang
 
 `captureRecording` braucht die aktuelle `runID` und einen beendeten eigenen
 Suchlauf. Die Antwort enthält `recording`: je nach benötigten Fähigkeiten Schema 1–8, Konfiguration, ursprüngliche

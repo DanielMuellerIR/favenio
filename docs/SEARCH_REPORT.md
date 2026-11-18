@@ -152,3 +152,7 @@ werden nicht entfernt. Die gespeicherten begrenzten Beispiele bleiben für
 spätere kleinere Momentaufnahmen unverändert.
 
 PDF-OCR ergänzt `pdfOCRProjection` (bewusst begrenzter Originalbezug) und `pdfOCRLimit` (Seiten-/Renderbudget). Der Bericht nennt 128 Seiten, 16 gerenderte Seiten, 150 DPI, sechs Millionen Pixel je Seite, 32 Millionen insgesamt, Kante 4096 und zehn Sekunden. OCR-/PDF-Fehlergründe bleiben getrennt. [Verhalten und Grenzen](PDF_OCR.md).
+
+PPTX-Bild-OCR erfasst `configuration.pptx_ocr`, die Bild-, Byte- und Zeitgrenzen
+unter `fixedLimits` sowie die vorhandenen OCR- und Archivgründe. `ocrProjection`
+kennzeichnet die ungefähre Bildprojektion. [Verhalten und Grenzen](DOCUMENT_TEXT.md#pptx-bild-ocr)

@@ -8,8 +8,9 @@ plattformabhängigen Leser, Vorschau- und Transportgrenzen stehen in
 **Dokumenttext → Weitere Filter → Bild-OCR im Dokumenttext** beziehungsweise
 `--document-text --ocr` liest zusätzlich Text aus einzelnen Bildframes. OCR ist
 standardmäßig aus. In den Suchzielen Name, Inhalt und Metadaten bleibt `--ocr`
-ohne Wirkung. PDF-Textebenen und bisherige Dokumentleser bleiben unverändert;
-Scan-PDFs und Bilder innerhalb von Office-Dokumenten werden hier nicht per OCR gelesen.
+ohne Wirkung. PDF-Textebenen und die Folientextsuche folgen ihren Dokumentlesern.
+Für [textlose PDF-Seiten](PDF_OCR.md) und [eingebettete PPTX-Bilder](DOCUMENT_TEXT.md#pptx-bild-ocr)
+gibt es eigene OCR-Schalter.
 
 ```sh
 ./favenio.py --document-text --ocr --json --content-preview München ~/Pictures

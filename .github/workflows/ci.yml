@@ -1,6 +1,5 @@
-# CI: Unit-Tests des Python-Kerns und kompletter App-Build mit Headless-
-# Selbsttest auf macOS. Der Kern läuft bewusst mit BEIDEN Interpretern:
-# /usr/bin/python3 ist das System-Python, das auch die gebauten Apps nutzen.
+# macOS prüft beide Python-Interpreter und die Bundles. Linux baut den
+# GTK-Frontend-Code und prüft die Swift-Sprachgrenze im Build-Container.
 name: CI
 
 on:
@@ -26,3 +25,14 @@ jobs:
           # Runner vorhandenes Zertifikat darf diesen Pfad nicht verdecken.
           FAVENIO_SIGN_ID: "-"
         run: ./build-app.sh
+
+  linux:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux bauen und Swift-Sprachgrenze prüfen
+        run: linux/build-container.sh check

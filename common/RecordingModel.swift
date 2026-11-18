@@ -18,7 +18,7 @@ struct SearchRecording {
     var object: [String: Any] {
         let finder = input.options.requiresFinderMetadata || hits.contains { $0.finderMetadata != nil }
         let portable = input.rootBytes != nil || hits.contains { $0.filesystemPathBytes != nil || ["poppler-text-v1", "tesseract-ocr-text-v1", "poppler-tesseract-text-v1"].contains($0.contentEncoding ?? "") }
-        var value: [String: Any] = ["schemaVersion": portable ? 9 : input.options.pdfOCR ? 8 : input.options.ocr ? 7 : input.options.localOnly ? 6 : finder ? 5 : input.options.requiresDateRanges ? 4 : (input.roots.count > 1 ? 3 : (input.options.requiresTransportVersion2 ? 2 : 1)), "configuration": input.object,
+        var value: [String: Any] = ["schemaVersion": input.options.pptxOCR ? 10 : portable ? 9 : input.options.pdfOCR ? 8 : input.options.ocr ? 7 : input.options.localOnly ? 6 : finder ? 5 : input.options.requiresDateRanges ? 4 : (input.roots.count > 1 ? 3 : (input.options.requiresTransportVersion2 ? 2 : 1)), "configuration": input.object,
             "runID": runID, "startedAt": startedAt, "capturedAt": capturedAt,
             "state": state, "warningCount": warningCount,
             "hits": hits.compactMap { preservedJSONObject(jsonlData(for: [$0])) },
@@ -28,6 +28,7 @@ struct SearchRecording {
         if input.options.localOnly { value["localContentCapability"] = 1 }
         if input.options.ocr { value["ocrCapability"] = 1 }
         if input.options.pdfOCR { value["pdfOCRCapability"] = 1 }
+        if input.options.pptxOCR { value["pptxOCRCapability"] = 1 }
         if input.options.requiresDateRanges { value["dateResolution"] = dateResolution.flatMap { preservedJSONObject($0) } ?? NSNull() }
         return value
     }
@@ -38,9 +39,9 @@ struct SearchRecording {
         }
         guard let object = (rawData.flatMap { preservedJSONObject($0) } ?? value) as? [String: Any],
               rawData.map({ $0.count <= maximumBytes && !DateRangeTransport.hasDuplicateKeys($0) }) ?? true,
-              Set(object.keys).isSubset(of: ["schemaVersion", "configuration", "runID", "startedAt", "capturedAt", "state", "warningCount", "error", "hits", "selection", "dateResolution", "finderMetadataCapability", "localContentCapability", "ocrCapability", "pdfOCRCapability"]),
+              Set(object.keys).isSubset(of: ["schemaVersion", "configuration", "runID", "startedAt", "capturedAt", "state", "warningCount", "error", "hits", "selection", "dateResolution", "finderMetadataCapability", "localContentCapability", "ocrCapability", "pdfOCRCapability", "pptxOCRCapability"]),
               SearchControlWire.encode(object).count <= maximumBytes,
-              let version = SearchControlWire.integer(object["schemaVersion"]), [1, 2, 3, 4, 5, 6, 7, 8, 9].contains(version),
+              let version = SearchControlWire.integer(object["schemaVersion"]), (1...10).contains(version),
               let runID = object["runID"] as? String, UUID(uuidString: runID) != nil,
               let startedAt = object["startedAt"] as? NSNumber,
               CFGetTypeID(startedAt) != CFBooleanGetTypeID(), startedAt.doubleValue.isFinite,
@@ -65,6 +66,8 @@ struct SearchRecording {
               !input.options.localOnly || version >= 6,
               !input.options.ocr || version >= 7,
               !input.options.pdfOCR || version >= 8,
+              input.options.pptxOCR == (version == 10),
+              version == 10 ? SearchControlWire.integer(object["pptxOCRCapability"]) == 1 : object["pptxOCRCapability"] == nil,
               (version == 8 || input.options.pdfOCR) ? input.options.pdfOCR && SearchControlWire.integer(object["pdfOCRCapability"]) == 1 : object["pdfOCRCapability"] == nil,
               (version == 7 || input.options.ocr) ? version >= 7 && input.options.ocr && SearchControlWire.integer(object["ocrCapability"]) == 1 : object["ocrCapability"] == nil,
               (version == 6 || input.options.localOnly) ? version >= 6 && input.options.localOnly && SearchControlWire.integer(object["localContentCapability"]) == 1 : object["localContentCapability"] == nil,
@@ -83,6 +86,7 @@ struct SearchRecording {
             guard let hit = parseHit(raw), version >= 5 || hit.finderMetadata == nil,
                   hit.contentEncoding != "vision-ocr-text-v1" || (version >= 7 && input.options.ocr),
                   hit.contentEncoding != "pdfkit-vision-text-v1" || (version >= 8 && input.options.pdfOCR),
+                  DocumentPosition.pptxOCREncodings[hit.contentEncoding ?? ""] == nil || version == 10,
                   hit.filesystemPath.hasPrefix("/"), !hit.filesystemPath.utf8.contains(0) else { throw invalid() }
             guard version >= 9 || (hit.filesystemPathBytes == nil && !["poppler-text-v1", "tesseract-ocr-text-v1", "poppler-tesseract-text-v1"].contains(hit.contentEncoding ?? "")) else { throw invalid() }
             _ = try ControlIdentity.parse(ControlIdentity.object(hit.identity))

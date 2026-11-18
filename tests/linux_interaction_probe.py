@@ -149,7 +149,7 @@ def main():
                 subprocess.run(['import','-window','root',str(Path(evidence)/'result-context.png')],check=True,timeout=5)
             key('Escape',1);key('Escape',0);time.sleep(.1)
             # Echte Sortierauswahl und anschließende Ergebnisabfrage gemeinsam prüfen.
-            for sort_index in [6, 7, 8, 0]:
+            for sort_index in [6, 7, 8, 9, 0]:
                 before=call('results',runID=state['runID'],offset=0,limit=128)
                 xt.XTestFakeMotionEvent(display,-1,250,180,0)
                 xt.XTestFakeButtonEvent(display,1,1,0);xt.XTestFakeButtonEvent(display,1,0,0);x.XFlush(display)
@@ -157,7 +157,7 @@ def main():
                 time.sleep(.3)
                 page=call('results',runID=state['runID'],offset=0,limit=128)
                 assert 'error' not in page and len(page['hits'])==2,page
-                assert page['generation']!=before['generation'],'Sort widget must change the projection'
+                assert page['generation']!=before['generation'],f'Sort option {sort_index} must change the projection'
             xt.XTestFakeMotionEvent(display,-1,245,112,0)
             xt.XTestFakeButtonEvent(display,1,1,0);xt.XTestFakeButtonEvent(display,1,0,0);x.XFlush(display)
             time.sleep(.3)

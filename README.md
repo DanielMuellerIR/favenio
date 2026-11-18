@@ -2,7 +2,7 @@
 
 # Favenio
 
-Linux: Rust/GTK frontends share the Swift application models and Python search engine. Signed packages are available through the [Linux release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.3) and a separate GitHub update channel. Desktop integration has been tested on X11 and Wayland. See [Linux build and installation](docs/LINUX.md).
+Linux: Rust/GTK frontends share the Swift application models and Python search engine. Signed packages are available through the [Linux release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.68.0) and a separate GitHub update channel. Desktop integration has been tested on X11 and Wayland. See [Linux build and installation](docs/LINUX.md).
 
 
 **"facile invenio" — Latin for "I find with ease".**
@@ -26,6 +26,12 @@ The search core is pure Python 3 (standard library only), a single file, no
 installation. Two native macOS apps are built on top of it: a full search
 window and a small quick-search panel for the Finder toolbar.
 
+## What’s new in 0.68.0
+
+PPTX document search can recognize text in embedded screenshots. Search status
+explains empty results, the macOS main app can compare runs with recordings,
+and Linux can append results in arrival order.
+
 ## What’s new in 0.66.3
 
 Linux result queries support every sort option. Editing metadata criteria preserves “All text fields”. Folder groups also distinguish identically displayed names whose original path bytes differ.
@@ -40,7 +46,7 @@ ExifTool is now found in Arch/CachyOS’s vendor Perl directory even when the de
 
 ## What’s new in 0.66.0
 
-Linux frontends now share the existing Python engine and portable Swift application models. Rust/GTK provides both windows, with Poppler/Tesseract readers, integrated previews, file-manager adapters and signed update coordination. Desktop acceptance and the first public Linux delivery are pending; see [Linux](docs/LINUX.md).
+Linux frontends now share the existing Python engine and portable Swift application models. Rust/GTK provides both windows, with Poppler/Tesseract readers, integrated previews, file-manager adapters and signed update coordination. See [Linux](docs/LINUX.md) for setup and platform details.
 
 ## What's new in 0.65.0
 
@@ -235,6 +241,11 @@ Filter-only searches also support handoff in content mode; without search terms,
 the copy opens at the beginning without a verified hit position.
 
 Search recordings (0.38.0) can reopen a bounded saved result list without searching, or explicitly rerun its configuration with a new run ID. Recorded states do not preserve historical file contents. See [recording commands](docs/LOCAL-CONTROL.md#suchaufzeichnungen-ab-0380).
+
+The macOS main app offers **Ablage → Suchstand aufzeichnen…**, **Suchaufzeichnung
+öffnen…**, and **Suche erneut ausführen und vergleichen**. The comparison shows
+newly found results, results found only in the earlier run, and what is known
+about each run's coverage. [Comparison and limits](docs/LOCAL-CONTROL.md#vergleich-in-der-macos-haupt-app)
 Changing filters keeps the recorded-state label until a new search or result list
 replaces that state. Loading a template also keeps its confirmation and any
 missing-folder warning visible beside the recorded-state label.
@@ -258,6 +269,7 @@ missing-folder warning visible beside the recorded-state label.
 | `--local-only` | read only locally available contents on macOS 13+; names/known facts remain searchable, skipped cloud contents are explained; see [local contents](docs/LOCAL_CONTENT.md) |
 | `--ocr` | opt in to local German/English image OCR in document text mode (macOS 13+); [limits and recognized evidence](docs/OCR.md) |
 | `--pdf-ocr` | opt in to bounded local OCR of textless PDF pages, preserving text layers and page origins; [limits and coverage](docs/PDF_OCR.md) |
+| `--pptx-ocr` | opt in to local OCR of embedded PPTX images, with slide and picture evidence; [limits and coverage](docs/DOCUMENT_TEXT.md#pptx-bild-ocr) |
 | `--term TEXT` | an additional search term that must ALSO match (repeatable); same rules and same target as the pattern; AND across the whole file, not the same line (see below) |
 | `--list-metadata-fields` | print the curated field list, one per line, and exit |
 | `--min-size BYTES`, `--max-size BYTES` | inclusive file-size bounds; whole nonnegative bytes, optionally B/KiB/MiB/GiB/TiB |
@@ -513,10 +525,15 @@ and value kinds. See [XLSX projection and limits](docs/DOCUMENT_TEXT.md).
 PPTX follows presentation slide relationships and joins text runs in shapes and
 tables. Evidence retains the slide, stored object ID, paragraph and table cell.
 Hidden slides are included. Notes, masters/layouts, comments, fields, charts,
-images and embedded objects are excluded. XML object order is used within a slide;
+and embedded foreign objects are excluded. XML object order is used within a slide;
 no visual reading order or PowerPoint calculation is promised. Existing package
 limits apply, with 64 slides, 32768 objects/paragraphs and 131072 table cells/rows.
 See [PPTX projection and locators](docs/DOCUMENT_TEXT.md).
+
+Choose **Eingebettete PPTX-Bilder per OCR lesen** in document text mode, or
+use `--document-text --pptx-ocr`, to find text in screenshots embedded on slides.
+The preview marks recognized text and identifies the slide and picture.
+[PPTX image OCR](docs/DOCUMENT_TEXT.md#pptx-bild-ocr)
 
 ### Local image OCR
 
@@ -757,6 +774,10 @@ front of the total size means at least one file has no size known up front
 
 ### Search report
 
+After a search with zero hits, the status explains whether the requested scope
+was searched or gives a reason for limited coverage. The macOS main window
+puts the report beside this message and identifies when a view filter hides all hits.
+
 “Suchbericht…” in both apps explains omissions by reason: intentional exclusions,
 technical read failures and exhausted budgets. Counts represent events, not unique
 files; each reason keeps at most three shortened path examples. “Bericht exportieren…”
@@ -766,6 +787,9 @@ and Quick’s hit limit never imply complete coverage. Reporting adds no full sc
 see [the contract and limits](docs/SEARCH_REPORT.md).
 
 ### Refine, export and clean up the result list
+
+On Linux, **Eingangsreihenfolge** shows results as they arrive and appends new
+rows to an unfiltered, ungrouped list. [Linux list performance](docs/LINUX.md#große-trefferlisten)
 
 **Tabelle / Miniaturen** switches the same result list between rows and a thumbnail grid. Selection, sorting, groups, QuickLook, opening and drag-and-drop remain shared. Only visible raster images are loaded in the background; unavailable images show a reason. Thumbnails always read local content only, independently of the search setting. See [thumbnail limits and actions](docs/THUMBNAILS.md).
 

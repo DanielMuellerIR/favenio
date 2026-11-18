@@ -85,12 +85,16 @@ impl Ui {
         }
         for snippet in &snippets {
             let mut end = buffer.end_iter();
+            let position = snippet["positionTitle"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("Zeile {}", snippet["line"]));
             buffer.insert(
                 &mut end,
                 &format!(
-                    "{} · Zeile {}\n",
+                    "{} · {}\n",
                     snippet["label"].as_str().unwrap_or("Fundstelle"),
-                    snippet["line"]
+                    position
                 ),
             );
             if snippet["documentPosition"]["confidence"].is_number() {

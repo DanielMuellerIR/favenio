@@ -8,6 +8,16 @@ private func encoded(_ value: Any) -> Data? {
 private func identityText(_ hit: Hit) -> String {
     encoded([hit.filesystemPathData.base64EncodedString(), hit.archiveMembers, hit.archiveMemberBytes])!.base64EncodedString()
 }
+private func presented(_ preview: ContentPreview) -> [String: Any] {
+    var value = preview.json
+    if var rows = value["snippets"] as? [[String: Any]] {
+        for (index, snippet) in preview.snippets.enumerated() {
+            rows[index]["positionTitle"] = snippet.documentPosition?.title
+        }
+        value["snippets"] = rows
+    }
+    return value
+}
 private func projected(_ hit: Hit, root: String? = nil, multiple: Bool = false) -> [String: Any] {
     var result: [String: Any] = ["id": identityText(hit), "name": hit.displayName,
         "folder": root.map { hit.folderText(relativeTo: $0, showSearchRoot: multiple) } ?? hit.folderPath, "path": hit.path, "location": hit.locationText,
@@ -19,7 +29,7 @@ private func projected(_ hit: Hit, root: String? = nil, multiple: Bool = false) 
     if let created = hit.created { result["created"] = created }
     if let finder = hit.finderMetadata { result["finderTags"] = finder.tagsText; result["finderComment"] = finder.commentText }
     if let position = hit.documentPosition { result["documentPosition"] = position.json }
-    if let preview = hit.contentPreview { result["preview"] = preview.json }
+    if let preview = hit.contentPreview { result["preview"] = presented(preview) }
     return result
 }
 
@@ -85,6 +95,13 @@ private func ordered(_ current: Session, request: [String: Any]) -> ([Hit], [Int
     let source = current.hits, accepted = current.accepted, removed = current.removed
     current.condition.unlock()
     let sort = request["sort"] as? String ?? "name", ascending = request["ascending"] as? Bool ?? true
+    let isVisible: (Int) -> Bool = { index in
+        let identity = source[index].identity
+        return !removed.contains(identity) && (accepted?.contains(identity) ?? true)
+    }
+    if sort == "arrival" {
+        return (source, source.indices.filter(isVisible))
+    }
     let comparator: (Int, Int) -> Bool = { compareHits(source[$0], source[$1], key: sort, ascending: ascending) }
     if current.sortedKey != sort || current.sortedAscending != ascending {
         current.sortedIndices = source.indices.sorted(by: comparator)
@@ -92,7 +109,7 @@ private func ordered(_ current: Session, request: [String: Any]) -> ([Hit], [Int
         current.sortedIndices = mergingSortedValues(current.sortedIndices, Array(current.sortedCount..<source.count), using: comparator)
     }
     current.sortedKey = sort; current.sortedAscending = ascending; current.sortedCount = source.count
-    let indices = current.sortedIndices.filter { !removed.contains(source[$0].identity) && (accepted?.contains(source[$0].identity) ?? true) }
+    let indices = current.sortedIndices.filter(isVisible)
     return (source, indices)
 }
 
@@ -191,7 +208,7 @@ private func perform(_ request: [String: Any]) -> [String: Any] {
             current.condition.lock()
             let limited = current.limited
             let count = current.hits.count
-            let report = current.report
+            let report = exit.report ?? current.report
             current.condition.unlock()
             let state = limited ? "limitReached" : current.runner.isCancelled ? "cancelled" : searchExitIsError(exit.status, reason: exit.reason) ? "failed" : "finished"
             var event: [String: Any] = ["kind": "finish", "state": state, "count": count, "warnings": exit.warningCount]
@@ -201,7 +218,14 @@ private func perform(_ request: [String: Any]) -> [String: Any] {
             current.error = state == "failed" ? searchFailureText(exit) : nil
             current.condition.unlock()
             if state == "failed" { event["error"] = searchFailureText(exit) }
-            if let report { event["report"] = report.ending(state, warningCount: exit.warningCount).exportObject; event["reportText"] = report.displayText }
+            let finalReport = report?.ending(state, warningCount: exit.warningCount)
+            if let finalReport {
+                event["report"] = finalReport.exportObject
+                event["reportText"] = finalReport.displayText
+            }
+            if state == "finished" && count == 0 {
+                event["emptyResultText"] = SearchReportSnapshot.emptyResultText(for: finalReport)
+            }
             current.enqueue(event)
         })
         return ["ok": true, "runID": current.id]
@@ -239,7 +263,7 @@ private func perform(_ request: [String: Any]) -> [String: Any] {
                 current.previewLoad = nil
                 var event: [String: Any] = ["kind": "preview", "loadID": id, "identity": identityText(hit)]
                 switch outcome {
-                case .ready(let preview): event["preview"] = preview.json
+                case .ready(let preview): event["preview"] = presented(preview)
                 case .sourceChanged: event["error"] = "Quelle verändert. Bitte neu suchen."
                 case .failed(let message): event["error"] = message
                 }
@@ -251,7 +275,7 @@ private func perform(_ request: [String: Any]) -> [String: Any] {
         guard let raw = request["raw"] as? String, let hit = parseHit(Data(raw.utf8)), let preview = hit.contentPreview else { return failure("Für diesen Suchlauf wurde keine Vorschau erfasst. Mit aktivierter Fundstellenvorschau neu suchen.") }
         if preview.status != "ready" { return ["ok": true, "preview": preview.json] }
         guard let source = preview.sourceGeneration, ContentSourceGeneration.current(hit.filesystemPathData) == source else { return failure("Quelle verändert oder nicht mehr verfügbar. Bitte neu suchen.") }
-        return ["ok": true, "preview": preview.json]
+        return ["ok": true, "preview": presented(preview)]
     case "materialize":
         guard let raw = request["raw"] as? String, let hit = parseHit(Data(raw.utf8)) else { return failure("Ungültiger Treffer.") }
         let id = UUID().uuidString
@@ -299,6 +323,9 @@ private func perform(_ request: [String: Any]) -> [String: Any] {
     case "projection":
         guard let current = session, request["runID"] as? String == current.id,
               let mode = ResultGroupingMode(rawValue: request["mode"] as? String ?? "none") else { return failure("Suchlauf oder Gruppierung fehlt.") }
+        current.condition.lock()
+        let unfiltered = current.filter == nil && current.removed.isEmpty
+        current.condition.unlock()
         let (source, indices) = ordered(current, request: request)
         let hits = indices.map { source[$0] }
         let initially = ResultProjection(hits: hits, mode: mode)
@@ -311,7 +338,8 @@ private func perform(_ request: [String: Any]) -> [String: Any] {
             if let index = projection.hitIndex(at: row) { rows.append(["kind": "hit", "index": indices[index]]) }
             else if let group = projection.group(at: row) { rows.append(["kind": "group", "key": key(group), "title": group.title, "count": group.hitIndices.count]) }
         }
-        return ["ok": true, "rows": rows, "total": source.count, "visible": hits.count, "expanded": projection.displayedHitCount]
+        return ["ok": true, "rows": rows, "total": source.count, "visible": hits.count, "expanded": projection.displayedHitCount,
+                "arrivalPrefix": unfiltered && mode == .none && request["sort"] as? String == "arrival"]
     case "filter":
         guard let current = session, let query = request["criteria"] as? String else { return failure("Suchlauf oder Filter fehlt.") }
         let operation = ResultFilterRun()

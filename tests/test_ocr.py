@@ -18,6 +18,7 @@ import zipfile
 import zlib
 
 import favenio as f
+from pptx_fixture import pptx_with_picture
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -239,6 +240,43 @@ class NativeOCRTests(unittest.TestCase):
         self.assertEqual(hits[0]['contentEncoding'], f.OCR_ENCODING)
         self.assertEqual(hits[0]['documentPosition']['kind'], 'imageOCR')
         self.assertEqual(len(hits[0]['terms']), 2)
+
+    def test_actual_vision_reads_an_embedded_screenshot_on_its_slide(self):
+        source = self.root / 'presentation.pptx'
+        source.write_bytes(pptx_with_picture(self.image.read_bytes()))
+        command = [sys.executable, '-B', str(REPO/'favenio.py'), '--document-text',
+                   '--json', '--content-preview']
+        env = dict(os.environ, FAVENIO_OCR_HELPER=str(self.helper))
+        def search(pattern, *options, environment=env):
+            return subprocess.run(command + [*options, pattern, str(source)], env=environment,
+                                  capture_output=True, text=True, timeout=12)
+        self.assertEqual(search('Invoice').returncode, 1)
+        regular = search('Normaler Folientext')
+        self.assertEqual(regular.returncode, 0, regular.stderr)
+        self.assertEqual(json.loads(regular.stdout)['documentPosition']['slide'], 1)
+        mixed = search('Invoice', '--pptx-ocr', '--term=Normaler Folientext')
+        self.assertEqual(mixed.returncode, 0, mixed.stderr)
+        hit = json.loads(mixed.stdout)
+        position = hit['documentPosition']
+        self.assertEqual((position['kind'], position['slide'], position['objectID']), ('pptxOCR', 2, '9'))
+        self.assertEqual([term['documentPosition']['slide'] for term in hit['terms']], [2, 1])
+        self.assertEqual(hit['contentPreview']['snippets'][0]['documentPosition'], position)
+        from swift_test_support import run_probe
+        rendered = json.loads(run_probe('content-preview', 'parse', input=json.dumps(hit)+'\n').stdout)
+        self.assertEqual(rendered['status'], 'ready')
+        self.assertTrue(rendered['roundtrip'])
+        self.assertIn('Folie 2 · Bild 9 · OCR', rendered['rendered'])
+        self.assertIn('Invoice', rendered['marks'])
+        request = dict(schemaVersion=1, hit=hit, filePath=str(source),
+                       fileGeneration=f.source_generation(str(source)), queryIndex=0, occurrence=0)
+        with mock.patch.dict(os.environ, FAVENIO_OCR_HELPER=str(self.helper)):
+            preview = f.load_content_preview(request)['contentPreview']
+        self.assertEqual(preview['snippets'][0]['documentPosition'], position)
+        for pattern, expected in [('Invoice', 1), ('Text nach dem Bild', 0)]:
+            missing = search(pattern,'--pptx-ocr','--search-report',environment=dict(env, FAVENIO_OCR_HELPER=''))
+            self.assertEqual(missing.returncode, expected, missing.stderr)
+            report = json.loads(missing.stdout.splitlines()[-1])
+            self.assertIn('ocrHelperUnavailable', [reason['id'] for reason in report['reasons']])
 
     def test_pixel_limit_precedes_native_image_decode(self):
         image = self.root / 'too-many-pixels.png';image.write_bytes(png_bytes(4000, 4000))

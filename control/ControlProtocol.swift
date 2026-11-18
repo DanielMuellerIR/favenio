@@ -21,11 +21,11 @@ enum SearchControlWire {
         ["protocolVersion": 1, "operations": operations,
          "maximumRequestBytes": maximumRequestBytes, "maximumReplyBytes": maximumReplyBytes,
          "maximumPage": maximumPage, "fastraSourceSnapshotSchemaVersion": 1,
-         "maximumHandoffBytes": 262_144, "handoffTimeoutSeconds": 30, "recordingSchemaVersion": 9,
-         "recordingSchemaVersions": [1, 2, 3, 4, 5, 6, 7, 8, 9], "maximumRecordingBytes": 196_608, "maximumRecordingHits": 128,
-         "configurationSchemaVersions": [1, 2, 3, 4, 5, 6, 7, 8], "maximumSearchRoots": 16,
+         "maximumHandoffBytes": 262_144, "handoffTimeoutSeconds": 30, "recordingSchemaVersion": 10,
+         "recordingSchemaVersions": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "maximumRecordingBytes": 196_608, "maximumRecordingHits": 128,
+         "configurationSchemaVersions": [1, 2, 3, 4, 5, 6, 7, 8, 9], "maximumSearchRoots": 16,
          "maximumSearchRootBytes": 4096, "maximumSearchRootsBytes": 65_536,
-         "criteriaSchemaVersion": 3, "criteriaSchemaVersions": [1, 2, 3], "dateRangeSchemaVersion": 1, "finderMetadataSchemaVersion": 1, "localContentSchemaVersion": 1, "ocrSchemaVersion": 1, "pdfOCRSchemaVersion": 1, "maximumCriteriaBytes": 65_536,
+         "criteriaSchemaVersion": 3, "criteriaSchemaVersions": [1, 2, 3], "dateRangeSchemaVersion": 1, "finderMetadataSchemaVersion": 1, "localContentSchemaVersion": 1, "ocrSchemaVersion": 1, "pdfOCRSchemaVersion": 1, "pptxOCRSchemaVersion": 1, "maximumCriteriaBytes": 65_536,
          "textEncodings": ["utf-8", "auto", "utf-16-le", "utf-16-be", "windows-1252", "iso-8859-1", "mac-roman"]]
     }
     static func endpoint(_ identifier: String) -> String {

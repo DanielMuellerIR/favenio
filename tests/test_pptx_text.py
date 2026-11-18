@@ -14,7 +14,7 @@ import zipfile
 
 from test_favenio import TempTreeTest, favenio, run
 from test_criteria import arguments, group, leaf
-from pptx_fixture import pptx_bytes, slide, shape, table, paragraph, PML, DML, OFFICE, REL
+from pptx_fixture import pptx_bytes, pptx_with_picture, slide, shape, table, paragraph, PML, DML, OFFICE, REL
 from package_text_fixture import package
 from swift_test_support import run_probe, suite_binary
 
@@ -56,6 +56,40 @@ class PPTXTextTests(TempTreeTest):
         positions = [favenio.load_content_preview(self.request(hit,i))['contentPreview']['snippets'][0]['documentPosition'] for i in range(3)]
         self.assertEqual([(x['part'],x['slide'],x['objectID']) for x in positions],[('ppt/slides/z.xml',1,'2'),('ppt/slides/z.xml',1,'3'),('ppt/slides/a.xml',2,'7')])
         self.assertEqual((positions[1]['row'],positions[1]['column']),(1,1))
+
+    def test_pptx_ocr_is_bounded_and_never_proves_absence(self):
+        data = pptx_with_picture(b'synthetic embedded image')
+        self.path.write_bytes(data)
+        def recognize(reader, path, deadline):
+            self.assertEqual(Path(path).read_bytes(), b'synthetic embedded image')
+            reader.reader_fingerprint = 'a'*64
+            yield dict(block=1, confidence=0.9, region=[0.1, 0.2, 0.3, 0.4]), 'nurimfoto'
+        with mock.patch.object(favenio, 'find_ocr_helper', return_value='fixture'), \
+             mock.patch.object(favenio.OCRTextReader, 'sections', autospec=True, side_effect=recognize) as ocr:
+            self.assertEqual(self.search(pattern='nurimfoto')[0], 1)
+            ocr.assert_not_called()
+            negatives = arguments(leaf('image', 'content', value='absent', negate=True))
+            result = run(['--json','--document-text','--pptx-ocr',*negatives,str(self.path)])
+            self.assertEqual(result[0],1)
+            ocr.assert_called_once()
+            ocr.reset_mock()
+            with mock.patch.object(favenio, 'PPTX_OCR_IMAGE_BYTES', 2):
+                limited = self.search('--pptx-ocr', pattern='Text nach dem Bild')
+            self.assertEqual(limited[0], 0)
+            self.assertIn('ocrLimit', [reason['id'] for reason in limited[2]['reasons']])
+            ocr.assert_not_called()
+            self.path.write_bytes(pptx_with_picture(b'irrelevant', target='https://example.invalid/image.png', external=True))
+            external = self.search('--pptx-ocr', pattern='nurimfoto')
+            self.assertEqual(external[0], 1)
+            self.assertIn('ocrReadError', [reason['id'] for reason in external[2]['reasons']])
+            ocr.assert_not_called()
+            outer = Path(self.root, 'outer.zip')
+            with zipfile.ZipFile(outer, 'w') as archive:
+                archive.writestr('leaf!/report.pptx', data)
+            code, hits, _, error = self.search('--pptx-ocr', path=outer, pattern='nurimfoto')
+            self.assertEqual(code, 0, error)
+            self.assertEqual(hits[0]['archiveMembers'], ['leaf!/report.pptx'])
+            self.assertEqual(hits[0]['documentPosition']['slide'], 2)
 
     def test_unicode_original_encoding_entities_breaks_and_no_cross_paragraph_match(self):
         text = paragraph('\ufeffJahres','bericht 😀 fu\u0308r & < >').replace('</a:p>','<a:br/><a:r><a:t>Zweite Zeile</a:t></a:r></a:p>')

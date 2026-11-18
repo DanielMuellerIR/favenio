@@ -161,12 +161,12 @@ zu dieser Prüfung. Fortschritt, Abbruch, geänderte Quellen, Hardlinks und
 Lesefehler bleiben nachvollziehbar. Keine automatische Löschung oder
 Archivänderung ist vorgesehen.
 
-## Vielleicht sinnvoll: gespeicherte Suchstände vergleichen
+## Gespeicherte Suchstände vergleichen
 
-Der Vergleich gespeicherter Suchstände ist nur als Idee vorgemerkt und gehört
-nicht zum gewählten Funktionsausbau. Ein späterer Entwurf müsste zuerst den
-konkreten Nutzen, vergleichbare vollständige Läufe, begrenzte Aufzeichnungen
-und die Unterscheidung zwischen geänderten Fakten und geänderten Inhalten klären.
+Die Haupt-App kann eine Suchaufzeichnung öffnen, ihre Suche erneut ausführen
+und die Treffer anhand ihrer Quellidentität vergleichen. Die Ansicht zeigt
+neue und nur früher gefundene Treffer sowie die bekannte Abdeckung beider Läufe.
+[Ablauf und Grenzen](LOCAL-CONTROL.md#vergleich-in-der-macos-haupt-app)
 
 ## Gemeinsame Abschlusskriterien
 

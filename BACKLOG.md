@@ -41,7 +41,8 @@ Fakten sind ebenfalls verfügbar; [Vertrag](docs/RESULT_FILTER.md). Gruppierung
 nach Ordner/Endung/Quellarchiv und getrennte Navigation zur äußeren Archivdatei
 samt Archivkette sind umgesetzt; [Vertrag](docs/RESULT_GROUPS.md). Mehrere geordnete Datei-/Ordnerbereiche mit Herkunft, Deduplikation und versionierten Transporten sind umgesetzt; [Vertrag](docs/SEARCH_ROOTS.md). Die gewählten Erweiterungen sind umgesetzt; Formatgrenzen und optionale
 Erweiterungen stehen in den jeweiligen Verträgen und verbleibenden Punkten.
-Der Vergleich gespeicherter Suchstände bleibt lediglich eine mögliche Idee.
+Die Haupt-App vergleicht aufgezeichnete und erneut ausgeführte Suchläufe nach
+Trefferidentität. [Suchaufzeichnungen](docs/LOCAL-CONTROL.md#suchaufzeichnungen-ab-0380)
 
 
 Gemeinsame Kalender-/Uhrzeiteingaben und relative Datumsbereiche sind umgesetzt,

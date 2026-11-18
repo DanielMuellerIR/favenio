@@ -114,6 +114,7 @@ struct SearchConfiguration: Equatable {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
         return number.doubleValue == 1
     }
+    var pptxOCR = false
     var pdfOCR = false
     var ocr = false
     var finderMetadata = false
@@ -175,15 +176,15 @@ struct SearchConfiguration: Equatable {
         let criteria = criteriaJSON == nil ? "" : "Zusätzliche Kriterien"
         let encoding = textEncoding == .utf8 ? "" : "Textkodierung: " + textEncoding.title
         let dates = dateRanges.keys.sorted().map { ($0 == "modified" ? "Geändert: " : "Erstellt: ") + dateRanges[$0]!.title + " (" + dateRanges[$0]!.timeZone + ")" }
-        return ([pixels, termList, criteria, encoding, localOnly ? "Nur lokale Inhalte" : "", ocr ? "Bild-OCR im Dokumenttext (DE/EN)" : "", pdfOCR ? "Scan-PDF-OCR im Dokumenttext" : ""].filter { !$0.isEmpty } + facts + dates).joined(separator: ", ")
+        return ([pixels, termList, criteria, encoding, localOnly ? "Nur lokale Inhalte" : "", ocr ? "Bild-OCR im Dokumenttext (DE/EN)" : "", pdfOCR ? "Scan-PDF-OCR im Dokumenttext" : "", pptxOCR ? "PPTX-Bild-OCR im Dokumenttext" : ""].filter { !$0.isEmpty } + facts + dates).joined(separator: ", ")
     }
 
     static let pixelKeys = ["minw", "maxw", "minh", "maxh"]
 
     static func transportProblem(_ items: [URLQueryItem]) -> String? {
         let known = Set(SearchConfiguration().queryItems.map { $0.name }
-            + ["criteria", "field", "term", "exclude", "encoding", "date-ranges", "date-reference-time", "finder-metadata", "local-only", "ocr", "pdf-ocr"] + FactFilterOption.all.map { $0.key })
-        let booleans = Set(["content", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "finder-metadata", "local-only", "ocr", "pdf-ocr"])
+            + ["criteria", "field", "term", "exclude", "encoding", "date-ranges", "date-reference-time", "finder-metadata", "local-only", "ocr", "pdf-ocr", "pptx-ocr"] + FactFilterOption.all.map { $0.key })
+        let booleans = Set(["content", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "finder-metadata", "local-only", "ocr", "pdf-ocr", "pptx-ocr"])
         var seen = Set<String>()
         for item in items {
             guard known.contains(item.name), let text = item.value, !text.utf8.contains(0),
@@ -204,6 +205,7 @@ struct SearchConfiguration: Equatable {
         result.localOnly = value("local-only") == "1"
         result.ocr = value("ocr") == "1"
         result.pdfOCR = value("pdf-ocr") == "1"
+        result.pptxOCR = value("pptx-ocr") == "1"
         result.finderMetadata = value("finder-metadata") == "1"
         result.textEncoding = SearchTextEncoding(rawValue: value("encoding") ?? "utf-8") ?? .utf8
         result.mode = SearchTextMode(rawValue: value("mode") ?? "")
@@ -242,6 +244,7 @@ struct SearchConfiguration: Equatable {
         if localOnly { items.append(URLQueryItem(name: "local-only", value: "1")) }
         if ocr { items.append(URLQueryItem(name: "ocr", value: "1")) }
         if pdfOCR { items.append(URLQueryItem(name: "pdf-ocr", value: "1")) }
+        if pptxOCR { items.append(URLQueryItem(name: "pptx-ocr", value: "1")) }
         if finderMetadata { items.append(URLQueryItem(name: "finder-metadata", value: "1")) }
         if let metadataField { items.append(URLQueryItem(name: "field", value: metadataField)) }
         for (key, text) in zip(Self.pixelKeys, pixelTexts) {
@@ -278,6 +281,7 @@ struct SearchConfiguration: Equatable {
         if localOnly { args.append("--local-only") }
         if ocr { args.append("--ocr") }
         if pdfOCR { args.append("--pdf-ocr") }
+        if pptxOCR { args.append("--pptx-ocr") }
         if finderMetadata { args.append("--finder-metadata") }
         if textEncoding != .utf8 { args.append("--encoding=" + textEncoding.rawValue) }
         if let criteriaJSON { args.append("--criteria-json=" + criteriaJSON) }
@@ -434,7 +438,7 @@ struct SearchTemplateError: Error, CustomStringConvertible, Equatable {
 /// `version` wird abgelehnt und genannt, statt still
 /// falsch gelesen zu werden — ein fehlender oder falscher Wert ebenso.
 enum SearchTemplateFormat {
-    static let version = 9
+    static let version = 10
     static let maximumBytes = 8 * 1024 * 1024
 
     static func encodeOptions(_ configuration: SearchConfiguration) -> String {
@@ -462,7 +466,7 @@ enum SearchTemplateFormat {
         if let problem = CriteriaTransport.problem(items) {
             throw SearchTemplateError(description: problem)
         }
-        if items.contains(where: { ["encoding", "local-only", "ocr", "pdf-ocr"].contains($0.name) }),
+        if items.contains(where: { ["encoding", "local-only", "ocr", "pdf-ocr", "pptx-ocr"].contains($0.name) }),
            let problem = SearchConfiguration.transportProblem(items) {
             throw SearchTemplateError(description: problem)
         }
@@ -474,9 +478,10 @@ enum SearchTemplateFormat {
         let finder = templates.contains { $0.configuration.requiresFinderMetadata }
         let local = templates.contains { $0.configuration.localOnly }
         let ocr = templates.contains { $0.configuration.ocr }
+        let pptxOCR = templates.contains { $0.configuration.pptxOCR }
         let pdfOCR = templates.contains { $0.configuration.pdfOCR }
         let portable = templates.contains { $0.rootBytes != nil }
-        let multiple = portable || pdfOCR || ocr || local || finder || dates || templates.contains { ($0.roots?.count ?? 0) > 1 }
+        let multiple = portable || pptxOCR || pdfOCR || ocr || local || finder || dates || templates.contains { ($0.roots?.count ?? 0) > 1 }
         for template in templates {
             if let roots = template.roots, let problem = SearchRoots.problem(roots, limited: multiple, rawBytes: template.rootBytes) {
                 throw SearchTemplateError(description: problem)
@@ -492,7 +497,7 @@ enum SearchTemplateFormat {
             if let raw = template.rootBytes { entry["rootBytes"] = raw.map { $0.base64EncodedString() } }
             return entry
         }
-        let fileVersion = portable ? 9 : pdfOCR ? 8 : ocr ? 7 : local ? 6 : finder ? 5 : dates ? 4 : (multiple ? 3 : (templates.contains { $0.configuration.requiresTransportVersion2 } ? 2 : 1))
+        let fileVersion = pptxOCR ? 10 : portable ? 9 : pdfOCR ? 8 : ocr ? 7 : local ? 6 : finder ? 5 : dates ? 4 : (multiple ? 3 : (templates.contains { $0.configuration.requiresTransportVersion2 } ? 2 : 1))
         let data = try JSONSerialization.data(
             withJSONObject: ["version": fileVersion, "templates": entries],
             options: [.prettyPrinted, .sortedKeys])
@@ -567,6 +572,7 @@ enum SearchTemplateFormat {
             let configuration: SearchConfiguration
             do {
                 configuration = try decodeOptions(entry["options"] as? String ?? "")
+                if configuration.pptxOCR && fileVersion < 10 { throw SearchTemplateError(description: "PPTX-Bild-OCR benötigt Vorlagenformat 10.") }
                 if configuration.pdfOCR && fileVersion < 8 { throw SearchTemplateError(description: "PDF-OCR benötigt Vorlagenformat 8.") }
                 if configuration.ocr && fileVersion < 7 {
                     throw SearchTemplateError(description: "OCR benötigt Vorlagenformat 7.")

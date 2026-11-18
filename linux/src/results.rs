@@ -165,6 +165,31 @@ impl Ui {
             "sort":(SORT_KEYS[self.sorting.selected()as usize]),
             "ascending":self.ascending.is_active(),"collapsed":self.collapsed.borrow().iter().collect::<Vec<_>>(),"collapseAll":collapse_all}))
     }
+    pub(super) fn refresh_streaming_results(&self) {
+        if !self.arrival_prefix.get()
+            || self.grouping.selected() != 0
+            || SORT_KEYS[self.sorting.selected() as usize] != "arrival"
+            || !self.initial_selection.borrow().is_empty()
+        {
+            self.refresh_projection();
+            return;
+        }
+        let source = self.all_hits.borrow();
+        let start = self.store.n_items();
+        let incoming = &source[start as usize..];
+        if incoming.is_empty() {
+            return;
+        }
+        let rows: Vec<_> = incoming
+            .iter()
+            .cloned()
+            .map(glib::BoxedAnyObject::new)
+            .collect();
+        self.result_count.set(source.len() as u64);
+        self.result_generation.set(self.result_generation.get() + 1);
+        // Die bisherigen GTK-Objekte bleiben stehen und behalten ihre Auswahl.
+        self.store.splice(start, 0, &rows);
+    }
     pub(super) fn refresh_projection(&self) {
         let mut selected: std::collections::HashSet<_> = self
             .selected()
@@ -175,6 +200,8 @@ impl Ui {
         let Ok(value) = self.projection(false) else {
             return;
         };
+        self.arrival_prefix
+            .set(value["arrivalPrefix"].as_bool() == Some(true));
         self.result_count
             .set(value["visible"].as_u64().unwrap_or(0));
         self.result_generation.set(self.result_generation.get() + 1);

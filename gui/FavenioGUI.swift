@@ -944,7 +944,11 @@ func runSelfTest() -> Int32 {
         print("SELFTEST FEHLER: " + failure)
         return 1
     }
-    if let failure = checkResultFilterControl(sandbox: tmp) {
+    if let failure = checkRecordingComparison(sandbox: tmp) {
+        print("SELFTEST FEHLER: " + failure)
+        return 1
+    }
+    if let failure = checkEmptySearchStatus(sandbox: tmp) ?? checkResultFilterControl(sandbox: tmp) {
         print("SELFTEST FEHLER: " + failure)
         return 1
     }
@@ -952,6 +956,7 @@ func runSelfTest() -> Int32 {
         fputs("SELFTEST FAILED: \(failure)\n", stderr); exit(1)
     }
     if let failure = checkPDFOCRControl(sandbox: tmp) { print("SELFTEST FEHLER: \(failure)"); return 1 }
+    if let failure = checkPPTXOCRControl(sandbox: tmp) { print("SELFTEST FEHLER: \(failure)"); return 1 }
     if let failure = checkOCRControl(sandbox: tmp) {
         print("SELFTEST FEHLER: \(failure)"); return 1
     }
@@ -1388,6 +1393,8 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// `loadResults()` nehmen ihn weg — bis 0.34.0 hing er die ganze
     /// Sitzung hinter jedem Status.
     var exportStatus: String?
+    var recordingComparison: RecordingComparison?
+    var recordingComparisonWindow: RecordingComparisonWindow?
     var exportIsBusy: Bool { exportSavePanel != nil || exportWriter.isWriting || searchReportController.isSaving }
 
     // ---------- App-Lebenszyklus ----------
@@ -1591,7 +1598,8 @@ final class MainController: HitListController, NSApplicationDelegate,
                                              resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "favenio"
         else { return }
-        guard ["results", "results-v2", "results-v3", "results-v4", "results-v5", "results-v6", "results-v7", "results-v8"].contains(components.host?.lowercased() ?? "") else {
+        let hosts = ["results", "results-v2", "results-v3", "results-v4", "results-v5", "results-v6", "results-v7", "results-v8", "results-v9"]
+        guard let index = hosts.firstIndex(of: components.host?.lowercased() ?? "") else {
             if components.host?.lowercased().hasPrefix("results-v") == true {
                 presentActionIssue(summary: "Unbekannte Version der Quick-Übergabe.", detail: nil)
             }
@@ -1601,19 +1609,13 @@ final class MainController: HitListController, NSApplicationDelegate,
         func value(_ name: String) -> String? {
             items.first { $0.name == name }?.value
         }
-        let version2 = components.host?.lowercased() == "results-v2"
-        let version3 = components.host?.lowercased() == "results-v3"
-        let version4 = components.host?.lowercased() == "results-v4"
-        let version5 = components.host?.lowercased() == "results-v5"
-        let version6 = components.host?.lowercased() == "results-v6"
-        let version7 = components.host?.lowercased() == "results-v7"
-        let version8 = components.host?.lowercased() == "results-v8"
-        if version2 || version3 || version4 || version5 || version6 || version7 || version8 {
+        let version = index + 1
+        if version >= 2 {
             let transportKeys = Set(["q", "root", "file", "continue"])
             let envelope = items.filter { transportKeys.contains($0.name) }
             guard Set(envelope.map { $0.name }).count == envelope.count,
                   envelope.allSatisfy({ $0.value != nil && !$0.value!.utf8.contains(0) }),
-                  !(version3 || version4 || version5 || version6 || version7 || version8) || value("root") == nil else {
+                  version < 3 || value("root") == nil else {
                 presentActionIssue(summary: "Ungültige Quick-Übergabe.", detail: nil)
                 return
             }
@@ -1626,22 +1628,23 @@ final class MainController: HitListController, NSApplicationDelegate,
             presentActionIssue(summary: problem, detail: nil)
             return
         }
-        guard (value("criteria") == nil && !items.contains(where: { $0.name == "encoding" })) || version2 || version3 || version4 || version5 || version6 || version7 || version8 else {
+        guard (value("criteria") == nil && !items.contains(where: { $0.name == "encoding" })) || version >= 2 else {
             presentActionIssue(summary: "Kriterien und Textkodierung benötigen Übergabeformat 2.", detail: nil)
             return
         }
         let configuration = SearchConfiguration.fromQueryItems(items)
-        guard !configuration.requiresDateRanges || version4 || version5 || version6 || version7 || version8 else {
+        guard !configuration.requiresDateRanges || version >= 4 else {
             presentActionIssue(summary: "Kalenderbereiche benötigen Übergabeformat 4.", detail: nil); return
         }
-        guard !configuration.requiresFinderMetadata || version5 || version6 || version7 || version8 else {
+        guard !configuration.requiresFinderMetadata || version >= 5 else {
             presentActionIssue(summary: "Finder-Eigenschaften benötigen Übergabeformat 5.", detail: nil); return
         }
-        guard !configuration.localOnly || version6 || version7 || version8 else {
+        guard !configuration.localOnly || version >= 6 else {
             presentActionIssue(summary: "Lokale Inhalte benötigen Übergabeformat 6.", detail: nil); return
         }
-        guard !configuration.pdfOCR || version8 else { presentActionIssue(summary: "PDF-OCR benötigt Übergabeformat 8.", detail: nil); return }
-        guard !configuration.ocr || version7 || version8 else {
+        guard !configuration.pptxOCR || version >= 9 else { presentActionIssue(summary: "PPTX-Bild-OCR benötigt Übergabeformat 9.", detail: nil); return }
+        guard !configuration.pdfOCR || version >= 8 else { presentActionIssue(summary: "PDF-OCR benötigt Übergabeformat 8.", detail: nil); return }
+        guard !configuration.ocr || version >= 7 else {
             presentActionIssue(summary: "OCR benötigt Übergabeformat 7.", detail: nil); return
         }
         guard let filePath = value("file"),
@@ -1649,12 +1652,12 @@ final class MainController: HitListController, NSApplicationDelegate,
               quickHandoffInputProblem(query: value("q") ?? "",
                                        root: value("root") ?? "") == nil else { return }
         guard let incoming = consumeQuickHandoffPayload(URL(fileURLWithPath: filePath)),
-              incoming.version == (version8 ? 8 : version7 ? 7 : version6 ? 6 : version5 ? 5 : version4 ? 4 : (version3 ? 3 : (version2 ? 2 : 1))),
+              incoming.version == version,
               let payload = incoming.bound(to: incoming.roots ?? value("root").map { [$0] } ?? searchRoots) else {
             presentActionIssue(summary: "Ungültige oder zu große Ergebnisübergabe.", detail: nil)
             return
         }
-        if version4 || version5 || version6 || version7 || version8 {
+        if version >= 4 {
             guard let frozen = payload.configuration,
                   frozen.queryItems.flatMap({ [Data($0.name.utf8), Data(($0.value ?? "").utf8)] })
                     == configuration.queryItems.flatMap({ [Data($0.name.utf8), Data(($0.value ?? "").utf8)] }) else {
@@ -1879,13 +1882,17 @@ final class MainController: HitListController, NSApplicationDelegate,
         let filterSpacer = NSView()
         filterSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let filtersRow = NSStackView(views: [filters.disclosureButton, filters.titleButton,
-                                            filterSpacer, searchReportController.button, duplicateCheckController.button, criteriaControl])
+                                            filterSpacer, duplicateCheckController.button, criteriaControl])
         filtersRow.orientation = .horizontal
         filtersRow.alignment = .centerY
         filtersRow.spacing = 2
         contentPreviewView.onRestart = { [weak self] in self?.startSearch() }
+        let statusRow = NSStackView(views: [statusLabel, searchReportController.button])
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .centerY
+        statusRow.spacing = 8
         let stack = NSStackView(views: [topRow, optionsRow, filtersRow, sizeRow, filterView,
-                                        resultFilter.view, resultGrouping.view, scroll, finderMetadataView, contentPreviewView, statusLabel])
+                                        resultFilter.view, resultGrouping.view, scroll, finderMetadataView, contentPreviewView, statusRow])
         // Erst NACH dem Einhängen in den Stack verstecken: `NSStackView(views:)`
         // hängt eine schon versteckte Ansicht sichtbar ein.
         filters.extraViews = [sizeRow]
@@ -1923,7 +1930,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             finderMetadataView.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // Statuszeile an die Stack-Breite binden → kann das Fenster nicht
             // in die Breite ziehen (langer „durchsuche …"-Pfad).
-            statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            statusRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 100),
         ])
 
@@ -2051,7 +2058,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             return text
         }
         if case .failed(let reason) = searchPhase { return reason }
-        if hits.isEmpty && !resultFilter.isActive {
+        if hits.isEmpty {
             switch searchPhase {
             case .idle:
                 return templateNote ?? "Bereit."
@@ -2059,7 +2066,19 @@ final class MainController: HitListController, NSApplicationDelegate,
                 return progressPath.map { "Durchsuche " + abbreviateHome($0) }
                     ?? "Suche läuft…"
             case .stopped:
-                return "Suche gestoppt — keine Treffer."
+                return resultFilter.sourceCount > 0
+                    ? "Suche gestoppt. Der Ansichtsfilter blendet alle bisherigen Treffer aus."
+                    : "Suche gestoppt. Bis zum Abbruch keine Treffer."
+            case .finished:
+                if resultFilter.sourceCount > 0 {
+                    if let error = resultFilter.errorMessage { return error }
+                    return resultFilter.isFiltering
+                        ? "Ansichtsfilter wird angewendet…"
+                        : "Der Ansichtsfilter blendet alle Treffer aus."
+                }
+                return seenHitIdentities.isEmpty
+                    ? SearchReportSnapshot.emptyResultText(for: searchReportController.snapshot)
+                    : "Die Trefferliste ist leer."
             default:
                 return "Keine Treffer." + skippedNote(skippedCount)
             }
@@ -2614,6 +2633,7 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// Ersetzt den Trefferstand für Suchstart und beide Quick-Übergaben.
     /// Vorlagen benutzen diesen Weg nicht: Sie ändern nur die Suchoptionen.
     func replaceSearchResults(_ incoming: [Hit]) {
+        recordingComparison = nil
         stopSearch()
         resultFilter.clearForSearch()
         // Vorschau und Öffnen gehören zur alten Liste. Der Abbruch verhindert,
@@ -2634,13 +2654,15 @@ final class MainController: HitListController, NSApplicationDelegate,
 
     @objc func startSearch() { startSearchWithReference(nil) }
 
-    func startSearchWithReference(_ referenceTime: String?) {
+    func startSearchWithReference(_ referenceTime: String?, comparing recording: SearchRecording? = nil) {
         replaceSearchResults([])
+        recordingComparison = recording.map(RecordingComparison.init)
         searchControl.begin(controlInput)
         searchReportController.reset()
         searchPhase = .idle
         guard validatePixelInputs() else {
             if case .failed(let reason) = searchPhase { searchControl.failed(reason) }
+            finishRecordingComparison()
             return
         }
         let pattern = searchField.stringValue
@@ -2650,9 +2672,11 @@ final class MainController: HitListController, NSApplicationDelegate,
         guard !pattern.isEmpty || searchConfiguration.hasPositiveFilter else {
             searchControl.failed("Suchmuster oder positiver Filter fehlt.")
             refreshStatus()
+            finishRecordingComparison()
             return
         }
-        launchSearch(pattern: pattern, dateReferenceTime: referenceTime)
+        launchSearch(pattern: pattern, dateReferenceTime: referenceTime, frozenDateResolution: recording?.dateResolution)
+        if activeSearchRun == nil { finishRecordingComparison() }
     }
 
     /// Setzt alle Suchoptionen der Oberfläche aus einer Konfiguration — die
@@ -2672,6 +2696,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         filterView.localOnly = configuration.localOnly
         filterView.ocr = configuration.ocr
         filterView.pdfOCR = configuration.pdfOCR
+        filterView.pptxOCR = configuration.pptxOCR
         filterView.finderMetadata = configuration.finderMetadata
         // Übergebene Filter sollen sichtbar sein, sonst wundert man sich
         // über eine kürzere Trefferliste ohne erkennbaren Grund.
@@ -2697,6 +2722,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         configuration.localOnly = filterView.localOnly
         configuration.ocr = filterView.ocr
         configuration.pdfOCR = filterView.pdfOCR
+        configuration.pptxOCR = filterView.pptxOCR
         configuration.finderMetadata = filterView.finderMetadata
         configuration.pixelTexts = pixelFields.map { $0.stringValue }
         configuration.exclusions = filterView.exclusions
@@ -2876,6 +2902,7 @@ final class MainController: HitListController, NSApplicationDelegate,
             searchPhase = .idle
         }
         refreshStatus()
+        finishRecordingComparison()
     }
 
     /// Klick auf den Stopp-Button: laufende Suche abbrechen.
@@ -2886,6 +2913,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         progressPath = nil
         flushPending()
         refreshStatus()
+        finishRecordingComparison()
     }
 
     /// Sortieren, neu laden und dieselben Treffer wieder auswählen.
@@ -2926,8 +2954,10 @@ final class MainController: HitListController, NSApplicationDelegate,
     /// in den Papierkorb gelegte Dateien dürfen nicht erneut erscheinen.
     func enqueueSearchHits(_ incoming: [Hit]) {
         let scope = SearchRoots(searchControl.run?.input.roots ?? searchRoots)
-        for original in incoming where !trashedPaths.contains(original.filesystemPath) {
+        for original in incoming {
             guard let hit = scope.carrying(original) else { continue }
+            recordingComparison?.accept(hit)
+            guard !trashedPaths.contains(hit.filesystemPath) else { continue }
             if seenHitIdentities.insert(hit.identity).inserted { pending.append(hit) }
         }
     }
@@ -2987,6 +3017,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         searchPhase = searchExitIsError(exit.status, reason: exit.reason)
             ? .failed(searchFailureText(exit)) : .finished
         refreshStatus()
+        finishRecordingComparison()
     }
 
     // ---------- Tabelle ----------
@@ -3180,6 +3211,12 @@ final class MainController: HitListController, NSApplicationDelegate,
             action: #selector(exportAllHits(_:)), keyEquivalent: "e")
         exportAll.target = self
         fileMenu.addItem(.separator())
+        for (title, action) in [("Suchstand aufzeichnen…", #selector(saveSearchRecording)),
+                                ("Suchaufzeichnung öffnen…", #selector(openSearchRecording)),
+                                ("Suche erneut ausführen und vergleichen", #selector(rerunSearchRecording))] {
+            fileMenu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
+        }
+        fileMenu.addItem(.separator())
         addFastraMenuItems(to: fileMenu)
         fileMenu.addItem(.separator())
         addResultListItems(to: fileMenu)
@@ -3222,6 +3259,13 @@ final class MainController: HitListController, NSApplicationDelegate,
         let fromTableMenu = item.menu === tableView.menu
         let mainWindowIsKey = window?.isKeyWindow == true
         switch item.action {
+        case #selector(saveSearchRecording):
+            return mainWindowIsKey && !exportIsBusy && activeSearchRun == nil
+                && searchControl.run.map { $0.origin == "live" && $0.state != "running" } == true
+        case #selector(openSearchRecording):
+            return mainWindowIsKey && activeSearchRun == nil && !searchControl.handoff.busy
+        case #selector(rerunSearchRecording):
+            return mainWindowIsKey && searchControl.openedRecording != nil
         case #selector(showSelectedInFastra(_:)):
             let indices = rows(for: item)
             return (fromTableMenu || (mainWindowIsKey && resultListHasFocus))

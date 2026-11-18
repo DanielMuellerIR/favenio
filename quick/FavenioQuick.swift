@@ -1319,6 +1319,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         configuration.localOnly = filterView.localOnly
         configuration.ocr = filterView.ocr
         configuration.pdfOCR = filterView.pdfOCR
+        configuration.pptxOCR = filterView.pptxOCR
         configuration.finderMetadata = filterView.finderMetadata
         configuration.pixelTexts = pixelFields.map { $0.stringValue }
         configuration.exclusions = filterView.exclusions
@@ -1617,17 +1618,18 @@ final class QuickController: HitListController, NSApplicationDelegate,
         let criterion = query.isEmpty
             ? (searchConfiguration.filterSummary.isEmpty ? "" : " (\(searchConfiguration.filterSummary))")
             : " für „\(query)“"
-        let summary = quickLimitReached && skippedCount == 0 ? "" : (resultFilter.sourceCount == 0
-            ? "Keine Treffer\(criterion) in \(abbreviateHome(searchRoot))."
-            : "\(resultFilter.sourceCount) Treffer\(criterion).")
-            + skippedNote(skippedCount)
+        let summary = resultFilter.sourceCount == 0
+            ? SearchReportSnapshot.emptyResultText(for: searchReportController.snapshot)
+            : (quickLimitReached && skippedCount == 0 ? "" : "\(resultFilter.sourceCount) Treffer\(criterion).")
+                + skippedNote(skippedCount)
         searchOutcomeText = summary
         // Gerade wenn NICHTS gefunden wurde, muss ein unklarer Suchbereich
         // dabeistehen — sonst sucht man den Fehler beim Suchbegriff.
         if let problem = scopeProblem ?? runScopeNoteText() {
             showScopeProblem(summary.isEmpty ? problem : summary + " " + problem)
         } else {
-            showSearchInfo(summary, detail: summary + "\n" + searchRoot)
+            let searched = resultFilter.sourceCount == 0 ? "\nGesucht\(criterion) in \(searchRoot)." : "\n" + searchRoot
+            showSearchInfo(summary, detail: summary + searched)
         }
     }
 
@@ -1674,7 +1676,8 @@ final class QuickController: HitListController, NSApplicationDelegate,
         }
         let needsVersion2 = configuration.requiresTransportVersion2 || !selectedHitIdentities().isEmpty
         let needsFinder = configuration.requiresFinderMetadata || resultFilter.unfilteredHits.contains { $0.finderMetadata != nil }
-        let version = configuration.pdfOCR ? 8 : configuration.ocr ? 7 : configuration.localOnly ? 6 : needsFinder ? 5 : configuration.requiresDateRanges ? 4 : (roots.count > 1 ? 3 : (needsVersion2 ? 2 : 1))
+        let version = configuration.pptxOCR ? 9 : configuration.pdfOCR ? 8 : configuration.ocr ? 7 : configuration.localOnly ? 6 : needsFinder ? 5 : configuration.requiresDateRanges ? 4 : (roots.count > 1 ? 3 : (needsVersion2 ? 2 : 1))
+        if configuration.pptxOCR, !mainAppSupportsPPTXOCR() { showHandoffIssue("Bitte beide Apps gemeinsam aktualisieren; die Haupt-App unterstützt PPTX-Bild-OCR noch nicht."); return }
         if configuration.pdfOCR, !mainAppSupportsPDFOCR() { showHandoffIssue("Bitte beide Apps gemeinsam aktualisieren; die Haupt-App unterstützt PDF-OCR noch nicht."); return }
         if configuration.ocr, !mainAppSupportsOCR() {
             showHandoffIssue("Bitte Favenio und FavenioQuick gemeinsam aktualisieren; die Haupt-App unterstützt Bild-OCR noch nicht.")
@@ -1735,7 +1738,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
             return
         }
         if version2 {
-            guard let appURL = locateMainApp(), (version == 8 ? mainAppSupportsPDFOCR() : version == 7 ? mainAppSupportsOCR() : version == 6 ? mainAppSupportsLocalContent() : version == 5 ? mainAppSupportsFinderMetadata() : version == 4 ? mainAppSupportsDateRanges() : (version == 3 ? mainAppSupportsMultipleRoots() : mainAppSupportsCriteria())) else {
+            guard let appURL = locateMainApp(), (version == 9 ? mainAppSupportsPPTXOCR() : version == 8 ? mainAppSupportsPDFOCR() : version == 7 ? mainAppSupportsOCR() : version == 6 ? mainAppSupportsLocalContent() : version == 5 ? mainAppSupportsFinderMetadata() : version == 4 ? mainAppSupportsDateRanges() : (version == 3 ? mainAppSupportsMultipleRoots() : mainAppSupportsCriteria())) else {
                 try? FileManager.default.removeItem(at: resultsFile)
                 showInfo("Die Haupt-App unterstützt diese Übergabe noch nicht; bitte beide Apps aktualisieren.")
                 return
@@ -1813,19 +1816,19 @@ final class QuickController: HitListController, NSApplicationDelegate,
         guard let url = locateMainApp(), let bundle = Bundle(url: url),
               let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
               CFGetTypeID(version) != CFBooleanGetTypeID() else { return false }
-        return [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0].contains(version.doubleValue)
+        return [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].contains(version.doubleValue)
     }
 
     func mainAppSupportsMultipleRoots() -> Bool {
         guard let url = locateMainApp(), let bundle = Bundle(url: url),
               let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
               CFGetTypeID(version) != CFBooleanGetTypeID() else { return false }
-        return [3.0, 4.0, 5.0, 6.0, 7.0, 8.0].contains(version.doubleValue)
+        return [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].contains(version.doubleValue)
     }
     func mainAppSupportsDateRanges() -> Bool {
         guard let url = locateMainApp(), let bundle = Bundle(url: url),
               let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), [4.0, 5.0, 6.0, 7.0, 8.0].contains(version.doubleValue),
+              CFGetTypeID(version) != CFBooleanGetTypeID(), [4.0, 5.0, 6.0, 7.0, 8.0, 9.0].contains(version.doubleValue),
               let dates = bundle.object(forInfoDictionaryKey: "FavenioDateRangeSchemaVersion") as? NSNumber,
               CFGetTypeID(dates) != CFBooleanGetTypeID(), dates.doubleValue == 1 else { return false }
         return true
@@ -1833,7 +1836,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     func mainAppSupportsFinderMetadata() -> Bool {
         guard let url = locateMainApp(), let bundle = Bundle(url: url),
               let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), [5.0, 6.0, 7.0, 8.0].contains(version.doubleValue),
+              CFGetTypeID(version) != CFBooleanGetTypeID(), [5.0, 6.0, 7.0, 8.0, 9.0].contains(version.doubleValue),
               let capability = bundle.object(forInfoDictionaryKey: "FavenioFinderMetadataSchemaVersion") as? NSNumber,
               CFGetTypeID(capability) != CFBooleanGetTypeID(), capability.doubleValue == 1 else { return false }
         return true
@@ -1842,16 +1845,23 @@ final class QuickController: HitListController, NSApplicationDelegate,
     func mainAppSupportsLocalContent() -> Bool {
         guard let url = locateMainApp(), let bundle = Bundle(url: url),
               let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), [6.0, 7.0, 8.0].contains(version.doubleValue),
+              CFGetTypeID(version) != CFBooleanGetTypeID(), [6.0, 7.0, 8.0, 9.0].contains(version.doubleValue),
               let capability = bundle.object(forInfoDictionaryKey: "FavenioLocalContentSchemaVersion") as? NSNumber,
               SearchConfiguration.supportsLocalContentCapability(capability) else { return false }
         return true
     }
 
+    func mainAppSupportsPPTXOCR() -> Bool {
+        guard let url = locateMainApp(), let bundle = Bundle(url: url),
+              let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
+              CFGetTypeID(version) != CFBooleanGetTypeID(), version.doubleValue == 9 else { return false }
+        return SearchConfiguration.supportsOCRCapability(bundle.object(forInfoDictionaryKey: "FavenioPPTXOCRSchemaVersion"))
+    }
+
     func mainAppSupportsPDFOCR() -> Bool {
         guard let url = locateMainApp(), let bundle = Bundle(url: url),
               let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), version.doubleValue == 8,
+              CFGetTypeID(version) != CFBooleanGetTypeID(), [8.0, 9.0].contains(version.doubleValue),
               SearchConfiguration.supportsPDFOCRCapability(bundle.object(forInfoDictionaryKey: "FavenioPDFOCRSchemaVersion")) else { return false }
         return true
     }
@@ -1859,7 +1869,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     func mainAppSupportsOCR() -> Bool {
         guard let url = locateMainApp(), let bundle = Bundle(url: url),
               let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), [7.0, 8.0].contains(version.doubleValue),
+              CFGetTypeID(version) != CFBooleanGetTypeID(), [7.0, 8.0, 9.0].contains(version.doubleValue),
               SearchConfiguration.supportsOCRCapability(bundle.object(forInfoDictionaryKey: "FavenioOCRSchemaVersion")) else { return false }
         return true
     }

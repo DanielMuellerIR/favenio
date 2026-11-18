@@ -67,10 +67,10 @@ import zipfile
 import zlib
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-__version__ = "0.66.3"
+__version__ = "0.68.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-11-09"
+__date__ = "2026-11-18"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -1662,6 +1662,8 @@ def load_content_preview(request, local_only=False):
     encoding = preview.get("contentEncoding")
     document_reader = query.get("documentReader")
     document = document_reader in DOCUMENT_READERS
+    if document_reader in PPTX_OCR_READERS and document_reader != PPTX_OCR_READER:
+        raise ValueError("Originaler PPTX-OCR-Leser ist auf dieser Plattform nicht verfügbar")
     if document_reader in ("pdfkit-v1", "poppler-v1", "pdfkit-vision-v1", "poppler-tesseract-v1", "vision-image-v1", "tesseract-image-v1") and DOCUMENT_READERS[document_reader] not in (DOCUMENT_ENCODING, PDF_OCR_ENCODING, OCR_ENCODING):
         raise ValueError("Originaler Dokument-/OCR-Leser ist auf dieser Plattform nicht verfügbar")
     if query.get("documentReader") is not None and not document:
@@ -1763,10 +1765,14 @@ def load_content_preview(request, local_only=False):
                                                  ("totalBytes", DEFAULT_MAX_ARCHIVE_TOTAL_BYTES),
                                                  ("ratio", DEFAULT_MAX_ARCHIVE_RATIO))):
                         raise ValueError("ungültige Archivgrenzen")
-                    reader = PACKAGE_QUERY_READERS[document_reader](ArchiveBudget(
+                    budget = ArchiveBudget(
                         min(DEFAULT_MAX_ARCHIVE_MEMBER_BYTES, limits.get("memberBytes", DEFAULT_MAX_ARCHIVE_MEMBER_BYTES)),
                         min(DEFAULT_MAX_ARCHIVE_TOTAL_BYTES, limits.get("totalBytes", DEFAULT_MAX_ARCHIVE_TOTAL_BYTES)),
-                        min(DEFAULT_MAX_ARCHIVE_RATIO, limits.get("ratio", DEFAULT_MAX_ARCHIVE_RATIO))))
+                        min(DEFAULT_MAX_ARCHIVE_RATIO, limits.get("ratio", DEFAULT_MAX_ARCHIVE_RATIO)))
+                    if document_reader in PPTX_OCR_READERS:
+                        reader = PPTXTextReader(budget, OCRTextReader(find_ocr_helper()))
+                    else:
+                        reader = PACKAGE_QUERY_READERS[document_reader](budget)
                 elif document_reader in ("pdfkit-vision-v1", "poppler-tesseract-v1"):
                     reader = PDFOCRTextReader(find_pdf_helper())
                 elif document_reader in ("vision-image-v1", "tesseract-image-v1"):
@@ -1779,7 +1785,11 @@ def load_content_preview(request, local_only=False):
                 pieces = ((number, raw, complete, ends_line, None) for number, raw, complete, ends_line in
                     iter_line_pieces(chunks(handle), text_encoding=requested_encoding, decoder_info=info, **options))
             for number, raw, complete, ends_line, position in pieces:
-                if document_reader in ("poppler-v1", "tesseract-image-v1", "poppler-tesseract-v1") and (not isinstance(original.get("documentPosition"), dict) or original["documentPosition"].get("readerFingerprint") != position.get("readerFingerprint")):
+                bound_reader = document_reader in ("poppler-v1", "tesseract-image-v1", "poppler-tesseract-v1")
+                original_position = original.get("documentPosition")
+                if document_reader == "pptx-tesseract-v1" and position.get("kind") == "pptxOCR":
+                    bound_reader = isinstance(original_position, dict) and original_position.get("kind") == "pptxOCR"
+                if bound_reader and (not isinstance(original_position, dict) or original_position.get("readerFingerprint") != position.get("readerFingerprint")):
                     raise DocumentReadError("documentReaderChanged")
                 if time.monotonic() >= deadline:
                     raise PreviewLoadLimit()
@@ -1854,6 +1864,8 @@ def load_content_preview(request, local_only=False):
             pieces.close()
         if isinstance(reader, PDFTextReader):
             reader.close()
+        elif isinstance(reader, PPTXTextReader) and reader.ocr_reader is not None:
+            reader.ocr_reader.close()
         signal.signal(signal.SIGALRM, alarm_handler)
         signal.setitimer(signal.ITIMER_REAL, *alarm_timer)
     state["readBytes"] = read_bytes
@@ -2908,6 +2920,13 @@ PPTX_SLIDES = 64
 PPTX_OBJECTS = 32768
 PPTX_TABLE_CELLS = 131072
 PPTX_TABLE_ROWS = 131072
+PPTX_OCR_IMAGES = 8
+PPTX_OCR_IMAGE_BYTES = 8 * 1024 * 1024
+PPTX_OCR_TOTAL_BYTES = 24 * 1024 * 1024
+PPTX_OCR_SECONDS = 3.0
+PPTX_OCR_READERS = {"pptx-vision-v1": "pptx-vision-text-v1", "pptx-tesseract-v1": "pptx-tesseract-text-v1"}
+PPTX_OCR_READER = "pptx-tesseract-v1" if sys.platform.startswith("linux") else "pptx-vision-v1"
+PPTX_OCR_ENCODING = PPTX_OCR_READERS[PPTX_OCR_READER]
 XLSX_ENCODING = "xlsx-text-v1"
 XLSX_CELLS = 131072
 XLSX_SHARED_STRINGS = 65536
@@ -2932,6 +2951,7 @@ OCR_BLOCKS = 4096
 OCR_TEXT_BYTES = 1024 * 1024
 OCR_REASONS = frozenset(("ocrHelperUnavailable", "ocrDamaged", "ocrLimit", "ocrReadError", "ocrMultipleFrames", "ocrNoText", "ocrTimeout"))
 DOCUMENT_READERS = {"pdfkit-v1": "pdfkit-text-v1", "poppler-v1": "poppler-text-v1", "docx-v1": DOCX_ENCODING, "odt-v1": ODT_ENCODING, "epub-v1": EPUB_ENCODING, "xlsx-v1": XLSX_ENCODING, "pptx-v1": PPTX_ENCODING, "vision-image-v1": "vision-ocr-text-v1", "tesseract-image-v1": "tesseract-ocr-text-v1", "pdfkit-vision-v1": "pdfkit-vision-text-v1", "poppler-tesseract-v1": "poppler-tesseract-text-v1"}
+DOCUMENT_READERS.update(PPTX_OCR_READERS)
 
 
 def linux_document_helper():
@@ -3888,10 +3908,13 @@ class PPTXTextReader(ZIPDocumentReader):
     DRAWING = ("http://schemas.openxmlformats.org/drawingml/2006/main",
                "http://purl.oclc.org/ooxml/drawingml/main")
 
-    def __init__(self, budget):
+    def __init__(self, budget, ocr_reader=None):
         super().__init__(budget)
         self.objects = self.cells = 0
         self.pending_error = None
+        self.ocr_reader = ocr_reader
+        self.image_attempts = self.image_bytes = 0
+        self.ocr_seconds = 0.0
 
     def issue(self, reason):
         if reason in ("documentLimit", "documentTimeout"):
@@ -3982,6 +4005,10 @@ class PPTXTextReader(ZIPDocumentReader):
                 if obj["id"] is not None:
                     raise DocumentReadError("documentDamaged")
                 obj["id"] = identifier(attrs.get("id", ""))
+            if self.ocr_reader is not None and obj["type"] == "p:pic" and relative == ["p:blipFill", "a:blip"]:
+                embeds = [attrs[key] for prefix in self.REL_PREFIXES
+                          if (key := prefix.rstrip("/") + "}embed") in attrs]
+                obj["embed"] = embeds[0] if len(embeds) == 1 and "embed" not in obj else None
             table_path = ["a:graphic", "a:graphicData", "a:tbl"]
             if obj["type"] == "p:graphicFrame" and relative == ["a:graphic", "a:graphicData"]:
                 obj["table"] = attrs.get("uri") in tuple(ns + "/table" for ns in self.DRAWING)
@@ -4040,6 +4067,9 @@ class PPTXTextReader(ZIPDocumentReader):
                 obj = objects.pop()
                 if obj["id"] is None:
                     raise DocumentReadError("documentDamaged")
+                if self.ocr_reader is not None and obj["type"] == "p:pic":
+                    queue.append((dict(kind="pptxOCR", part=part, slide=slide,
+                                       objectID=obj["id"], objectKind="picture"), obj.get("embed")))
             stack.pop()
         parser.StartElementHandler, parser.EndElementHandler, parser.CharacterDataHandler = start, end, data
         for chunk in self.chunks(archive, part):
@@ -4055,6 +4085,47 @@ class PPTXTextReader(ZIPDocumentReader):
         if not tree_seen:
             raise DocumentReadError("documentDamaged")
 
+    def picture_sections(self, archive, position, relation, deadline):
+        if self.image_attempts >= PPTX_OCR_IMAGES or self.image_bytes >= PPTX_OCR_TOTAL_BYTES or self.ocr_seconds >= PPTX_OCR_SECONDS:
+            raise DocumentReadError("ocrLimit")
+        self.image_attempts += 1
+        if relation is None or relation[0] != "image" or not relation[1]:
+            raise DocumentReadError("ocrReadError")
+        part = relation[1]
+        suffix = posixpath.splitext(part)[1].lower()
+        if suffix not in OCR_EXTENSIONS:
+            raise DocumentReadError("ocrDamaged")
+        info = archive.getinfo(part)
+        if info.flag_bits & 1 or info.is_dir():
+            raise DocumentReadError("ocrDamaged")
+        if info.file_size > min(PPTX_OCR_IMAGE_BYTES, PPTX_OCR_TOTAL_BYTES - self.image_bytes):
+            raise DocumentReadError("ocrLimit")
+        if not self.ocr_reader.path:
+            raise DocumentReadError("ocrHelperUnavailable")
+        started = time.monotonic()
+        image_deadline = min(deadline, started + PPTX_OCR_SECONDS - self.ocr_seconds)
+        try:
+            with open_document_temporary(suffix) as image, archive.open(info) as member:
+                for chunk in self.budget.iter_chunks(member, part, info.file_size, info.compress_size):
+                    self.image_bytes += len(chunk)
+                    if self.image_bytes > PPTX_OCR_TOTAL_BYTES or image.tell() + len(chunk) > PPTX_OCR_IMAGE_BYTES:
+                        raise DocumentReadError("ocrLimit")
+                    if time.monotonic() >= image_deadline:
+                        raise DocumentReadError("ocrTimeout")
+                    image.write(chunk)
+                image.flush()
+                for block, text in self.ocr_reader.sections(image.name, image_deadline):
+                    self.text_bytes += len(text.encode("utf-8"))
+                    if self.text_bytes > DOCUMENT_TEXT_BYTES:
+                        raise DocumentReadError("documentLimit")
+                    locator = dict(position, block=block["block"], confidence=block["confidence"],
+                                   region=block["region"], reader=PPTX_OCR_READER)
+                    if PPTX_OCR_READER == "pptx-tesseract-v1":
+                        locator["readerFingerprint"] = self.ocr_reader.reader_fingerprint
+                    yield locator, text
+        finally:
+            self.ocr_seconds += time.monotonic() - started
+
     def sections(self, path, deadline):
         with self.package(path) as archive:
             for number, relation in enumerate(self.presentation(archive), 1):
@@ -4065,7 +4136,25 @@ class PPTXTextReader(ZIPDocumentReader):
                 try:
                     if relation is None or relation[0] != "slide" or relation[1] is None:
                         raise DocumentReadError("documentReadError")
-                    yield from self.paragraphs_in(archive, relation[1], number)
+                    part = relation[1]
+                    relations = None
+                    for position, text in self.paragraphs_in(archive, part, number):
+                        if position["kind"] != "pptxOCR":
+                            if self.ocr_reader is not None:
+                                position = dict(position, reader=PPTX_OCR_READER)
+                            yield position, text
+                            continue
+                        if self.on_issue:
+                            self.on_issue("ocrProjection")
+                        try:
+                            if relations is None and text is not None:
+                                directory, name = posixpath.split(part)
+                                relations = self.relations(archive, posixpath.join(directory, "_rels", name + ".rels"), directory)
+                            yield from self.picture_sections(archive, position, (relations or {}).get(text), deadline)
+                        except (DocumentReadError, ArchiveLimitError) as error:
+                            self.issue(error.reason)
+                        except (KeyError, zipfile.BadZipFile, xml.parsers.expat.ExpatError, UnicodeError, OSError):
+                            self.issue("ocrReadError")
                 except (DocumentReadError, xml.parsers.expat.ExpatError, UnicodeError, zipfile.BadZipFile) as err:
                     self.issue(err.reason if isinstance(err, DocumentReadError) else "documentDamaged")
             if self.pending_error:
@@ -4075,6 +4164,20 @@ class PPTXTextReader(ZIPDocumentReader):
 PACKAGE_DOCUMENT_READERS = {".docx": DOCXTextReader, ".odt": ODTTextReader, ".epub": EPUBTextReader, ".xlsx": XLSXTextReader, ".pptx": PPTXTextReader}
 PACKAGE_DOCUMENT_ENCODINGS = {".docx": DOCX_ENCODING, ".odt": ODT_ENCODING, ".epub": EPUB_ENCODING, ".xlsx": XLSX_ENCODING, ".pptx": PPTX_ENCODING}
 PACKAGE_QUERY_READERS = {"docx-v1": DOCXTextReader, "odt-v1": ODTTextReader, "epub-v1": EPUBTextReader, "xlsx-v1": XLSXTextReader, "pptx-v1": PPTXTextReader}
+PACKAGE_QUERY_READERS.update(dict.fromkeys(PPTX_OCR_READERS, PPTXTextReader))
+
+
+@contextlib.contextmanager
+def open_document_temporary(suffix):
+    with contextlib.ExitStack() as cleanup:
+        # Die Datei muss vor Zustellung eines Abbruchs zum Aufräumen registriert sein.
+        previous = signal.pthread_sigmask(signal.SIG_BLOCK,
+            {signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGALRM})
+        try:
+            temporary = cleanup.enter_context(tempfile.NamedTemporaryFile(suffix=suffix))
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        yield temporary
 
 
 class PDFTextReader:
@@ -4746,6 +4849,7 @@ class FileProbe:
         if self.extension != ".pdf" and self.extension not in PACKAGE_DOCUMENT_READERS and not image_ocr:
             raise DocumentReadError("documentUnsupported")
         pdf_ocr = self.search.pdf_ocr and self.extension == ".pdf"
+        pptx_ocr = self.search.pptx_ocr and self.extension == ".pptx"
         seconds = PDF_OCR_SECONDS if pdf_ocr else DOCUMENT_SECONDS
         deadline = time.monotonic() + seconds
         previous_handler = signal.getsignal(signal.SIGALRM)
@@ -4789,9 +4893,13 @@ class FileProbe:
                     temporary.flush()
                     path = temporary.name
                 package_reader = PACKAGE_DOCUMENT_READERS.get(self.extension)
-                reader = (self.search.ocr_reader if image_ocr else
-                          package_reader(self.search.archive_budget) if package_reader else self.search.pdf_reader)
-                self.decoder_info["decoder"] = OCR_ENCODING if image_ocr else PDF_OCR_ENCODING if pdf_ocr else PACKAGE_DOCUMENT_ENCODINGS.get(self.extension, DOCUMENT_ENCODING)
+                if pptx_ocr:
+                    reader = PPTXTextReader(self.search.archive_budget, self.search.ocr_reader)
+                    self.decoder_info["decoder"] = PPTX_OCR_ENCODING
+                else:
+                    reader = (self.search.ocr_reader if image_ocr else
+                              package_reader(self.search.archive_budget) if package_reader else self.search.pdf_reader)
+                    self.decoder_info["decoder"] = OCR_ENCODING if image_ocr else PDF_OCR_ENCODING if pdf_ocr else PACKAGE_DOCUMENT_ENCODINGS.get(self.extension, DOCUMENT_ENCODING)
                 if image_ocr:
                     # Auch ein hoher Modellwert beweist nicht, dass alle Bildtexte erkannt wurden.
                     self.decoder_info["documentMissingText"] = True
@@ -5871,17 +5979,18 @@ class Search:
                  modified_from=None, modified_to=None,
                  created_from=None, created_to=None, extra_matchers=(),
                  criteria_query=None, text_encoding="utf-8", content_preview=False, search_report=None,
-                 document_mode=False, include_finder_metadata=False, local_only=False, ocr=False, pdf_ocr=False, json_path_bytes=False):
+                 document_mode=False, include_finder_metadata=False, local_only=False, ocr=False, pdf_ocr=False, pptx_ocr=False, json_path_bytes=False):
         self.report = search_report
         self.local_only = local_only
         self.search_root = None
         self.document_mode = document_mode
         self.ocr = ocr
         self.pdf_ocr = pdf_ocr
+        self.pptx_ocr = pptx_ocr
         self.json_path_bytes = json_path_bytes
         self.include_finder_metadata = include_finder_metadata
         self.pdf_reader = (PDFOCRTextReader if pdf_ocr else PDFTextReader)(find_pdf_helper()) if document_mode else None
-        self.ocr_reader = OCRTextReader(find_ocr_helper()) if document_mode and ocr else None
+        self.ocr_reader = OCRTextReader(find_ocr_helper()) if document_mode and (ocr or pptx_ocr) else None
         self.text_encoding = text_encoding
         self.content_preview = content_preview
         self.preview_remaining = MAX_PREVIEW_TOTAL_BYTES
@@ -6098,6 +6207,7 @@ class Search:
         elif document_position is not None:
             positions = [item["documentPosition"] for item in terms or [] if "documentPosition" in item] or [document_position]
             text = path + ":" + ", ".join(("PDF-Seite %d OCR-Bereich %d Zeile %d (erkannt, ungefähre Seitenposition)" % (item["page"], item["block"], item["line"]) if item["kind"] == "pdfOCR" else "PDF-Seite %d Zeile %d (Textebene)" % (item["page"], item["line"]) if item["kind"] == "pdfTextPage" else "OCR-Bereich %d Zeile %d (erkannt, ungefähre Bildposition)" % (item["block"], item["line"]) if item["kind"] == "imageOCR" else
+                                          "Folie %d Bild %s OCR-Bereich %d Zeile %d (erkannt, ungefähre Bildposition)" % (item["slide"], item["objectID"], item["block"], item["line"]) if item["kind"] == "pptxOCR" else
                                           "Seite %d Zeile %d" % (item["page"], item["line"]) if item["kind"] == "pdfPage" else
                                           "%s Absatz %d Zeile %d" % (item["part"], item["paragraph"], item["line"])) for item in positions)
         elif terms and terms[0].get("line") is not None:
@@ -7905,6 +8015,8 @@ def main(argv=None):
                         help="logischen PDF-/DOCX-/ODT-/EPUB-/XLSX-/PPTX-Text mit Dokumentbelegen lesen (optionaler PDFKit-Helfer)")
     parser.add_argument("--pdf-ocr", action="store_true",
                         help="textlose PDF-Seiten im Dokumenttext begrenzt per Vision erkennen (macOS 13+)")
+    parser.add_argument("--pptx-ocr", action="store_true",
+                        help="eingebettete PPTX-Bilder im Dokumenttext begrenzt lokal erkennen")
     parser.add_argument("--ocr", action="store_true",
                         help="im Dokumenttextmodus zusätzlich lokale Bild-OCR verwenden (Deutsch/Englisch, macOS 13+)")
     parser.add_argument("--content-preview", action="store_true",
@@ -8429,7 +8541,9 @@ def run_parsed(args, parser):
                                       "pptxSlides": PPTX_SLIDES, "pptxNotes": 0, "pptxObjects": PPTX_OBJECTS,
                                       "pptxTableCells": PPTX_TABLE_CELLS, "pptxTableRows": PPTX_TABLE_ROWS, "pptxHidden": "included",
                                       "pptxOrder": "presentationThenShapeTreeXML",
-                                      "pptxExcluded": ["notes", "masters", "layouts", "comments", "fields", "charts", "embeddedObjects", "imageOCR", "alternateContent"]}
+                                      "pptxExcluded": ["notes", "masters", "layouts", "comments", "fields", "charts", "embeddedObjects", "alternateContent"] + ([] if args.pptx_ocr else ["imageOCR"]),
+                                      "pptxOCRImages": PPTX_OCR_IMAGES, "pptxOCRImageBytes": PPTX_OCR_IMAGE_BYTES,
+                                      "pptxOCRTotalBytes": PPTX_OCR_TOTAL_BYTES, "pptxOCRSeconds": PPTX_OCR_SECONDS}
         report = SearchReport(configuration, date_resolver.snapshot() if date_resolver.entries else None)
     search = Search(matcher, args.content, archive_depth, args.json,
                     progress=args.progress, only=args.only,
@@ -8444,7 +8558,7 @@ def run_parsed(args, parser):
                     exiftool_path=exiftool_path, extra_matchers=extra_matchers,
                     criteria_query=criteria_query, text_encoding=args.encoding,
                     content_preview=args.content_preview, search_report=report, document_mode=args.document_text,
-                    include_finder_metadata=args.finder_metadata, local_only=args.local_only, ocr=args.ocr, pdf_ocr=args.pdf_ocr, json_path_bytes=args.json_path_bytes,
+                    include_finder_metadata=args.finder_metadata, local_only=args.local_only, ocr=args.ocr, pdf_ocr=args.pdf_ocr, pptx_ocr=args.pptx_ocr, json_path_bytes=args.json_path_bytes,
                     **dimension_limits, **fact_limits)
 
     # Erst alle Startpfade prüfen, dann suchen: sonst stünden bei mehreren

@@ -726,7 +726,7 @@ class SwiftGuardTests(unittest.TestCase):
         controller = GUI[GUI.index("final class MainController"):]
         self.assertNotIn("Data(contentsOf:", controller)
         self.assertIn('components.scheme?.lowercased() == "favenio"', GUI)
-        self.assertIn('["results", "results-v2", "results-v3", "results-v4", "results-v5", "results-v6", "results-v7", "results-v8"].contains(components.host?.lowercased() ?? "")', GUI)
+        self.assertIn('["results", "results-v2", "results-v3", "results-v4", "results-v5", "results-v6", "results-v7", "results-v8", "results-v9"]', GUI)
         handler = GUI[
             GUI.index("func handleFavenioURL"):
             GUI.index("func loadResults")

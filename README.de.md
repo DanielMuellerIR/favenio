@@ -2,7 +2,7 @@
 
 # Favenio
 
-Linux: Rust/GTK-Oberflächen verwenden die gemeinsamen Swift-Anwendungsmodelle und den Python-Suchkern. Signierte Pakete stehen im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.3) und über einen eigenen GitHub-Updatekanal bereit. Die Desktop-Anbindung ist unter X11 und Wayland geprüft. Siehe [Linux-Bau und Installation](docs/LINUX.md).
+Linux: Rust/GTK-Oberflächen verwenden die gemeinsamen Swift-Anwendungsmodelle und den Python-Suchkern. Signierte Pakete stehen im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.68.0) und über einen eigenen GitHub-Updatekanal bereit. Die Desktop-Anbindung ist unter X11 und Wayland geprüft. Siehe [Linux-Bau und Installation](docs/LINUX.md).
 
 
 **„facile invenio", Latein für „ich finde mit Leichtigkeit".**
@@ -25,6 +25,12 @@ Der Suchkern ist pures Python 3 (nur Standardbibliothek), eine Datei, keine
 Installation. Darauf aufbauend gibt es zwei native macOS-Apps: ein großes
 Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
 
+## Neu in 0.68.0
+
+Die PPTX-Dokumenttextsuche kann Text in eingebetteten Screenshots erkennen.
+Die Statuszeile erklärt leere Suchergebnisse, die macOS-Haupt-App vergleicht
+Läufe mit Aufzeichnungen und Linux kann Treffer in Eingangsreihenfolge anhängen.
+
 ## Neu in 0.66.3
 
 Linux-Ergebnisabfragen unterstützen alle Sortierungen. Metadatenkriterien behalten „Alle Textfelder“ beim Bearbeiten bei. Ordnergruppen unterscheiden auch gleich dargestellte Namen mit unterschiedlichen ursprünglichen Pfadbytes.
@@ -39,7 +45,7 @@ ExifTool wird unter Arch/CachyOS auch dann gefunden, wenn der Desktop-PATH das V
 
 ## Neu in 0.66.0
 
-Die Linux-Oberflächen verwenden den bestehenden Python-Suchkern und gemeinsame Swift-Anwendungsmodelle. Rust/GTK stellt beide Fenster bereit, ergänzt durch Poppler/Tesseract, integrierte Vorschauen, Dateimanager-Adapter und signierte Updatekoordination. Die Desktop-Abnahme und die erste öffentliche Linux-Auslieferung stehen noch aus; siehe [Linux](docs/LINUX.md).
+Die Linux-Oberflächen verwenden den bestehenden Python-Suchkern und gemeinsame Swift-Anwendungsmodelle. Rust/GTK stellt beide Fenster bereit, ergänzt durch Poppler/Tesseract, integrierte Vorschauen, Dateimanager-Adapter und signierte Updatekoordination. Einrichtung und Plattformdetails stehen unter [Linux](docs/LINUX.md).
 
 ## Neu in 0.65.0
 
@@ -244,6 +250,11 @@ Auch reine Filtersuchen im Inhaltsmodus lassen sich übergeben; ohne Suchbegriff
 öffnet sich die Kopie am Anfang ohne belegte Fundposition.
 
 Suchaufzeichnungen (0.38.0) können einen begrenzten gespeicherten Trefferstand ohne Suche wieder öffnen oder seine Konfiguration ausdrücklich mit neuer Laufkennung erneut suchen. Historische Dateiinhalte werden dabei nicht gespeichert. Siehe [Aufnahmebefehle](docs/LOCAL-CONTROL.md#suchaufzeichnungen-ab-0380).
+
+Die macOS-Haupt-App bietet **Ablage → Suchstand aufzeichnen…**,
+**Suchaufzeichnung öffnen…** und **Suche erneut ausführen und vergleichen**.
+Der Vergleich zeigt neu und nur früher gefundene Treffer sowie die bekannte
+Abdeckung beider Läufe. [Vergleich und Grenzen](docs/LOCAL-CONTROL.md#vergleich-in-der-macos-haupt-app)
 Filteränderungen behalten den Aufnahmehinweis, bis eine neue Suche oder eine
 andere Trefferliste den Stand ersetzt. Beim Laden einer Vorlage bleiben auch
 die Bestätigung und ein Hinweis auf einen fehlenden Ordner neben der
@@ -268,6 +279,7 @@ Aufnahmeherkunft sichtbar.
 | `--local-only` | nur lokal vorhandene Inhalte lesen (macOS 13+); Namen/bekannte Fakten bleiben suchbar, ausgelassene Cloudinhalte werden erklärt; siehe [lokale Inhalte](docs/LOCAL_CONTENT.md) |
 | `--ocr` | lokale deutsche/englische Bild-OCR im Dokumenttextmodus zuschalten (macOS 13+); [Grenzen und erkannte Belege](docs/OCR.md) |
 | `--pdf-ocr` | textlose PDF-Seiten ausdrücklich begrenzt per lokaler OCR lesen; Textebenen bevorzugen, Seitenherkunft erhalten; [Grenzen und Abdeckung](docs/PDF_OCR.md) |
+| `--pptx-ocr` | eingebettete PPTX-Bilder ausdrücklich per lokaler OCR lesen, mit Folien- und Bildbeleg; [Grenzen und Abdeckung](docs/DOCUMENT_TEXT.md#pptx-bild-ocr) |
 | `--term TEXT` | weiterer Suchbegriff, der ZUSÄTZLICH zutreffen muss (wiederholbar); gleiche Regeln und gleiches Ziel wie das Muster; UND über die ganze Datei, nicht dieselbe Zeile (siehe unten) |
 | `--list-metadata-fields` | die kuratierte Feldliste ausgeben, eine je Zeile, und beenden |
 | `--min-size BYTES`, `--max-size BYTES` | inklusive Dateigrößengrenzen; ganze nichtnegative Bytezahl, optional B/KiB/MiB/GiB/TiB |
@@ -534,13 +546,18 @@ und Wertarten. [XLSX-Projektion und Grenzen](docs/DOCUMENT_TEXT.md).
 PPTX folgt Präsentationsliste und Folienbeziehungen; Form-/Textkastenläufe und
 Tabellenabsätze bleiben mit Folie, gespeicherter Objekt-ID und Absatz belegt.
 Tabellen ergänzen Zeile/Spalte. Ausgeblendete Folien sind enthalten; Notizen,
-Master-/Layouttexte, Kommentare, Felder, Diagramme, Bilder und eingebettete
+Master-/Layouttexte, Kommentare, Felder, Diagramme und eingebettete
 Fremdobjekte bleiben aus. Innerhalb einer Folie gilt XML-Objektreihenfolge;
 keine visuelle Leserichtung oder PowerPoint-Berechnung wird versprochen.
 64 Folien, 32768 Objekte/Absätze und 131072 Tabellenzellen/-zeilen ergänzen die bestehenden
 Paket-/XML-/Textgrenzen. Vorschau, Navigation, Übergabe und Export erhalten die
 jeweiligen Lokatoren. Einzelheiten: [Dokumenttext](docs/DOCUMENT_TEXT.md).
 
+
+Im Suchziel **Dokumenttext** findet **Eingebettete PPTX-Bilder per OCR lesen**
+Text in Screenshots auf Folien. In der CLI schaltet
+`--document-text --pptx-ocr` diese Suche ein. Die Vorschau kennzeichnet den
+erkannten Text mit Folie und Bildobjekt. [PPTX-Bild-OCR](docs/DOCUMENT_TEXT.md#pptx-bild-ocr)
 
 ### Lokale Bild-OCR
 
@@ -796,6 +813,10 @@ sich verteilen; ab zwei markierten Zeilen auch die Größe der Auswahl. Steht ei
 
 ### Suchbericht
 
+Nach einer Suche ohne Treffer nennt der Status die Abdeckung oder einen Grund
+für ihre Einschränkung. Im macOS-Hauptfenster steht der Suchbericht direkt
+daneben. Wenn ein Ansichtsfilter alle Treffer ausblendet, meldet das Fenster dies.
+
 „Suchbericht…“ erklärt in beiden Apps Auslassungen nach Gründen: absichtliche
 Ausschlüsse, technische Lesefehler und ausgeschöpfte Budgets. Gezählt werden
 Ereignisse, keine eindeutigen Dateien; pro Grund gibt es höchstens drei gekürzte
@@ -806,6 +827,10 @@ Quick-Treffergrenze sind keine vollständige Abdeckung. Der Bericht ergänzt
 keinen Vollscan; [Datenvertrag und Grenzen](docs/SEARCH_REPORT.md).
 
 ### Trefferliste verfeinern, exportieren, aufräumen
+
+Unter Linux zeigt **Eingangsreihenfolge** Treffer in der Reihenfolge ihres
+Eintreffens und hängt neue Zeilen an die ungefilterte, ungruppierte Liste an.
+[Messung unter Linux](docs/LINUX.md#große-trefferlisten)
 
 **Tabelle / Miniaturen** schaltet dieselbe Trefferliste zwischen Zeilen und Bildraster um. Auswahl, Sortierung, Gruppen, QuickLook, Öffnen und Drag-and-drop bleiben gemeinsam. Nur sichtbare Rasterbilder werden im Hintergrund geladen; fehlende Miniaturen nennen den Grund. Miniaturen lesen unabhängig von der Suchoption ausschließlich lokale Inhalte. [Grenzen und Dateiaktionen](docs/THUMBNAILS.md).
 

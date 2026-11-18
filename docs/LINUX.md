@@ -172,7 +172,40 @@ Ein Schlüsselwechsel wird nicht still akzeptiert.
 Dateimanager-Adapter nach Bestätigung. Laufende Apps und Updates müssen zuerst
 geschlossen werden. Vorlagen und Einstellungen bleiben erhalten.
 
+## Große Trefferlisten
+
+Unter **Eingangsreihenfolge** hängt die laufende Suche neue Treffer an eine
+ungefilterte, ungruppierte Liste an. Die bestehende Auswahl und Vorschau
+bleiben bestehen. Für Spaltensortierungen, Gruppierung und Ansichtsfilter
+verwendet die App die gemeinsame Swift-Projektion.
+
+Gemessen am 2026-11-18 unter Linux Mint 22.2 (Ryzen 7 7730U, GTK 4.14.5,
+Xvfb, GTK-Debugbuild, optimierter Swift-Kern). Je Variante zwei Namenssuchen
+in 16 Ordnern mit leerem Dateiinhalt und deaktivierter Vorschau. Die
+Messfenster lagen in den letzten rund 2.000 Treffern. Die erste Befüllung
+bleibt bei den Aktualisierungszeiten unberücksichtigt. Die Tabelle zeigt
+Maximalwerte in Millisekunden.
+
+| Treffer | Eingangsreihenfolge | Modellprojektion inkl. Sprachgrenze | GTK-Zeilen und Auswahl | Gesamte Aktualisierung | Auswahlreaktion |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 10.000 | Neuaufbau | 463 | 1.636 | 2.091 | 2.795 |
+| 10.000 | Anhängen | 0 | 9 | 9 | 732 |
+| 50.000 | Neuaufbau | 2.324 | 3.106 | 5.363 | 6.127 |
+| 50.000 | Anhängen | 0 | 9 | 9 | 923 |
+
+Ein GTK-Timer löste alle 25 ms eine Auswahl in der eingeblendeten Liste aus.
+Die Reaktionszeit enthält die Wartezeit in der Ereignisschleife und die
+Verarbeitung der Auswahl. Beim Anhängen entfällt der Modellaufruf für die
+Listenprojektion. Die Übertragung der Treffer aus dem Modell läuft weiter.
+Die bisherige Namenssortierung lag im gleichen Aufbau bei rund 2,0 s
+(10.000 Treffer, 95. Perzentil) und 5,0 s (50.000 Treffer, Maximum aus einem
+Lauf) pro Listenaktualisierung.
+
 ## Prüfung
+
+`linux/build-container.sh check` baut die GTK-App und führt
+`tests/linux_shared_probe.py` im selben Swift-/Rust-Container aus. Der
+Linux-CI-Job verwendet denselben Befehl auf Ubuntu 24.04.
 
 `tests/linux_shared_probe.py` prüft die echte Swift-Sprachgrenze einschließlich
 Suchprozessen, Byteidentitäten, Aufzeichnungen und Nachladen.

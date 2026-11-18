@@ -109,6 +109,34 @@ class SharedModelTests(unittest.TestCase):
             self.assertNotEqual(old['runID'], new['runID'])
             self.assertEqual(self.call(operation='poll', runID=old['runID'])['events'], [])
 
+    def test_arrival_order_stays_consistent_across_projections_and_pages(self):
+        with tempfile.TemporaryDirectory(prefix='favenio-ffi-arrival-') as directory:
+            roots = []
+            for filename in ('needle-z.txt', 'needle-a.txt', 'needle-m.txt'):
+                path = Path(directory, filename)
+                path.touch()
+                roots.append(str(path))
+            started = self.call(operation='start', pattern='needle', roots=roots, options=[])
+            hits, ending = self.finish(started)
+            self.assertEqual(ending['state'], 'finished')
+            self.assertEqual([hit['path'] for hit in hits], roots)
+            run = dict(runID=started['runID'], sort='arrival', ascending=False)
+            current = self.call(operation='projection', mode='none', **run)
+            self.assertTrue(current['arrivalPrefix'])
+            self.assertEqual([row['index'] for row in current['rows']], [0, 1, 2])
+            page = self.call(operation='page', offset=0, limit=3, **run)
+            self.assertEqual([row.get('hit', row)['path'] for row in page['hits']], roots)
+            by_name = self.call(operation='projection', runID=started['runID'], mode='none', sort='name')
+            self.assertFalse(by_name['arrivalPrefix'])
+            self.assertEqual([row['index'] for row in by_name['rows']], [1, 2, 0])
+            grouped = self.call(operation='projection', mode='fileExtension', **run)
+            self.assertFalse(grouped['arrivalPrefix'])
+            self.assertEqual([row['index'] for row in grouped['rows'] if row['kind'] == 'hit'], [0, 1, 2])
+            self.call(operation='remove', indices=[1])
+            current = self.call(operation='projection', mode='none', **run)
+            self.assertFalse(current['arrivalPrefix'])
+            self.assertEqual([row['index'] for row in current['rows']], [0, 2])
+
     def finish(self, started):
         self.assertTrue(started['ok'], started)
         hits, ending = [], None
@@ -159,6 +187,9 @@ class SharedModelTests(unittest.TestCase):
             self.assertNotIn('error',result,result)
             projection=self.call(operation='projection',runID=opened['runID'],mode='none',sort='path')
             self.assertEqual(projection['visible'],1,projection)
+            arrival=self.call(operation='projection',runID=opened['runID'],mode='none',sort='arrival')
+            self.assertEqual(arrival['visible'],1,arrival)
+            self.assertFalse(arrival['arrivalPrefix'])
             self.call(operation='resetFilter')
             self.assertEqual(self.call(operation='projection',runID=opened['runID'],mode='none',sort='path')['visible'],2)
 

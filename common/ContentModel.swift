@@ -183,8 +183,9 @@ struct DocumentPosition: Hashable {
         hasher.combine(part != nil)
         if let part { for byte in part.utf8 { hasher.combine(byte) } }
     }
-    static let readers = ["pdfkit-text-v1": "pdfkit-v1", "docx-text-v1": "docx-v1", "odt-text-v1": "odt-v1", "epub-text-v1": "epub-v1", "xlsx-text-v1": "xlsx-v1", "pptx-text-v1": "pptx-v1", "vision-ocr-text-v1": "vision-image-v1", "pdfkit-vision-text-v1": "pdfkit-vision-v1", "poppler-text-v1": "poppler-v1", "tesseract-ocr-text-v1": "tesseract-image-v1", "poppler-tesseract-text-v1": "poppler-tesseract-v1"]
-    var reader: String { readerOverride ?? ["pdfPage": "pdfkit-v1", "docxParagraph": "docx-v1", "odtParagraph": "odt-v1", "epubParagraph": "epub-v1", "xlsxCell": "xlsx-v1", "pptxParagraph": "pptx-v1", "imageOCR": "vision-image-v1", "pdfOCR": "pdfkit-vision-v1", "pdfTextPage": "pdfkit-vision-v1"][kind]! }
+    static let pptxOCREncodings = ["pptx-vision-text-v1": "pptx-vision-v1", "pptx-tesseract-text-v1": "pptx-tesseract-v1"]
+    static let readers = ["pdfkit-text-v1": "pdfkit-v1", "docx-text-v1": "docx-v1", "odt-text-v1": "odt-v1", "epub-text-v1": "epub-v1", "xlsx-text-v1": "xlsx-v1", "pptx-text-v1": "pptx-v1", "vision-ocr-text-v1": "vision-image-v1", "pdfkit-vision-text-v1": "pdfkit-vision-v1", "poppler-text-v1": "poppler-v1", "tesseract-ocr-text-v1": "tesseract-image-v1", "poppler-tesseract-text-v1": "poppler-tesseract-v1"].merging(pptxOCREncodings) { existing, _ in existing }
+    var reader: String { readerOverride ?? ["pdfPage": "pdfkit-v1", "docxParagraph": "docx-v1", "odtParagraph": "odt-v1", "epubParagraph": "epub-v1", "xlsxCell": "xlsx-v1", "pptxParagraph": "pptx-v1", "pptxOCR": "pptx-vision-v1", "imageOCR": "vision-image-v1", "pdfOCR": "pdfkit-vision-v1", "pdfTextPage": "pdfkit-vision-v1"][kind]! }
     static let cellValueKinds = ["text", "number", "boolean", "date", "cachedString", "cachedNumber", "cachedBoolean", "cachedDate"]
     var json: [String: Any] {
         var result = baseJSON
@@ -193,9 +194,13 @@ struct DocumentPosition: Hashable {
         return result
     }
     private var baseJSON: [String: Any] {
-        if kind == "imageOCR" || kind == "pdfOCR" {
-            var value: [String: Any] = ["kind": kind, "block": ocrBlock!, "confidence": ocrConfidence!, "region": ocrRegion!, "line": line]
+        if let ocrBlock, let ocrConfidence, let ocrRegion {
+            var value: [String: Any] = ["kind": kind, "block": ocrBlock, "confidence": ocrConfidence, "region": ocrRegion, "line": line]
             if kind == "pdfOCR" { value["page"] = page }
+            if kind == "pptxOCR" {
+                value["part"] = part; value["slide"] = slide
+                value["objectKind"] = objectKind; value["objectID"] = objectID
+            }
             return value
         }
         if kind == "pdfTextPage" { return ["kind": kind, "page": page, "line": line] }
@@ -219,6 +224,7 @@ struct DocumentPosition: Hashable {
         if kind == "pdfTextPage" { return "Seite \(page) · Textebene · Zeile \(line)" }
         if kind == "pdfOCR" { return "Seite \(page) · OCR · Bereich \(ocrBlock!) (ca.) · Zeile \(line)" }
         if kind == "imageOCR" { return "OCR · Bereich \(ocrBlock!) (ca.) · Zeile \(line)" }
+        if kind == "pptxOCR" { return "Folie \(slide!) · Bild \(objectID!) · OCR · Bereich \(ocrBlock!) (ca.) · Zeile \(line)" }
         if kind == "pptxParagraph" {
             let object = objectKind == "table" ? "Tabelle \(objectID!) · Zelle \(row!),\(column!)" : "Objekt \(objectID!)"
             return "Folie \(slide!) · \(object) · Absatz \(paragraph!) · Zeile \(line)"
@@ -242,21 +248,30 @@ struct DocumentPosition: Hashable {
     }
     static func parse(_ raw: Any?) -> Self? {
         if var object = raw as? [String: Any], let reader = object.removeValue(forKey: "reader") {
-            guard let fingerprint = object.removeValue(forKey: "readerFingerprint") as? String,
-                  fingerprint.utf8.count == 64, fingerprint.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
-                  let name = reader as? String,
-                  let kinds = ["poppler-v1": ["pdfPage"], "tesseract-image-v1": ["imageOCR"], "poppler-tesseract-v1": ["pdfTextPage", "pdfOCR"]][name],
+            let fingerprint = object.removeValue(forKey: "readerFingerprint")
+            guard let name = reader as? String,
+                  let kinds = ["poppler-v1": ["pdfPage"], "tesseract-image-v1": ["imageOCR"], "poppler-tesseract-v1": ["pdfTextPage", "pdfOCR"],
+                               "pptx-vision-v1": ["pptxParagraph", "pptxOCR"], "pptx-tesseract-v1": ["pptxParagraph", "pptxOCR"]][name],
                   let kind = object["kind"] as? String, kinds.contains(kind), var result = parse(object) else { return nil }
-            result.readerOverride = name; result.readerFingerprint = fingerprint
+            let needsFingerprint = name != "pptx-vision-v1" && (name != "pptx-tesseract-v1" || kind == "pptxOCR")
+            if needsFingerprint {
+                guard let text = fingerprint as? String, text.utf8.count == 64,
+                      text.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+                result.readerFingerprint = text
+            } else if fingerprint != nil { return nil }
+            result.readerOverride = name
             return result
         }
 
         guard let object = raw as? [String: Any],
               let line = previewInteger(object["line"]), line > 0 else { return nil }
-        if let kind = object["kind"] as? String, ["imageOCR", "pdfOCR"].contains(kind) {
+        if let kind = object["kind"] as? String, ["imageOCR", "pdfOCR", "pptxOCR"].contains(kind) {
             let page = kind == "pdfOCR" ? previewInteger(object["page"], maximum: 128) : 0
+            var keys: Set<String> = ["kind", "block", "confidence", "region", "line"]
+            if kind == "pdfOCR" { keys.insert("page") }
+            if kind == "pptxOCR" { keys.formUnion(["part", "slide", "objectID", "objectKind"]) }
             guard let page, kind != "pdfOCR" || page > 0,
-                  Set(object.keys) == (kind == "pdfOCR" ? ["kind", "block", "confidence", "region", "line", "page"] : ["kind", "block", "confidence", "region", "line"]),
+                  Set(object.keys) == keys,
                   let block = previewInteger(object["block"], maximum: 4096), block > 0,
                   let confidence = object["confidence"] as? NSNumber, CFGetTypeID(confidence) != CFBooleanGetTypeID(),
                   confidence.doubleValue.isFinite, (0.5...1).contains(confidence.doubleValue),
@@ -264,7 +279,14 @@ struct DocumentPosition: Hashable {
                   values.allSatisfy({ CFGetTypeID($0) != CFBooleanGetTypeID() && $0.doubleValue.isFinite && (0...1).contains($0.doubleValue) }) else { return nil }
             let region = values.map(\.doubleValue)
             guard region[2] > 0, region[3] > 0, region[0] + region[2] <= 1.000001, region[1] + region[3] <= 1.000001 else { return nil }
-            return Self(page: page, line: line, kind: kind, ocrBlock: block, ocrConfidence: confidence.doubleValue, ocrRegion: region)
+            var position = Self(page: page, line: line, kind: kind, ocrBlock: block, ocrConfidence: confidence.doubleValue, ocrRegion: region)
+            if kind == "pptxOCR" {
+                guard let part = partName(object["part"]), let (slide, id) = slideObject(object),
+                      object["objectKind"] as? String == "picture" else { return nil }
+                position.part = part; position.slide = slide
+                position.objectID = id; position.objectKind = "picture"
+            }
+            return position
         }
         if object["kind"] as? String == "pdfTextPage" {
             guard Set(object.keys) == ["kind", "page", "line"], let page = previewInteger(object["page"], maximum: 128), page > 0 else { return nil }
@@ -278,14 +300,9 @@ struct DocumentPosition: Hashable {
             return Self(page: page, line: line)
         }
         guard let locator = object["kind"] as? String, ["docxParagraph", "odtParagraph", "epubParagraph", "xlsxCell", "pptxParagraph"].contains(locator),
-              let part = object["part"] as? String, !part.isEmpty, part.unicodeScalars.count <= 256,
-              !part.hasPrefix("/"), !part.contains("\\"), !part.contains("\0"),
-              !part.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return nil }
+              let part = partName(object["part"]) else { return nil }
         if locator == "pptxParagraph" {
-            guard let slide = previewInteger(object["slide"], maximum: 64), slide > 0,
-                  let objectID = object["objectID"] as? String, !objectID.isEmpty, objectID.utf8.count <= 10,
-                  (objectID == "0" || objectID.utf8.first != 48), objectID.utf8.allSatisfy({ (48...57).contains($0) }),
-                  let identifier = UInt64(objectID), identifier <= 4294967295,
+            guard let (slide, objectID) = slideObject(object),
                   let objectKind = object["objectKind"] as? String, ["shape", "table"].contains(objectKind),
                   let paragraph = previewInteger(object["paragraph"], maximum: 32768), paragraph > 0,
                   ["sheet", "sheetIndex", "cell", "valueKind", "partKind", "chapter", "page"].allSatisfy({ object[$0] == nil }) else { return nil }
@@ -318,6 +335,19 @@ struct DocumentPosition: Hashable {
         }
         guard let chapter = previewInteger(object["chapter"], maximum: 4096), chapter > 0 else { return nil }
         return Self(page: 0, line: line, part: part, paragraph: paragraph, kind: locator, chapter: chapter)
+    }
+    private static func partName(_ raw: Any?) -> String? {
+        guard let part = raw as? String, !part.isEmpty, part.unicodeScalars.count <= 256,
+              !part.hasPrefix("/"), !part.contains("\\"), !part.contains("\0"),
+              !part.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return nil }
+        return part
+    }
+    private static func slideObject(_ object: [String: Any]) -> (Int, String)? {
+        guard let slide = previewInteger(object["slide"], maximum: 64), slide > 0,
+              let id = object["objectID"] as? String, !id.isEmpty, id.utf8.count <= 10,
+              (id == "0" || id.utf8.first != 48), id.utf8.allSatisfy({ (48...57).contains($0) }),
+              let number = UInt32(id), String(number) == id else { return nil }
+        return (slide, id)
     }
     private static func validCellAddress(_ address: String) -> Bool {
         let bytes = Array(address.utf8)

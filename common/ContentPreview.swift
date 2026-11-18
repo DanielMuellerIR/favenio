@@ -139,6 +139,9 @@ final class ContentPreviewView: NSStackView {
         var notes: [String] = []
         if preview.encoding == "vision-ocr-text-v1" { notes.append("OCR: erkannter Text, kein garantierter Originaltext; Bildbereiche sind ungefähr.") }
         if preview.encoding == "pdfkit-vision-text-v1" { notes.append("PDF: Textebenen bevorzugt; OCR textloser Seiten ist erkannt und nicht garantiert vollständig. Seitenbereiche sind ungefähr.") }
+        if preview.snippets.contains(where: { $0.documentPosition?.kind == "pptxOCR" }) {
+            notes.append("PPTX-Bild-OCR: Erkannter Text kann vom Original abweichen. Regionen beziehen sich auf das eingebettete Bild.")
+        }
         var firstMatch: NSRange?
         func appendContext(_ line: ContentPreviewNavigation.ContextLine) {
             result.append(NSAttributedString(string: "Kontext · " + (line.documentPosition?.title ?? "Zeile \(line.line)") + (line.truncated ? " · gekürzt" : "") + "\n" + line.text + "\n\n",

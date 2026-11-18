@@ -1016,12 +1016,14 @@ func quickHandoffInputProblem(query: String, root: String) -> String? {
 /// Schreibt die Quick→Haupt-App-Übergabe atomar und nur für den Besitzer.
 func writeQuickHandoff(_ hits: [Hit], selection: Set<HitIdentity> = [], version: Int = 1, roots: [String]? = nil,
                        configuration: SearchConfiguration? = nil, dateResolution: Data? = nil) throws -> URL {
-    guard [1, 2, 3, 4, 5, 6, 7, 8].contains(version), selection.count <= 20,
+    guard (1...9).contains(version), selection.count <= 20,
           selection.isSubset(of: Set(hits.map { $0.identity })),
           version >= 2 || selection.isEmpty else { throw CocoaError(.fileWriteUnknown) }
     guard version >= 7 || configuration?.ocr != true else { throw CocoaError(.fileWriteUnknown) }
+    guard version >= 9 || configuration?.pptxOCR != true else { throw CocoaError(.fileWriteUnknown) }
+    guard !hits.contains(where: { DocumentPosition.pptxOCREncodings[$0.contentEncoding ?? ""] != nil }) || configuration?.pptxOCR == true else { throw CocoaError(.fileWriteUnknown) }
     guard !hits.contains(where: { $0.contentEncoding == "vision-ocr-text-v1" }) || configuration?.ocr == true else { throw CocoaError(.fileWriteUnknown) }
-    guard version == 8 || configuration?.pdfOCR != true else { throw CocoaError(.fileWriteUnknown) }
+    guard version >= 8 || configuration?.pdfOCR != true else { throw CocoaError(.fileWriteUnknown) }
     guard version >= 8 || !hits.contains(where: { $0.contentEncoding == "pdfkit-vision-text-v1" }) else { throw CocoaError(.fileWriteUnknown) }
     guard version >= 7 || !hits.contains(where: { $0.contentEncoding == "vision-ocr-text-v1" }) else { throw CocoaError(.fileWriteUnknown) }
     guard version >= 6 || configuration?.localOnly != true else { throw CocoaError(.fileWriteUnknown) }
@@ -1035,7 +1037,7 @@ func writeQuickHandoff(_ hits: [Hit], selection: Set<HitIdentity> = [], version:
     } else if roots != nil { throw CocoaError(.fileWriteUnknown) }
     if version >= 4 {
         guard let configuration, SearchConfiguration.transportProblem(configuration.queryItems) == nil,
-              version == 8 ? configuration.pdfOCR : version == 7 ? configuration.ocr : version == 6 ? configuration.localOnly : version == 5 ? (configuration.requiresFinderMetadata || hits.contains { $0.finderMetadata != nil }) : configuration.requiresDateRanges else { throw CocoaError(.fileWriteUnknown) }
+              version == 9 ? configuration.pptxOCR : version == 8 ? configuration.pdfOCR : version == 7 ? configuration.ocr : version == 6 ? configuration.localOnly : version == 5 ? (configuration.requiresFinderMetadata || hits.contains { $0.finderMetadata != nil }) : configuration.requiresDateRanges else { throw CocoaError(.fileWriteUnknown) }
         if configuration.requiresDateRanges {
             guard configuration.dateReferenceTime != nil,
                   dateResolution.map({ DateRangeTransport.bound($0, to: configuration) }) ?? hits.isEmpty else { throw CocoaError(.fileWriteUnknown) }
@@ -1056,7 +1058,8 @@ func writeQuickHandoff(_ hits: [Hit], selection: Set<HitIdentity> = [], version:
         if version >= 5 { header["finderMetadataCapability"] = 1 }
         if version >= 6 { header["localContentCapability"] = 1 }
         if version >= 7 { header["ocrCapability"] = 1 }
-        if version == 8 { header["pdfOCRCapability"] = 1 }
+        if version >= 8 { header["pdfOCRCapability"] = 1 }
+        if version >= 9 { header["pptxOCRCapability"] = 1 }
         data = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
         data.append(10)
     }
@@ -1113,9 +1116,10 @@ struct QuickHandoffPayload {
         guard SearchRoots.problem(paths, limited: paths.count != 1) == nil,
               roots == nil || roots!.map({ Data($0.utf8) }) == scope.bytes else { return nil }
         guard !hits.contains(where: { $0.contentEncoding == "vision-ocr-text-v1" }) || configuration?.ocr == true else { return nil }
+        guard !hits.contains(where: { DocumentPosition.pptxOCREncodings[$0.contentEncoding ?? ""] != nil }) || (version >= 9 && configuration?.pptxOCR == true) else { return nil }
         if version >= 4 {
             guard let configuration,
-                  version == 8 ? configuration.pdfOCR : version == 7 ? configuration.ocr : version == 6 ? configuration.localOnly : version == 5 ? (configuration.requiresFinderMetadata || hits.contains { $0.finderMetadata != nil }) : configuration.requiresDateRanges else { return nil }
+                  version == 9 ? configuration.pptxOCR : version == 8 ? configuration.pdfOCR : version == 7 ? configuration.ocr : version == 6 ? configuration.localOnly : version == 5 ? (configuration.requiresFinderMetadata || hits.contains { $0.finderMetadata != nil }) : configuration.requiresDateRanges else { return nil }
             if configuration.requiresDateRanges {
                 guard configuration.dateReferenceTime != nil,
                       dateResolution.map({ DateRangeTransport.bound($0, to: configuration) }) ?? hits.isEmpty else { return nil }
@@ -1144,6 +1148,7 @@ private func quickHandoffHeaderKeys(_ version: Int) -> Set<String> {
     if version >= 6 { keys.insert("localContentCapability") }
     if version >= 7 { keys.insert("ocrCapability") }
     if version >= 8 { keys.insert("pdfOCRCapability") }
+    if version >= 9 { keys.insert("pptxOCRCapability") }
     return keys
 }
 
@@ -1161,13 +1166,14 @@ func consumeQuickHandoffPayload(_ candidate: URL) -> QuickHandoffPayload? {
         if firstLine, let object = preservedJSONObject(line) as? [String: Any],
            object["type"] as? String == "quickHandoff" {
             guard let version = object["schemaVersion"] as? NSNumber,
-                  CFGetTypeID(version) != CFBooleanGetTypeID(), [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0].contains(version.doubleValue),
+                  CFGetTypeID(version) != CFBooleanGetTypeID(), [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].contains(version.doubleValue),
                   !DateRangeTransport.hasDuplicateKeys(line),
                   Set(object.keys) == quickHandoffHeaderKeys(version.intValue),
                   version.intValue < 5 || FinderMetadataSnapshot.supportsCapability(object["finderMetadataCapability"]),
                   version.intValue < 6 || SearchConfiguration.supportsLocalContentCapability(object["localContentCapability"]),
                   version.intValue < 7 || SearchConfiguration.supportsOCRCapability(object["ocrCapability"]),
-                  version.intValue != 8 || SearchConfiguration.supportsPDFOCRCapability(object["pdfOCRCapability"]),
+                  version.intValue < 8 || SearchConfiguration.supportsPDFOCRCapability(object["pdfOCRCapability"]),
+                  version.intValue < 9 || SearchConfiguration.supportsOCRCapability(object["pptxOCRCapability"]),
                   let rows = object["selection"] as? [[String: Any]], rows.count <= 20 else { return false }
             if version.intValue >= 3 {
                 guard let roots = object["roots"] as? [String], SearchRoots.problem(roots) == nil else { return false }
@@ -1178,9 +1184,10 @@ func consumeQuickHandoffPayload(_ candidate: URL) -> QuickHandoffPayload? {
                 let items = pairs.map { URLQueryItem(name: $0["name"]!, value: $0["value"]!) }
                 guard SearchConfiguration.transportProblem(items) == nil else { return false }
                 let configuration = SearchConfiguration.fromQueryItems(items)
-                guard version.intValue == 8 ? configuration.pdfOCR : version.intValue == 7 ? configuration.ocr : version.intValue == 6 ? configuration.localOnly : version.intValue == 5 || configuration.requiresDateRanges,
+                guard version.intValue == 9 ? configuration.pptxOCR : version.intValue == 8 ? configuration.pdfOCR : version.intValue == 7 ? configuration.ocr : version.intValue == 6 ? configuration.localOnly : version.intValue == 5 || configuration.requiresDateRanges,
                       !configuration.ocr || version.intValue >= 7,
-                      !configuration.pdfOCR || version.intValue == 8,
+                      !configuration.pdfOCR || version.intValue >= 8,
+                      !configuration.pptxOCR || version.intValue == 9,
                       !configuration.localOnly || version.intValue >= 6,
                       !configuration.requiresFinderMetadata || version.intValue >= 5,
                       !configuration.requiresDateRanges || configuration.dateReferenceTime != nil else { return false }
@@ -1206,7 +1213,8 @@ func consumeQuickHandoffPayload(_ candidate: URL) -> QuickHandoffPayload? {
         guard let hit = parseHit(line), payload.version >= 5 || hit.finderMetadata == nil,
               payload.version >= 7 || hit.contentEncoding != "vision-ocr-text-v1",
               hit.contentEncoding != "vision-ocr-text-v1" || payload.configuration?.ocr == true,
-              payload.version >= 8 || hit.contentEncoding != "pdfkit-vision-text-v1" else { return false }
+              payload.version >= 8 || hit.contentEncoding != "pdfkit-vision-text-v1",
+              DocumentPosition.pptxOCREncodings[hit.contentEncoding ?? ""] == nil || payload.configuration?.pptxOCR == true else { return false }
         payload.hits.append(hit)
         return true
     }

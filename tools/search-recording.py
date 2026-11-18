@@ -28,8 +28,8 @@ def configuration_key(value):
         raise ValueError('Ungültige Suchkonfiguration.')
     if set(value) == {'pattern', 'root', 'options'} and isinstance(value['root'], str):
         roots = [value['root']]
-    elif (set(value).difference({'rootBytes'} if value.get('schemaVersion') == 8 else set()) == {'schemaVersion', 'pattern', 'roots', 'options'}
-          and type(value['schemaVersion']) is int and value['schemaVersion'] in (2, 3, 4, 5, 6, 7, 8)
+    elif (set(value).difference({'rootBytes'} if value.get('schemaVersion') in (8, 9) else set()) == {'schemaVersion', 'pattern', 'roots', 'options'}
+          and type(value['schemaVersion']) is int and value['schemaVersion'] in (2, 3, 4, 5, 6, 7, 8, 9)
           and isinstance(value['roots'], list) and 1 <= len(value['roots']) <= 16
           and all(isinstance(root, str) and len(root.encode('utf-8')) <= 4096 for root in value['roots'])
           and sum(len(root.encode('utf-8')) for root in value['roots']) <= 65536):
@@ -37,7 +37,7 @@ def configuration_key(value):
     else:
         raise ValueError('Unbekannte Suchkonfiguration.')
     raw_roots = roots
-    if value.get('schemaVersion') == 8:
+    if value.get('schemaVersion') == 8 or 'rootBytes' in value:
         values = value.get('rootBytes')
         if not isinstance(values, list) or len(values) != len(roots):
             raise ValueError('POSIX-Suchwurzeln fehlen.')
@@ -102,7 +102,7 @@ class Controller:
         caps = self.send('capabilities')
         self.binding = {key: caps[key] for key in ('runtimeID', 'windowID')}
         self.capabilities = caps['capabilities']
-        if not set(self.recording_versions()).intersection((1, 2, 3, 4, 5, 6, 7, 8, 9)):
+        if not set(self.recording_versions()).intersection(range(1, 11)):
             raise ValueError('Favenio unterstützt das Aufnahmeformat nicht.')
 
     def recording_versions(self):
@@ -120,6 +120,8 @@ class Controller:
         if historical and self.supports_capability('portableRecordingSchemaVersion'):
             return
         for option in configuration['options']:
+            if option['name'] == 'pptx-ocr' and option['value'] == '1' and not self.supports_capability('pptxOCRSchemaVersion'):
+                raise ValueError('Favenio unterstützt PPTX-Bild-OCR nicht; gemeinsam aktualisieren.')
             if option['name'] == 'pdf-ocr' and option['value'] == '1' and not self.supports_capability('pdfOCRSchemaVersion'):
                 raise ValueError('Favenio unterstützt PDF-OCR nicht; gemeinsam aktualisieren.')
             if option['name'] == 'ocr' and option['value'] == '1' and not self.supports_capability('ocrSchemaVersion'):
@@ -154,6 +156,8 @@ class Controller:
         if type(recording.get('schemaVersion')) is not int or recording['schemaVersion'] not in self.recording_versions():
             raise ValueError('Favenio unterstützt dieses Aufnahmeformat nicht; gemeinsam aktualisieren.')
         self.require_configuration(recording['configuration'], historical=True)
+        if recording['schemaVersion'] == 10 and not self.supports_capability('pptxOCRSchemaVersion'):
+            raise ValueError('Favenio unterstützt PPTX-Bild-OCR nicht; gemeinsam aktualisieren.')
         if recording['schemaVersion'] == 8 and not self.supports_capability('pdfOCRSchemaVersion'):
             raise ValueError('Favenio unterstützt PDF-OCR nicht; gemeinsam aktualisieren.')
         if any(option['name'] == 'ocr' and option['value'] == '1' for option in recording['configuration']['options']) and not self.supports_capability('ocrSchemaVersion'):

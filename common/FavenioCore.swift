@@ -749,6 +749,11 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
         get { pdfOCRCheckbox.state == .on }
         set { pdfOCRCheckbox.state = newValue ? .on : .off }
     }
+    let pptxOCRCheckbox = NSButton(checkboxWithTitle: "Eingebettete PPTX-Bilder per OCR lesen (Deutsch/Englisch)", target: nil, action: nil)
+    var pptxOCR: Bool {
+        get { pptxOCRCheckbox.state == .on }
+        set { pptxOCRCheckbox.state = newValue ? .on : .off }
+    }
     let ocrCheckbox = NSButton(checkboxWithTitle: "Bild-OCR im Dokumenttext (Deutsch/Englisch)", target: nil, action: nil)
     var ocr: Bool {
         get { ocrCheckbox.state == .on }
@@ -808,7 +813,7 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
     /// Von/Bis-Feld, jedes Ausschlussmuster und jeder weitere Begriff zählt
     /// eins; wörtliche Platzhalter zählen ebenfalls. Beide Apps zeigen die
     /// Zahl am zugeklappten Aufklapp-Schalter.
-    var activeFilterCount: Int { rawFacts.count + dateRanges.count + exclusions.count + terms.count + (literalWildcards ? 1 : 0) + (textEncoding == .utf8 ? 0 : 1) + (finderMetadata ? 1 : 0) + (localOnly ? 1 : 0) + (ocr ? 1 : 0) + (pdfOCR ? 1 : 0) }
+    var activeFilterCount: Int { rawFacts.count + dateRanges.count + exclusions.count + terms.count + (literalWildcards ? 1 : 0) + (textEncoding == .utf8 ? 0 : 1) + (finderMetadata ? 1 : 0) + (localOnly ? 1 : 0) + (ocr ? 1 : 0) + (pdfOCR ? 1 : 0) + (pptxOCR ? 1 : 0) }
 
     @objc private func encodingChanged() { onChange?() }
 
@@ -934,6 +939,12 @@ final class SearchFilterView: NSStackView, NSTextViewDelegate, NSTextFieldDelega
         pdfOCRCheckbox.setAccessibilityIdentifier("pdf-ocr")
         pdfOCRCheckbox.toolTip = "Nur im Dokumenttext: vorhandene Textebenen bevorzugen, textlose Seiten begrenzt rendern und lokal erkennen. Erkannter Text und Seitenbereiche sind ungefähr. Fortschritt und Grenzen stehen im Suchbericht."
         factColumn.addArrangedSubview(pdfOCRCheckbox)
+        pptxOCRCheckbox.font = .systemFont(ofSize: 11)
+        pptxOCRCheckbox.target = self
+        pptxOCRCheckbox.action = #selector(encodingChanged)
+        pptxOCRCheckbox.setAccessibilityIdentifier("pptx-ocr")
+        pptxOCRCheckbox.toolTip = "Nur im Dokumenttext. Erkennt Text in begrenzt gelesenen, eingebetteten Bildern. Die Vorschau kennzeichnet Folie, Bildobjekt und ungefähre Bildregion."
+        factColumn.addArrangedSubview(pptxOCRCheckbox)
         // Darunter die weiteren Suchbegriffe: UND zum Suchfeld, einer je
         // Zeile. Unter der linken Spalte statt als dritte Spalte, damit die
         // Ansicht nicht breiter wird — die Schnellsuche hat eine feste Breite.
@@ -1890,10 +1901,11 @@ final class ExportWriter {
     }
 
     @discardableResult
-    func writeJSON(_ object: [String: Any], to destination: URL,
+    func writeJSON(_ object: [String: Any], to destination: URL, prettyPrinted: Bool = true,
                    completion: @escaping (Result<Void, Error>) -> Void) -> Bool {
         enqueue({
-            let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+            let options: JSONSerialization.WritingOptions = prettyPrinted ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
+            let data = try JSONSerialization.data(withJSONObject: object, options: options)
             try data.write(to: destination, options: .atomic)
         }, completion: completion)
     }

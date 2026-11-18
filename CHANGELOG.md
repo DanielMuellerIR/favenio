@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.68.0 — 2026-11-18
+
+- Die zuschaltbare PPTX-Bild-OCR findet Text in eingebetteten Screenshots und kennzeichnet Folie, Bildobjekt und erkannte Region in der Vorschau.
+
+## 0.67.0 — 2026-11-18
+
+- Die macOS-Haupt-App öffnet und speichert Suchaufzeichnungen und kann einen neuen Lauf mit dem früheren Trefferstand vergleichen.
+
+## 0.66.5 — 2026-11-18
+
+- Linux: Die Sortierung „Eingangsreihenfolge“ hängt neue Treffer in der ungefilterten, ungruppierten Liste an und behält Auswahl und Vorschau bei.
+
+## 0.66.4 — 2026-11-18
+
+- Die Statuszeile erklärt Suchen ohne Treffer anhand des Suchberichts. Die macOS-Haupt-App bietet den Bericht direkt daneben an und kennzeichnet eine leer gefilterte Liste.
+
 ## 0.66.3 — 2026-11-09
 
 - Linux: Ergebnisabfragen bleiben bei den Sortierungen Bildmaße, Finder-Tags und Finder-Kommentar stabil.

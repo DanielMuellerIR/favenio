@@ -16,7 +16,8 @@ struct ControlSearchInput {
     var object: [String: Any] {
         var value: [String: Any] = ["pattern": pattern,
             "options": options.queryItems.map { ["name": $0.name, "value": $0.value ?? ""] }]
-        if let rootBytes { value["schemaVersion"] = 8; value["roots"] = roots; value["rootBytes"] = rootBytes.map { $0.base64EncodedString() } }
+        if let rootBytes { value["schemaVersion"] = options.pptxOCR ? 9 : 8; value["roots"] = roots; value["rootBytes"] = rootBytes.map { $0.base64EncodedString() } }
+        else if options.pptxOCR { value["schemaVersion"] = 9; value["roots"] = roots }
         else if options.pdfOCR { value["schemaVersion"] = 7; value["roots"] = roots }
         else if options.ocr { value["schemaVersion"] = 6; value["roots"] = roots }
         else if options.localOnly { value["schemaVersion"] = 5; value["roots"] = roots }
@@ -39,11 +40,11 @@ struct ControlSearchInput {
                 throw SearchControlFailure(code: "invalidRequest", message: problem)
             }
         } else if (Set(object.keys) == ["schemaVersion", "pattern", "roots", "options"] || Set(object.keys) == ["schemaVersion", "pattern", "roots", "rootBytes", "options"]),
-                  [2, 3, 4, 5, 6, 7, 8].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0), let paths = object["roots"] as? [String],
+                  [2, 3, 4, 5, 6, 7, 8, 9].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0), let paths = object["roots"] as? [String],
                   SearchRoots.problem(paths, rawBytes: object["rootBytes"].flatMap { SearchRoots.decodeRawPaths($0, paths: paths) }) == nil { roots = paths }
         else { throw SearchControlFailure(code: "invalidRequest", message: "Ungültige oder zu große Suchbereichsliste (Konfigurationsformat 2).") }
-        let known = Set(["mode", "content", "only", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "field", "exclude", "term", "criteria", "encoding", "date-ranges", "date-reference-time", "finder-metadata", "local-only", "ocr", "pdf-ocr"] + SearchConfiguration.pixelKeys + FactFilterOption.all.map { $0.key })
-        let booleans = Set(["content", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "finder-metadata", "local-only", "ocr", "pdf-ocr"])
+        let known = Set(["mode", "content", "only", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "field", "exclude", "term", "criteria", "encoding", "date-ranges", "date-reference-time", "finder-metadata", "local-only", "ocr", "pdf-ocr", "pptx-ocr"] + SearchConfiguration.pixelKeys + FactFilterOption.all.map { $0.key })
+        let booleans = Set(["content", "regex", "case", "archives", "hidden", "exact", "literal-wildcards", "finder-metadata", "local-only", "ocr", "pdf-ocr", "pptx-ocr"])
         var seen = Set<String>()
         var items: [URLQueryItem] = []
         for pair in pairs {
@@ -60,16 +61,17 @@ struct ControlSearchInput {
             items.append(URLQueryItem(name: name, value: text))
         }
         let options = SearchConfiguration.fromQueryItems(items)
-        guard !options.requiresDateRanges || [3, 4, 5, 6, 7, 8].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0),
+        guard !options.requiresDateRanges || [3, 4, 5, 6, 7, 8, 9].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0),
               options.dateReferenceTime == nil || options.requiresDateRanges else {
             throw SearchControlFailure(code: "invalidRequest", message: "Kalenderbereiche benötigen Konfigurationsformat 3.")
         }
-        guard !options.requiresFinderMetadata || [4, 5, 6, 7, 8].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0) else {
+        guard !options.requiresFinderMetadata || [4, 5, 6, 7, 8, 9].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0) else {
             throw SearchControlFailure(code: "invalidRequest", message: "Finder-Eigenschaften benötigen Konfigurationsformat 4.")
         }
-        guard !options.localOnly || [5, 6, 7, 8].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0) else {
+        guard !options.localOnly || [5, 6, 7, 8, 9].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0) else {
             throw SearchControlFailure(code: "invalidRequest", message: "Lokale Inhalte benötigen Konfigurationsformat 5.")
         }
+        guard options.pptxOCR == (SearchControlWire.integer(object["schemaVersion"]) == 9) else { throw SearchControlFailure(code: "invalidRequest", message: "PPTX-Bild-OCR benötigt Konfigurationsformat 9.") }
         guard !options.pdfOCR || (SearchControlWire.integer(object["schemaVersion"]) ?? 0) >= 7 else { throw SearchControlFailure(code: "invalidRequest", message: "PDF-OCR benötigt Konfigurationsformat 7.") }
         guard !options.ocr || (SearchControlWire.integer(object["schemaVersion"]) ?? 0) >= 6 else {
             throw SearchControlFailure(code: "invalidRequest", message: "OCR benötigt Konfigurationsformat 6.")
@@ -82,7 +84,7 @@ struct ControlSearchInput {
         }
         var result = ControlSearchInput(pattern: pattern, roots: roots, options: options)
         if let raw = object["rootBytes"] {
-            guard SearchControlWire.integer(object["schemaVersion"]) == 8, let values = raw as? [String], values.count == roots.count else {
+            guard [8, 9].contains(SearchControlWire.integer(object["schemaVersion"]) ?? 0), let values = raw as? [String], values.count == roots.count else {
                 throw SearchControlFailure(code: "invalidRequest", message: "POSIX-Wurzeln brauchen Konfigurationsformat 8.")
             }
             let data = values.compactMap { Data(base64Encoded: $0) }

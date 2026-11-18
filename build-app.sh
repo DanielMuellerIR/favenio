@@ -153,12 +153,13 @@ cat > Favenio.app/Contents/Info.plist <<EOF
 <dict>
     <key>CFBundleExecutable</key><string>Favenio</string>
     <key>CFBundleIdentifier</key><string>local.favenio</string>
-    <key>FavenioQuickHandoffVersion</key><integer>8</integer>
+    <key>FavenioQuickHandoffVersion</key><integer>9</integer>
     <key>FavenioDateRangeSchemaVersion</key><integer>1</integer>
     <key>FavenioFinderMetadataSchemaVersion</key><integer>1</integer>
     <key>FavenioLocalContentSchemaVersion</key><integer>1</integer>
     <key>FavenioOCRSchemaVersion</key><integer>1</integer>
     <key>FavenioPDFOCRSchemaVersion</key><integer>1</integer>
+    <key>FavenioPPTXOCRSchemaVersion</key><integer>1</integer>
     <key>FavenioTextEncodingVersion</key><integer>1</integer>
     <key>CFBundleName</key><string>Favenio</string>
     <key>CFBundleDisplayName</key><string>Favenio</string>
@@ -223,6 +224,7 @@ cat > FavenioQuick.app/Contents/Info.plist <<EOF
     <key>FavenioLocalContentSchemaVersion</key><integer>1</integer>
     <key>FavenioOCRSchemaVersion</key><integer>1</integer>
     <key>FavenioPDFOCRSchemaVersion</key><integer>1</integer>
+    <key>FavenioPPTXOCRSchemaVersion</key><integer>1</integer>
     <key>CFBundleName</key><string>Favenio Schnellsuche</string>
     <key>CFBundleDisplayName</key><string>Favenio Schnellsuche</string>
     <key>CFBundleIconFile</key><string>FavenioQuick</string>

@@ -373,7 +373,13 @@ impl Ui {
     fn wire_configuration(&self) -> Value {
         let mut value = self.configuration();
         value.as_object_mut().unwrap().remove("continuation");
-        if value.get("rootBytes").is_some() {
+        if self
+            .checks
+            .iter()
+            .any(|(name, check)| *name == "pptx-ocr" && check.is_active())
+        {
+            value["schemaVersion"] = json!(9)
+        } else if value.get("rootBytes").is_some() {
             value["schemaVersion"] = json!(8)
         } else {
             value["schemaVersion"] = json!(7)

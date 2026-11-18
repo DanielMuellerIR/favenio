@@ -1,6 +1,129 @@
 import AppKit
 import Darwin
 
+func checkRecordingComparison(sandbox: URL) -> String? {
+    let root = sandbox.appendingPathComponent("recording-comparison")
+    let source = root.appendingPathComponent("still-present.txt")
+    let archiveMember = root.appendingPathComponent("archive-member.txt")
+    let added = root.appendingPathComponent("new.txt")
+    let host = MainController()
+    host.buildWindow()
+    defer {
+        host.stopSearch()
+        host.recordingComparisonWindow?.window.close()
+        try? FileManager.default.removeItem(at: root)
+    }
+    func wait() -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + 8
+        while host.activeSearchRun != nil && ProcessInfo.processInfo.systemUptime < deadline {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        return host.activeSearchRun == nil
+    }
+    do {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        for file in [source, archiveMember] { try Data("comparisonNeedle\n".utf8).write(to: file) }
+        let zip = Process()
+        zip.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        zip.arguments = ["-qj", root.appendingPathComponent("stable.zip").path, archiveMember.path]
+        try zip.run()
+        zip.waitUntilExit()
+        guard zip.terminationStatus == 0 else { return "Vergleichsarchiv nicht erstellt" }
+        try FileManager.default.removeItem(at: archiveMember)
+        host.setSearchRoot(root)
+        host.searchField.stringValue = "comparisonNeedle"
+        var options = SearchConfiguration()
+        options.mode = .content
+        options.archives = true
+        host.applyConfiguration(options)
+        host.startSearch()
+        guard wait(), host.hits.count == 2, host.hits.filter(\.isMember).count == 1 else {
+            return "Früherer Vergleichslauf enthält nicht Datei und Archivtreffer"
+        }
+
+        let raw = try host.searchControl.captureRecording()
+        let wrapper = SearchControlWire.encode(["schemaVersion": 1, "recording": raw, "actions": []])
+        let recording = try MainController.decodeSearchRecording(wrapper)
+        let native = try MainController.decodeSearchRecording(SearchControlWire.encode(raw))
+        guard raw["schemaVersion"] as? Int == 1, native.runID == recording.runID else {
+            return "Aufzeichnungsdatei und älterer Helferumschlag sind nicht miteinander lesbar"
+        }
+        try Data("inzwischen anderer Inhalt\n".utf8).write(to: source)
+        try Data("comparisonNeedle\n".utf8).write(to: added)
+        try host.searchControl.openRecording(recording)
+        host.rerunSearchRecording()
+        guard wait(), let compared = host.recordingComparisonWindow,
+              compared.newHits.map(\.filesystemPath) == [added.path],
+              compared.earlierOnly.map(\.filesystemPath) == [source.path],
+              FileManager.default.fileExists(atPath: source.path),
+              compared.summary.stringValue.contains("Abdeckung ist unbekannt."),
+              compared.table.numberOfRows == 1 else { return "Vergleich verliert neue, historische oder stabile Archivtreffer" }
+
+        try host.searchControl.openRecording(recording)
+        host.rerunSearchRecording()
+        host.stopSearchClicked()
+        guard host.recordingComparisonWindow?.summary.stringValue.contains("neue Suche wurde abgebrochen") == true,
+              host.recordingComparisonWindow?.newHits.isEmpty == true else { return "Abgebrochener Vergleich meldet falsche Abdeckung" }
+
+        try FileManager.default.removeItem(at: root)
+        try host.searchControl.openRecording(recording)
+        host.rerunSearchRecording()
+        guard host.searchControl.run?.state == "failed",
+              host.recordingComparisonWindow?.summary.stringValue.contains(root.lastPathComponent) == true,
+              host.recordingComparisonWindow?.earlierOnly.isEmpty == true else { return "Fehlende Quelle erzeugt scheinbar verschwundene Treffer" }
+    } catch { return "Vergleichsfixture fehlgeschlagen. \(error)" }
+    return nil
+}
+
+func checkEmptySearchStatus(sandbox: URL) -> String? {
+    let root = sandbox.appendingPathComponent("empty-search-status")
+    let locked = root.appendingPathComponent("unreadable")
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+    do {
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        try Data().write(to: root.appendingPathComponent("find-this.txt"))
+    } catch { return "Fixture für leere Suchergebnisse fehlt" }
+    let host = MainController()
+    host.buildWindow()
+    defer { host.stopSearch(); host.resultFilter.stopForTermination() }
+    func wait(_ done: () -> Bool) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + 8
+        while !done() && ProcessInfo.processInfo.systemUptime < deadline {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        return done()
+    }
+    func search(_ pattern: String) -> Bool {
+        host.setSearchRoot(root)
+        host.searchField.stringValue = pattern
+        host.startSearch()
+        return wait { host.activeSearchRun == nil }
+    }
+    let report = host.searchReportController
+    guard search("no-match"), host.statusLabel.stringValue.contains("Im angefragten Umfang gesucht"),
+          report.snapshot?.coverage == "withinRequestedScope", report.button.isEnabled else {
+        return "Reguläre Nulltreffersuche erklärt die Abdeckung nicht: " + host.statusLabel.stringValue
+    }
+    do { try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path) }
+    catch { return "Lesesperre für Nulltreffersuche nicht setzbar" }
+    guard search("no-match"), host.statusLabel.stringValue.contains("Keine Leseberechtigung"),
+          report.snapshot?.reasons.contains(where: { $0["id"] as? String == "permissionDenied" }) == true,
+          report.button.isEnabled else {
+        return "Nulltreffersuche zeigt Lesesperre und Bericht nicht: " + host.statusLabel.stringValue
+    }
+    guard search("find-this"), host.hits.count == 1 else { return "Treffer für Ansichtsfilter fehlt" }
+    host.resultFilter.criteria.applyJSON(CriteriaNode(field: "name", value: "other").json)
+    host.resultFilter.apply()
+    guard wait({ !host.resultFilter.isFiltering }), host.hits.isEmpty, host.resultFilter.sourceCount == 1,
+          host.statusLabel.stringValue == "Der Ansichtsfilter blendet alle Treffer aus." else {
+        return "Leer gefilterte Liste zeigt falschen Status: " + host.statusLabel.stringValue
+    }
+    return nil
+}
+
 func checkSearchRootsControl(sandbox: URL) -> String? {
     let host = MainController()
     host.tableView.dataSource = host; host.tableView.delegate = host
@@ -542,6 +665,20 @@ func checkDateRangesControl(sandbox: URL) -> String? {
           control.run?.state == "completed", host.hits.count == 1, host.hits[0].filesystemPath == root.appendingPathComponent("next.txt").path,
           control.run?.input.options.dateReferenceTime == "2026-03-30T12:00:00Z",
           recording.input.options.dateReferenceTime == "2026-03-29T12:00:00Z" else { return "Neuer Start übernimmt historischen Referenzzeitpunkt" }
+    let comparison = RecordingComparison(recording)
+    guard let newInput = control.run?.input,
+          comparison.incompatibility(newInput, report: host.searchReportController.snapshot)?.contains("Kalendergrenzen unterscheiden sich") == true,
+          response("openRecording", ["recording": object])["error"] == nil else {
+        return "Vergleich erkennt verschobene Kalendergrenzen nicht"
+    }
+    host.rerunSearchRecording()
+    guard wait(), host.hits.first?.filesystemPath == root.appendingPathComponent("spring.txt").path,
+          host.recordingComparisonWindow?.newHits.isEmpty == true,
+          host.recordingComparisonWindow?.earlierOnly.isEmpty == true,
+          host.recordingComparisonWindow?.tabs.superview != nil,
+          control.run?.input.options.dateReferenceTime == recording.input.options.dateReferenceTime else {
+        return "Vergleich lädt die ursprünglichen Kalendergrenzen nicht erneut"
+    }
     return nil
 }
 
@@ -752,4 +889,46 @@ func checkPDFOCRControl(sandbox: URL) -> String? {
         print("PDF OCR CONTROL OK: configuration 7, recording 8, legacy rejection and combined capabilities")
         return nil
     } catch { return "OCR-Steuerung: \(error)" }
+}
+
+func checkPPTXOCRControl(sandbox: URL) -> String? {
+    do {
+        let host = MainController()
+        host.buildWindow()
+        var options = SearchConfiguration()
+        options.mode = .document
+        options.pptxOCR = true
+        options.pdfOCR = true
+        host.applyConfiguration(options)
+        guard host.filterView.pptxOCR, host.searchConfiguration.pptxOCR,
+              options.arguments(pattern: "needle", roots: [sandbox.path], progress: false)?.contains("--pptx-ocr") == true else {
+            return "PPTX-Bild-OCR erreicht den Suchauftrag nicht"
+        }
+        var input = ControlSearchInput(pattern: "needle", root: sandbox.path, options: options)
+        input.rootBytes = [Data(sandbox.path.utf8)]
+        let decoded = try ControlSearchInput.decode(input.object)
+        guard input.object["schemaVersion"] as? Int == 9, decoded.options.pptxOCR, decoded.rootBytes == input.rootBytes else {
+            return "PPTX-Bild-OCR verliert Konfiguration oder Pfadbytes"
+        }
+        let recording = SearchRecording(input: input, runID: UUID().uuidString, startedAt: 1, capturedAt: 2,
+            state: "completed", warningCount: 0, error: nil, hits: [], selection: [])
+        let template = SearchTemplate(name: "PPTX", pattern: "needle", root: sandbox.path, configuration: options)
+        let saved = try SearchTemplateFormat.decode(SearchTemplateFormat.encode([template]))
+        let file = try writeQuickHandoff([], version: 9, roots: input.roots, configuration: options)
+        guard recording.object["schemaVersion"] as? Int == 10,
+              try SearchRecording.decode(recording.object).input.options.pptxOCR,
+              saved == [template],
+              let yielded = consumeQuickHandoffPayload(file)?.bound(to: input.roots),
+              yielded.configuration?.pptxOCR == true, yielded.configuration?.pdfOCR == true else {
+            return "PPTX-Bild-OCR fehlt in Aufzeichnung, Vorlage oder Quick-Übergabe"
+        }
+        var older = input.object
+        older["schemaVersion"] = 8
+        guard (try? ControlSearchInput.decode(older)) == nil,
+              (try? writeQuickHandoff([], version: 8, roots: input.roots, configuration: options)) == nil else {
+            return "PPTX-Bild-OCR wurde in einem älteren Transportformat übernommen"
+        }
+        print("PPTX OCR CONTROL OK: explicit option, native path bytes, recording, templates and Quick handoff")
+        return nil
+    } catch { return "PPTX-Bild-OCR-Steuerung fehlgeschlagen. \(error)" }
 }

@@ -15,6 +15,17 @@ def shape(identifier, *paragraphs):
 def table(identifier, *rows):
     return f'<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="{identifier}" name="TABLE_NAME"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="{DML}/table"><a:tbl><a:tblPr/><a:tblGrid/>'+''.join('<a:tr>'+''.join('<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>'+value+'</a:txBody><a:tcPr/></a:tc>' for value in row)+'</a:tr>' for row in rows)+'</a:tbl></a:graphicData></a:graphic></p:graphicFrame>'
 
+def pptx_with_picture(image, target="../media/screenshot.png", external=False):
+    picture = (f'<p:pic xmlns:r="{OFFICE}"><p:nvPicPr><p:cNvPr id="9" name="Screenshot"/>'
+               '<p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="shot"/>'
+               '</p:blipFill><p:spPr/></p:pic>')
+    relation = (f'<Relationships xmlns="{REL}"><Relationship Id="shot" Type="{OFFICE}/image" Target="{target}"'
+                + (' TargetMode="External"' if external else '') + '/></Relationships>')
+    return pptx_bytes(
+        slides=[('slides/a.xml', slide(shape(2, paragraph('Normaler Folientext')))),
+                ('slides/z.xml', slide(picture + shape(10, paragraph('Text nach dem Bild'))))],
+        extra=[('ppt/slides/_rels/z.xml.rels', relation), ('ppt/media/screenshot.png', image)])
+
 def slide(body, hidden=False):
     return f'<p:sld xmlns:p="{PML}" xmlns:a="{DML}"'+(' show="0"' if hidden else '')+'><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>'+body+'</p:spTree></p:cSld></p:sld>'
 
