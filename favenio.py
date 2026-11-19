@@ -67,10 +67,10 @@ import zipfile
 import zlib
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-__version__ = "0.68.0"
+__version__ = "0.70.0"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-11-18"
+__date__ = "2026-11-19"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -1661,8 +1661,10 @@ def load_content_preview(request, local_only=False):
             raise ValueError("ungültige Musteroption")
     encoding = preview.get("contentEncoding")
     document_reader = query.get("documentReader")
+    original_position = original.get("documentPosition")
+    replay_pptx_ocr = document_reader in PPTX_OCR_READERS
     document = document_reader in DOCUMENT_READERS
-    if document_reader in PPTX_OCR_READERS and document_reader != PPTX_OCR_READER:
+    if replay_pptx_ocr and document_reader != PPTX_OCR_READER:
         raise ValueError("Originaler PPTX-OCR-Leser ist auf dieser Plattform nicht verfügbar")
     if document_reader in ("pdfkit-v1", "poppler-v1", "pdfkit-vision-v1", "poppler-tesseract-v1", "vision-image-v1", "tesseract-image-v1") and DOCUMENT_READERS[document_reader] not in (DOCUMENT_ENCODING, PDF_OCR_ENCODING, OCR_ENCODING):
         raise ValueError("Originaler Dokument-/OCR-Leser ist auf dieser Plattform nicht verfügbar")
@@ -1757,7 +1759,7 @@ def load_content_preview(request, local_only=False):
                 read_bytes = os.fstat(handle.fileno()).st_size
                 if read_bytes > DOCUMENT_BYTES:
                     raise PreviewLoadLimit()
-                if document_reader in PACKAGE_QUERY_READERS:
+                if replay_pptx_ocr or document_reader in PACKAGE_QUERY_READERS:
                     limits = preview.get("archiveLimits", {})
                     if not isinstance(limits, dict) or any(type(limits.get(key, default)) not in (int, float) or
                             not math.isfinite(limits.get(key, default)) or limits.get(key, default) <= 0
@@ -1769,8 +1771,13 @@ def load_content_preview(request, local_only=False):
                         min(DEFAULT_MAX_ARCHIVE_MEMBER_BYTES, limits.get("memberBytes", DEFAULT_MAX_ARCHIVE_MEMBER_BYTES)),
                         min(DEFAULT_MAX_ARCHIVE_TOTAL_BYTES, limits.get("totalBytes", DEFAULT_MAX_ARCHIVE_TOTAL_BYTES)),
                         min(DEFAULT_MAX_ARCHIVE_RATIO, limits.get("ratio", DEFAULT_MAX_ARCHIVE_RATIO)))
-                    if document_reader in PPTX_OCR_READERS:
+                    if replay_pptx_ocr:
                         reader = PPTXTextReader(budget, OCRTextReader(find_ocr_helper()))
+                        # Ein übersprungenes Bild könnte die Fundnummern verschieben.
+                        def require_projection(reason):
+                            if reason not in ("ocrProjection", "ocrNoText"):
+                                raise DocumentReadError(reason)
+                        reader.on_issue = require_projection
                     else:
                         reader = PACKAGE_QUERY_READERS[document_reader](budget)
                 elif document_reader in ("pdfkit-vision-v1", "poppler-tesseract-v1"):
@@ -1786,7 +1793,6 @@ def load_content_preview(request, local_only=False):
                     iter_line_pieces(chunks(handle), text_encoding=requested_encoding, decoder_info=info, **options))
             for number, raw, complete, ends_line, position in pieces:
                 bound_reader = document_reader in ("poppler-v1", "tesseract-image-v1", "poppler-tesseract-v1")
-                original_position = original.get("documentPosition")
                 if document_reader == "pptx-tesseract-v1" and position.get("kind") == "pptxOCR":
                     bound_reader = isinstance(original_position, dict) and original_position.get("kind") == "pptxOCR"
                 if bound_reader and (not isinstance(original_position, dict) or original_position.get("readerFingerprint") != position.get("readerFingerprint")):
@@ -1827,6 +1833,11 @@ def load_content_preview(request, local_only=False):
                     if base + start < last_end:
                         continue
                     last_end = base + max(end, start + 1)
+                    if replay_pptx_ocr and count == 0:
+                        # Konfidenz und Bildregion sind keine Ortskennung.
+                        locator = {key: value for key, value in position.items() if key not in ("confidence", "region")}
+                        if not isinstance(original_position, dict) or any(original_position.get(key) != value for key, value in locator.items()):
+                            raise DocumentReadError("documentReaderChanged")
                     if count < occurrence:
                         count += 1
                         continue
@@ -1847,6 +1858,8 @@ def load_content_preview(request, local_only=False):
                 if found is None and ends_line:
                     before.append(context_line(number, raw, complete, position))
                     before = before[-3:]
+            if replay_pptx_ocr and count == 0 and found is None and state["reason"] == "end":
+                raise DocumentReadError("documentReaderChanged")
             if source_generation(status=os.fstat(handle.fileno())) != leaf_expected:
                 changed()
     except PreviewLoadLimit:
@@ -1856,7 +1869,10 @@ def load_content_preview(request, local_only=False):
     except DocumentReadError as err:
         if err.reason == "documentSourceChanged":
             changed()
-        else:
+        elif not (replay_pptx_ocr and err.reason == "ocrNoText" and found is not None):
+            if replay_pptx_ocr:
+                updated["snippets"] = []
+                state["contextLines"] = []
             state.update(reason="documentUnavailable", documentReason=err.reason, documentMessage=str(err))
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
@@ -4153,7 +4169,8 @@ class PPTXTextReader(ZIPDocumentReader):
                             yield from self.picture_sections(archive, position, (relations or {}).get(text), deadline)
                         except (DocumentReadError, ArchiveLimitError) as error:
                             self.issue(error.reason)
-                        except (KeyError, zipfile.BadZipFile, xml.parsers.expat.ExpatError, UnicodeError, OSError):
+                        except (KeyError, zipfile.BadZipFile, zlib.error, lzma.LZMAError, EOFError, NotImplementedError,
+                                xml.parsers.expat.ExpatError, UnicodeError, OSError):
                             self.issue("ocrReadError")
                 except (DocumentReadError, xml.parsers.expat.ExpatError, UnicodeError, zipfile.BadZipFile) as err:
                     self.issue(err.reason if isinstance(err, DocumentReadError) else "documentDamaged")
@@ -4164,7 +4181,6 @@ class PPTXTextReader(ZIPDocumentReader):
 PACKAGE_DOCUMENT_READERS = {".docx": DOCXTextReader, ".odt": ODTTextReader, ".epub": EPUBTextReader, ".xlsx": XLSXTextReader, ".pptx": PPTXTextReader}
 PACKAGE_DOCUMENT_ENCODINGS = {".docx": DOCX_ENCODING, ".odt": ODT_ENCODING, ".epub": EPUB_ENCODING, ".xlsx": XLSX_ENCODING, ".pptx": PPTX_ENCODING}
 PACKAGE_QUERY_READERS = {"docx-v1": DOCXTextReader, "odt-v1": ODTTextReader, "epub-v1": EPUBTextReader, "xlsx-v1": XLSXTextReader, "pptx-v1": PPTXTextReader}
-PACKAGE_QUERY_READERS.update(dict.fromkeys(PPTX_OCR_READERS, PPTXTextReader))
 
 
 @contextlib.contextmanager
@@ -4657,7 +4673,16 @@ class FileProbe:
                                               # Komponente)
         self.open_stream = open_stream        # liefert einen frischen
                                               # lesbaren Datenstrom
-        self.chunker = chunker                # chunker(handle, free_bytes)
+        # Dokumentleser haben eigene laufende Fristen. Nur rohe Inhaltsströme
+        # dürfen auch mitten in einer Datei auf die Fortsetzung warten.
+        if search.quick_deadline is not None and not search.document_mode:
+            def paused_chunks(*args, **kwargs):
+                for chunk in chunker(*args, **kwargs):
+                    search.check_quick_pause()
+                    yield chunk
+            self.chunker = paused_chunks
+        else:
+            self.chunker = chunker                # chunker(handle, free_bytes)
                                               # → Byte-Häppchen (Budget!)
         self.filesystem_path = filesystem_path
         self.in_archive = in_archive
@@ -5980,6 +6005,7 @@ class Search:
                  created_from=None, created_to=None, extra_matchers=(),
                  criteria_query=None, text_encoding="utf-8", content_preview=False, search_report=None,
                  document_mode=False, include_finder_metadata=False, local_only=False, ocr=False, pdf_ocr=False, pptx_ocr=False, json_path_bytes=False):
+        self.quick_deadline = None
         self.report = search_report
         self.local_only = local_only
         self.search_root = None
@@ -6531,6 +6557,15 @@ class Search:
 
     # ---------- Dateisystem ----------
 
+    def check_quick_pause(self):
+        if self.quick_deadline is None or time.monotonic() < self.quick_deadline:
+            return
+        self.report.emit("paused", force=True)
+        if sys.stdin.buffer.read(1) != b"1":
+            raise SystemExit(128 + signal.SIGTERM)
+        self.quick_deadline = None
+        self.report.emit(force=True)
+
     def search_path(self, root):
         """Durchsucht einen Startpfad rekursiv (Datei ODER Ordner)."""
         previous = self.search_root
@@ -6551,6 +6586,7 @@ class Search:
         for dirpath, dirnames, filenames in os.walk(
             root, onerror=lambda err: self.report_warning(str(err), path=err.filename, error=err), followlinks=False
         ):
+            self.check_quick_pause()
             self.report_progress(dirpath)
             if not self.include_hidden:
                 # Unsichtbare Ordner gar nicht erst betreten (spart auch das
@@ -6576,6 +6612,7 @@ class Search:
                 # Inhalt nicht mehr (`find -maxdepth 1` listet die direkten
                 # Unterordner ebenfalls).
                 for dirname in dirnames:
+                    self.check_quick_pause()
                     if self.type_allowed(True):
                         folder = os.path.join(dirpath, dirname)
                         # Die zulässigen Ordnerkriterien öffnen keinen Strom.
@@ -6654,6 +6691,7 @@ class Search:
         return status.st_size, status.st_mtime, birth
 
     def visit_file(self, path, root=None):
+        self.check_quick_pause()
         if not self.content_preview:
             return self._visit_file(path, root)
         previous = self.preview_source_generation
@@ -6897,6 +6935,7 @@ class Search:
         modified:    Änderungszeit des Eintrags als Unix-Zeit, None wenn das
                      Format sie nicht nennt (bsdtar, einzeln komprimiert).
         """
+        self.check_quick_pause()
         # Der Wurzeleintrag eines mit `tar -cf x.tar -C ordner .` gebauten
         # Archivs heißt "./" — das ist das Archiv selbst, kein Eintrag
         # darin. Seit "." nicht mehr als versteckter Name gilt, käme er
@@ -8009,6 +8048,8 @@ def main(argv=None):
                              "UND über das ganze Objekt, nicht dieselbe Zeile)")
     parser.add_argument("-c", "--content", action="store_true",
                         help="im Dateiinhalt suchen statt in Dateinamen")
+    parser.add_argument("--quick-pause-after", type=float, metavar="SEKUNDEN",
+                        help="mit --search-report einmalig pausieren; ASCII 1 an stdin setzt fort")
     parser.add_argument("--search-report", action="store_true",
                         help="mit --json begrenzte strukturierte Suchberichte ausgeben")
     parser.add_argument("--document-text", action="store_true",
@@ -8272,6 +8313,9 @@ def run_parsed(args, parser):
                                  or args.list_metadata_fields or args.validate_criteria):
         parser.error("Finder-Erfassung kann nicht mit Ausgabeaktionen kombiniert werden")
 
+    if args.quick_pause_after is not None and not (
+            args.search_report and 0 <= args.quick_pause_after <= 3600):
+        parser.error("--quick-pause-after braucht --search-report und 0 bis 3600 Sekunden")
     if args.search_report and not args.json:
         parser.error("--search-report braucht --json")
     criteria_query = None
@@ -8577,6 +8621,8 @@ def run_parsed(args, parser):
             print("favenio: fehler: Pfad existiert nicht: %s" % path,
                   file=sys.stderr)
             return 2
+    if args.quick_pause_after is not None:
+        search.quick_deadline = time.monotonic() + args.quick_pause_after
     previous_handlers = install_termination_handlers()
     report_state = "failed"
     try:

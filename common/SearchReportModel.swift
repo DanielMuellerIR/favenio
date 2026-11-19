@@ -19,7 +19,7 @@ struct SearchReportSnapshot {
               let object = preservedJSONObject(data) as? [String: Any],
               let version = object["schemaVersion"] as? NSNumber, !boolean(version), version.doubleValue == 1,
               let id = object["runID"] as? String, UUID(uuidString: id) != nil,
-              let state = object["state"] as? String, ["running", "finished", "cancelled", "failed"].contains(state),
+              let state = object["state"] as? String, ["running", "paused", "finished", "cancelled", "failed"].contains(state),
               object["counting"] as? String == "events",
               object["configuration"] is [String: Any],
               let reasons = object["reasons"] as? [[String: Any]], reasons.count <= 64,
@@ -70,6 +70,7 @@ struct SearchReportSnapshot {
     }
     var summary: String {
         switch state {
+        case "paused": return "Suche pausiert – weitere Treffer möglich"
         case "running": return "Suche läuft – vorläufiger Bericht"
         case "finished": return coverage == "incomplete" ? "Suche beendet – Abdeckung eingeschränkt" : "Suchlauf im angefragten Umfang beendet"
         case "cancelled": return "Suche abgebrochen – Abdeckung unvollständig"

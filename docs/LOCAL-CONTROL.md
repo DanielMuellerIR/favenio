@@ -252,9 +252,12 @@ python3 tools/search-recording.py --helper "$HELPER" open suchstand.json
 python3 tools/search-recording.py --helper "$HELPER" rerun suchstand.json
 ```
 
-`record` schreibt eine private JSON-Datei atomar. `open` zeigt gespeicherte
+`record` schreibt eine private JSON-Datei atomar. Das Werkzeug liest auch die
+JSON-Datei aus „Suchstand aufzeichnen“ in der Haupt-App und ergänzt beim
+ersten `append-action` den Umschlag für die Aktionsliste. `open` zeigt gespeicherte
 Treffer, `rerun` konfiguriert und startet eine neue echte Suche, ohne die
-Aufzeichnung zu überschreiben. Bis zu 32 ausdrücklich ausgeführte Auswahl-/
+Aufzeichnung zu überschreiben. Die macOS-App lehnt dabei Suchbereiche mit
+ungültigen UTF-8-Pfadbytes vor dem Start ab. Bis zu 32 ausdrücklich ausgeführte Auswahl-/
 Übergabeaktionen können mit `append-action DATEI select|handoff IDENTITÄTSDATEI`
 angehängt werden. Die Identitätsdatei enthält `filesystemPath`, `archiveMembers`
 und `archiveMemberBytes`; der Treffer muss zum gespeicherten Stand gehören.

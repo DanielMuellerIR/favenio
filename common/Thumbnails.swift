@@ -479,7 +479,6 @@ final class ThumbnailGridController: NSObject, NSCollectionViewDataSource, NSCol
         collection.isSelectable = true
         collection.allowsMultipleSelection = true
         collection.backgroundColors = [.controlBackgroundColor]
-        collection.setDraggingSourceOperationMask(.copy, forLocal: false)
         collection.prefetchDataSource = nil
         collection.autoresizingMask = [.width]
         collection.setAccessibilityIdentifier("thumbnail-grid")
@@ -662,6 +661,12 @@ final class ThumbnailGridController: NSObject, NSCollectionViewDataSource, NSCol
     }
     func collectionView(_ view: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) { select() }
     func collectionView(_ view: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) { select() }
+    func collectionView(_ view: NSCollectionView, draggingSession session: NSDraggingSession,
+                        willBeginAt screenPoint: NSPoint, forItemsAt indexPaths: Set<IndexPath>) {
+        let operations = owner?.externalDragOperations(for: indexPaths.compactMap(hitIndex)) ?? .copy
+        view.setDraggingSourceOperationMask(operations, forLocal: false)
+        session.draggingFormation = .pile
+    }
     func collectionView(_ view: NSCollectionView, pasteboardWriterForItemAt index: IndexPath) -> NSPasteboardWriting? {
         guard let hit = hitIndex(index) else { return nil }
         return owner?.hitPasteboardWriter(hit)

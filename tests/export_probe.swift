@@ -32,6 +32,18 @@ struct ExportProbe {
                 preconditionFailure("Übergabe akzeptiert eine zu lange JSONL-Zeile")
             } catch { precondition((error as? CocoaError)?.code == .fileWriteOutOfSpace) }
         }
+        let many = (0..<30).map { index -> Hit in
+            let path = "/fixture/Datei-\(index)"
+            return Hit(path: path, kind: "file", line: nil, size: 1, filesystemPath: path,
+                       archiveMembers: [], isDirectory: false)
+        }
+        let all = try writeQuickHandoff(many, continuingSearch: true)
+        precondition(consumeQuickHandoff(all) == many)
+        metadata.value = String(repeating: "x", count: 950_000)
+        let large = many + Array(repeating: metadata, count: 10)
+        let bounded = try writeQuickHandoff(large, continuingSearch: true)
+        let prefix = consumeQuickHandoff(bounded)!
+        precondition(prefix.count > many.count && prefix.count < large.count && prefix == Array(large.prefix(prefix.count)))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

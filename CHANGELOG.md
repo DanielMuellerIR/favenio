@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.70.0 — 2026-11-19
+
+- Originaldateien und Ordner lassen sich aus Tabelle und Miniaturen beider macOS-Apps im Finder verschieben oder kopieren. Archivtreffer werden kopiert.
+
+## 0.69.0 — 2026-11-19
+
+- Die macOS-Schnellsuche pausiert nach fünf Sekunden. „Fortsetzen“ durchsucht den Rest im selben Fenster. Die Statuszeile unterscheidet Pause, vollständigen Suchlauf und eingeschränkte Abdeckung.
+
+## 0.68.1 — 2026-11-18
+
+- Die PPTX-Suche liest Folientext weiter, wenn die OCR ein eingebettetes Bild wegen eines ZIP-Fehlers überspringt.
+- Die Vorschau behält die ursprüngliche Fundstelle und meldet den Leserfehler, wenn sich der PPTX-OCR-Text nicht nachladen lässt.
+- Das Aufzeichnungswerkzeug liest auch die JSON-Dateien, die die macOS-App speichert.
+- Schnellsuche und Haupt-App prüfen Quick-Übergabeformate nach denselben Regeln.
+
 ## 0.68.0 — 2026-11-18
 
 - Die zuschaltbare PPTX-Bild-OCR findet Text in eingebetteten Screenshots und kennzeichnet Folie, Bildobjekt und erkannte Region in der Vorschau.

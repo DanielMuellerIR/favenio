@@ -6,10 +6,9 @@
 //   Klick aufs Toolbar-Icon  → normales Suchfenster ohne Dock-Icon
 //   0,6 s Pause / Return     → Suche läuft (Namenssuche; Archive/Inhalt
 //                              per Umschalter, Default AUS = schnell)
-//   Treffer                  → erscheinen LIVE in der Liste (max. 20).
+//   Treffer                  → erscheinen LIVE in der Liste.
 //                              Doppelklick öffnet, Rechtsklick „Öffnen mit".
-//   ab dem 20. Treffer       → Quick stoppt; der Button übergibt die 20 an
-//                              Favenio, das dort live weitersucht.
+//   nach fünf Sekunden       → laufende Suche pausiert; „Fortsetzen“ sucht bis zum Ende.
 //   Esc (bei leerem Feld)    → App beendet sich
 //
 // Die App ist ein „Accessory" (LSUIElement): kein Dock-Icon. Ihr Fenster ist
@@ -35,6 +34,17 @@ struct FavenioQuickApp {
             controller.window.orderBack(nil)
             defer { controller.window.orderOut(nil) }
             let output = URL(fileURLWithPath: CommandLine.arguments.last!)
+            func captureWindow(_ name: String) throws {
+                controller.window.displayIfNeeded()
+                let capture = Process()
+                capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                capture.arguments = ["-x", "-l", "\(controller.window.windowNumber)",
+                    output.appendingPathComponent(name + ".png").path]
+                try capture.run()
+                capture.waitUntilExit()
+                precondition(capture.terminationStatus == 0 && !app.isActive)
+                precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmost)
+            }
             do {
                 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
                 for (index, folders) in [["/finder"], ["/ersatz"]].enumerated() {
@@ -50,16 +60,28 @@ struct FavenioQuickApp {
                         precondition(controller.infoLabel.textColor == .secondaryLabelColor)
                         precondition(controller.infoLabel.toolTip == controller.searchOutcomeText! + "\n/ersatz")
                     }
-                    controller.window.displayIfNeeded()
-                    let capture = Process()
-                    capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                    capture.arguments = ["-x", "-l", "\(controller.window.windowNumber)",
-                        output.appendingPathComponent("scope-\(index).png").path]
-                    try capture.run()
-                    capture.waitUntilExit()
-                    precondition(capture.terminationStatus == 0 && !app.isActive)
-                    precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmost)
+                    try captureWindow("scope-\(index)")
                 }
+                let fixture = output.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: false)
+                defer { try? FileManager.default.removeItem(at: fixture) }
+                try Data().write(to: fixture.appendingPathComponent("fixture.txt"))
+                controller.manualSearchRoots = [fixture.path]
+                controller.userPickedScope = true
+                controller.initialSearchSeconds = 0
+                controller.startSearch()
+                let until = Date(timeIntervalSinceNow: 8)
+                while controller.resumeButton.isHidden && Date() < until {
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+                }
+                precondition(!controller.resumeButton.isHidden && controller.infoLabel.stringValue.contains("Pausiert"))
+                try captureWindow("quick-paused")
+                controller.resumeButton.performClick(nil)
+                while controller.runningSearch != nil && Date() < until {
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+                }
+                precondition(controller.hits.count == 1 && controller.infoLabel.stringValue.contains("Suchbereich durchsucht"))
+                try captureWindow("quick-finished")
                 print("SCOPE UI OK — Bereichswarnung und normaler Quick-Endstand im Hintergrund geprüft")
             } catch {
                 print("SELFTEST FEHLER: \(error)")
@@ -202,9 +224,9 @@ struct FavenioQuickApp {
                 repeated.append(hit); hit.searchRootBytes = roots.bytes[1]; repeated.append(hit)
             }
             deduped.enqueueSearchHits(repeated, scope: roots)
-            guard deduped.pending.count == 20, Set(deduped.pending.map { $0.identity }).count == 20,
+            guard deduped.pending.count == 25, Set(deduped.pending.map { $0.identity }).count == 25,
                   deduped.pending.allSatisfy({ $0.searchRootBytes == roots.bytes[0] }) else {
-                print("SELFTEST FEHLER: Quick dedupliziert nicht vor der 20er-Grenze")
+                print("SELFTEST FEHLER: Quick dedupliziert überlappende Suchbereiche falsch")
                 exit(1)
             }
             deduped.manualSearchRoots = roots.paths; deduped.userPickedScope = true
@@ -222,54 +244,53 @@ struct FavenioQuickApp {
                 print("SELFTEST FEHLER: Editor-Menü verliert sichtbaren Finderbereich")
                 exit(1)
             }
-            // Die Begrenzung am echten Controller prüfen: mehr Eingaben als
-            // Quick anzeigen darf, mit dem gebündelten Suchkern und ohne Fenster.
             do {
                 let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
                 defer { try? FileManager.default.removeItem(at: root) }
                 // os.walk liest die FIFO vor dem Abstieg in den Trefferordner.
-                // Ihre Warnung muss auch den gezielten Top-20-Abbruch überleben.
+                // Ihre Warnung muss auch nach dem Fortsetzen sichtbar bleiben.
                 precondition(mkfifo(root.appendingPathComponent("warn.pipe").path, 0o600) == 0)
                 let matches = root.appendingPathComponent("matches")
                 try FileManager.default.createDirectory(at: matches, withIntermediateDirectories: true)
                 for index in 0..<32 {
                     try Data("NEEDLE\n".utf8).write(to: matches.appendingPathComponent("match-\(index).txt"))
                 }
-                // Eine Sparse-Datei nach den Treffern hält den Kern bis zum
-                // echten SIGTERM-Abbruch beschäftigt, ohne 8 GiB zu belegen.
-                let slow = matches.appendingPathComponent("slow")
-                try FileManager.default.createDirectory(at: slow, withIntermediateDirectories: true)
-                let sparse = slow.appendingPathComponent("zeros.txt")
-                FileManager.default.createFile(atPath: sparse.path, contents: Data())
-                let sparseHandle = try FileHandle(forWritingTo: sparse)
-                try sparseHandle.truncate(atOffset: 8 * 1024 * 1024 * 1024)
-                try sparseHandle.close()
                 let limited = QuickController()
                 limited.tableView.dataSource = limited
                 limited.field.stringValue = "NEEDLE"
                 limited.modeControl.selectItem(at: 1)
                 limited.scopePopup.addItem(withTitle: "Fixture")
                 limited.scopePopup.selectedItem?.representedObject = root.path
+                limited.initialSearchSeconds = 0
                 limited.startSearch()
                 let deadline = ProcessInfo.processInfo.systemUptime + 10
+                while limited.resumeButton.isHidden && ProcessInfo.processInfo.systemUptime < deadline {
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
+                }
+                guard let run = limited.runningSearch, !limited.searching, !limited.resumeButton.isHidden,
+                      limited.infoLabel.stringValue.contains("Weitere Treffer möglich") else {
+                    print("SELFTEST FEHLER: Zeitpause ohne Treffer nicht sichtbar")
+                    exit(1)
+                }
+                limited.resumeSearch()
+                guard limited.runningSearch === run else { print("SELFTEST FEHLER: Fortsetzen startet neue Suche"); exit(1) }
                 while limited.runningSearch != nil && ProcessInfo.processInfo.systemUptime < deadline {
                     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
                 }
-                guard limited.hits.count == QuickController.maxQuickHits,
-                      limited.pending.isEmpty, !limited.searching,
-                      limited.runningSearch == nil else {
-                    print("SELFTEST FEHLER: Quick stoppt nicht bei zwanzig Treffern")
+                guard limited.hits.count == 32, limited.runningSearch == nil, limited.resumeButton.isHidden,
+                      limited.infoLabel.stringValue.contains("Abdeckung eingeschränkt") else {
+                    print("SELFTEST FEHLER: Quick setzt die Suche nicht bis zum Ende fort")
                     exit(1)
                 }
                 guard limited.skippedCount == 1,
                       limited.infoLabel.stringValue.contains(skippedNote(1)),
                       !limited.infoLabel.stringValue.contains("fehlgeschlagen") else {
-                    print("SELFTEST FEHLER: Top-20-Abbruch verliert Warnungen")
+                    print("SELFTEST FEHLER: Fortsetzen verliert Warnungen")
                     exit(1)
                 }
             } catch {
-                print("SELFTEST FEHLER: Quick-Treffergrenze: \(error)")
+                print("SELFTEST FEHLER: Quick-Zeitpause: \(error)")
                 exit(1)
             }
             if let error = quickFilterDisclosureSelfTest() {
@@ -310,15 +331,15 @@ struct FavenioQuickApp {
             while filteredLimit.resultFilter.isFiltering && ProcessInfo.processInfo.systemUptime < filteredUntil {
                 RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
             }
-            guard filteredLimit.quickLimitReached, filteredLimit.resultFilter.sourceCount == 20,
-                  filteredLimit.hits.count == 10, filteredLimit.pending.isEmpty,
+            guard filteredLimit.resultFilter.sourceCount == 24,
+                  filteredLimit.hits.count == 12, filteredLimit.pending.isEmpty,
                   filteredLimit.resultFilter.errorMessage == nil else {
-                print("SELFTEST FEHLER: Ansichtsfilter verändert Quick-Quellgrenze")
+                print("SELFTEST FEHLER: Ansichtsfilter verliert Quick-Quelltreffer")
                 filteredLimit.resultFilter.stopForTermination()
                 exit(1)
             }
             filteredLimit.resultFilter.reset()
-            guard filteredLimit.hits.count == 20 else { print("SELFTEST FEHLER: Quick-Filterreset verliert Quelltreffer"); exit(1) }
+            guard filteredLimit.hits.count == 24 else { print("SELFTEST FEHLER: Quick-Filterreset verliert Quelltreffer"); exit(1) }
             // Die Vorschau zu schließen darf die App NICHT beenden. Der
             // Controller ist auch Delegat des Quick-Look-Panels, und dessen
             // `orderOut` kommt als `windowWillClose` an. Feuerte hier
@@ -419,7 +440,7 @@ func quickHandoffIssueSelfTest() -> String? {
     guard controller.lastInfo.text.contains("Finder-Ordner ist /finder"),
           controller.lastInfo.text.contains(warning) else { return "Übergabehinweis verdeckt tatsächlichen Suchbereich" }
     controller.applyScopeOutcome(.folders(["/ersatz"]))
-    guard controller.hits.count == 1, controller.searchOutcomeText?.hasPrefix("1 Treffer") == true,
+    guard controller.hits.count == 1, controller.searchOutcomeText?.contains("1 Treffer") == true,
           controller.lastInfo.text == warning else { return "Übergabehinweis wird durch Suchabschluss oder Bereichsantwort ersetzt" }
     let errorText = "Eigener Suchfehler: " + String(repeating: "Vollständiger technischer Grund. ", count: 40)
     controller.finish(query: "keep", errorText: errorText)
@@ -456,7 +477,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     private let updaterController = makeUpdaterController()
     static let hint = "Return oder 0,6 s Pause startet die Suche · Esc beendet"
     static let debounceInterval: TimeInterval = 0.6
-    static let maxQuickHits = 20        // ab hier übernimmt die große GUI
+    var initialSearchSeconds: TimeInterval = 5
     static let windowWidth: CGFloat = 560
     static let windowHeight: CGFloat = 520   // Default; Fenster ist resizable
 
@@ -489,13 +510,11 @@ final class QuickController: HitListController, NSApplicationDelegate,
     // „release.sh" fände dann auch „test-github-release.sh".
     let exactCheckbox = NSButton(checkboxWithTitle: "Genauer Name",
                                  target: nil, action: nil)
-    // Öffnet die große Favenio.app mit den Treffern (zum Sortieren / für mehr
-    // als die Top 20). Früher sprang Quick automatisch dorthin — jetzt nur
-    // noch auf Klick bzw. Cmd+Return.
     // Das Kürzel steht IM Titel: AppKit zeigt keinen Hinweis auf den
     // Tastaturmonitor, der Cmd+Return abfängt.
     let openButton = NSButton(title: "Alle in Favenio ↗ ⌘↩",
                               target: nil, action: nil)
+    let resumeButton = NSButton(title: "Fortsetzen", target: nil, action: nil)
     let infoLabel = NSTextField(labelWithString: QuickController.hint)
     let spinner = NSProgressIndicator()
     let scrollView = NSScrollView()
@@ -549,8 +568,8 @@ final class QuickController: HitListController, NSApplicationDelegate,
     /// woanders gesucht wurde. Wird von startSearch() zurückgesetzt.
     ///
     /// Gemerkt werden nur die beiden Pfade, NICHT der fertige Satz: Die Zeile
-    /// wird auch nach dem Ende der Suche noch einmal gezeigt (finish() und der
-    /// Top-20-Stopp beenden die Suche vorher), und ein gespeichertes „Suche
+    /// wird auch nach dem Ende der Suche noch einmal gezeigt (finish() und die
+    /// Zeitpause beenden die Suche vorher), und ein gespeichertes „Suche
     /// läuft in …" behauptete dort weiter, es liefe noch. Den Text baut
     /// runScopeNoteText() aus dem aktuellen Zustand.
     var runScopeMismatch: (searched: String, finder: String)?
@@ -570,7 +589,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     var runningSearch: SearchRunner?
     var searchGeneration = 0
     var hasSearched = false
-    var quickLimitReached = false
+    var resumePipe: Pipe?
     var searchOutcomeText: String?
 
 
@@ -801,8 +820,13 @@ final class QuickController: HitListController, NSApplicationDelegate,
         openButton.target = self
         openButton.action = #selector(openInMainApp)
         openButton.isEnabled = false        // erst wenn es Treffer gibt
-        openButton.toolTip = "Favenio übernimmt die ersten 20 Treffer und "
-            + "setzt die Suche für alle weiteren fort (⌘↩)."
+        openButton.toolTip = "Öffnet dieselbe Suche in Favenio (⌘↩). Bisherige Treffer sind sofort sichtbar (bis 8 MiB, ausgewählte zuerst)."
+        resumeButton.bezelStyle = .rounded
+        resumeButton.controlSize = .small
+        resumeButton.font = openButton.font
+        resumeButton.target = self
+        resumeButton.action = #selector(resumeSearch)
+        resumeButton.toolTip = "Diese Suche ab der Pause bis zum Ende fortsetzen."
 
         infoLabel.font = NSFont.systemFont(ofSize: 11)
         infoLabel.textColor = .secondaryLabelColor
@@ -831,24 +855,16 @@ final class QuickController: HitListController, NSApplicationDelegate,
         optionsRow.orientation = .horizontal
         optionsRow.spacing = 10
         optionsRow.alignment = .centerY
-        // Aufklappzeile: Dreieck plus klickbarer Titel, beide schalten um;
-        // rechts daneben Spinner, Trefferzeile und der Knopf „Alle in
-        // Favenio". Eine Zeile statt zwei: Jede Zeile über der Tabelle
-        // kostet Trefferzeilen im Panel. Bis 0.34.21 standen Spinner, Info
-        // und Knopf in der Maßzeile — die ist jetzt zugeklappt unsichtbar.
+        let spacer = NSView()
         let filtersRow = NSStackView(views: [filters.disclosureButton, filters.titleButton,
-                                             spinner, infoLabel, searchReportController.button, duplicateCheckController.button, openButton])
-        filtersRow.orientation = .horizontal
+                                             spacer, searchReportController.button, duplicateCheckController.button, openButton])
         filtersRow.spacing = 6
-        filtersRow.alignment = .centerY
         filtersRow.setCustomSpacing(2, after: filters.disclosureButton)
-        filtersRow.setCustomSpacing(14, after: filters.titleButton)
-        // Schalter und Knopf behalten ihre Breite; nur die Trefferzeile gibt
-        // nach und wird gekürzt, wenn es eng wird.
-        for view in filtersRow.views where view !== infoLabel {
-            view.setContentCompressionResistancePriority(.required,
-                                                         for: .horizontal)
-        }
+        let statusRow = NSStackView(views: [spinner, infoLabel, resumeButton])
+        statusRow.spacing = 6
+        statusRow.alignment = .centerY
+        resumeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        resumeButton.isHidden = true
 
         // Schmale Maßzeile: „px  B [min]–[max]  H [min]–[max]".
         func smallLabel(_ text: String) -> NSTextField {
@@ -879,7 +895,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         resultFilter.compact()
         contentPreviewView.onRestart = { [weak self] in self?.startSearch() }
         let outer = NSStackView(views: [searchRow, optionsRow, criteriaControl, filtersRow, sizeRow,
-                                        filterView, resultFilter.view, resultGrouping.view, scrollView, finderMetadataView, contentPreviewView])
+                                        filterView, resultFilter.view, resultGrouping.view, statusRow, scrollView, finderMetadataView, contentPreviewView])
         // Erst NACH dem Einhängen in den Stack verstecken: `NSStackView(views:)`
         // hängt eine schon versteckte Ansicht sichtbar ein.
         filters.extraViews = [sizeRow]
@@ -908,6 +924,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
             optionsRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             criteriaControl.widthAnchor.constraint(equalTo: outer.widthAnchor),
             filtersRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
+            statusRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             sizeRow.widthAnchor.constraint(equalTo: outer.widthAnchor),
             filterView.widthAnchor.constraint(equalTo: outer.widthAnchor),
             resultFilter.view.widthAnchor.constraint(equalTo: outer.widthAnchor),
@@ -966,7 +983,6 @@ final class QuickController: HitListController, NSApplicationDelegate,
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.target = self
         tableView.doubleAction = #selector(openSelected)
-        tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
 
         let menu = NSMenu()
         menu.delegate = self
@@ -1184,8 +1200,8 @@ final class QuickController: HitListController, NSApplicationDelegate,
     /// Der Hinweis auf den abweichenden Suchbereich — immer frisch aus dem
     /// AKTUELLEN Zustand formuliert, nie aus einem gemerkten Satz:
     ///
-    /// * „Suche läuft" gilt nur, solange sie läuft. finish() und der
-    ///   Top-20-Stopp beenden den Lauf, bevor sie die Zeile neu setzen.
+    /// * „Suche läuft" gilt nur, solange sie läuft. finish() und die
+    ///   Zeitpause beenden den Lauf, bevor sie die Zeile neu setzen.
     /// * „Return sucht dort" gilt nur, solange der Suchbereich dem vordersten
     ///   Finder-Fenster folgt. Hat der Nutzer inzwischen selbst einen Ordner
     ///   gewählt, sucht Return dort — dann entfällt der Hinweis ganz.
@@ -1368,6 +1384,8 @@ final class QuickController: HitListController, NSApplicationDelegate,
         searchGeneration += 1
         if runningSearch != nil { searchReportController.end("cancelled") }
         runningSearch?.cancel(); runningSearch = nil
+        resumePipe = nil
+        resumeButton.isHidden = true
         pending = []
         searching = false
         spinner.stopAnimation(nil)
@@ -1396,7 +1414,6 @@ final class QuickController: HitListController, NSApplicationDelegate,
         runScopeMismatch = nil
         skippedCount = 0
         hasSearched = false
-        quickLimitReached = false
         searchOutcomeText = nil
         previewURLs = []
         // Vorschau UND Dateiaktionen gehören zur alten Trefferliste. Die
@@ -1472,30 +1489,34 @@ final class QuickController: HitListController, NSApplicationDelegate,
         let run = SearchRunner()
         runningSearch = run
         hasSearched = true
-        run.start(arguments: searchOutputArguments(arguments), onBatch: { [weak self, weak run] hits, progress in
+        let input = Pipe()
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        run.process.standardInput = input
+        resumePipe = input
+        var timedArguments = searchOutputArguments(arguments)
+        timedArguments.insert("--quick-pause-after=\(initialSearchSeconds)", at: timedArguments.firstIndex(of: "--") ?? timedArguments.endIndex)
+        run.start(arguments: timedArguments, onBatch: { [weak self, weak run] hits, progress in
             guard let self, let run, self.runningSearch === run,
                   generation == self.searchGeneration else { return }
-            // Quick braucht nur zwanzig Treffer, auch ein Transportpaket
-            // darf seinen UI-Puffer nicht darüber hinaus füllen.
             self.enqueueSearchHits(hits, scope: scope)
             if let progress { self.showProgress(path: progress) }
-            if self.resultFilter.sourceCount + self.pending.count >= Self.maxQuickHits {
-                self.flushPending()
-            }
+            if !self.resumeButton.isHidden { self.flushPending() }
         }, onReport: { [weak self, weak run] report in
             guard let self, let run, self.runningSearch === run, generation == self.searchGeneration else { return }
             self.searchReportController.accept(report)
+            if report.state == "paused" {
+                self.searching = false
+                self.resumeButton.isHidden = false
+                self.spinner.stopAnimation(nil)
+                self.updateSearchStatus()
+            }
         }, completion: { [weak self, weak run] exit in
             guard let self, let run, self.runningSearch === run,
                   generation == self.searchGeneration else { return }
             self.runningSearch = nil
-            // Der Kern räumt nach SIGTERM auf und endet regulär mit 143.
-            let expectedStop = self.quickLimitReached && (
-                (exit.reason == .uncaughtSignal && (exit.status == SIGTERM || exit.status == SIGKILL))
-                || (exit.reason == .exit && exit.status == 128 + SIGTERM))
-            let errorText = !expectedStop && searchExitIsError(exit.status, reason: exit.reason)
-                ? searchFailureText(exit) : nil
-            self.searchReportController.end(self.quickLimitReached ? "limitReached" : (searchExitIsError(exit.status, reason: exit.reason) ? "failed" : "finished"), exit: exit)
+            let failed = searchExitIsError(exit.status, reason: exit.reason)
+            let errorText = failed ? searchFailureText(exit) : nil
+            self.searchReportController.end(failed ? "failed" : "finished", exit: exit)
             self.skippedCount = exit.warningCount
             self.finish(query: query, errorText: errorText)
         })
@@ -1516,8 +1537,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
 
     func enqueueSearchHits(_ incoming: [Hit], scope: SearchRoots) {
         for original in incoming {
-            guard resultFilter.sourceCount + pending.count < Self.maxQuickHits,
-                  let hit = scope.carrying(original), seenHitIdentities.insert(hit.identity).inserted else { continue }
+            guard let hit = scope.carrying(original), seenHitIdentities.insert(hit.identity).inserted else { continue }
             pending.append(hit)
         }
     }
@@ -1549,47 +1569,51 @@ final class QuickController: HitListController, NSApplicationDelegate,
         resultFilter.refresh()
     }
 
-    /// Gebündelt anzeigen. Bei 20 Treffern STOPPT die Suche (Top 20 reichen
-    /// meist) — der Rest bzw. das Sortieren läuft auf Wunsch in der Haupt-App
-    /// (Button „Alle in Favenio ↗" oder Cmd+Return), nicht mehr automatisch.
     func flushPending() {
         guard !pending.isEmpty else { return }
-        // Auswahl über den reloadData hinweg festhalten (fürs QuickLook).
-        let selectedIdentities = selectedHitIdentities()
-        let room = Self.maxQuickHits - resultFilter.sourceCount
-        if room > 0 {
-            if resultFilter.isActive { resultFilter.append(Array(pending.prefix(room))) }
-            else { hits.append(contentsOf: pending.prefix(room)) }
-        }
+        let incoming = pending
         pending = []
-        sortHits()
-        reloadKeepingSelection(selectedIdentities)
-        openButton.isEnabled = resultFilter.sourceCount > 0
-        let reachedTop = resultFilter.sourceCount >= Self.maxQuickHits
-        if reachedTop {
-            // Der Abschluss liefert noch die bereits gelesenen Warnungen.
-            // Nur neue Kriterien dürfen seine Laufidentität entwerten.
-            quickLimitReached = true
-            searchReportController.end("limitReached")
-            flushTimer?.invalidate(); flushTimer = nil
-            runningSearch?.cancel()
-            searching = false
-            spinner.stopAnimation(nil)
-        }
-        // Ein unbestätigter Suchbereich bleibt sichtbar: Sonst verschwände die
-        // Warnung beim ersten Trefferpaket und während des Top-20-Abbruchs.
-        if let problem = scopeProblem ?? runScopeNoteText() {
-            let summary = reachedTop
-                ? "" : "\(hits.count) Treffer — Suche läuft… "
-            showScopeProblem(summary + problem)
-        } else if reachedTop {
-            // Die Erklärung der 20er-Grenze steht am zugehörigen Button. Eine
-            // eigene „Top 20"-Zeile würde nur Tabellenhöhe verbrauchen.
-            showSearchInfo("")
+        if resultFilter.isActive {
+            resultFilter.append(incoming)
         } else {
-            showSearchInfo("\(hits.count) Treffer — Suche läuft…",
-                     detail: searchRoot)
+            let selected = selectedHitIdentities()
+            if let comparator = hitComparator() {
+                hits = mergingSortedValues(hits, incoming, using: comparator)
+            } else {
+                hits.append(contentsOf: incoming)
+            }
+            reloadKeepingSelection(selected)
         }
+        openButton.isEnabled = resultFilter.sourceCount > 0
+        updateSearchStatus()
+    }
+
+    func updateSearchStatus() {
+        let paused = !resumeButton.isHidden
+        let summary = paused
+            ? "Pausiert · Weitere Treffer möglich (\(resultFilter.sourceCount) bisher)."
+            : "\(resultFilter.sourceCount) Treffer — Suche läuft…"
+        searchOutcomeText = paused ? summary : nil
+        if let problem = scopeProblem ?? runScopeNoteText() {
+            showScopeProblem(summary + " " + problem)
+        } else {
+            showSearchInfo(summary, detail: summary + "\n" + searchRoot)
+        }
+    }
+
+    @objc func resumeSearch() {
+        guard !resumeButton.isHidden, let input = resumePipe else { return }
+        do {
+            try input.fileHandleForWriting.write(contentsOf: Data([0x31]))
+        } catch {
+            cancelSearch()
+            showInfo("Fortsetzen fehlgeschlagen. Bitte die Suche neu starten.")
+            return
+        }
+        resumeButton.isHidden = true
+        searching = true
+        spinner.startAnimation(nil)
+        updateSearchStatus()
     }
 
     /// Wie viele Objekte der letzte Lauf überspringen musste. Ohne diese
@@ -1618,9 +1642,11 @@ final class QuickController: HitListController, NSApplicationDelegate,
         let criterion = query.isEmpty
             ? (searchConfiguration.filterSummary.isEmpty ? "" : " (\(searchConfiguration.filterSummary))")
             : " für „\(query)“"
+        let coverage = searchReportController.snapshot?.coverage == "withinRequestedScope"
+            ? "Suchbereich durchsucht" : "Suche beendet · Abdeckung eingeschränkt"
         let summary = resultFilter.sourceCount == 0
             ? SearchReportSnapshot.emptyResultText(for: searchReportController.snapshot)
-            : (quickLimitReached && skippedCount == 0 ? "" : "\(resultFilter.sourceCount) Treffer\(criterion).")
+            : "\(coverage) · \(resultFilter.sourceCount) Treffer\(criterion)."
                 + skippedNote(skippedCount)
         searchOutcomeText = summary
         // Gerade wenn NICHTS gefunden wurde, muss ein unklarer Suchbereich
@@ -1670,79 +1696,57 @@ final class QuickController: HitListController, NSApplicationDelegate,
             showHandoffIssue(problem, detail: problem)
             return
         }
-        if configuration.textEncoding != .utf8, !mainAppSupportsTextEncoding() {
-            showHandoffIssue("Bitte Favenio und FavenioQuick gemeinsam aktualisieren; die Haupt-App unterstützt diese Textkodierung noch nicht.")
-            return
-        }
-        let needsVersion2 = configuration.requiresTransportVersion2 || !selectedHitIdentities().isEmpty
-        let needsFinder = configuration.requiresFinderMetadata || resultFilter.unfilteredHits.contains { $0.finderMetadata != nil }
-        let version = configuration.pptxOCR ? 9 : configuration.pdfOCR ? 8 : configuration.ocr ? 7 : configuration.localOnly ? 6 : needsFinder ? 5 : configuration.requiresDateRanges ? 4 : (roots.count > 1 ? 3 : (needsVersion2 ? 2 : 1))
-        if configuration.pptxOCR, !mainAppSupportsPPTXOCR() { showHandoffIssue("Bitte beide Apps gemeinsam aktualisieren; die Haupt-App unterstützt PPTX-Bild-OCR noch nicht."); return }
-        if configuration.pdfOCR, !mainAppSupportsPDFOCR() { showHandoffIssue("Bitte beide Apps gemeinsam aktualisieren; die Haupt-App unterstützt PDF-OCR noch nicht."); return }
-        if configuration.ocr, !mainAppSupportsOCR() {
-            showHandoffIssue("Bitte Favenio und FavenioQuick gemeinsam aktualisieren; die Haupt-App unterstützt Bild-OCR noch nicht.")
-            return
-        }
-        if configuration.localOnly, !mainAppSupportsLocalContent() {
-            showHandoffIssue("Bitte Favenio und FavenioQuick gemeinsam aktualisieren; die Haupt-App unterstützt die lokale Inhaltspolitik noch nicht.")
-            return
-        }
-        if needsFinder, !mainAppSupportsFinderMetadata() {
-            showHandoffIssue("Bitte Favenio und FavenioQuick gemeinsam aktualisieren; die Haupt-App unterstützt Finder-Eigenschaften noch nicht.")
-            return
-        }
-        if configuration.requiresDateRanges, !mainAppSupportsDateRanges() {
-            showHandoffIssue("Bitte Favenio und FavenioQuick gemeinsam aktualisieren; die Haupt-App unterstützt Kalenderbereiche noch nicht.")
-            return
-        }
-        if version >= 3, !mainAppSupportsMultipleRoots() {
-            showHandoffIssue("Bitte Favenio und FavenioQuick gemeinsam aktualisieren; die Haupt-App unterstützt mehrere Suchbereiche noch nicht.")
-            return
-        }
-        if needsVersion2, !mainAppSupportsCriteria() {
-            showHandoffIssue("Bitte Favenio und FavenioQuick gemeinsam aktualisieren; die Haupt-App unterstützt diese Übergabe noch nicht.")
+        let selection = selectedHitIdentities()
+        let source = resultFilter.unfilteredHits
+        var seed = Array(source.lazy.filter { selection.contains($0.identity) }.prefix(20))
+        let seedSelection = Set(seed.map { $0.identity })
+        if seed.isEmpty { seed = source }
+        else { seed.append(contentsOf: source.lazy.filter { !seedSelection.contains($0.identity) }) }
+        let finderSnapshots = seed.contains { $0.finderMetadata != nil }
+        let format = QuickHandoffFormat.forSending(configuration, rootCount: roots.count,
+                                                   hasSelection: !seedSelection.isEmpty,
+                                                   finderSnapshots: finderSnapshots)
+        let mainAppURL = locateMainApp()
+        let info = mainAppURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:]
+        if let feature = format.missingSupport(info, options: configuration, finderSnapshots: finderSnapshots) {
+            showHandoffIssue("Die Haupt-App unterstützt diese Übergabe nicht (\(feature)). Bitte beide Apps gemeinsam aktualisieren.")
             return
         }
         let resultsFile: URL
         let dateResolution = searchReportController.snapshot?.object["dateResolution"].flatMap { DateRangeTransport.resolution($0) }
-        do { resultsFile = try writeQuickHandoff(resultFilter.unfilteredHits, selection: selectedHitIdentities(),
-                                               version: version, roots: version >= 3 ? roots : nil,
-                                               configuration: version >= 4 ? configuration : nil,
-                                               dateResolution: version >= 4 ? dateResolution : nil) } catch {
+        do { resultsFile = try writeQuickHandoff(seed, selection: seedSelection,
+                                               version: format.rawValue, roots: format.hasRoots ? roots : nil,
+                                               configuration: format.hasFrozenOptions ? configuration : nil,
+                                               dateResolution: format.hasFrozenOptions ? dateResolution : nil,
+                                               continuingSearch: true) } catch {
             showHandoffIssue("Konnte Treffer nicht zwischenspeichern.")
             return
         }
         cancelSearch()   // eigenen Suchlauf stoppen
-        openMainApp(query: query, roots: roots, resultsFile: resultsFile, version: version, configuration: configuration)
+        openMainApp(query: query, roots: roots, resultsFile: resultsFile, format: format, options: configuration, mainAppURL: mainAppURL)
     }
 
-    func openMainApp(query: String, roots: [String], resultsFile: URL, version: Int, configuration: SearchConfiguration? = nil) {
-        let frozenOptions = configuration ?? searchConfiguration.forNewRun()
+    func openMainApp(query: String, roots: [String], resultsFile: URL, format: QuickHandoffFormat,
+                     options: SearchConfiguration, mainAppURL: URL?) {
         // Weg 1: URL-Schema — mit continue=1 setzt die große GUI die Suche
-        // live fort (zeigt die 20 sofort). Optionen mitgeben, damit sie mit
+        // live fort (zeigt die übergebenen Treffer sofort). Optionen mitgeben, damit sie mit
         // denselben Einstellungen weitersucht.
         var components = URLComponents()
         components.scheme = "favenio"
-        let version2 = version >= 2
-        components.host = version >= 3 ? "results-v\(version)" : (version2 ? "results-v2" : "results")
+        components.host = format.host
         components.queryItems = [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "file", value: resultsFile.path),
             URLQueryItem(name: "continue", value: "1"),
-        ] + frozenOptions.queryItems
-        if version < 3, let root = SearchRoots(roots).single { components.queryItems?.append(URLQueryItem(name: "root", value: root)) }
+        ] + options.queryItems
+        if !format.hasRoots, let root = SearchRoots(roots).single { components.queryItems?.append(URLQueryItem(name: "root", value: root)) }
         guard let handoffURL = components.url,
               handoffURL.absoluteString.utf8.count <= maximumQuickURLBytes else {
             try? FileManager.default.removeItem(at: resultsFile)
             showInfo("Konnte Ergebnisübergabe nicht erzeugen.")
             return
         }
-        if version2 {
-            guard let appURL = locateMainApp(), (version == 9 ? mainAppSupportsPPTXOCR() : version == 8 ? mainAppSupportsPDFOCR() : version == 7 ? mainAppSupportsOCR() : version == 6 ? mainAppSupportsLocalContent() : version == 5 ? mainAppSupportsFinderMetadata() : version == 4 ? mainAppSupportsDateRanges() : (version == 3 ? mainAppSupportsMultipleRoots() : mainAppSupportsCriteria())) else {
-                try? FileManager.default.removeItem(at: resultsFile)
-                showInfo("Die Haupt-App unterstützt diese Übergabe noch nicht; bitte beide Apps aktualisieren.")
-                return
-            }
+        if format.hasHeader, let appURL = mainAppURL {
             NSWorkspace.shared.open([handoffURL], withApplicationAt: appURL,
                                     configuration: NSWorkspace.OpenConfiguration()) { _, error in
                 DispatchQueue.main.async {
@@ -1762,7 +1766,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         // Weg 2 (Fallback): Favenio.app direkt starten. Derselbe strukturierte
         // URL-Datensatz reist als Argument mit; dadurch bleiben Wurzel,
         // Optionen und das Fortsetzen der Suche exakt wie im primären Weg.
-        guard let appURL = locateMainApp() else {
+        guard let appURL = mainAppURL else {
             try? FileManager.default.removeItem(at: resultsFile)
             showInfo("Favenio.app nicht gefunden — bitte einmal "
                      + "manuell starten.")
@@ -1803,75 +1807,6 @@ final class QuickController: HitListController, NSApplicationDelegate,
             return sibling
         }
         return nil
-    }
-
-    func mainAppSupportsTextEncoding() -> Bool {
-        guard let url = locateMainApp(), let bundle = Bundle(url: url) else { return false }
-        guard let version = bundle.object(forInfoDictionaryKey: "FavenioTextEncodingVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID() else { return false }
-        return version.doubleValue == 1
-    }
-
-    func mainAppSupportsCriteria() -> Bool {
-        guard let url = locateMainApp(), let bundle = Bundle(url: url),
-              let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID() else { return false }
-        return [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].contains(version.doubleValue)
-    }
-
-    func mainAppSupportsMultipleRoots() -> Bool {
-        guard let url = locateMainApp(), let bundle = Bundle(url: url),
-              let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID() else { return false }
-        return [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].contains(version.doubleValue)
-    }
-    func mainAppSupportsDateRanges() -> Bool {
-        guard let url = locateMainApp(), let bundle = Bundle(url: url),
-              let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), [4.0, 5.0, 6.0, 7.0, 8.0, 9.0].contains(version.doubleValue),
-              let dates = bundle.object(forInfoDictionaryKey: "FavenioDateRangeSchemaVersion") as? NSNumber,
-              CFGetTypeID(dates) != CFBooleanGetTypeID(), dates.doubleValue == 1 else { return false }
-        return true
-    }
-    func mainAppSupportsFinderMetadata() -> Bool {
-        guard let url = locateMainApp(), let bundle = Bundle(url: url),
-              let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), [5.0, 6.0, 7.0, 8.0, 9.0].contains(version.doubleValue),
-              let capability = bundle.object(forInfoDictionaryKey: "FavenioFinderMetadataSchemaVersion") as? NSNumber,
-              CFGetTypeID(capability) != CFBooleanGetTypeID(), capability.doubleValue == 1 else { return false }
-        return true
-    }
-
-    func mainAppSupportsLocalContent() -> Bool {
-        guard let url = locateMainApp(), let bundle = Bundle(url: url),
-              let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), [6.0, 7.0, 8.0, 9.0].contains(version.doubleValue),
-              let capability = bundle.object(forInfoDictionaryKey: "FavenioLocalContentSchemaVersion") as? NSNumber,
-              SearchConfiguration.supportsLocalContentCapability(capability) else { return false }
-        return true
-    }
-
-    func mainAppSupportsPPTXOCR() -> Bool {
-        guard let url = locateMainApp(), let bundle = Bundle(url: url),
-              let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), version.doubleValue == 9 else { return false }
-        return SearchConfiguration.supportsOCRCapability(bundle.object(forInfoDictionaryKey: "FavenioPPTXOCRSchemaVersion"))
-    }
-
-    func mainAppSupportsPDFOCR() -> Bool {
-        guard let url = locateMainApp(), let bundle = Bundle(url: url),
-              let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), [8.0, 9.0].contains(version.doubleValue),
-              SearchConfiguration.supportsPDFOCRCapability(bundle.object(forInfoDictionaryKey: "FavenioPDFOCRSchemaVersion")) else { return false }
-        return true
-    }
-
-    func mainAppSupportsOCR() -> Bool {
-        guard let url = locateMainApp(), let bundle = Bundle(url: url),
-              let version = bundle.object(forInfoDictionaryKey: "FavenioQuickHandoffVersion") as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), [7.0, 8.0, 9.0].contains(version.doubleValue),
-              SearchConfiguration.supportsOCRCapability(bundle.object(forInfoDictionaryKey: "FavenioOCRSchemaVersion")) else { return false }
-        return true
     }
 
     // ---------- Trefferliste (Anzeige + Öffnen) ----------
@@ -1919,14 +1854,6 @@ final class QuickController: HitListController, NSApplicationDelegate,
         let selectedIdentities = selectedHitIdentities()
         sortHits()
         reloadKeepingSelection(selectedIdentities)
-    }
-
-    /// Hält die gewählte Sortierung auch beim Streaming neuer Treffer ein.
-    func sortHits() {
-        guard let descriptor = tableView.sortDescriptors.first,
-              let key = descriptor.key else { return }
-        let ascending = descriptor.ascending
-        hits.sort { compareHits($0, $1, key: key, ascending: ascending) }
     }
 
     /// Zeilen, auf die sich eine Aktion bezieht: die geklickte Zeile, sonst

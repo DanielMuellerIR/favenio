@@ -22,8 +22,8 @@ beweist nicht, dass die Quelldatei noch vorhanden oder unverändert ist.
 
 Während eines laufenden Suchlaufs werden neue Treffer mit denselben Kriterien
 gefiltert. Bereits geprüfte Treffer müssen dafür nicht erneut durch den Kern.
-Die 20er-Grenze der Schnellsuche zählt Quelltreffer, auch wenn der Ansichtsfilter
-weniger davon zeigt. Sortierung und Auswahl bleiben an den ursprünglichen
+Die Zeitpause in macOS Quick gilt unabhängig davon, wie viele Treffer der
+Ansichtsfilter anzeigt. „Fortsetzen“ behält den Filter bei. Sortierung und Auswahl bleiben an den ursprünglichen
 strukturierten Identitäten gebunden; der sichtbare Pfad wird nie an `!/` zerlegt.
 
 Auswahl, Öffnen, Vorschau, Pfadkopie, Entfernen und Papierkorb arbeiten auf den
@@ -38,8 +38,9 @@ Teilmenge. Bei Gruppierung heißt der Punkt **Alle gefilterten Treffer exportier
 und enthält ausdrücklich auch eingeklappte Gruppen; Auswahl-Export bleibt auf
 die Auswahl begrenzt. JSONL, CSV und
 Inhaltsbelege bleiben unverändert. Aufzeichnungen bewahren dagegen den gesamten
-beendeten Suchstand. **Alle in Favenio** übergibt ebenfalls den gesamten
-Quellstand; die Haupt-App setzt die ursprüngliche Suche ohne Ansichtsfilter fort.
+beendeten Suchstand. **Alle in Favenio** übergibt den bisherigen
+Quellstand bis zur Transportgrenze von 8 MiB. Bis zu 20 markierte Treffer haben
+Vorrang. Die Haupt-App durchsucht den gesamten Bereich ohne Ansichtsfilter.
 
 ## Fehler, Abbruch und Grenzen
 

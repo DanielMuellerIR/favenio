@@ -2,7 +2,7 @@
 
 # Favenio
 
-Linux: Rust/GTK frontends share the Swift application models and Python search engine. Signed packages are available through the [Linux release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.68.0) and a separate GitHub update channel. Desktop integration has been tested on X11 and Wayland. See [Linux build and installation](docs/LINUX.md).
+Linux: Rust/GTK frontends share the Swift application models and Python search engine. Signed packages are available through the [Linux release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.70.0) and a separate GitHub update channel. Desktop integration has been tested on X11 and Wayland. See [Linux build and installation](docs/LINUX.md).
 
 
 **"facile invenio" — Latin for "I find with ease".**
@@ -25,6 +25,12 @@ regular files, exactly as before.
 The search core is pure Python 3 (standard library only), a single file, no
 installation. Two native macOS apps are built on top of it: a full search
 window and a small quick-search panel for the Finder toolbar.
+
+## What’s new in 0.70.0
+
+On macOS, drag original files and folders from either app into Finder to move
+or copy them. Quick search pauses after five seconds at the next reading boundary
+and can resume in the same window.
 
 ## What’s new in 0.68.0
 
@@ -300,6 +306,7 @@ missing-folder warning visible beside the recorded-state label.
 | `--json` | JSONL output for scripts/agents (with `size` in bytes where the format states it) |
 | `--json-path-bytes` | Versioned JSONL hit envelopes with lossless POSIX path bytes; requires `--json` |
 | `--search-roots-bytes JSON` | Absolute POSIX search roots as a canonical Base64 JSON list; preserves paths that are not valid UTF-8 |
+| `--quick-pause-after SECONDS` | With `--search-report`, pause once at the next safe reading boundary. Write ASCII `1` to stdin to continue. EOF cancels. |
 | `--search-report` | with `--json`, emit bounded structured search reports; [contract](docs/SEARCH_REPORT.md) |
 | `--progress` | report where the search currently is (JSONL objects with `--json`, stderr otherwise) |
 | `--extract HIT` | extract a hit path (`!/` notation) to a temp folder and print the usable path |
@@ -743,10 +750,13 @@ From the results list:
   Escape cancels it
 - **Right-click**: Open / **Open With…** (all matching apps) /
   Show in Finder / Copy path
-- **Drag & drop**: drag hits into Finder or other apps. This also works for
-  files inside archives: an entry that is not extracted yet is dragged as a
-  file promise and extracted when you drop it (Finder and apps that accept
-  promised files); an already extracted copy is dragged as a plain file
+- **Drag to Finder** from the table or thumbnail grid in either app. Finder
+  normally moves original files and folders on the same volume and copies them
+  to another volume. Hold **Option (⌥)** to copy or **Command (⌘)** to move.
+  Finder shows the drop operation at the pointer and handles **⌘Z** after
+  the drop. Other apps choose which operations they accept.
+  A selection containing an archive member supports copying only. Favenio
+  extracts an uncached entry when Finder accepts its file promise.
 - **Space**: QuickLook preview. Keyboard focus stays in the result list, so
   Up/Down walks the preview through the hits
 - **More terms**: under *Weitere Filter*, the field *Weitere Begriffe* takes
@@ -800,7 +810,7 @@ rows to an unfiltered, ungrouped list. [Linux list performance](docs/LINUX.md#gr
 
 Both apps search an ordered list of files and folders through **Ablage → Suchbereiche bearbeiten…** (⇧⌘O). Overlapping successful hits appear once; a missing root blocks the whole new search. Templates, Quick handoff and recordings retain the same list. See [search roots and migration](docs/SEARCH_ROOTS.md).
 
-Both apps offer **Trefferliste filtern → Bearbeiten…** to narrow existing results by known name, path, extension, facts and captured Finder properties. **x von y Treffern** shows filtered and original counts; **Zurücksetzen** restores hidden rows without rescanning. Missing facts do not satisfy negated conditions. Selection actions and selection exports use expanded hit rows; full export includes all filtered hits; recordings and Quick handoff retain the whole source list. A new search resets this view filter. See [result filtering](docs/RESULT_FILTER.md).
+Both apps offer **Trefferliste filtern → Bearbeiten…** to narrow existing results by known name, path, extension, facts and captured Finder properties. **x von y Treffern** shows filtered and original counts; **Zurücksetzen** restores hidden rows without rescanning. Missing facts do not satisfy negated conditions. Selection actions and selection exports use expanded hit rows; full export includes all filtered hits; recordings retain the whole source list. Quick handoff includes hidden results. A new search resets this view filter. See [result filtering](docs/RESULT_FILTER.md).
 
 These entries live in the **Ablage** (File) menu and in the result list's
 context menu. The shortcuts that act on the selection (⌫, ⌘⌫, ⇧⌘E) only apply
@@ -859,8 +869,14 @@ the header of a Finder window while holding **Cmd**.
   without a term
 - The result columns are sortable and resizable; horizontal scrolling exposes
   long source paths
-- Quick search shows up to 20 hits. **All in Favenio** (or **Cmd-Return**) hands
-  them to the main app, which continues the same search without duplicates
+- Quick shows all hits found so far. After five seconds it pauses at the next
+  block or item. A document reader or filesystem call already in progress can
+  take longer. Click **Fortsetzen** (Continue) to finish the same search in
+  Quick. The status shows when the search is paused and whether the completed
+  search covered the requested scope or skipped items.
+- **All in Favenio** (Cmd-Return) opens the same search in the main app.
+  Results found so far appear immediately, up to 8 MiB. Up to 20 selected
+  hits take priority. The main app searches the entire scope.
 - **Esc** closes an open preview; with an empty field it quits the quick search
 
 The search scope is never guessed silently. While the Finder is being asked,

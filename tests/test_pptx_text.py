@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import struct
 import subprocess
 import sys
 import tarfile
@@ -100,6 +101,64 @@ class PPTXTextTests(TempTreeTest):
         self.assertEqual(self.search('--exact',pattern='Zweite Zeile')[1][0]['documentPosition']['line'],2)
         self.assertEqual(self.search(pattern='AB')[0],1)
         self.assertEqual(self.search(pattern='für')[0],0)
+
+    def test_unreadable_embedded_picture_keeps_later_slide_text(self):
+        original = pptx_with_picture(b'synthetic embedded image')
+        with zipfile.ZipFile(io.BytesIO(original)) as archive:
+            image = archive.getinfo('ppt/media/screenshot.png')
+        header = image.header_offset
+        name_length, extra_length = struct.unpack_from('<HH', original, header + 26)
+        compressed = header + 30 + name_length + extra_length
+        corrupt = bytearray(original)
+        corrupt[compressed] = 7  # Reservierter Deflate-Blocktyp.
+        unsupported = bytearray(original)
+        catalog = original.index(b'PK\x01\x02', compressed + image.compress_size)
+        while struct.unpack_from('<I', original, catalog + 42)[0] != header:
+            name_length, extra_length, comment_length = struct.unpack_from('<HHH', original, catalog + 28)
+            catalog += 46 + name_length + extra_length + comment_length
+        struct.pack_into('<H', unsupported, header + 8, 99)
+        struct.pack_into('<H', unsupported, catalog + 10, 99)
+        with mock.patch.object(favenio, 'find_ocr_helper', return_value='fixture'):
+            for kind, data in [('Deflate', corrupt), ('Kompression', unsupported)]:
+                with self.subTest(kind=kind):
+                    self.path.write_bytes(data)
+                    code, hits, report, error = self.search('--pptx-ocr', pattern='Text nach dem Bild')
+                    self.assertEqual(code, 0, error)
+                    self.assertEqual(hits[0]['documentPosition']['objectID'], '10')
+                    self.assertIn('ocrReadError', [reason['id'] for reason in report['reasons']])
+
+    def test_preview_never_replaces_missing_picture_match_with_slide_text(self):
+        self.path.write_bytes(pptx_with_picture(b'synthetic embedded image'))
+        with zipfile.ZipFile(self.path) as archive:
+            slide_xml = archive.read('ppt/slides/z.xml').decode()
+        self.rewrite('ppt/slides/z.xml', slide_xml.replace('</p:txBody>',
+            paragraph('Kontext eins') + paragraph('Kontext zwei') + paragraph('Kontext drei') + '</p:txBody>'))
+
+        def recognize(reader, path, deadline):
+            reader.reader_fingerprint = 'a' * 64
+            yield dict(block=1, confidence=0.9, region=[0.1, 0.2, 0.3, 0.4]), 'Text nach dem Bild'
+
+        for reader, encoding in favenio.PPTX_OCR_READERS.items():
+            with self.subTest(reader=reader), mock.patch.multiple(favenio, PPTX_OCR_READER=reader, PPTX_OCR_ENCODING=encoding):
+                with mock.patch.object(favenio, 'find_ocr_helper', return_value='fixture'), \
+                     mock.patch.object(favenio.OCRTextReader, 'sections', autospec=True, side_effect=recognize):
+                    hit = self.search('--pptx-ocr', pattern='Text nach dem Bild')[1][0]
+                    self.assertEqual(hit['documentPosition']['kind'], 'pptxOCR')
+                    for occurrence, kind in [(0, 'pptxOCR'), (1, 'pptxParagraph')]:
+                        preview = favenio.load_content_preview(self.request(hit, occurrence, True))['contentPreview']
+                        self.assertEqual(preview['snippets'][0]['documentPosition']['kind'], kind)
+
+                with mock.patch.object(favenio, 'find_ocr_helper', return_value=None):
+                    for occurrence in (0, 1):
+                        response = favenio.load_content_preview(self.request(hit, occurrence, True))
+                        preview = response['contentPreview']
+                        self.assertEqual(preview['snippets'], [])
+                        self.assertEqual(preview['navigation']['reason'], 'documentUnavailable')
+                        self.assertEqual(preview['navigation']['documentReason'], 'ocrHelperUnavailable')
+                        decoded = json.loads(run_probe('content-preview', 'parse', input=json.dumps(response)+'\n').stdout)
+                        self.assertEqual(decoded['status'], 'noContentEvidence')
+                        self.assertEqual(decoded['documentReason'], 'ocrHelperUnavailable')
+                        self.assertEqual(decoded['documentMessage'], preview['navigation']['documentMessage'])
 
     def test_table_cells_have_independent_paragraph_numbers_and_rows(self):
         self.path.write_bytes(pptx_bytes(slides=[('slides/z.xml',slide(table(8,[paragraph('A'),paragraph('B')],[paragraph('C')+paragraph('Jahres','bericht'),paragraph('D')])))]))

@@ -2,7 +2,7 @@
 
 # Favenio
 
-Linux: Rust/GTK-Oberflächen verwenden die gemeinsamen Swift-Anwendungsmodelle und den Python-Suchkern. Signierte Pakete stehen im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.68.0) und über einen eigenen GitHub-Updatekanal bereit. Die Desktop-Anbindung ist unter X11 und Wayland geprüft. Siehe [Linux-Bau und Installation](docs/LINUX.md).
+Linux: Rust/GTK-Oberflächen verwenden die gemeinsamen Swift-Anwendungsmodelle und den Python-Suchkern. Signierte Pakete stehen im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.70.0) und über einen eigenen GitHub-Updatekanal bereit. Die Desktop-Anbindung ist unter X11 und Wayland geprüft. Siehe [Linux-Bau und Installation](docs/LINUX.md).
 
 
 **„facile invenio", Latein für „ich finde mit Leichtigkeit".**
@@ -24,6 +24,12 @@ die Dateien einfach normale Dateien — wie bisher.
 Der Suchkern ist pures Python 3 (nur Standardbibliothek), eine Datei, keine
 Installation. Darauf aufbauend gibt es zwei native macOS-Apps: ein großes
 Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
+
+## Neu in 0.70.0
+
+Unter macOS lassen sich Originaldateien und Ordner aus beiden Apps in den Finder
+ziehen und dort verschieben oder kopieren. Die Schnellsuche pausiert nach fünf
+Sekunden an der nächsten Lesegrenze und lässt sich im selben Fenster fortsetzen.
 
 ## Neu in 0.68.0
 
@@ -310,6 +316,7 @@ Aufnahmeherkunft sichtbar.
 | `--json` | JSONL-Ausgabe für Skripte/Agenten (mit `size` in Bytes, soweit das Format sie nennt) |
 | `--json-path-bytes` | Versionierte JSONL-Treffer mit verlustfreien POSIX-Pfadbytes; benötigt `--json` |
 | `--search-roots-bytes JSON` | Absolute POSIX-Suchwurzeln als kanonische Base64-JSON-Liste; erhält nicht als UTF-8 lesbare Pfade |
+| `--quick-pause-after SEKUNDEN` | Pausiert mit `--search-report` einmalig an der nächsten Lesegrenze. ASCII `1` an stdin setzt die Suche fort. EOF bricht sie ab. |
 | `--search-report` | mit `--json` begrenzte strukturierte Suchberichte ausgeben; [Vertrag](docs/SEARCH_REPORT.md) |
 | `--progress` | laufend melden, wo gerade gesucht wird (mit `--json` als JSONL-Objekte, sonst auf stderr) |
 | `--extract TREFFER` | Treffer-Pfad (`!/`-Notation) in einen Temp-Ordner auspacken und den nutzbaren Pfad ausgeben |
@@ -777,11 +784,14 @@ Aus der Trefferliste heraus:
   solange, ⎋ bricht ab
 - **Rechtsklick**: Öffnen / **Öffnen mit…** (alle passenden Apps) /
   Im Finder zeigen / Pfad kopieren
-- **Drag & Drop**: Treffer in den Finder oder andere Apps ziehen.
-  Das geht auch mit Dateien aus Archiven: Ein noch nicht ausgepackter
-  Eintrag wird als Dateiversprechen gezogen und beim Ablegen ausgepackt
-  (Finder und Apps, die versprochene Dateien annehmen); eine schon
-  ausgepackte Kopie wird als normale Datei gezogen
+- **In den Finder ziehen** funktioniert in beiden Apps aus der Tabelle und
+  den Miniaturen. Originaldateien und Ordner verschiebt der Finder auf demselben
+  Volume. Auf ein anderes Volume kopiert er sie. **Alt (⌥)** wählt Kopieren,
+  **Cmd (⌘)** Verschieben. Der Finder zeigt die Aktion am Mauszeiger an.
+  **⌘Z im Finder** macht sie rückgängig. Andere Ziel-Apps bestimmen selbst,
+  welche Aktionen sie annehmen.
+  Enthält die Auswahl einen Archivtreffer, lässt sie sich nur kopieren. Einen
+  noch nicht ausgepackten Eintrag liefert Favenio beim Ablegen als Dateiversprechen.
 - **Leertaste**: QuickLook-Vorschau. Der Tastaturfokus bleibt in der
   Trefferliste, mit Pfeil hoch/runter wandert die Vorschau also durch die
   Treffer
@@ -841,7 +851,7 @@ Eintreffens und hängt neue Zeilen an die ungefilterte, ungruppierte Liste an.
 
 Beide Apps durchsuchen über **Ablage → Suchbereiche bearbeiten…** (⇧⌘O) mehrere Dateien und Ordner in einer geordneten Liste. Überlappende Treffer erscheinen einmal; eine fehlende Wurzel blockiert den gesamten neuen Start. Vorlagen, Quick-Übergabe und Aufzeichnungen erhalten dieselbe Liste. [Suchbereiche und Migration](docs/SEARCH_ROOTS.md).
 
-Beide Apps begrenzen über **Trefferliste filtern → Bearbeiten…** vorhandene Treffer nach bekannten Namen, Pfaden, Endungen, Fakten und erfassten Finder-Eigenschaften. **x von y Treffern** zeigt gefilterte und ursprüngliche Menge; **Zurücksetzen** stellt versteckte Zeilen ohne erneute Suche wieder her. Fehlende Fakten erfüllen auch negative Bedingungen nicht. Auswahlaktionen und Auswahl-Exporte verwenden aufgeklappte Trefferzeilen; der vollständige Export enthält alle gefilterten Treffer; Aufzeichnungen und Quick-Übergabe bewahren den gesamten Quellstand. Neue Suchen setzen den Ansichtsfilter zurück. Einzelheiten: [Trefferfilter](docs/RESULT_FILTER.md).
+Beide Apps begrenzen über **Trefferliste filtern → Bearbeiten…** vorhandene Treffer nach bekannten Namen, Pfaden, Endungen, Fakten und erfassten Finder-Eigenschaften. **x von y Treffern** zeigt gefilterte und ursprüngliche Menge; **Zurücksetzen** stellt versteckte Zeilen ohne erneute Suche wieder her. Fehlende Fakten erfüllen auch negative Bedingungen nicht. Auswahlaktionen und Auswahl-Exporte verwenden aufgeklappte Trefferzeilen; der vollständige Export enthält alle gefilterten Treffer; Aufzeichnungen bewahren den gesamten Quellstand. Die Quick-Übergabe berücksichtigt auch ausgeblendete Treffer. Neue Suchen setzen den Ansichtsfilter zurück. Einzelheiten: [Trefferfilter](docs/RESULT_FILTER.md).
 
 Diese Einträge stehen im Menü **Ablage** und im Rechtsklick-Menü der
 Trefferliste. Die Kürzel, die auf der Auswahl arbeiten (⌫, ⌘⌫, ⇧⌘E), gelten
@@ -902,9 +912,14 @@ gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
   auch ohne Begriff
 - Die Ergebnisspalten sind sortierbar und verschiebbar; horizontales Scrollen
   macht lange Quellpfade zugänglich
-- Die Schnellsuche zeigt bis zu 20 Treffer. **Alle in Favenio** oder
-  **Cmd-Return** übergibt sie an die Haupt-App, die dieselbe Suche ohne
-  Duplikate fortsetzt
+- Quick zeigt alle bisherigen Treffer. Läuft die Suche nach fünf Sekunden noch,
+  pausiert sie am nächsten Leseblock oder Objekt. Ein laufender Dokumentleser oder
+  Dateisystemzugriff kann länger dauern. **Fortsetzen** durchsucht den Rest im
+  selben Fenster. Die Statuszeile zeigt die Pause und meldet nach Abschluss,
+  ob der Suchbereich vollständig durchsucht wurde oder Bereiche ausgelassen wurden.
+- **Alle in Favenio** (⌘↩) öffnet dieselbe Suche in der Haupt-App. Bisherige
+  Treffer erscheinen dort sofort, bis zu 8 MiB. Bis zu 20 markierte Treffer
+  haben Vorrang. Die Haupt-App durchsucht den gesamten Bereich.
 - **Esc** schließt eine offene Vorschau; bei leerem Feld beendet es die Schnellsuche
 
 Der Suchbereich wird nie stillschweigend geraten. Solange der Finder befragt

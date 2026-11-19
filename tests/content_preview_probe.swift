@@ -30,6 +30,8 @@ enum ContentPreviewProbe {
             let first = hits[0]
             let preview = first.contentPreview
             report["status"] = preview?.status ?? "missing"
+            report["documentReason"] = preview?.navigation?.documentReason
+            report["documentMessage"] = preview?.navigation?.documentMessage
             report["requestedEncoding"] = preview?.snippets.first?.query?.encoding ?? "missing"
             report["roundtrip"] = parseHit(jsonlData(for: [first]).prefix(while: { $0 != 10 })) == first
             report["same_generation"] = preview?.sourceGeneration == ContentSourceGeneration.current(first.filesystemPath)

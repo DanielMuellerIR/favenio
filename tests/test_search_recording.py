@@ -15,6 +15,42 @@ spec.loader.exec_module(recording)
 
 
 class RecordingFilesTest(unittest.TestCase):
+    def test_gui_export_opens_reruns_and_gains_an_action_envelope(self):
+        configuration = dict(pattern='needle', root='/fixture', options=[])
+        identity = dict(filesystemPath='/fixture/needle', archiveMembers=[], archiveMemberBytes=[])
+        hit = dict(path=identity['filesystemPath'], type='file', isDirectory=False, **identity)
+        native = dict(schemaVersion=1, configuration=configuration,
+                      runID='00000000-0000-0000-0000-000000000001', startedAt=1, capturedAt=2,
+                      state='completed', warningCount=0, hits=[hit], selection=[])
+        status = dict(runID='own', state='completed', configuration=configuration)
+        calls = []
+
+        def send(controller, operation, **fields):
+            calls.append((operation, fields))
+            if operation == 'capabilities':
+                return dict(runtimeID='runtime', windowID='window', capabilities=dict(recordingSchemaVersion=1))
+            return dict(status=status)
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'gui-export.json'
+            path.write_text(json.dumps(native))
+            identity_path = Path(folder) / 'identity.json'
+            identity_path.write_text(json.dumps(identity))
+            commands = [('open', [str(path)]), ('rerun', [str(path)]),
+                        ('append-action', [str(path), 'select', str(identity_path)])]
+            with patch.object(recording.Controller, 'send', send), contextlib.redirect_stdout(io.StringIO()):
+                for command, args in commands:
+                    with patch('sys.argv', ['search-recording.py', '--helper', '/unused', command, *args]):
+                        recording.main()
+                    if command != 'append-action':
+                        self.assertEqual(json.loads(path.read_text()), native)
+            self.assertIn(('openRecording', dict(recording=native)), calls)
+            self.assertIn(('configure', dict(configuration=configuration)), calls)
+            self.assertIn(('start', {}), calls)
+            self.assertIn(('select', dict(runID='own', identity=identity)), calls)
+            self.assertEqual(recording.read_recording(path),
+                             dict(schemaVersion=1, recording=native, actions=[dict(operation='select', identity=identity)]))
+
     def test_open_recording_sends_bounded_original_unicode_as_utf8(self):
         controller = object.__new__(recording.Controller)
         controller.helper = Path('/unused'); controller.binding = {}

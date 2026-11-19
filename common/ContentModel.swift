@@ -468,7 +468,10 @@ struct ContentPreviewNavigation: Hashable {
         let documentReason = object["documentReason"] as? String
         let documentMessage = object["documentMessage"] as? String
         if object["documentMessage"] != nil && (documentMessage == nil || documentMessage!.unicodeScalars.count > 256) { return nil }
-        if object["documentReason"] != nil && !(documentReason?.hasPrefix("document") == true && documentReason!.utf8.count <= 64) { return nil }
+        if object["documentReason"] != nil {
+            guard let documentReason, documentReason.utf8.count <= 64,
+                  ["document", "ocr", "archive"].contains(where: { documentReason.hasPrefix($0) }) else { return nil }
+        }
         return Self(queryIndex: index, occurrence: occurrence, reason: reason, contextLines: contexts, readBytes: bytes, documentReason: documentReason, documentMessage: documentMessage)
     }
 }

@@ -41,8 +41,8 @@ Fastra-Aufträge; alte Antworten dürfen nicht auf einer neuen Zeile landen.
 **Alle gefilterten Treffer exportieren…** enthält auch eingeklappte Gruppen;
 der Sichern-Dialog nennt diesen Umfang ausdrücklich. Auswahl-Export verwendet
 nur ausgewählte echte Treffer. Die Gruppierung ist nicht Bestandteil von JSONL,
-CSV oder anderen Trefferformaten. Aufzeichnungen und **Alle in Favenio** bewahren
-weiterhin den vollständigen Quellstand des Ansichtsfilters.
+CSV oder anderen Trefferformaten. Aufzeichnungen bewahren den vollständigen Quellstand. **Alle in Favenio**
+übernimmt auch eingeklappte Treffer [innerhalb der Übergabegrenzen](RESULT_FILTER.md).
 
 Der lokale Controller liefert unter `resultGrouping` Gruppierungsart, Gruppen-
 und Klappzahl, gefilterte Trefferzahl (`matchedCount`) sowie dargestellte

@@ -56,7 +56,11 @@ Die Kategorien sind `intentional`, `readError` und `budget`.
 SIGTERM/SIGHUP/KeyboardInterrupt versuchen einen abschließenden Stand; bei
 SIGKILL oder geschlossenem Verbraucher ist keine Schlusszeile zugesagt.
 Die Apps kennzeichnen ihren beobachteten Abbruch/Fehler selbst, einschließlich
-Abbruch vor Prozessstart. Quick verwendet `limitReached` für seine 20-Treffer-Grenze.
+Abbruch vor Prozessstart. macOS Quick fordert über `--quick-pause-after`
+einmalig eine Zeitpause an. Der Kern meldet zusätzlich `paused` und wartet auf
+das ASCII-Byte `1` an stdin. EOF beendet den Lauf. Beim Fortsetzen meldet der
+Kern wieder `running`, mit derselben Lauf-ID und denselben Zählern. Die
+Linux-Schnellsuche verwendet `limitReached` für ihre Treffergrenze.
 Übernommene Treffer besitzen keinen ursprünglichen Bericht: `recorded`, Quelle
 `frontend`. Ein Bericht vor dem ersten Kernrecord enthält den sichtbaren Auftrag
 und ist als vorläufiger Frontendstand kenntlich. Laufwechsel übernehmen keine alten

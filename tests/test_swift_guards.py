@@ -41,8 +41,9 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("== .orderedAscending", compare)
         # Und der Headless-Selbsttest prüft die Ordnung zur Laufzeit.
         self.assertIn("!compareHits(tied, tied", GUI)
-        self.assertIn("compareHits($0, $1", GUI)
-        self.assertIn("compareHits($0, $1", QUICK)
+        self.assertIn("compareHits($0, $1", swift_function(COMMON, "func hitComparator()"))
+        for frontend in (GUI, QUICK):
+            self.assertIn("hitComparator()", swift_function(frontend, "func flushPending()"))
 
     def test_gui_table_updates_always_go_through_one_place(self):
         """Sortierung und Auswahlerhalt haengen an applyHitsToTable(). Wer
@@ -437,8 +438,10 @@ class SwiftGuardTests(unittest.TestCase):
         Der Vertrag steht in der URL selbst, statt als fehlender Wert vom
         Leser erraten zu werden."""
         handoff = swift_function(QUICK, "func openMainApp(")
-        self.assertIn("frozenOptions.queryItems", handoff)
-        self.assertIn("configuration ?? searchConfiguration.forNewRun()", handoff)
+        self.assertIn("] + options.queryItems", handoff)
+        sender = swift_function(QUICK, "func openInMainApp(")
+        self.assertIn("(hasSearched ? lastSearchConfiguration : nil) ?? searchConfiguration.forNewRun()", sender)
+        self.assertIn("options: configuration, mainAppURL:", sender)
         configuration = swift_function(QUICK, "var searchConfiguration:")
         self.assertNotIn("configuration.regex =", configuration)
         self.assertNotIn("configuration.caseSensitive =", configuration)
@@ -685,8 +688,10 @@ class SwiftGuardTests(unittest.TestCase):
             QUICK.index("func openMainApp("):
             QUICK.index("func locateMainApp()")
         ]
-        self.assertIn("frozenOptions.queryItems", handoff)
-        self.assertIn("configuration ?? searchConfiguration.forNewRun()", handoff)
+        self.assertIn("] + options.queryItems", handoff)
+        sender = swift_function(QUICK, "func openInMainApp(")
+        self.assertIn("configuration: format.hasFrozenOptions ? configuration : nil", sender)
+        self.assertIn("options: configuration, mainAppURL:", sender)
         # Seit 0.33.0 schreibt applyConfiguration() die Optionen in die
         # Oberflaeche; die Uebergabe ruft sie.
         handler = swift_function(GUI, "func handleFavenioURL(")
@@ -726,7 +731,7 @@ class SwiftGuardTests(unittest.TestCase):
         controller = GUI[GUI.index("final class MainController"):]
         self.assertNotIn("Data(contentsOf:", controller)
         self.assertIn('components.scheme?.lowercased() == "favenio"', GUI)
-        self.assertIn('["results", "results-v2", "results-v3", "results-v4", "results-v5", "results-v6", "results-v7", "results-v8", "results-v9"]', GUI)
+        self.assertIn("QuickHandoffFormat(host: host)", GUI)
         handler = GUI[
             GUI.index("func handleFavenioURL"):
             GUI.index("func loadResults")
@@ -736,7 +741,7 @@ class SwiftGuardTests(unittest.TestCase):
             handler.index("searchField.stringValue = query"),
         )
         self.assertIn("let resultsFile: URL", QUICK)
-        self.assertIn("try writeQuickHandoff(resultFilter.unfilteredHits, selection: selectedHitIdentities()", QUICK)
+        self.assertIn("try writeQuickHandoff(seed, selection: seedSelection", QUICK)
 
     def test_quick_fallback_reuses_the_structured_handoff_url(self):
         # Schlägt die LaunchServices-Zuordnung des URL-Schemas fehl, darf der
@@ -819,7 +824,7 @@ class SwiftGuardTests(unittest.TestCase):
             QUICK.index("func flushPending()"):
             QUICK.index("func finish(")
         ]
-        self.assertIn("showScopeProblem(summary + problem)", flush)
+        self.assertIn("showScopeProblem(summary + \" \" + problem)", flush)
 
     def test_quick_keeps_the_late_finder_note_for_the_running_search(self):
         # Meldet sich der Finder erst, während die Suche schon im

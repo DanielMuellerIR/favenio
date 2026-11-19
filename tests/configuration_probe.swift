@@ -11,6 +11,7 @@ struct ConfigurationProbe {
     static func run(_ arguments: [String]) throws {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
+        try checkQuickHandoffFormats()
         let nfc = "Büro"
         let nfd = "Bu\u{0308}ro"
         precondition(nfc == nfd && !nfc.utf8.elementsEqual(nfd.utf8))
@@ -435,4 +436,64 @@ struct ConfigurationProbe {
         }
         print("CONFIGURATION OK")
     }
+}
+
+private func checkQuickHandoffFormats() throws {
+    var options = SearchConfiguration()
+    let legacy = options
+    options.textEncoding = .latin1
+    let encoding = options
+    options = SearchConfiguration()
+    options.dateRanges["modified"] = DateRangeSpec(kind: "relative", timeZone: "UTC", preset: "today")
+    options = options.forNewRun(reference: "2026-11-18T00:00:00Z")
+    let dates = options
+    options.finderMetadata = true
+    let finder = options
+    options.localOnly = true
+    let local = options
+    options.mode = .document
+    options.ocr = true
+    let ocr = options
+    options.pdfOCR = true
+    let pdf = options
+    options.pptxOCR = true
+    let cases: [(version: Int, options: SearchConfiguration, roots: [String], minimumURL: Int, capability: String?)] = [
+        (1, legacy, ["/fixture"], 1, nil),
+        (2, encoding, ["/fixture"], 2, nil),
+        (3, legacy, ["/fixture", "/second"], 1, nil),
+        (4, dates, ["/fixture"], 4, nil),
+        (5, finder, ["/fixture"], 5, "finderMetadataCapability"),
+        (6, local, ["/fixture"], 6, "localContentCapability"),
+        (7, ocr, ["/fixture"], 7, "ocrCapability"),
+        (8, pdf, ["/fixture"], 8, "pdfOCRCapability"),
+        (9, options, ["/fixture"], 9, "pptxOCRCapability"),
+    ]
+    for row in cases {
+        let format = QuickHandoffFormat.forSending(row.options, rootCount: row.roots.count, hasSelection: false, finderSnapshots: false)
+        precondition(format.rawValue == row.version)
+        for candidate in QuickHandoffFormat.allCases {
+            let host = candidate.rawValue == 1 ? "results" : "results-v\(candidate.rawValue)"
+            let decoded = QuickHandoffFormat(host: host)
+            precondition(decoded == candidate)
+            precondition((decoded?.optionProblem(row.options) == nil) == (candidate.rawValue >= row.minimumURL))
+        }
+        let file = try writeQuickHandoff([], version: row.version, roots: row.version >= 3 ? row.roots : nil,
+                                        configuration: row.version >= 4 ? row.options : nil)
+        let data = try Data(contentsOf: file)
+        let payload = consumeQuickHandoffPayload(file)
+        precondition(payload?.version == row.version && payload?.bound(to: row.roots)?.roots == row.roots)
+        if let capability = row.capability {
+            var header = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            precondition(header.removeValue(forKey: capability) as? Int == 1)
+            try JSONSerialization.data(withJSONObject: header).write(to: file)
+            precondition(consumeQuickHandoffPayload(file) == nil)
+        }
+        if row.version >= 4 {
+            for other in 4...9 where other != row.version {
+                let rejected = (try? writeQuickHandoff([], version: other, roots: row.roots, configuration: row.options)) == nil
+                precondition(rejected)
+            }
+        }
+    }
+    precondition(QuickHandoffFormat(host: "results-v10") == nil && QuickHandoffFormat.decode(true) == nil)
 }

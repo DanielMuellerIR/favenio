@@ -31,7 +31,7 @@ Startdatei wird mit ihrem Dateinamen geprüft, Archivmitglieder bleiben relativ
 zum Archiv. Archive teilen sich die bisherigen Laufbudgets. Ein überlappender
 Pfad wird erneut ausgewertet: Erst die zweite Wurzel kann seine relative
 Pfadbedingung erfüllen. Beide Apps entfernen erfolgreiche doppelte HitIdentity
-vor Filter, Statistik und Quicks 20er-Grenze. Der erste erfolgreiche Treffer
+vor Ansichtsfilter und Statistik. Der erste erfolgreiche Treffer
 behält seine Belege und Herkunft. Das bisherige CLI-Duplikatverhalten bleibt.
 
 JSONL ergänzt `searchRoot` als absolute Herkunft des Treffers. Bereits absolute

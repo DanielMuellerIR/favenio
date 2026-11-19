@@ -2637,6 +2637,18 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
         return result
     }
     var window: NSWindow!
+    func hitComparator() -> ((Hit, Hit) -> Bool)? {
+        guard let descriptor = tableView.sortDescriptors.first,
+              let key = descriptor.key else { return nil }
+        let ascending = descriptor.ascending
+        return { compareHits($0, $1, key: key, ascending: ascending) }
+    }
+
+    func sortHits() {
+        guard let comparator = hitComparator() else { return }
+        hits.sort(by: comparator)
+    }
+
     let tableView = HitResultTableView()
     var thumbnailController: ThumbnailGridController?
     var activeResultView: NSView {
@@ -2785,6 +2797,22 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     /// Von jeder App überschrieben: Die Haupt-App schreibt in die Fußzeile,
     /// die Schnellsuche in ihre Infozeile. Die Basis zeigt nichts an.
     func presentActionIssue(summary: String, detail: String?) {}
+
+    /// Der Finder erhält nur für Originale die Wahl zwischen Verschieben
+    /// und Kopieren. Ein ausgepacktes Archivmitglied gehört dem temporären Cache.
+    func externalDragOperations(for indices: [Int]) -> NSDragOperation {
+        guard !indices.isEmpty, indices.allSatisfy({ hits.indices.contains($0) && !hits[$0].isMember })
+        else { return .copy }
+        return [.copy, .move]
+    }
+
+    @objc(tableView:draggingSession:willBeginAtPoint:forRowIndexes:)
+    func tableView(_ table: NSTableView, draggingSession session: NSDraggingSession,
+                   willBeginAt point: NSPoint, forRowIndexes rows: IndexSet) {
+        table.setDraggingSourceOperationMask(externalDragOperations(for: rows.compactMap(hitIndex(forTableRow:))),
+                                             forLocal: false)
+        session.draggingFormation = .pile
+    }
 
     func hitPasteboardWriter(_ index: Int) -> NSPasteboardWriting? {
         guard hits.indices.contains(index) else { return nil }

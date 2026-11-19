@@ -1013,6 +1013,13 @@ func checkResultListFeatures(realHits: [Hit], sandbox: URL) -> String? {
         archiveMembers: ["inner.zip", "x.txt"], isDirectory: false)
     let replacement = MainController()
     replacement.tableView.dataSource = replacement
+    guard let original = realHits.first(where: { !$0.isMember }) else { return "Originaldatei fehlt im Test" }
+    replacement.hits = [original, literal]
+    guard replacement.externalDragOperations(for: [0]) == [.move, .copy],
+          replacement.externalDragOperations(for: [1]) == .copy,
+          replacement.externalDragOperations(for: [0, 1]) == .copy else {
+        return "Ziehoperationen für Original, Archivmitglied oder gemischte Auswahl falsch"
+    }
     for incoming in [[literal, nested], []] {
         replacement.pending = [literal]
         replacement.contextRow = 7
@@ -1598,9 +1605,9 @@ final class MainController: HitListController, NSApplicationDelegate,
                                              resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "favenio"
         else { return }
-        let hosts = ["results", "results-v2", "results-v3", "results-v4", "results-v5", "results-v6", "results-v7", "results-v8", "results-v9"]
-        guard let index = hosts.firstIndex(of: components.host?.lowercased() ?? "") else {
-            if components.host?.lowercased().hasPrefix("results-v") == true {
+        let host = components.host?.lowercased() ?? ""
+        guard let format = QuickHandoffFormat(host: host) else {
+            if host.hasPrefix("results-v") {
                 presentActionIssue(summary: "Unbekannte Version der Quick-Übergabe.", detail: nil)
             }
             return
@@ -1609,13 +1616,12 @@ final class MainController: HitListController, NSApplicationDelegate,
         func value(_ name: String) -> String? {
             items.first { $0.name == name }?.value
         }
-        let version = index + 1
-        if version >= 2 {
+        if format.hasHeader {
             let transportKeys = Set(["q", "root", "file", "continue"])
             let envelope = items.filter { transportKeys.contains($0.name) }
             guard Set(envelope.map { $0.name }).count == envelope.count,
                   envelope.allSatisfy({ $0.value != nil && !$0.value!.utf8.contains(0) }),
-                  version < 3 || value("root") == nil else {
+                  !format.hasRoots || value("root") == nil else {
                 presentActionIssue(summary: "Ungültige Quick-Übergabe.", detail: nil)
                 return
             }
@@ -1628,36 +1634,22 @@ final class MainController: HitListController, NSApplicationDelegate,
             presentActionIssue(summary: problem, detail: nil)
             return
         }
-        guard (value("criteria") == nil && !items.contains(where: { $0.name == "encoding" })) || version >= 2 else {
-            presentActionIssue(summary: "Kriterien und Textkodierung benötigen Übergabeformat 2.", detail: nil)
-            return
-        }
         let configuration = SearchConfiguration.fromQueryItems(items)
-        guard !configuration.requiresDateRanges || version >= 4 else {
-            presentActionIssue(summary: "Kalenderbereiche benötigen Übergabeformat 4.", detail: nil); return
-        }
-        guard !configuration.requiresFinderMetadata || version >= 5 else {
-            presentActionIssue(summary: "Finder-Eigenschaften benötigen Übergabeformat 5.", detail: nil); return
-        }
-        guard !configuration.localOnly || version >= 6 else {
-            presentActionIssue(summary: "Lokale Inhalte benötigen Übergabeformat 6.", detail: nil); return
-        }
-        guard !configuration.pptxOCR || version >= 9 else { presentActionIssue(summary: "PPTX-Bild-OCR benötigt Übergabeformat 9.", detail: nil); return }
-        guard !configuration.pdfOCR || version >= 8 else { presentActionIssue(summary: "PDF-OCR benötigt Übergabeformat 8.", detail: nil); return }
-        guard !configuration.ocr || version >= 7 else {
-            presentActionIssue(summary: "OCR benötigt Übergabeformat 7.", detail: nil); return
+        if let problem = format.optionProblem(configuration, explicitEncoding: items.contains(where: { $0.name == "encoding" })) {
+            presentActionIssue(summary: problem, detail: nil)
+            return
         }
         guard let filePath = value("file"),
               validatedQuickHandoff(URL(fileURLWithPath: filePath)) != nil,
               quickHandoffInputProblem(query: value("q") ?? "",
                                        root: value("root") ?? "") == nil else { return }
         guard let incoming = consumeQuickHandoffPayload(URL(fileURLWithPath: filePath)),
-              incoming.version == version,
+              incoming.version == format.rawValue,
               let payload = incoming.bound(to: incoming.roots ?? value("root").map { [$0] } ?? searchRoots) else {
             presentActionIssue(summary: "Ungültige oder zu große Ergebnisübergabe.", detail: nil)
             return
         }
-        if version >= 4 {
+        if format.hasFrozenOptions {
             guard let frozen = payload.configuration,
                   frozen.queryItems.flatMap({ [Data($0.name.utf8), Data(($0.value ?? "").utf8)] })
                     == configuration.queryItems.flatMap({ [Data($0.name.utf8), Data(($0.value ?? "").utf8)] }) else {
@@ -1685,7 +1677,7 @@ final class MainController: HitListController, NSApplicationDelegate,
         NSApp.activate(ignoringOtherApps: true)
 
         if value("continue") == "1" {
-            // Schnellsuche hat bei 20 Treffern übergeben: die 20 sofort
+            // Die Schnellsuche hat erste Treffer übergeben: diese sofort
             // zeigen und die Suche hier live fortsetzen (weitere Treffer
             // kommen hinzu, die 20 werden dabei nicht doppelt gelistet).
             continueSearch(payload: payload)
@@ -2007,8 +1999,6 @@ final class MainController: HitListController, NSApplicationDelegate,
         menu.delegate = self
         tableView.menu = menu
 
-        // Drag & Drop nach draußen (Finder, andere Apps) erlauben.
-        tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
         restoreFinderColumnVisibility()
     }
 
@@ -3119,22 +3109,6 @@ final class MainController: HitListController, NSApplicationDelegate,
     func tableView(_ tableView: NSTableView,
                    sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         applyHitsToTable(keepingSelection: selectedHitIdentities())
-    }
-
-    /// Sortiert `hits` nach dem aktiven Sortierkriterium (oder lässt die
-    /// Einfüge-Reihenfolge, wenn keins gesetzt ist).
-    /// Der aktive Vergleicher der Trefferliste — oder nil, wenn der Nutzer
-    /// keine Spalte zum Sortieren gewählt hat.
-    func hitComparator() -> ((Hit, Hit) -> Bool)? {
-        guard let descriptor = tableView.sortDescriptors.first,
-              let key = descriptor.key else { return nil }
-        let ascending = descriptor.ascending
-        return { compareHits($0, $1, key: key, ascending: ascending) }
-    }
-
-    func sortHits() {
-        guard let comparator = hitComparator() else { return }
-        hits.sort(by: comparator)
     }
 
     /// Fügt frische Treffer in die BEREITS sortierte Liste ein.

@@ -65,6 +65,14 @@ def read_regular(path, limit):
 def read_recording(path):
     data = read_regular(path, MAX_BYTES)
     value = json.loads(data, object_pairs_hook=unique_json_object)
+    if isinstance(value, dict) and 'recording' not in value and 'actions' not in value:
+        required = {'schemaVersion', 'configuration', 'runID', 'startedAt', 'capturedAt',
+                    'state', 'warningCount', 'hits', 'selection'}
+        if (required <= value.keys() and type(value['schemaVersion']) is int
+                and 1 <= value['schemaVersion'] <= 10 and len(data) <= 196608
+                and isinstance(value['hits'], list) and isinstance(value['selection'], list)):
+            configuration_key(value['configuration'])
+            value = dict(schemaVersion=1, recording=value, actions=[])
     if (not isinstance(value, dict) or set(value) != {'schemaVersion', 'recording', 'actions'}
             or type(value['schemaVersion']) is not int or value['schemaVersion'] != 1
             or not isinstance(value['recording'], dict) or not isinstance(value['actions'], list)

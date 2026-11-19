@@ -71,6 +71,28 @@ func checkRecordingComparison(sandbox: URL) -> String? {
         guard host.searchControl.run?.state == "failed",
               host.recordingComparisonWindow?.summary.stringValue.contains(root.lastPathComponent) == true,
               host.recordingComparisonWindow?.earlierOnly.isEmpty == true else { return "Fehlende Quelle erzeugt scheinbar verschwundene Treffer" }
+
+        let prefix = root.path + "/byte-"
+        let visible = prefix + "\u{FFFD}"
+        try FileManager.default.createDirectory(atPath: visible, withIntermediateDirectories: true)
+        try Data("comparisonNeedle\n".utf8).write(to: URL(fileURLWithPath: visible).appendingPathComponent("wrong.txt"))
+        for pptxOCR in [false, true] {
+            var recordedOptions = options
+            if pptxOCR { recordedOptions.mode = .document; recordedOptions.pptxOCR = true }
+            var input = ControlSearchInput(pattern: "comparisonNeedle", root: visible, options: recordedOptions)
+            input.rootBytes = [Data(prefix.utf8) + Data([0xff])]
+            let transport = SearchRecording(input: input, runID: UUID().uuidString, startedAt: 1, capturedAt: 2,
+                state: "completed", warningCount: 0, error: nil, hits: [], selection: [])
+            let unchanged = host.searchControl.run?.id
+            do {
+                _ = try MainController.decodeSearchRecording(SearchControlWire.encode(transport.object))
+                return "Aufzeichnung mit gleich dargestelltem Ersatzzeichenpfad für den Vergleich freigegeben"
+            } catch let failure as SearchControlFailure where failure.code == "unsupported" {
+                guard host.activeSearchRun == nil, host.searchControl.run?.id == unchanged else {
+                    return "Abgewiesene Aufzeichnung verändert den Suchlauf"
+                }
+            }
+        }
     } catch { return "Vergleichsfixture fehlgeschlagen. \(error)" }
     return nil
 }
