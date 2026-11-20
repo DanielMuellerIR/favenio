@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.70.1 — 2026-11-20
+
+- Die Vorschau lädt belegten PPTX-Folientext auch bei übersprungenen Bildern und zeigt verfügbaren Kontext bei Lesefehlern weiter an.
+- Die Schnellsuche pausiert auch beim Lesen von TAR-Katalogen und beim Entpacken verschachtelter Archive. Ein Aufruf ohne Standardeingabe beendet sich an der Pause regulär als abgebrochen.
+- „Alle in Favenio“ übergibt Treffer mit langen Archivnamen auch dann, wenn nur ein Teil der Auswahl in die Übergabedatei passt.
+
 ## 0.70.0 — 2026-11-19
 
 - Originaldateien und Ordner lassen sich aus Tabelle und Miniaturen beider macOS-Apps im Finder verschieben oder kopieren. Archivtreffer werden kopiert.

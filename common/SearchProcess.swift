@@ -1128,37 +1128,60 @@ func writeQuickHandoff(_ hits: [Hit], selection: Set<HitIdentity> = [], version:
           format.hasHeader || selection.isEmpty,
           configuration.map({ SearchConfiguration.transportProblem($0.queryItems) == nil }) ?? true
     else { throw CocoaError(.fileWriteUnknown) }
-    var data = Data()
+    var headerData = Data()
+    var header: [String: Any] = [:]
+    var identities: [[String: Any]] = []
+    var transferredSelection: Set<HitIdentity> = []
+    func encodeHeader(_ identities: [[String: Any]]) throws -> Data {
+        var object = header
+        object["selection"] = identities
+        var line = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        line.append(10)
+        return line
+    }
     if format.hasHeader {
-        let identities = hits.filter { selection.contains($0.identity) }.map { hit in
-            ["filesystemPath": hit.filesystemPath, "archiveMembers": hit.archiveMembers,
-             "archiveMemberBytes": hit.archiveMemberBytes] as [String: Any]
-        }
-        var header: [String: Any] = ["type": "quickHandoff", "schemaVersion": version, "selection": identities]
+        header = ["type": "quickHandoff", "schemaVersion": version]
         if let roots { header["roots"] = roots }
         if let configuration {
             header["options"] = configuration.queryItems.map { ["name": $0.name, "value": $0.value ?? ""] }
             header["dateResolution"] = dateResolution.flatMap { preservedJSONObject($0) } ?? NSNull()
         }
         for key in format.headerCapabilities { header[key] = 1 }
-        data = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
-        data.append(10)
+        headerData = try encodeHeader(identities)
     }
-    guard data.count <= maximumHandoffLineBytes + 1 else { throw CocoaError(.fileWriteOutOfSpace) }
-    var count = 0
+    guard headerData.count <= maximumHandoffLineBytes + 1 else { throw CocoaError(.fileWriteOutOfSpace) }
+    var rows = Data()
+    var seed: [Hit] = []
     for hit in hits {
         let line = jsonlData(for: [hit])
         guard !line.isEmpty else { throw CocoaError(.fileWriteUnknown) }
-        guard line.count <= maximumHandoffLineBytes + 1, data.count + line.count <= maximumHandoffBytes else {
+        guard line.count <= maximumHandoffLineBytes + 1 else {
+            if continuingSearch { continue }
+            throw CocoaError(.fileWriteOutOfSpace)
+        }
+        let rowBytes = rows.count + line.count
+        guard headerData.count + rowBytes <= maximumHandoffBytes else {
             if continuingSearch { break }
             throw CocoaError(.fileWriteOutOfSpace)
         }
-        data.append(line)
-        count += 1
+        let identity = hit.identity
+        if selection.contains(identity), !transferredSelection.contains(identity) {
+            let entry: [String: Any] = ["filesystemPath": hit.filesystemPath, "archiveMembers": hit.archiveMembers,
+                                        "archiveMemberBytes": hit.archiveMemberBytes]
+            let candidate = try encodeHeader(identities + [entry])
+            if candidate.count <= maximumHandoffLineBytes + 1, candidate.count + rowBytes <= maximumHandoffBytes {
+                headerData = candidate
+                identities.append(entry)
+                transferredSelection.insert(identity)
+            } else if !continuingSearch {
+                throw CocoaError(.fileWriteOutOfSpace)
+            }
+        }
+        rows.append(line)
+        seed.append(hit)
     }
     // Nur die übergebenen Treffer dürfen Wurzeln, Auswahl und Belege bestätigen.
-    let seed = Array(hits.prefix(count))
-    guard selection.isSubset(of: Set(seed.map { $0.identity })),
+    guard (continuingSearch || selection == transferredSelection),
           format.acceptsFile(configuration, dateResolution: dateResolution, hits: seed)
     else { throw CocoaError(.fileWriteUnknown) }
     if format.hasRoots {
@@ -1169,7 +1192,8 @@ func writeQuickHandoff(_ hits: [Hit], selection: Set<HitIdentity> = [], version:
     } else if roots != nil { throw CocoaError(.fileWriteUnknown) }
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
         quickHandoffPrefix + UUID().uuidString + quickHandoffSuffix)
-    try data.write(to: url, options: .atomic)
+    headerData.append(rows)
+    try headerData.write(to: url, options: .atomic)
     try FileManager.default.setAttributes(
         [.posixPermissions: 0o600], ofItemAtPath: url.path)
     return url

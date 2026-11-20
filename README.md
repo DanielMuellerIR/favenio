@@ -870,13 +870,15 @@ the header of a Finder window while holding **Cmd**.
 - The result columns are sortable and resizable; horizontal scrolling exposes
   long source paths
 - Quick shows all hits found so far. After five seconds it pauses at the next
-  block or item. A document reader or filesystem call already in progress can
+  read block or item, including while reading TAR catalogs and unpacking nested
+  archives. A document reader or filesystem call already in progress can
   take longer. Click **Fortsetzen** (Continue) to finish the same search in
   Quick. The status shows when the search is paused and whether the completed
   search covered the requested scope or skipped items.
 - **All in Favenio** (Cmd-Return) opens the same search in the main app.
   Results found so far appear immediately, up to 8 MiB. Up to 20 selected
-  hits take priority. The main app searches the entire scope.
+  hits take priority and stay selected if their selection data fits. The main app
+  searches the entire scope.
 - **Esc** closes an open preview; with an empty field it quits the quick search
 
 The search scope is never guessed silently. While the Finder is being asked,

@@ -44,6 +44,24 @@ struct ExportProbe {
         let bounded = try writeQuickHandoff(large, continuingSearch: true)
         let prefix = consumeQuickHandoff(bounded)!
         precondition(prefix.count > many.count && prefix.count < large.count && prefix == Array(large.prefix(prefix.count)))
+        let archiveHits = (1...3).map { index -> Hit in
+            let archive = "/fixture/entries.tar"
+            let member = String(repeating: "x", count: 200_000) + String(index)
+            return Hit(path: archive + "!/" + member, kind: "member", line: nil, size: nil,
+                       filesystemPath: archive, archiveMembers: [member],
+                       archiveMemberBytes: [Data(member.utf8).base64EncodedString()], isDirectory: false)
+        }
+        let selection = Set(archiveHits.map { $0.identity })
+        let selected = try writeQuickHandoff(archiveHits, selection: selection, version: 2, continuingSearch: true)
+        let selectedPayload = consumeQuickHandoffPayload(selected)!
+        precondition(selectedPayload.hits == archiveHits)
+        precondition(selectedPayload.selection == Set(archiveHits.prefix(2).map { $0.identity }))
+        let nearLimit = Array(repeating: metadata, count: 8)
+        let limited = try writeQuickHandoff(nearLimit + archiveHits, selection: selection,
+                                            version: 2, continuingSearch: true)
+        let limitedPayload = consumeQuickHandoffPayload(limited)!
+        precondition(limitedPayload.hits == nearLimit + [archiveHits[0]])
+        precondition(limitedPayload.selection.isEmpty)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -913,13 +913,15 @@ gedrückter **Cmd-Taste** in die Kopfleiste eines Finder-Fensters ziehen.
 - Die Ergebnisspalten sind sortierbar und verschiebbar; horizontales Scrollen
   macht lange Quellpfade zugänglich
 - Quick zeigt alle bisherigen Treffer. Läuft die Suche nach fünf Sekunden noch,
-  pausiert sie am nächsten Leseblock oder Objekt. Ein laufender Dokumentleser oder
+  pausiert sie am nächsten Leseblock oder Objekt, auch beim Lesen von TAR-Katalogen
+  und Entpacken verschachtelter Archive. Ein laufender Dokumentleser oder
   Dateisystemzugriff kann länger dauern. **Fortsetzen** durchsucht den Rest im
   selben Fenster. Die Statuszeile zeigt die Pause und meldet nach Abschluss,
   ob der Suchbereich vollständig durchsucht wurde oder Bereiche ausgelassen wurden.
 - **Alle in Favenio** (⌘↩) öffnet dieselbe Suche in der Haupt-App. Bisherige
   Treffer erscheinen dort sofort, bis zu 8 MiB. Bis zu 20 markierte Treffer
-  haben Vorrang. Die Haupt-App durchsucht den gesamten Bereich.
+  haben Vorrang und bleiben markiert, soweit die Auswahldaten in die Übergabedatei
+  passen. Die Haupt-App durchsucht den gesamten Bereich.
 - **Esc** schließt eine offene Vorschau; bei leerem Feld beendet es die Schnellsuche
 
 Der Suchbereich wird nie stillschweigend geraten. Solange der Finder befragt

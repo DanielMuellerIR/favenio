@@ -178,11 +178,12 @@ class DuplicateArchiveMemberTest(TempTreeTest):
             with opener() as handle:
                 payloads.append(handle.read())
 
-        visitor = type("Visitor", (), {"visit_member": staticmethod(visit)})()
+        search = favenio.Search(None, False, 1, True)
         with mock.patch.object(tarfile.TarFile, "extractfile", tracking_extract), \
-                mock.patch.object(gzip._GzipReader, "read", counting_read):
+                mock.patch.object(gzip._GzipReader, "read", counting_read), \
+                mock.patch.object(search, "visit_member", side_effect=visit):
             with tarfile.open(str(packed), mode="r:gz") as archive:
-                favenio.Search.walk_tar(visitor, archive, str(packed), 0, str(packed), [])
+                search.walk_tar(archive, str(packed), 0, str(packed), [])
         self.assertEqual(payloads, [b"NEEDLE" + b"y" * 8192] * 32)
         code, lines, err = run(["--content", "NEEDLE", str(packed)])
         self.assertEqual((code, len(lines), err), (0, 32, ""))

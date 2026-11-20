@@ -7,6 +7,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import tracemalloc
@@ -216,6 +217,67 @@ favenio.main(['--json','--search-report','needle','.'])'''
             final = json.loads(output.splitlines()[-1])
             self.assertEqual(final['runID'], first['runID'])
             self.assertEqual((final['state'], final['coverage']), ('cancelled', 'incomplete'))
+
+    def test_quick_pause_without_stdin_cancels_cleanly(self):
+        args = [sys.executable, str(REPO / 'favenio.py'), '--json', '--search-report',
+                '--quick-pause-after=0', 'needle', str(self.root)]
+        result = subprocess.run(['/bin/sh', '-c', 'exec "$@" <&-', 'favenio-test', *args],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 128 + signal.SIGTERM, result.stderr)
+        self.assertEqual(result.stderr, '')
+        states = [json.loads(line)['state'] for line in result.stdout.splitlines()]
+        self.assertEqual(states, ['running', 'paused', 'cancelled'])
+
+    def test_quick_pauses_during_tar_catalog_before_emitting_hits(self):
+        with tarfile.open(self.root / 'entries.tar', 'w') as archive:
+            for i in range(12):
+                archive.addfile(tarfile.TarInfo('needle-%d' % i))
+        now, headers = 0, 0
+        next_header = tarfile.TarFile.next
+        def read_header(archive):
+            nonlocal now, headers
+            result = next_header(archive)
+            if result is not None:
+                headers += 1
+                if headers == 4:
+                    now = 2
+            return result
+        self.check_archive_pause(lambda: now, lambda: headers, 4,
+                                 mock.patch.object(tarfile.TarFile, 'next', read_header), 12)
+
+    def test_quick_pauses_between_nested_archive_read_blocks(self):
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, 'w') as archive:
+            archive.writestr('needle.txt', b'x' * (4 * favenio.CHUNK_SIZE))
+        with zipfile.ZipFile(self.root / 'outer.zip', 'w') as archive:
+            archive.writestr('inner.zip', inner.getvalue())
+        now, blocks = 0, 0
+        iter_chunks = favenio.ArchiveBudget.iter_chunks
+        def read_chunks(budget, *args, **kwargs):
+            nonlocal now, blocks
+            for chunk in iter_chunks(budget, *args, **kwargs):
+                blocks += 1
+                if blocks == 2:
+                    now = 2
+                yield chunk
+        self.check_archive_pause(lambda: now, lambda: blocks, 2,
+                                 mock.patch.object(favenio.ArchiveBudget, 'iter_chunks', read_chunks), 1)
+
+    def check_archive_pause(self, monotonic, progress, expected, reader, expected_hits):
+        paused_at = []
+        def resume(_):
+            paused_at.append(progress())
+            return b'1'
+        stdin = mock.Mock()
+        stdin.buffer.read.side_effect = resume
+        with mock.patch.object(sys, 'stdin', stdin), mock.patch.object(time, 'monotonic', monotonic), reader:
+            code, records, errors = self.search('--quick-pause-after=1', '--archive-depth=2')
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(paused_at, [expected])
+        pause = next(i for i, record in enumerate(records) if record.get('state') == 'paused')
+        self.assertTrue(all(record['type'] == 'searchReport' for record in records[:pause]))
+        self.assertEqual(sum(record['type'] == 'member' for record in records), expected_hits)
+        self.assertEqual(records[-1]['state'], 'finished')
 
 
 class SearchReportSwiftTest(unittest.TestCase):

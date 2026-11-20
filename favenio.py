@@ -67,10 +67,10 @@ import zipfile
 import zlib
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-__version__ = "0.70.0"
+__version__ = "0.70.1"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-11-19"
+__date__ = "2026-11-20"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -763,7 +763,7 @@ MAX_TAR_MEMBERS = 65_536
 MAX_ARCHIVE_DEPTH = 100
 
 
-def bounded_tar_members(archive):
+def bounded_tar_members(archive, check_pause=None):
     """Liest den Tar-Katalog vollständig, aber nie über die feste Grenze.
 
     Suche UND Extraktion müssen denselben Wächter verwenden. Erst der
@@ -772,6 +772,8 @@ def bounded_tar_members(archive):
     Warnung."""
     members = []
     for index, member in enumerate(archive):
+        if check_pause is not None:
+            check_pause()
         if index >= MAX_TAR_MEMBERS:
             raise ArchiveLimitError(
                 "mehr als %d Tar-Einträge — Archiv übersprungen"
@@ -1773,9 +1775,10 @@ def load_content_preview(request, local_only=False):
                         min(DEFAULT_MAX_ARCHIVE_RATIO, limits.get("ratio", DEFAULT_MAX_ARCHIVE_RATIO)))
                     if replay_pptx_ocr:
                         reader = PPTXTextReader(budget, OCRTextReader(find_ocr_helper()))
-                        # Ein übersprungenes Bild könnte die Fundnummern verschieben.
+                        # Die erste Fundstelle hat einen eigenen Lokator. Weitere
+                        # Fundnummern brauchen den lückenlos gelesenen Strom.
                         def require_projection(reason):
-                            if reason not in ("ocrProjection", "ocrNoText"):
+                            if reason not in ("ocrProjection", "ocrNoText") and (occurrence > 0 or found is not None):
                                 raise DocumentReadError(reason)
                         reader.on_issue = require_projection
                     else:
@@ -1820,7 +1823,13 @@ def load_content_preview(request, local_only=False):
                     stable_end = (len(prefix) if canonical == raw else
                                   original_normalized_span(raw, canonical, len(prefix), len(canonical))[0])
                 after = 0
-                while after <= len(raw):
+                at_original_position = True
+                if replay_pptx_ocr and count == 0:
+                    # Konfidenz und Bildregion sind keine Ortskennung.
+                    at_original_position = isinstance(original_position, dict) and all(
+                        original_position.get(key) == value for key, value in position.items()
+                        if key not in ("confidence", "region"))
+                while after <= len(raw) and (occurrence > 0 or at_original_position):
                     if time.monotonic() >= deadline:
                         raise PreviewLoadLimit()
                     span = preview_match_span(matcher, raw, after)
@@ -1833,11 +1842,8 @@ def load_content_preview(request, local_only=False):
                     if base + start < last_end:
                         continue
                     last_end = base + max(end, start + 1)
-                    if replay_pptx_ocr and count == 0:
-                        # Konfidenz und Bildregion sind keine Ortskennung.
-                        locator = {key: value for key, value in position.items() if key not in ("confidence", "region")}
-                        if not isinstance(original_position, dict) or any(original_position.get(key) != value for key, value in locator.items()):
-                            raise DocumentReadError("documentReaderChanged")
+                    if not at_original_position:
+                        raise DocumentReadError("documentReaderChanged")
                     if count < occurrence:
                         count += 1
                         continue
@@ -1870,9 +1876,6 @@ def load_content_preview(request, local_only=False):
         if err.reason == "documentSourceChanged":
             changed()
         elif not (replay_pptx_ocr and err.reason == "ocrNoText" and found is not None):
-            if replay_pptx_ocr:
-                updated["snippets"] = []
-                state["contextLines"] = []
             state.update(reason="documentUnavailable", documentReason=err.reason, documentMessage=str(err))
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
@@ -6561,7 +6564,7 @@ class Search:
         if self.quick_deadline is None or time.monotonic() < self.quick_deadline:
             return
         self.report.emit("paused", force=True)
-        if sys.stdin.buffer.read(1) != b"1":
+        if sys.stdin is None or sys.stdin.buffer.read(1) != b"1":
             raise SystemExit(128 + signal.SIGTERM)
         self.quick_deadline = None
         self.report.emit(force=True)
@@ -6851,6 +6854,7 @@ class Search:
                 self.walk_single(kind, fs_path, fileobj, display, depth,
                                  archive_path, archive_members)
         except EXPECTED_ARCHIVE_ERRORS as err:
+            self.check_quick_pause()
             # Die Endung versprach ein Archiv. Ob der Inhalt dasselbe
             # verspricht, entscheidet erst die Signatur — hinter demselben
             # Fehler stecken zwei sehr verschiedene Fälle:
@@ -6993,11 +6997,13 @@ class Search:
         # vor dem Rekursionsversuch gelesen hat.
         counted = [0]
 
-        def chunker(handle, free_bytes=0):
+        def chunker(handle, free_bytes=0, check_pause=None):
             read = 0
             for chunk in self.archive_budget.iter_chunks(
                     handle, full_display, size, compressed_size,
                     free_bytes=max(counted[0], free_bytes)):
+                if check_pause is not None:
+                    check_pause()
                 read += len(chunk)
                 counted[0] = max(counted[0], read)
                 yield chunk
@@ -7038,8 +7044,11 @@ class Search:
             # weitersuchen (depth sinkt um 1).
             try:
                 with open_member() as handle:
-                    data = b"".join(chunker(handle))
+                    check_pause = self.check_quick_pause if self.quick_deadline is not None else None
+                    data = b"".join(chunker(handle, check_pause=check_pause))
+                self.check_quick_pause()
             except EXPECTED_ARCHIVE_ERRORS as err:
+                self.check_quick_pause()
                 self.report_warning("%s: %s" % (full_display, err), path=full_display, error=err)
                 return
             opened = self.search_archive(None, io.BytesIO(data), nested_kind,
@@ -7097,7 +7106,9 @@ class Search:
         # Wie bei der Extraktion gewinnt der letzte gleichnamige Eintrag.
         # Der vollständige Katalog bleibt in archive erhalten: Hardlinks
         # dürfen weiterhin auf frühere Einträge zeigen.
-        members = bounded_tar_members(archive)
+        check_pause = self.check_quick_pause if self.quick_deadline is not None else None
+        members = bounded_tar_members(archive, check_pause)
+        self.check_quick_pause()
         members_by_name = {member.name: member for member in members}
         # Die Gewinner in physischer Reihenfolge lesen: Rückwärtssprünge
         # würden bei gzip den komprimierten Strom jedes Mal neu entpacken.

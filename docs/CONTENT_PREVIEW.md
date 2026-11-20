@@ -211,3 +211,9 @@ Bildregion werden sichtbar genannt; Quellengeneration und lokale Lesepolitik
 bleiben erforderlich. [OCR-Vertrag](OCR.md).
 
 PDF-OCR verwendet `pdfkit-vision-text-v1` / `pdfkit-vision-v1` mit `pdfTextPage` (page, line) oder `pdfOCR` (page, block, line, confidence, region). Vorschau/Nachladen erhalten Ursprung und Quelle; ungefähre Seitenregionen und OCR-Unsicherheit werden sichtbar gekennzeichnet. Details: [PDF-OCR](PDF_OCR.md).
+
+Bei PPTX-Bild-OCR wird die erste Fundstelle am gespeicherten Dokumentort
+erneut geprüft. Übersprungene Bilder vor diesem Ort lassen die verifizierte
+Fundstelle gültig. Weitere Fundnummern erfordern einen lückenlosen Belegstrom
+bis zur angeforderten Stelle. Bei einem Lesefehler im anschließenden Kontext
+bleiben der bestätigte Ausschnitt und der bereits gelesene Kontext verfügbar.

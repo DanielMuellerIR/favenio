@@ -374,7 +374,10 @@ final class ContentPreviewController {
             if reason == "end" { self.view.statusLabel.stringValue = "Keine weitere Fundstelle für diesen Begriff oder diese Bedingung." }
             if reason == "readLimit" { self.view.statusLabel.stringValue = "Nachladegrenze erreicht: höchstens 64 MiB / drei Sekunden im Leser." }
             if reason == "positionLimit" { self.view.statusLabel.stringValue = "Lange Zeile: weitere Positionen nicht begrenzt belegbar." }
-            if reason == "documentUnavailable" { self.view.statusLabel.stringValue = "Dokument nicht nachladbar: " + (response.navigation?.documentMessage ?? "Dokumentleser nicht verfügbar") + "." }
+            if reason == "documentUnavailable" {
+                let summary = response.status == "ready" ? "Kontext unvollständig: " : "Dokument nicht nachladbar: "
+                self.view.statusLabel.stringValue = summary + (navigation.documentMessage ?? "Dokumentleser nicht verfügbar") + "."
+            }
             self.view.statusLabel.toolTip = self.view.statusLabel.stringValue
             self.view.navigation(queries: original.snippets, occurrence: self.occurrence, next: reason == "ready")
         }

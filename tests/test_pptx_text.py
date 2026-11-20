@@ -160,6 +160,24 @@ class PPTXTextTests(TempTreeTest):
                         self.assertEqual(decoded['documentReason'], 'ocrHelperUnavailable')
                         self.assertEqual(decoded['documentMessage'], preview['navigation']['documentMessage'])
 
+    def test_preview_reloads_stored_text_on_either_side_of_skipped_picture(self):
+        self.path.write_bytes(pptx_with_picture(b'irrelevant', target='https://example.invalid/image.png', external=True))
+        before = self.search('--pptx-ocr', pattern='Normaler Folientext')[1][0]
+        after = self.search('--pptx-ocr', pattern='Text nach dem Bild')[1][0]
+        for hit in (before, after):
+            original = hit['contentPreview']['snippets'][0]
+            preview = favenio.load_content_preview(self.request(hit, 0, True))['contentPreview']
+            self.assertEqual(preview['status'], 'ready')
+            self.assertEqual(preview['snippets'][0]['documentPosition'], original['documentPosition'])
+            self.assertEqual(preview['snippets'][0]['text'], original['text'])
+            if hit is after:
+                self.assertTrue(preview['navigation']['contextLines'])
+            else:
+                self.assertEqual(preview['navigation']['documentReason'], 'ocrReadError')
+            later = favenio.load_content_preview(self.request(hit, 1, True))['contentPreview']
+            self.assertEqual(later['snippets'], [])
+            self.assertEqual(later['navigation']['documentReason'], 'ocrReadError')
+
     def test_table_cells_have_independent_paragraph_numbers_and_rows(self):
         self.path.write_bytes(pptx_bytes(slides=[('slides/z.xml',slide(table(8,[paragraph('A'),paragraph('B')],[paragraph('C')+paragraph('Jahres','bericht'),paragraph('D')])))]))
         pos = self.search()[1][0]['documentPosition']
