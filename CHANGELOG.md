@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.70.2 — 2026-11-21
+
+- Die CLI nennt bei XLSX-Texttreffern Blatt und Zelle und beendet die Suche regulär.
+- Die CLI meldet unzulässige Kombinationen von Suche und Einmalaktionen, bevor sie Dateien liest.
+- macOS-Selbsttests verwenden eigene Einstellungsdomänen und Test-Bundles. Beide Produkt-Bundles prüfen Identität, Ressourcen und Update-Anbindung.
+- Suchziel und Dublettendialog erklären Dokumentformate, OCR und teilweise Prüfungen deutlicher.
+- Die Linux-Oberfläche behandelt eine fehlende Auswahl und verwendet getrennte Ansichten für Treffer und Fundstellen.
+
 ## 0.70.1 — 2026-11-20
 
 - Die Vorschau lädt belegten PPTX-Folientext auch bei übersprungenen Bildern und zeigt verfügbaren Kontext bei Lesefehlern weiter an.
@@ -857,7 +865,7 @@ Nacht-Code-Review vom 2026-09-06 abgearbeitet (29 Funde; siehe Commit).
 - Bei 100.000 Treffern sank die Main-Thread-Verzögerung des CSV-Exports im
   Median von 16,57 s auf 2,88 ms, bei JSONL von 271 auf 0,98 ms. Die gesamte
   Exportdauer wird dadurch nicht kürzer; JSONL benötigt weiterhin rund
-  514 MiB Spitzenspeicher. Aufbau und Rohwerte: `tests/EXPORT_MEASUREMENTS.md`.
+  514 MiB Spitzenspeicher. Messaufbau und Ergebnisse: `tests/EXPORT_MEASUREMENTS.md`.
 
 ## Prüfungen vom 2026-09-05 nach 0.31.0
 

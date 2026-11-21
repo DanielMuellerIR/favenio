@@ -15,14 +15,33 @@ enum ContentPreviewProbe {
         return condition()
     }
 
+    static func runPositionFixtures(_ lines: [Data]) throws {
+        var positions = Set<DocumentPosition>()
+        let rows: [[String: Any]] = lines.map { line in
+            guard let hit = parseHit(line), let position = hit.documentPosition else { return ["accepted": false] }
+            positions.insert(position)
+            let written = jsonlData(for: [hit]).prefix(while: { $0 != 10 })
+            return ["accepted": true, "title": position.title, "reader": position.reader,
+                    "previewStatus": hit.contentPreview?.status ?? "missing",
+                    "roundtrip": parseHit(written) == hit,
+                    "written": preservedJSONObject(written) ?? NSNull()]
+        }
+        let result = try JSONSerialization.data(withJSONObject: ["rows": rows, "distinctPositions": positions.count])
+        FileHandle.standardOutput.write(result)
+    }
+
     static func run(_ arguments: [String]) throws {
-        _ = NSApplication.shared
-        defer { MaterializationManager.shared.cleanup() }
         let data = FileHandle.standardInput.readDataToEndOfFile()
         let lines: [Data] = data.split(separator: 10)
+        let mode = arguments.dropFirst().first ?? "parse"
+        if mode == "positions" {
+            try runPositionFixtures(lines)
+            return
+        }
+        _ = NSApplication.shared
+        defer { MaterializationManager.shared.cleanup() }
         let hits = lines.compactMap(parseHit)
         guard !hits.isEmpty else { exit(2) }
-        let mode = arguments.dropFirst().first ?? "parse"
         var report: [String: Any] = [:]
         if mode == "parse" {
             report["hitStride"] = MemoryLayout<Hit>.stride
@@ -70,13 +89,19 @@ enum ContentPreviewProbe {
             let next = mode == "pptx" ? "Folie 1 · Tabelle 3 · Zelle 1,1 · Absatz 1 · Zeile 1" : mode.hasPrefix("xlsx") ? "Blatt 1 „Übersicht“ · Zelle A3 · Text · Zeile 1" : mode == "epub" ? "Kapitel 2 (OPS/a.xhtml) · Absatz 1 · Zeile 1" : mode == "odt" ? "ODT-Haupttext · Absatz 3 · Zeile 1" : docx ? "Haupttext · Absatz 3 · Zeile 1" : "Seite 3 · Zeile 1"
             let context = mode == "pptx" ? "Kontext · Folie 1 · Objekt 2 · Absatz 2" : mode.hasPrefix("xlsx") ? "Kontext · Blatt 1 „Übersicht“ · Zelle A2" : mode == "epub" ? "Kontext · Kapitel 1 (OPS/z.xhtml) · Absatz 2" : mode == "odt" ? "Kontext · ODT-Haupttext · Absatz 2" : docx ? "Kontext · Haupttext · Absatz 2" : "Kontext · Seite 2"
             let first = hits[0]
-            if docx, var nfc = first.documentPosition, var nfd = first.documentPosition {
-                nfc.part = "word/Büro.xml"; nfd.part = "word/Bu\u{0308}ro.xml"
-                report["partByteIdentity"] = nfc != nfd && Set([nfc, nfd]).count == 2
+            func distinctSpellings(_ field: String, _ composed: String, _ decomposed: String) -> Bool {
+                guard var json = first.documentPosition?.json else { return false }
+                json[field] = composed
+                guard let nfc = DocumentPosition.parse(json) else { return false }
+                json[field] = decomposed
+                guard let nfd = DocumentPosition.parse(json) else { return false }
+                return nfc != nfd && Set([nfc, nfd]).count == 2
             }
-            if mode.hasPrefix("xlsx"), var nfc = first.documentPosition, var nfd = first.documentPosition {
-                nfc.sheet = "Büro"; nfd.sheet = "Bu\u{0308}ro"
-                report["sheetByteIdentity"] = nfc != nfd && Set([nfc, nfd]).count == 2
+            if docx, mode != "odt" {
+                report["partByteIdentity"] = distinctSpellings("part", "word/Büro.xml", "word/Bu\u{0308}ro.xml")
+            }
+            if mode.hasPrefix("xlsx") {
+                report["sheetByteIdentity"] = distinctSpellings("sheet", "Büro", "Bu\u{0308}ro")
             }
             report["roundtrip"] = parseHit(jsonlData(for: [first]).prefix(while: { $0 != 10 })) == first
             report["positionExport"] = (mode.hasPrefix("xlsx") ? first.documentPosition?.cell == "A1" : docx ? first.documentPosition?.paragraph == 1 : first.documentPosition?.page == 1) && first.documentSourceGeneration != nil

@@ -21,14 +21,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github/workflows/publish-appcast.yml"
-BUILD_SCRIPT = REPO / "build-app.sh"
 
-# Der Update-Schlüssel des Produkts (öffentlich, steht so in build-app.sh und
-# in beiden Info.plists).
+# Öffentliche Produktionsidentität als feste Vergleichsdaten für Testbundles.
 PRODUCTION_KEY = "H504COadHZVAKo+/XD0jzXT5PJzghkS2t/DDYmuHPDg="
-
-# Der Produktions-Update-Feed — ebenfalls aus build-app.sh, und die URL, gegen
-# die der Workflow das Release-Artefakt prüft.
 PRODUCTION_FEED = "https://danielmuellerir.github.io/favenio/appcast.xml"
 
 # Keine echte Projekt-ID, sondern die feste Herausgeber-ID der Test-Stubs.
@@ -148,24 +143,6 @@ class WorkflowShellSyntaxTest(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertNotIn("--ed-key-file - --verify", text)
         self.assertIn("favenio_check_feed site/appcast.xml", text)
-
-    def test_expected_update_key_matches_build_script(self):
-        build = BUILD_SCRIPT.read_text(encoding="utf-8")
-        self.assertEqual((BUILD_SCRIPT.parent / "common/update-public-key.txt").read_text().strip(), PRODUCTION_KEY)
-        self.assertIn('SPARKLE_PUBLIC_KEY=$(cat common/update-public-key.txt)', build)
-        self.assertIn('SPARKLE_PUBLIC_KEY: "%s"' % PRODUCTION_KEY,
-                      WORKFLOW.read_text(encoding="utf-8"))
-
-    def test_expected_feed_url_matches_build_script(self):
-        """Der Workflow prüft gegen eine Kopie des Feed-Defaults aus
-        build-app.sh. Laufen die auseinander, prüft das Release-Tor gegen eine
-        URL, die gar nicht mehr gebaut wird."""
-        build = BUILD_SCRIPT.read_text(encoding="utf-8")
-        self.assertIn(
-            'SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-%s}"' % PRODUCTION_FEED,
-            build)
-        self.assertIn('local expected_feed="%s"' % PRODUCTION_FEED,
-                      WORKFLOW.read_text(encoding="utf-8"))
 
     def test_exactly_one_dmg_per_release(self):
         """Ein Release mit null oder zwei DMGs darf keinen Feed erzeugen.
@@ -312,7 +289,6 @@ class WorkflowShellSyntaxTest(unittest.TestCase):
     def test_team_id_comes_from_an_actions_variable(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("FAVENIO_TEAM_ID: ${{ vars.FAVENIO_TEAM_ID }}", workflow)
-        self.assertIn('"$SPARKLE_PUBLIC_KEY" "$FAVENIO_TEAM_ID"', workflow)
 
     def test_dmg_is_verified_before_it_is_mounted(self):
         script = extract_run_block("Generate signed appcast")
@@ -421,12 +397,12 @@ class CheckArtifactTest(unittest.TestCase):
         return app
 
     def run_check(self, tag="v0.21.1", expected_key=PRODUCTION_KEY,
-                  expected_team=TEST_TEAM_ID, **fails):
+                  expected_team=TEST_TEAM_ID, expected_feed=PRODUCTION_FEED, **fails):
         script = (
             "set -euo pipefail\n"
             + self.BLOCK
             + "\n"
-            "if favenio_check_artifact \"$1\" \"$2\" \"$3\" \"$4\"; then\n"
+            "if favenio_check_artifact \"$1\" \"$2\" \"$3\" \"$4\" \"$5\"; then\n"
             '  echo "RC=0"\n'
             "else\n"
             '  echo "RC=$?"\n'
@@ -445,7 +421,7 @@ class CheckArtifactTest(unittest.TestCase):
             environment["STUB_FAIL_%s" % tool.upper()] = entries
         result = subprocess.run(
             ["bash", str(path), str(self.mount), tag, expected_key,
-             expected_team],
+             expected_team, expected_feed],
             cwd=REPO, env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return result.stdout.decode("utf-8", "replace")

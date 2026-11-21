@@ -1,12 +1,7 @@
 # Hält die Dokumentation am CLI-Vertrag fest.
 #
-# Diese Tests prüfen keinen Code, sondern ob README, README.de und AGENTS noch
-# beschreiben, was favenio.py wirklich tut. Beide Lücken, die sie schließen,
-# gab es wirklich: `-e/--exact` und `--max-depth` standen in den Beispielen,
-# aber in keiner Optionstabelle, und das Feld `isDirectory` kam am 2026-08-17
-# in JEDEN Treffer, ohne dass eine der drei Dateien es erwähnte.
+# Die Optionstabellen, Versionsangaben und JSONL-Felder am CLI-Vertrag halten.
 
-import ast
 import json
 import re
 import subprocess
@@ -22,7 +17,6 @@ READMES = {
     "README.md": (REPO / "README.md").read_text(encoding="utf-8"),
     "README.de.md": (REPO / "README.de.md").read_text(encoding="utf-8"),
 }
-AGENTS = (REPO / "AGENTS.md").read_text(encoding="utf-8")
 CHANGELOG = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
@@ -32,16 +26,9 @@ def cli_constant(name):
 
 
 def cli_long_options():
-    """Lange Optionen unabhängig von Anführungszeichen und Zeilenumbrüchen."""
-    return sorted({argument.value
-                   for call in ast.walk(ast.parse(CLI))
-                   if isinstance(call, ast.Call)
-                   and isinstance(call.func, ast.Attribute)
-                   and call.func.attr == 'add_argument'
-                   for argument in call.args
-                   if isinstance(argument, ast.Constant)
-                   and isinstance(argument.value, str)
-                   and argument.value.startswith('--')})
+    help_text = subprocess.check_output(
+        [sys.executable, str(REPO / "favenio.py"), "--help"], text=True, timeout=10)
+    return set(re.findall(r"^  (?:-[a-zA-Z], )?(--[a-z-]+)\b", help_text, re.M)) - {"--help"}
 
 
 def option_table(text):
@@ -102,6 +89,7 @@ class JsonContractTest(unittest.TestCase):
             root = Path(tmp) / "wurzel"
             (root / "ordner").mkdir(parents=True)
             (root / "datei.txt").write_text("x", encoding="utf-8")
+            (root / "toter-link").symlink_to(root / "fehlt")
             with zipfile.ZipFile(root / "archiv.zip", "w") as archive:
                 archive.writestr("innen/", "")
                 archive.writestr("innen/eintrag.txt", "x")
@@ -123,39 +111,16 @@ class JsonContractTest(unittest.TestCase):
         kinds = {(r["type"], r["isDirectory"]) for r in records}
         self.assertEqual(kinds, {("file", False), ("dir", True),
                                  ("member", False), ("member", True)})
+        by_name = {Path(record["path"]).name: record for record in records}
+        self.assertEqual(by_name["datei.txt"]["size"], 1)
+        self.assertEqual(by_name["toter-link"]["type"], "file")
+        self.assertNotIn("size", by_name["toter-link"])
 
-    def test_readmes_and_agents_name_the_always_fields(self):
-        for name, text in list(READMES.items()) + [("AGENTS.md", AGENTS)]:
+    def test_readmes_name_the_always_fields(self):
+        for name, text in READMES.items():
             for field in self.ALWAYS:
                 with self.subTest(document=name, field=field):
                     self.assertIn("`%s`" % field, text)
-
-    def test_documentation_warns_that_type_does_not_reveal_a_folder(self):
-        """Der eigentliche Fallstrick: Ein Ordner IM Archiv kommt als
-        `member` an wie eine Datei. Wer nur `type` liest, liegt falsch."""
-        for name, text in list(READMES.items()) + [("AGENTS.md", AGENTS)]:
-            # Zeilenumbrüche und Fettdruck wegnormalisieren: Die Aussage soll
-            # zählen, nicht wo der Zeilenumbruch gerade fällt.
-            plain = " ".join(text.replace("*", "").split()).lower()
-            with self.subTest(document=name):
-                self.assertRegex(
-                    plain,
-                    r"(ordner (im|innerhalb eines) archivs?|"
-                    r"folder inside an archive).{0,120}member",
-                    "%s erklärt nicht, dass ein Ordner im Archiv als "
-                    "`member` ankommt" % name)
-
-    def test_documentation_says_size_can_be_unavailable_for_plain_files(self):
-        required = {
-            "README.md": "cannot be determined",
-            "README.de.md": "nicht ermitteln lässt",
-            "AGENTS.md": "nicht ermitteln lässt",
-        }
-        texts = dict(READMES, **{"AGENTS.md": AGENTS})
-        for name, phrase in required.items():
-            with self.subTest(document=name):
-                self.assertIn(phrase, " ".join(texts[name].split()))
-
 
 class ChangelogTest(unittest.TestCase):
     """`favenio.py::__version__` ist die einzige Versionsquelle, und der

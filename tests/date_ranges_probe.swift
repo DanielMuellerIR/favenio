@@ -104,6 +104,19 @@ enum DateRangesProbe {
             editor.choice.selectItem(at: 0); editor.validate()
             checks["nativeCalendarClock"] = wait { editor.applyButton.isEnabled } && editor.from.datePickerStyle == .clockAndCalendar && editor.to.isEnabled && !editor.fixedButton.isEnabled
             editor.stopForTermination()
+            let boundary = DateRangeSpec(kind: "fixed", timeZone: "Europe/Berlin",
+                                         lower: "2026-03-29T00:59:59.500Z",
+                                         upper: "2026-03-29T03:00:00+02:00")
+            let fixed = DateRangeEditor(spec: boundary, title: "Probe")
+            let iso = ISO8601DateFormatter()
+            checks["fixedBoundsShowLocalClockAcrossDST"] =
+                iso.string(from: fixed.from.dateValue) == "2026-03-29T01:59:59Z"
+                && iso.string(from: fixed.to.dateValue) == "2026-03-29T03:00:00Z"
+            fixed.validate()
+            checks["fixedEditorSerializesLocalBounds"] = wait { fixed.applyButton.isEnabled }
+                && fixed.proofLabel.stringValue.contains("2026-03-29T00:59:59Z")
+                && fixed.proofLabel.stringValue.contains("2026-03-29T01:00:00Z")
+            fixed.stopForTermination()
         default: throw NSError(domain: "DateProbe", code: 2)
         }
         let data = try JSONSerialization.data(withJSONObject: checks, options: [.sortedKeys])

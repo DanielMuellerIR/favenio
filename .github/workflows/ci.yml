@@ -13,6 +13,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Python- und Swift-Code prüfen
+        run: |
+          python3 -m venv "$RUNNER_TEMP/favenio-lint"
+          "$RUNNER_TEMP/favenio-lint/bin/python" -m pip install ruff==0.15.9
+          "$RUNNER_TEMP/favenio-lint/bin/ruff" check favenio.py tools tests linux linux/helpers/favenio-document
+          xcrun swift-format lint --strict ocr/DocumentHelperIO.swift ocr/VisionText.swift ocr/main.swift pdf/main.swift
+
+      - name: Zsh-Einstiegsskripte prüfen
+        run: |
+          for script in build.sh build-app.sh install.sh notarize-lib.sh release.sh; do
+            zsh -n "$script"
+          done
+
       - name: Unit-Tests (System-Python /usr/bin/python3)
         run: /usr/bin/python3 -m unittest discover -s tests
 
@@ -33,6 +46,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      - name: Bash-Einstiegsskripte prüfen
+        run: |
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+            shellcheck --severity=error "$script"
+          done < <(git ls-files -z 'linux/*.sh')
 
       - name: Linux bauen und Swift-Sprachgrenze prüfen
         run: linux/build-container.sh check

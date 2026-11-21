@@ -267,6 +267,124 @@ class SwiftContentPreviewTests(TempTreeTest):
     def swift(self, hit):
         return json.loads(run_probe('content-preview', 'parse', input=json.dumps(hit) + '\n').stdout)
 
+    def position_fixture(self, position, encoding, query=None):
+        # Frühe Vorschauobjekte mit Schema 1 besitzen noch keinen Query-Deskriptor.
+        generation = dict(device='1', inode='2', size='6', modifiedNS='3', changedNS='4')
+        path = str(Path(self.root, 'historical.document'))
+        snippet = dict(line=position['line'], termIndex=1, text='needle', label='needle',
+                       positionBinding='excerptUTF16', location=0, length=6,
+                       excerptSHA256=hashlib.sha256(b'needle').hexdigest(),
+                       prefixTruncated=False, suffixTruncated=False, documentPosition=position)
+        if query is not None:
+            snippet['query'] = query
+        return dict(type='file', isDirectory=False, path=path, filesystemPath=path,
+                    archiveMembers=[], line=1, contentEncoding=encoding,
+                    documentSourceGeneration=generation, documentPosition=position,
+                    contentPreview=dict(schemaVersion=1, status='ready', omitted=0, snippets=[snippet],
+                                        contentEncoding=encoding, sourceGeneration=generation))
+
+    def position_fixtures(self, hits):
+        payload = ''.join(json.dumps(hit) + '\n' for hit in hits)
+        return json.loads(run_probe('content-preview', 'positions', input=payload).stdout)
+
+    def test_historical_document_position_variants_keep_their_wire_fields(self):
+        ocr = dict(block=2, confidence=0.75, region=[0.1, 0.2, 0.3, 0.4])
+        slide = dict(part='ppt/slides/z.xml', slide=3, objectID='10')
+        fingerprint = 'a' * 64
+        cases = [
+            ('pdfkit-text-v1', 'pdfkit-v1', 'Seite 2', dict(kind='pdfPage', page=2)),
+            ('pdfkit-vision-text-v1', 'pdfkit-vision-v1', 'Textebene', dict(kind='pdfTextPage', page=2)),
+            ('pdfkit-vision-text-v1', 'pdfkit-vision-v1', 'Seite 2 · OCR', dict(kind='pdfOCR', page=2, **ocr)),
+            ('vision-ocr-text-v1', 'vision-image-v1', 'OCR · Bereich 2', dict(kind='imageOCR', **ocr)),
+            ('docx-text-v1', 'docx-v1', 'Kopfzeile', dict(kind='docxParagraph', part='word/header.xml', partKind='header', paragraph=1)),
+            ('odt-text-v1', 'odt-v1', 'ODT-Haupttext', dict(kind='odtParagraph', part='content.xml', paragraph=2)),
+            ('epub-text-v1', 'epub-v1', 'Kapitel 4', dict(kind='epubParagraph', part='OPS/z.xhtml', chapter=4, paragraph=3)),
+            ('xlsx-text-v1', 'xlsx-v1', 'Zelle XFD1048576', dict(kind='xlsxCell', part='xl/sheet.xml', sheet='Übersicht', sheetIndex=4, cell='XFD1048576', valueKind='cachedDate')),
+            ('pptx-text-v1', 'pptx-v1', 'Objekt 10', dict(kind='pptxParagraph', objectKind='shape', paragraph=4, **slide)),
+            ('pptx-text-v1', 'pptx-v1', 'Zelle 2,3', dict(kind='pptxParagraph', objectKind='table', paragraph=4, row=2, column=3, **slide)),
+            ('pptx-vision-text-v1', 'pptx-vision-v1', 'Bild 10 · OCR', dict(kind='pptxOCR', objectKind='picture', reader='pptx-vision-v1', **slide, **ocr)),
+            ('pptx-vision-text-v1', 'pptx-vision-v1', 'Objekt 10', dict(kind='pptxParagraph', objectKind='shape', paragraph=4, reader='pptx-vision-v1', **slide)),
+            ('pptx-tesseract-text-v1', 'pptx-tesseract-v1', 'Bild 10 · OCR', dict(kind='pptxOCR', objectKind='picture', reader='pptx-tesseract-v1', readerFingerprint=fingerprint, **slide, **ocr)),
+            ('pptx-tesseract-text-v1', 'pptx-tesseract-v1', 'Objekt 10', dict(kind='pptxParagraph', objectKind='shape', paragraph=4, reader='pptx-tesseract-v1', **slide)),
+            ('poppler-text-v1', 'poppler-v1', 'Seite 2', dict(kind='pdfPage', page=2, reader='poppler-v1', readerFingerprint=fingerprint)),
+            ('poppler-tesseract-text-v1', 'poppler-tesseract-v1', 'Textebene', dict(kind='pdfTextPage', page=2, reader='poppler-tesseract-v1', readerFingerprint=fingerprint)),
+            ('poppler-tesseract-text-v1', 'poppler-tesseract-v1', 'Seite 2 · OCR', dict(kind='pdfOCR', page=2, reader='poppler-tesseract-v1', readerFingerprint=fingerprint, **ocr)),
+            ('tesseract-ocr-text-v1', 'tesseract-image-v1', 'OCR · Bereich 2', dict(kind='imageOCR', reader='tesseract-image-v1', readerFingerprint=fingerprint, **ocr)),
+        ]
+        hits = [self.position_fixture(dict(position, line=1), encoding) for encoding, _, _, position in cases]
+        report = self.position_fixtures(hits)
+        self.assertEqual(report['distinctPositions'], len(cases))
+        for (_, reader, title, _), hit, row in zip(cases, hits, report['rows']):
+            with self.subTest(position=hit['documentPosition']):
+                self.assertTrue(row['accepted'], row)
+                self.assertTrue(row['roundtrip'], row)
+                self.assertEqual(row['reader'], reader)
+                self.assertIn(title, row['title'])
+                self.assertEqual(row['written']['documentPosition'], hit['documentPosition'])
+                self.assertEqual(row['written']['contentPreview'], hit['contentPreview'])
+
+    def test_positions_keep_original_package_and_query_bytes(self):
+        query = dict(pattern='\ufeffBu\u0308ro', regex=True, caseSensitive=False, exact=True,
+                     literalWildcards=False, documentReader='xlsx-v1')
+        forms = ('Büro', 'Bu\u0308ro', '\ufeffBüro')
+        hits = []
+        for text in forms:
+            epub = dict(kind='epubParagraph', part=text + '.xhtml', chapter=1, paragraph=2, line=1)
+            xlsx = dict(kind='xlsxCell', part='xl/sheet.xml', sheet=text,
+                        sheetIndex=1, cell='A1', valueKind='text', line=1)
+            hits.extend([self.position_fixture(epub, 'epub-text-v1'), self.position_fixture(xlsx, 'xlsx-text-v1', query)])
+        report = self.position_fixtures(hits + [hits[0]])
+        self.assertEqual(report['distinctPositions'], len(hits))
+        for hit, row in zip(hits, report['rows']):
+            self.assertTrue(row['roundtrip'], row)
+            self.assertEqual(row['written']['documentPosition'], hit['documentPosition'])
+            self.assertEqual(row['written']['contentPreview'], hit['contentPreview'])
+
+    def test_position_and_query_reject_invalid_typed_fields(self):
+        pdf = dict(kind='pdfTextPage', page=1, line=1)
+        image = dict(kind='imageOCR', block=1, confidence=0.8, region=[0.1, 0.2, 0.3, 0.4], line=1)
+        docx = dict(kind='docxParagraph', part='word/document.xml', partKind='document', paragraph=1, line=1)
+        odt = dict(kind='odtParagraph', part='content.xml', paragraph=1, line=1)
+        epub = dict(kind='epubParagraph', part='OPS/z.xhtml', chapter=1, paragraph=1, line=1)
+        xlsx = dict(kind='xlsxCell', part='xl/sheet.xml', sheet='Übersicht', sheetIndex=1, cell='A1', valueKind='text', line=1)
+        table = dict(kind='pptxParagraph', part='ppt/slides/z.xml', slide=1,
+                     objectKind='table', objectID='2', paragraph=1, line=1, row=1, column=2)
+        picture_ocr = dict(image, kind='pptxOCR', part=table['part'], slide=1, objectKind='picture', objectID='3',
+                           reader='pptx-tesseract-v1', readerFingerprint='a' * 64)
+        invalid = [
+            (dict(pdf, page=True), 'pdfkit-vision-text-v1'),
+            (dict(pdf, line=1.5), 'pdfkit-vision-text-v1'),
+            (dict(pdf, region=image['region']), 'pdfkit-vision-text-v1'),
+            (dict(pdf, kind='pdfPage', page=513), 'pdfkit-text-v1'),
+            (dict(pdf, kind='pdfOCR', block=1), 'pdfkit-vision-text-v1'),
+            (dict(pdf, kind='pdfPage', reader='poppler-v1'), 'poppler-text-v1'),
+            (dict(image, confidence=True), 'vision-ocr-text-v1'),
+            (dict(image, region=[False, 0.2, 0.3, 0.4]), 'vision-ocr-text-v1'),
+            (dict(image, region=[0.8, 0.2, 0.3, 0.4]), 'vision-ocr-text-v1'),
+            (dict(docx, partKind='unknown'), 'docx-text-v1'),
+            (dict(odt, part='other.xml'), 'odt-text-v1'),
+            (dict(epub, chapter=4097), 'epub-text-v1'),
+            (dict(epub, part='../escape'), 'epub-text-v1'),
+            (dict(xlsx, sheetIndex=True), 'xlsx-text-v1'),
+            (dict(xlsx, cell='XFE1'), 'xlsx-text-v1'),
+            (dict(table, objectKind='shape'), 'pptx-text-v1'),
+            (dict(table, row=0), 'pptx-text-v1'),
+            ({key: val for key, val in table.items() if key != 'column'}, 'pptx-text-v1'),
+            (dict(picture_ocr, objectKind='table'), 'pptx-tesseract-text-v1'),
+            (dict(picture_ocr, readerFingerprint='A' * 64), 'pptx-tesseract-text-v1'),
+        ]
+        hits = [self.position_fixture(position, encoding) for position, encoding in invalid]
+        self.assertEqual(self.position_fixtures(hits)['rows'], [{'accepted': False}] * len(hits))
+
+        query = dict(pattern='needle', regex=False, caseSensitive=True, exact=False, literalWildcards=True,
+                     documentReader='pdfkit-vision-v1', encoding='utf-8')
+        bad_queries = [dict(query, **{key: int(query[key])}) for key in ('regex', 'caseSensitive', 'exact', 'literalWildcards')]
+        bad_queries.extend([dict(query, encoding=None), dict(query, documentReader='pdfkit-v1')])
+        hits = [self.position_fixture(pdf, 'pdfkit-vision-text-v1', descriptor) for descriptor in [query] + bad_queries]
+        rows = self.position_fixtures(hits)['rows']
+        self.assertEqual([row['previewStatus'] for row in rows], ['ready'] + ['invalid'] * len(bad_queries))
+        self.assertEqual(rows[0]['written']['contentPreview']['snippets'][0]['query'], query)
+
     def test_real_kernel_json_roundtrip_hash_generation_and_highlight(self):
         report = self.swift(self.product_hit())
         self.assertEqual(report['status'], 'ready')

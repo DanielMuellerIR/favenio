@@ -294,10 +294,13 @@ impl Ui {
                     {
                         return Err("stale".into());
                     }
-                    let page=self.model.call(json!({"operation":"page","runID":self.run.borrow().as_deref().unwrap_or(""),"offset":offset,"limit":limit,"sort":(SORT_KEYS[self.sorting.selected()as usize]),"ascending":self.ascending.is_active()}))?;
-                    for key in ["hits", "count", "nextOffset", "hasMore"] {
-                        reply[key] = page[key].clone();
-                    }
+                    let page =
+                        self.model
+                            .page(self.result_order(&self.run.borrow()), offset, limit)?;
+                    reply["hits"] = json!(page.hits);
+                    reply["count"] = json!(page.count);
+                    reply["nextOffset"] = json!(page.next_offset);
+                    reply["hasMore"] = json!(page.has_more);
                     reply["generation"] = json!(generation);
                     reply["runID"] = json!(self.run.borrow().clone());
                     reply["state"] = json!(self.run_state.borrow().clone());
@@ -320,12 +323,15 @@ impl Ui {
                     } else {
                         self.collapsed.borrow_mut().clear();
                         self.refresh_projection();
-                        for i in 0..self.store.n_items() {
-                            if let Some(object) =
-                                self.store.item(i).and_downcast::<glib::BoxedAnyObject>()
+                        for i in 0..self.results.store.n_items() {
+                            if let Some(object) = self
+                                .results
+                                .store
+                                .item(i)
+                                .and_downcast::<glib::BoxedAnyObject>()
                             {
                                 if object.borrow::<Value>()["index"] == target {
-                                    self.selection.select_item(i, true);
+                                    self.results.selection.select_item(i, true);
                                     break;
                                 }
                             }
@@ -371,8 +377,9 @@ impl Ui {
         reply
     }
     fn wire_configuration(&self) -> Value {
-        let mut value = self.configuration();
-        value.as_object_mut().unwrap().remove("continuation");
+        let mut configuration = self.configuration();
+        configuration.continuation = None;
+        let mut value = json!(configuration);
         if self
             .checks
             .iter()

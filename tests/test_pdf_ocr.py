@@ -14,7 +14,7 @@ import zipfile
 from test_favenio import TempTreeTest, favenio, run
 from test_criteria import arguments, group, leaf
 from pdf_fixture import pdf_bytes
-from swift_test_support import run_process
+from swift_test_support import native_document_helper_sources, run_process
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -27,8 +27,14 @@ class PDFOCRTests(TempTreeTest):
         cls.addClassCleanup(cls.tools.cleanup)
         cls.base = Path(cls.tools.name)
         cls.helper = cls.base/'favenio-pdf'
-        for sources, output in [(['ocr/VisionText.swift', 'pdf/main.swift'], cls.helper), (['tests/pdf_ocr_fixture.swift'], cls.base/'fixtures'), (['tests/pdf_encrypt_fixture.swift'], cls.base/'encrypt')]:
-            result = run_process(['swiftc', '-O', *[str(REPO/p) for p in sources], '-o', str(output)], timeout=40)
+        builds = [
+            (native_document_helper_sources("pdf", cls.base), cls.helper),
+            ((REPO / "tests/pdf_ocr_fixture.swift",), cls.base / "fixtures"),
+            ((REPO / "tests/pdf_encrypt_fixture.swift",), cls.base / "encrypt"),
+        ]
+        for sources, output in builds:
+            result = run_process(["swiftc", "-O", *(str(source) for source in sources),
+                                  "-o", str(output)], timeout=40)
             if result.returncode:
                 raise RuntimeError(result.stderr)
         (cls.base/'text.pdf').write_bytes(pdf_bytes([[(40, 700, 'original alpha needle')]]))

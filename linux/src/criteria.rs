@@ -131,9 +131,16 @@ fn node(value: Value, catalog: &Value, depth: usize) -> Node {
         container.append(&controls);
         let mut metadata_fields = vec![String::new()];
         metadata_fields.extend(strings(&catalog["metadataFields"]));
-        let metadata_titles: Vec<_> = metadata_fields.iter().map(|field| {
-            if field.is_empty() { "Alle Textfelder" } else { field.as_str() }
-        }).collect();
+        let metadata_titles: Vec<_> = metadata_fields
+            .iter()
+            .map(|field| {
+                if field.is_empty() {
+                    "Alle Textfelder"
+                } else {
+                    field.as_str()
+                }
+            })
+            .collect();
         let metadata = gtk::DropDown::from_strings(&metadata_titles);
         metadata.set_visible(selected == "metadata");
         if let Some(i) = metadata_fields
@@ -150,7 +157,9 @@ fn node(value: Value, catalog: &Value, depth: usize) -> Node {
         let e = entry.clone();
         let case_control = case.clone();
         field.connect_selected_notify(move |f| {
-            let name = &field_names[f.selected() as usize];
+            let Some(name) = field_names.get(f.selected() as usize) else {
+                return;
+            };
             let operators = strings(&cat["operators"][name])
                 .iter()
                 .map(|key| {
@@ -191,7 +200,9 @@ fn node(value: Value, catalog: &Value, depth: usize) -> Node {
         let date_fields = fields.clone();
         field.connect_selected_notify(move |field| {
             date_control.set_visible(
-                ["modified", "created"].contains(&date_fields[field.selected() as usize].as_str()),
+                date_fields
+                    .get(field.selected() as usize)
+                    .is_some_and(|field| ["modified", "created"].contains(&field.as_str())),
             )
         });
         container.append(&date_button);
@@ -204,7 +215,10 @@ fn node(value: Value, catalog: &Value, depth: usize) -> Node {
         let field_names = fields.clone();
         let e = entry.clone();
         date_button.connect_clicked(move |_| {
-            if ["modified", "created"].contains(&field_names[f.selected() as usize].as_str()) {
+            if field_names
+                .get(f.selected() as usize)
+                .is_some_and(|field| ["modified", "created"].contains(&field.as_str()))
+            {
                 date_dialog(&date, &e);
             }
         });
@@ -212,7 +226,9 @@ fn node(value: Value, catalog: &Value, depth: usize) -> Node {
         Node {
             widget: container,
             value: Rc::new(move || {
-                let f = &fields[field.selected() as usize];
+                let Some(f) = fields.get(field.selected() as usize) else {
+                    return Value::Null;
+                };
                 let op = strings(&catalog["operators"][f])
                     .get(operator.selected() as usize)
                     .cloned()
@@ -231,7 +247,10 @@ fn node(value: Value, catalog: &Value, depth: usize) -> Node {
                     result["caseSensitive"] = json!(true);
                 }
                 if f == "metadata" {
-                    if let Some(v) = metadata_fields.get(metadata.selected() as usize).filter(|v| !v.is_empty()) {
+                    if let Some(v) = metadata_fields
+                        .get(metadata.selected() as usize)
+                        .filter(|v| !v.is_empty())
+                    {
                         result["metadataField"] = json!(v);
                     }
                 }
@@ -420,6 +439,10 @@ pub(super) fn date_dialog(value: &Rc<RefCell<Option<Value>>>, entry: &gtk::Entry
     save.connect_clicked(move |button| {
         let zone = zone.text().to_string();
         let selected = preset.selected();
+        if selected > 3 {
+            issue.set_text("Einen Kalendertyp auswählen.");
+            return;
+        }
         let fixed = selected == 3 || freeze.is_active();
         let mut question = if selected < 3 {
             json!({"kind":"relative", "timeZone":zone, "preset":(["today","last7CalendarDays","thisMonth"][selected as usize])})
@@ -429,8 +452,11 @@ pub(super) fn date_dialog(value: &Rc<RefCell<Option<Value>>>, entry: &gtk::Entry
                 "toLocal":format!("{}T{}",upper.date().format("%Y-%m-%d").unwrap(),upper_time.text())})
         };
         if selected == 3 {
-            if from_fold.selected() > 0 { question["fromFold"] = json!(from_fold.selected()-1); }
-            if to_fold.selected() > 0 { question["toFold"] = json!(to_fold.selected()-1); }
+            for (name, selection) in [("fromFold", from_fold.selected()), ("toFold", to_fold.selected())] {
+                if (1..=2).contains(&selection) {
+                    question[name] = json!(selection - 1);
+                }
+            }
         }
         let reference = glib::DateTime::now_utc().unwrap().format("%Y-%m-%dT%H:%M:%SZ").unwrap().to_string();
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -460,33 +486,6 @@ pub(super) fn date_dialog(value: &Rc<RefCell<Option<Value>>>, entry: &gtk::Entry
     window.set_child(Some(&body));
     window.present();
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn metadata_field_roundtrip() {
-        gtk::init().expect("GTK-Test benötigt eine private Anzeige (z. B. Xvfb)");
-        let catalog = json!({"fields":["metadata"], "labels":{"metadata":"Metadaten"},
-            "operators":{"metadata":["contains"]},
-            "operatorTitles":{"metadata":{"contains":"enthält"}},
-            "metadataFields":["Title","Comment"]});
-        for explicit in [None, Some("Title"), Some("Comment")] {
-            let mut input = json!({"id":"meta","field":"metadata","operator":"contains","value":"needle"});
-            if let Some(field) = explicit { input["metadataField"] = json!(field); }
-            let tree = node(input.clone(), &catalog, 0);
-            assert_eq!((tree.value)(), input);
-            let menu = tree.widget.first_child().unwrap().next_sibling().unwrap()
-                .downcast::<gtk::DropDown>().unwrap();
-            assert_eq!(menu.model().unwrap().n_items(), 3);
-            menu.set_selected(2);
-            assert_eq!((tree.value)()["metadataField"], "Comment");
-            menu.set_selected(0);
-            assert!((tree.value)().get("metadataField").is_none());
-        }
-    }
-}
-
 pub(super) fn open(ui: &Rc<Ui>) {
     edit(ui, false)
 }
@@ -559,4 +558,40 @@ fn edit(ui: &Rc<Ui>, filter: bool) {
     });
     dialog.set_child(Some(&body));
     dialog.present();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_field_roundtrip() {
+        gtk::init().expect("GTK-Test benötigt eine private Anzeige (z. B. Xvfb)");
+        let catalog = json!({"fields":["metadata"], "labels":{"metadata":"Metadaten"},
+            "operators":{"metadata":["contains"]},
+            "operatorTitles":{"metadata":{"contains":"enthält"}},
+            "metadataFields":["Title","Comment"]});
+        for explicit in [None, Some("Title"), Some("Comment")] {
+            let mut input =
+                json!({"id":"meta","field":"metadata","operator":"contains","value":"needle"});
+            if let Some(field) = explicit {
+                input["metadataField"] = json!(field);
+            }
+            let tree = node(input.clone(), &catalog, 0);
+            assert_eq!((tree.value)(), input);
+            let menu = tree
+                .widget
+                .first_child()
+                .unwrap()
+                .next_sibling()
+                .unwrap()
+                .downcast::<gtk::DropDown>()
+                .unwrap();
+            assert_eq!(menu.model().unwrap().n_items(), 3);
+            menu.set_selected(2);
+            assert_eq!((tree.value)()["metadataField"], "Comment");
+            menu.set_selected(0);
+            assert!((tree.value)().get("metadataField").is_none());
+        }
+    }
 }

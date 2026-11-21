@@ -193,7 +193,7 @@ Build-/Prüfregeln stehen in [AGENTS.md](../AGENTS.md) und
 [README.md](../README.md). Vorgesehen sind:
 
 - Python-Kerntests mit üblichem und mit `/usr/bin/python3`;
-- `build-app.sh` und beide abschließenden `SELFTEST OK`-Nachweise;
+- `build-app.sh` mit zwei `SELFTEST OK`- und zwei `BUNDLE OK`-Meldungen;
 - echte sichtbare GUI-Prüfung für Konfiguration, Progress, Auswahl und Übergabe;
 - temporäre Fixtures für Nulltreffer, Teilergebnisse, Warnungen, Abbruch und
   Prozessfehler;
@@ -214,8 +214,22 @@ allein verlangt keinen Versions-Bump oder Produktbuild.
 
 ## Abnahmebelege
 
-Die umgesetzte Editor-Übergabe ist in der
-[Übergabeprüfung](../tests/measurements/handoff-2026-10-08.json) belegt.
-Die [Aufnahmeprüfung](../tests/measurements/recording-2026-10-08.json)
-belegt Wiederöffnung ohne Suche, ausdrückliche Neusuche und gebundene Aktionen.
-Diese früheren offenen Arbeiten stehen deshalb nicht mehr im Backlog.
+Die sichtbare macOS-Prüfung der Editor-Übergabe am 2026-10-08 verwendete
+Favenio 0.37.0 und Fastra 1.137.1. Sie prüfte die UTF-16-Auswahl bei BOM,
+Emoji und CRLF, ZIP-Namen mit `!/`, byteverschiedene TAR-Namen mit gleicher
+Anzeige, geänderte Archive und die übernommene Kopie nach Sender-Ende.
+Bei großen Archiven bleibt die Bindung an die Quellgeneration sichtbar.
+Die Probe mit Testdateien steht in [handoff-smoke.py](../tools/handoff-smoke.py).
+
+Die Aufnahmeprüfung am 2026-10-08 mit Favenio 0.38.0 prüfte die archivierte
+Trefferliste und Auswahl nach Löschen einer Quelle. Wiederöffnen startete
+keine Suche. Ein ausdrücklicher neuer Lauf erhielt eine neue Identität.
+Gebundene Aktionen prüften fehlende Ziele und ließen die gespeicherte
+Aufzeichnung unverändert. Die Probe steht in
+[recording-smoke.py](../tools/recording-smoke.py).
+
+Die lokale Fenstersteuerung wurde am 2026-10-06 mit Favenio 0.36.0 und
+Protokollversion 1 geprüft. [control-smoke.py](../tools/control-smoke.py)
+prüft unter anderem echten Prozessstart, stabile Auftragskennung beim
+wiederholten Start, begrenzte Trefferseiten, ZIP-Identität, Auswahl und
+die Ablehnung übergroßer oder unvollständiger Eingaben.

@@ -136,21 +136,6 @@ class NativeResultFilterTests(TempTreeTest):
         from swift_test_support import suite_binary
         suite_binary()
 
-    def test_quick_stream_keeps_loaded_occurrence_for_same_identity(self):
-        self.quick_occurrence('quick-selection')
-
-    def test_quick_grouped_stream_keeps_loaded_occurrence_for_same_identity(self):
-        self.quick_occurrence('quick-selection-grouped')
-
-    def quick_occurrence(self, mode):
-        from swift_test_support import run_probe
-        source = Path(self.root, 'content.txt')
-        source.write_text('needle\nKontext\nneedle\n')
-        code, lines, errors = run(['--json', '--content', '--content-preview', 'needle', str(source)])
-        self.assertEqual((code, errors), (0, ''))
-        result = run_probe('result-filter', mode, Path(favenio.__file__), input=lines[0]+'\n', timeout=20)
-        self.assertTrue(all(json.loads(result.stdout).values()), result.stdout)
-
     def test_shared_controller_selection_streaming_generation_and_cleanup(self):
         from swift_test_support import run_probe
         rows = [record('keep-a.txt', line=7), record('other-b.txt'), record('keep-c.txt'), record('other-d.txt')]

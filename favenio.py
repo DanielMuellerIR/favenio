@@ -22,7 +22,7 @@ Grundprinzipien:
 - Groß-/Kleinschreibung ist standardmäßig egal (--case-sensitive schaltet um).
 - Treffer in Archiven werden als  archiv.zip!/pfad/im/archiv  ausgegeben.
 
-Für AI-Agenten/Skripte: --json liefert einen Treffer pro Zeile als
+Für Skripte und Automatisierung: --json liefert einen Treffer pro Zeile als
 JSON-Objekt (JSONL); Exit-Code 0 = Treffer, 1 = kein Treffer, 2 = Fehler.
 Nur Python-Standardbibliothek, keine Abhängigkeiten.
 """
@@ -34,6 +34,7 @@ import codecs
 import collections
 import contextlib
 import ctypes
+from dataclasses import dataclass
 import datetime
 import errno
 import fnmatch
@@ -57,8 +58,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import traceback
+from typing import Any, Callable, Optional, Sequence
 import unicodedata
 import uuid
 import urllib.parse
@@ -67,10 +70,10 @@ import zipfile
 import zlib
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-__version__ = "0.70.1"
+__version__ = "0.70.2"
 # Datum dieser Version (ISO 8601). Zweite Single-Source neben __version__;
 # das Build-Skript gießt beides in eine Swift-Konstante für die Fenstertitel.
-__date__ = "2026-11-20"
+__date__ = "2026-11-21"
 
 # Dateiendungen, die wir als Zip-Container behandeln.
 # (Viele Formate sind „Zip in Verkleidung": Java-Archive, Python-Wheels,
@@ -671,6 +674,28 @@ def signature_head_bytes(key):
     return max((start + len(magic)
                 for start, magic in ARCHIVE_SIGNATURES.get(key, ())),
                default=0)
+
+
+def archive_head(key, fs_path, fileobj):
+    """Der Anfang des Archivs für die Signaturprüfung.
+
+    Gelesen wird nur, was das Format `key` wirklich braucht — vier
+    Bytes für ein Zip, 36 KB für ein ISO.
+
+    Lässt der Anfang sich nicht lesen, gilt die Datei als nicht
+    angekündigt und wird als ganz normale Datei behandelt — der stille
+    Rückfall ist der schonendere der beiden Wege."""
+    length = signature_head_bytes(key)
+    if not length:
+        return b""
+    try:
+        if fileobj is not None:
+            fileobj.seek(0)
+            return fileobj.read(length)
+        with open_regular_file(fs_path) as handle:
+            return handle.read(length)
+    except EXPECTED_ARCHIVE_ERRORS:
+        return b""
 
 
 def archive_signature_key(kind, name):
@@ -1550,10 +1575,10 @@ class ContentPreviewCapture:
                           for index, (matcher, term) in enumerate(zip(search.matchers, search.terms)))
         evidence = {item["id"] for item in probe.criteria_evidence or []
                     if item.get("field") == "content" and not item.get("negated")}
-        if search.criteria_query is not None:
+        if search.options.criteria_query is not None:
             wanted.extend((condition.matcher, {"criterionID": condition.identifier,
                                                "label": json_safe_text(condition.value[:128])})
-                          for condition in search.criteria_query.conditions
+                          for condition in search.options.criteria_query.conditions
                           if isinstance(condition, ContentCondition) and condition.identifier in evidence)
         if not wanted:
             return dict(schemaVersion=1, status="noContentEvidence", snippets=[], omitted=0)
@@ -1566,8 +1591,8 @@ class ContentPreviewCapture:
                 spec = matcher.preview_spec
                 if not any(0xD800 <= ord(char) <= 0xDFFF for char in spec[0]):
                     snippet["query"] = dict(pattern=spec[0], regex=spec[1], caseSensitive=spec[2],
-                                           exact=spec[3], literalWildcards=spec[4], encoding=search.text_encoding)
-                    if search.document_mode:
+                                           exact=spec[3], literalWildcards=spec[4], encoding=search.options.text_encoding)
+                    if search.options.document_mode:
                         snippet["query"]["documentReader"] = next(reader for reader, encoding in DOCUMENT_READERS.items() if encoding == probe.decoder_info.get("decoder"))
                 if probe.decoder_info.get("hadReplacement"):
                     snippet["positionBinding"] = "invalidDecoding"
@@ -1592,9 +1617,15 @@ class PreviewLoadLimit(Exception):
     pass
 
 
+def has_schema_version(value: Any, versions: tuple[int, ...]) -> bool:
+    return (isinstance(value, dict)
+            and type(value.get("schemaVersion")) is int
+            and value["schemaVersion"] in versions)
+
+
 def unwrap_hit(record):
     if isinstance(record, dict) and record.get("type") == "hitV2":
-        if set(record) != {"type", "schemaVersion", "hit"} or type(record["schemaVersion"]) is not int or record["schemaVersion"] != 2:
+        if set(record) != {"type", "schemaVersion", "hit"} or not has_schema_version(record, (2,)):
             raise ValueError("ungültiger Treffertransport")
         record = record["hit"]
     if not isinstance(record, dict):
@@ -1624,14 +1655,25 @@ def hit_filesystem_path(record):
     return path
 
 
-def load_content_preview(request, local_only=False):
-    """Gezieltes Wiederlesen eines bereits gewählten Blatts, keine Suche im Baum.
+@dataclass(frozen=True)
+class PreviewReplayRequest:
+    hit: dict[str, Any]
+    actual_path: str
+    path: str
+    expected: dict[str, str]
+    leaf_expected: dict[str, str]
+    original: dict[str, Any]
+    query: dict[str, Any]
+    encoding: str
+    requested_encoding: str
+    document_reader: Optional[str]
+    index: int
+    occurrence: int
+    context: bool
 
-    Die Fortsetzungsmarke ist eine Fundnummer pro Muster/Quellengeneration.
-    Sie ist kein Byteoffset: Auch Decoder und künftige Dokumentleser können
-    denselben Vertrag bedienen. Wiederlesen bleibt pro Auftrag gedeckelt.
-    """
-    if not isinstance(request, dict) or type(request.get("schemaVersion")) is not int or request["schemaVersion"] not in (1, 2):
+
+def parse_preview_replay_request(request: Any) -> PreviewReplayRequest:
+    if not has_schema_version(request, (1, 2)):
         raise ValueError("Nachladeauftrag braucht Schema 1/2")
     hit = unwrap_hit(request.get("hit"))
     if not isinstance(hit, dict) or not isinstance(hit.get("filesystemPath"), str) \
@@ -1663,14 +1705,18 @@ def load_content_preview(request, local_only=False):
             raise ValueError("ungültige Musteroption")
     encoding = preview.get("contentEncoding")
     document_reader = query.get("documentReader")
-    original_position = original.get("documentPosition")
+    if document_reader is not None and not isinstance(document_reader, str):
+        raise ValueError("unbekannter Dokumentleser")
     replay_pptx_ocr = document_reader in PPTX_OCR_READERS
     document = document_reader in DOCUMENT_READERS
     if replay_pptx_ocr and document_reader != PPTX_OCR_READER:
         raise ValueError("Originaler PPTX-OCR-Leser ist auf dieser Plattform nicht verfügbar")
-    if document_reader in ("pdfkit-v1", "poppler-v1", "pdfkit-vision-v1", "poppler-tesseract-v1", "vision-image-v1", "tesseract-image-v1") and DOCUMENT_READERS[document_reader] not in (DOCUMENT_ENCODING, PDF_OCR_ENCODING, OCR_ENCODING):
+    platform_readers = ("pdfkit-v1", "poppler-v1", "pdfkit-vision-v1", "poppler-tesseract-v1",
+                        "vision-image-v1", "tesseract-image-v1")
+    if (document_reader in platform_readers
+            and DOCUMENT_READERS[document_reader] not in (DOCUMENT_ENCODING, PDF_OCR_ENCODING, OCR_ENCODING)):
         raise ValueError("Originaler Dokument-/OCR-Leser ist auf dieser Plattform nicht verfügbar")
-    if query.get("documentReader") is not None and not document:
+    if document_reader is not None and not document:
         raise ValueError("unbekannter Dokumentleser")
     if not isinstance(encoding, str) or (encoding != DOCUMENT_READERS[document_reader] if document else encoding not in TEXT_ENCODINGS):
         raise ValueError("ungültiger tatsächlicher Decoder")
@@ -1692,6 +1738,84 @@ def load_content_preview(request, local_only=False):
         raise ValueError("Quellengeneration fehlt")
     if not hit["archiveMembers"] and os.path.abspath(path) != os.path.abspath(actual_path):
         raise ValueError("Blattdatei passt nicht zum Treffer")
+    return PreviewReplayRequest(hit, actual_path, path, expected, leaf_expected, original, query,
+                                encoding, requested_encoding, document_reader, index, occurrence,
+                                request.get("context") is True)
+
+
+def load_content_preview(request, local_only=False):
+    """Lädt einen Beleg mit eigener Frist, ohne fremde Alarmzustände zu ändern."""
+    if (threading.current_thread() is threading.main_thread()
+            and signal.getsignal(signal.SIGALRM) == signal.SIG_DFL
+            and signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)):
+        return replay_content_preview(request, local_only)
+    return preview_in_worker(request, local_only)
+
+
+def preview_in_worker(request, local_only):
+    try:
+        payload = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    except UnicodeEncodeError:
+        payload = json.dumps(request, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    if len(payload) > PREVIEW_REQUEST_BYTES:
+        raise ValueError("Nachladeauftrag ist größer als 128 KiB")
+    entry = ('import runpy, sys; runpy.run_path(sys.argv[1])'
+             '["_preview_worker_entry"](sys.argv[2] == "1")')
+    command = [sys.executable, "-I", "-B", "-c", entry, os.path.abspath(__file__), str(int(local_only))]
+    with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, start_new_session=True) as process:
+        try:
+            stdout, stderr = process.communicate(payload, timeout=PREVIEW_LOAD_SECONDS + 2)
+        except subprocess.TimeoutExpired:
+            raise ValueError("Nachladen im Hilfsprozess hat die Zeitgrenze überschritten") from None
+        finally:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+    if process.returncode != 0:
+        raise RuntimeError("Nachladen im Hilfsprozess fehlgeschlagen: "
+                           + stderr.decode("utf-8", "replace").strip())
+    ok, value = json.loads(stdout)
+    if not ok:
+        raise ValueError(value)
+    return value
+
+
+def _preview_worker_entry(local_only):
+    use_locale_independent_streams()
+    try:
+        payload = sys.stdin.buffer.read(PREVIEW_REQUEST_BYTES + 1)
+        if len(payload) > PREVIEW_REQUEST_BYTES:
+            raise ValueError("Nachladeauftrag ist größer als 128 KiB")
+        with local_content_policy(local_only):
+            result = replay_content_preview(json.loads(payload), local_only)
+        reply = (True, result)
+    except (ValueError, OSError, UnicodeError, re.error, RecursionError) as error:
+        reply = (False, str(error))
+    write_output(json.dumps(reply))
+
+
+def replay_content_preview(request, local_only=False):
+    """Gezieltes Wiederlesen eines bereits gewählten Blatts, keine Suche im Baum.
+
+    Die Fortsetzungsmarke ist eine Fundnummer pro Muster/Quellengeneration.
+    Sie ist kein Byteoffset: Auch Decoder und künftige Dokumentleser können
+    denselben Vertrag bedienen. Wiederlesen bleibt pro Auftrag gedeckelt.
+    """
+    replay = parse_preview_replay_request(request)
+    hit, path, actual_path = replay.hit, replay.path, replay.actual_path
+    expected, leaf_expected = replay.expected, replay.leaf_expected
+    encoding, requested_encoding = replay.encoding, replay.requested_encoding
+    index, occurrence, context = replay.index, replay.occurrence, replay.context
+    original, query = replay.original, replay.query
+    preview = hit["contentPreview"]
+    original_position = original.get("documentPosition")
+    document_reader = replay.document_reader
+    replay_pptx_ocr = document_reader in PPTX_OCR_READERS
+    document = document_reader in DOCUMENT_READERS
+    pattern = query["pattern"]
     matcher = build_matcher(pattern, query["regex"], query["caseSensitive"],
                             query["exact"], query["literalWildcards"], True)
     result = dict(hit)
@@ -1716,7 +1840,6 @@ def load_content_preview(request, local_only=False):
     deadline = time.monotonic() + PREVIEW_LOAD_SECONDS
     read_bytes = 0
     info = {}
-    context = request.get("context") is True
     before = []
     found = None
     count = 0
@@ -1739,15 +1862,13 @@ def load_content_preview(request, local_only=False):
                 return
             read_bytes += len(chunk)
             yield chunk
-    alarm_handler = signal.getsignal(signal.SIGALRM)
-    alarm_timer = signal.getitimer(signal.ITIMER_REAL)
     def expired(signum, frame):
         raise PreviewLoadLimit()
-    signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, max(0.001, PREVIEW_LOAD_SECONDS))
     reader = None
     pieces = None
+    alarm_handler = signal.signal(signal.SIGALRM, expired)
     try:
+        signal.setitimer(signal.ITIMER_REAL, max(0.001, deadline - time.monotonic()))
         with open_regular_file(path) as handle:
             if source_generation(status=os.fstat(handle.fileno())) != leaf_expected:
                 changed()
@@ -1879,14 +2000,17 @@ def load_content_preview(request, local_only=False):
             state.update(reason="documentUnavailable", documentReason=err.reason, documentMessage=str(err))
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
-        if pieces is not None:
-            pieces.close()
-        if isinstance(reader, PDFTextReader):
-            reader.close()
-        elif isinstance(reader, PPTXTextReader) and reader.ocr_reader is not None:
-            reader.ocr_reader.close()
-        signal.signal(signal.SIGALRM, alarm_handler)
-        signal.setitimer(signal.ITIMER_REAL, *alarm_timer)
+        try:
+            if pieces is not None:
+                pieces.close()
+        finally:
+            try:
+                if isinstance(reader, PDFTextReader):
+                    reader.close()
+                elif isinstance(reader, PPTXTextReader) and reader.ocr_reader is not None:
+                    reader.ocr_reader.close()
+            finally:
+                signal.signal(signal.SIGALRM, alarm_handler)
     state["readBytes"] = read_bytes
     if info.get("decoder", encoding) != encoding:
         raise ValueError("Decoder stimmt nicht mehr mit dem Beleg überein")
@@ -2093,7 +2217,7 @@ class DateRangeResolver:
 
     def read_frozen(self, value):
         if (not isinstance(value, dict) or set(value) != {"schemaVersion", "referenceInput", "referenceTime", "referenceISO", "entries"}
-                or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1
+                or not has_schema_version(value, (1,))
                 or value["referenceInput"] != self.reference_input
                 or not isinstance(value["entries"], list) or not 1 <= len(value["entries"]) <= 130):
             raise ValueError("eingefrorener Datumsbeleg passt nicht zum Laufzeitpunkt oder Schema")
@@ -2962,12 +3086,21 @@ DOCUMENT_XML_DEPTH = 128
 PDF_OCR_ENCODING = "poppler-tesseract-text-v1" if sys.platform.startswith("linux") else "pdfkit-vision-text-v1"
 PDF_OCR_SECONDS = 10
 PDF_OCR_PAGES = 128
+PDF_OCR_RENDERED_PAGES = 16
+PDF_OCR_DPI = 150
+PDF_OCR_RENDER_PIXELS = 6_000_000
+PDF_OCR_TOTAL_RENDER_PIXELS = 32_000_000
+PDF_OCR_RENDER_EDGE = 4096
 OCR_ENCODING = "tesseract-ocr-text-v1" if sys.platform.startswith("linux") else "vision-ocr-text-v1"
 OCR_EXTENSIONS = frozenset((".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".heic", ".heif"))
 OCR_PIXELS = 12_000_000
 OCR_EDGE = 8192
 OCR_BLOCKS = 4096
 OCR_TEXT_BYTES = 1024 * 1024
+OCR_BLOCK_BYTES = 65_536
+OCR_MINIMUM_CONFIDENCE = 0.5
+VISION_MINIMUM_TEXT_HEIGHT = 0.003
+VISION_MAXIMUM_BIT_DEPTH = 16
 OCR_REASONS = frozenset(("ocrHelperUnavailable", "ocrDamaged", "ocrLimit", "ocrReadError", "ocrMultipleFrames", "ocrNoText", "ocrTimeout"))
 DOCUMENT_READERS = {"pdfkit-v1": "pdfkit-text-v1", "poppler-v1": "poppler-text-v1", "docx-v1": DOCX_ENCODING, "odt-v1": ODT_ENCODING, "epub-v1": EPUB_ENCODING, "xlsx-v1": XLSX_ENCODING, "pptx-v1": PPTX_ENCODING, "vision-image-v1": "vision-ocr-text-v1", "tesseract-image-v1": "tesseract-ocr-text-v1", "pdfkit-vision-v1": "pdfkit-vision-text-v1", "poppler-tesseract-v1": "poppler-tesseract-text-v1"}
 DOCUMENT_READERS.update(PPTX_OCR_READERS)
@@ -3627,6 +3760,46 @@ class EPUBTextReader(ZIPDocumentReader):
                 raise pending_error
 
 
+class _XLSXSharedStrings:
+    def __init__(self, reader, archive, part):
+        self.reader = reader
+        self.archive = archive
+        self.part = part
+        self.stream = None
+        self.cache = []
+        self.error = None
+
+    def lookup(self, raw):
+        if not re.fullmatch(r"[0-9]{1,6}", raw):
+            raise DocumentReadError("documentDamaged")
+        index = int(raw)
+        if index >= XLSX_SHARED_STRINGS:
+            raise DocumentReadError("documentLimit")
+        # Ein Fehler im ungelesenen Rest entwertet bereits gelesene Strings nicht.
+        if index < len(self.cache):
+            return self.cache[index]
+        if self.error:
+            raise self.error
+        if self.part is None:
+            raise DocumentReadError("documentDamaged")
+        if self.stream is None:
+            self.stream = self.reader.strings_in(self.archive, self.part)
+        try:
+            while index >= len(self.cache):
+                self.cache.append(next(self.stream))
+        except (StopIteration, xml.parsers.expat.ExpatError, UnicodeError):
+            self.error = DocumentReadError("documentDamaged")
+            raise self.error
+        except DocumentReadError as error:
+            self.error = error
+            raise
+        return self.cache[index]
+
+    def close(self):
+        if self.stream is not None:
+            self.stream.close()
+
+
 class XLSXTextReader(ZIPDocumentReader):
     """Zellprojektion mit fortsetzbarer Shared-String-Tabelle, ohne Berechnung."""
     NAMESPACES = ("http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -3831,38 +4004,59 @@ class XLSXTextReader(ZIPDocumentReader):
         if not sheet_data:
             raise DocumentReadError("documentDamaged")
 
+    def _cell_value(self, cell, strings):
+        kind, formula = cell["type"], cell["formula"]
+        if kind not in ("s", "str", "inlineStr", "n", "b", "d"):
+            raise DocumentReadError("documentReadError")
+        if kind == "inlineStr":
+            if formula or cell["text"] is None or cell["value"] is not None:
+                raise DocumentReadError("documentDamaged")
+            return self.decoded("".join(cell["text"])), "text"
+        if cell["text"] is not None:
+            raise DocumentReadError("documentDamaged")
+        if cell["value"] is None:
+            if formula:
+                raise DocumentReadError("documentReadError")
+            return None
+        raw = "".join(cell["value"])
+        if kind in ("s", "str"):
+            text = strings.lookup(raw) if kind == "s" else self.decoded(raw)
+            return text, "cachedString" if formula else "text"
+        if kind == "n":
+            if not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", raw):
+                raise DocumentReadError("documentReadError")
+            return raw, "cachedNumber" if formula else "number"
+        if kind == "b" and raw in ("0", "1"):
+            text = "TRUE" if raw == "1" else "FALSE"
+            return text, "cachedBoolean" if formula else "boolean"
+        if kind == "d":
+            try:
+                datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                raise DocumentReadError("documentReadError")
+            return raw, "cachedDate" if formula else "date"
+        raise DocumentReadError("documentReadError")
+
+    def _sheet_sections(self, archive, part, sheet, sheet_index, strings):
+        for cell in self.cells_in(archive, part):
+            try:
+                projected = self._cell_value(cell, strings)
+                if projected is None:
+                    continue
+                text, value_kind = projected
+                self.text_bytes += len(text.encode("utf-8"))
+                if self.text_bytes > DOCUMENT_TEXT_BYTES:
+                    raise DocumentReadError("documentLimit")
+            except (DocumentReadError, UnicodeError) as err:
+                self.issue(err.reason if isinstance(err, DocumentReadError) else "documentDamaged")
+                continue
+            yield dict(kind="xlsxCell", part=part, sheet=sheet, sheetIndex=sheet_index,
+                       cell=cell["address"], valueKind=value_kind), text
+
     def sections(self, path, deadline):
-        shared_stream = None
-        cache = []
-        shared_error = None
-        try:
-            with self.package(path) as archive:
-                sheets, shared = self.workbook(archive)
-                def shared_value(raw):
-                    nonlocal shared_stream, shared_error
-                    if not re.fullmatch(r"[0-9]{1,6}", raw):
-                        raise DocumentReadError("documentDamaged")
-                    index = int(raw)
-                    if index >= XLSX_SHARED_STRINGS:
-                        raise DocumentReadError("documentLimit")
-                    if index < len(cache):
-                        return cache[index]
-                    if shared_error:
-                        raise shared_error
-                    if shared is None:
-                        raise DocumentReadError("documentDamaged")
-                    if shared_stream is None:
-                        shared_stream = self.strings_in(archive, shared)
-                    try:
-                        while index >= len(cache):
-                            cache.append(next(shared_stream))
-                    except StopIteration:
-                        shared_error = DocumentReadError("documentDamaged")
-                        raise shared_error
-                    except (DocumentReadError, xml.parsers.expat.ExpatError, UnicodeError) as err:
-                        shared_error = err if isinstance(err, DocumentReadError) else DocumentReadError("documentDamaged")
-                        raise shared_error
-                    return cache[index]
+        with self.package(path) as archive:
+            sheets, shared_part = self.workbook(archive)
+            with contextlib.closing(_XLSXSharedStrings(self, archive, shared_part)) as strings:
                 for sheet_index, (sheet, relation) in enumerate(sheets, 1):
                     if sheet_index > DOCUMENT_PARTS:
                         raise DocumentReadError("documentLimit")
@@ -3871,53 +4065,182 @@ class XLSXTextReader(ZIPDocumentReader):
                     try:
                         if relation is None or relation[0] != "worksheet" or relation[1] is None:
                             raise DocumentReadError("documentReadError")
-                        part = relation[1]
-                        for cell in self.cells_in(archive, part):
-                            try:
-                                kind, formula = cell["type"], cell["formula"]
-                                if kind not in ("s", "str", "inlineStr", "n", "b", "d"):
-                                    raise DocumentReadError("documentReadError")
-                                if kind != "inlineStr" and cell["text"] is not None:
-                                    raise DocumentReadError("documentDamaged")
-                                raw = "".join(cell["value"]) if cell["value"] is not None else None
-                                if kind == "inlineStr":
-                                    if formula or cell["text"] is None or raw is not None:
-                                        raise DocumentReadError("documentDamaged")
-                                    text, value_kind = self.decoded("".join(cell["text"])), "text"
-                                elif raw is None:
-                                    if formula:
-                                        raise DocumentReadError("documentReadError")
-                                    continue
-                                elif kind in ("s", "str"):
-                                    text = shared_value(raw) if kind == "s" else self.decoded(raw)
-                                    value_kind = "cachedString" if formula else "text"
-                                elif kind == "n":
-                                    if not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", raw):
-                                        raise DocumentReadError("documentReadError")
-                                    text, value_kind = raw, "cachedNumber" if formula else "number"
-                                elif kind == "b" and raw in ("0", "1"):
-                                    text, value_kind = ("TRUE" if raw == "1" else "FALSE"), "cachedBoolean" if formula else "boolean"
-                                elif kind == "d":
-                                    try:
-                                        datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                                    except ValueError:
-                                        raise DocumentReadError("documentReadError")
-                                    text, value_kind = raw, "cachedDate" if formula else "date"
-                                else:
-                                    raise DocumentReadError("documentReadError")
-                                self.text_bytes += len(text.encode("utf-8"))
-                                if self.text_bytes > DOCUMENT_TEXT_BYTES:
-                                    raise DocumentReadError("documentLimit")
-                                yield dict(kind="xlsxCell", part=part, sheet=sheet, sheetIndex=sheet_index, cell=cell["address"], valueKind=value_kind), text
-                            except (DocumentReadError, UnicodeError) as err:
-                                self.issue(err.reason if isinstance(err, DocumentReadError) else "documentDamaged")
+                        yield from self._sheet_sections(archive, relation[1], sheet, sheet_index, strings)
                     except (DocumentReadError, xml.parsers.expat.ExpatError, UnicodeError, zipfile.BadZipFile) as err:
                         self.issue(err.reason if isinstance(err, DocumentReadError) else "documentDamaged")
                 if self.pending_error:
                     raise self.pending_error
-        finally:
-            if shared_stream is not None:
-                shared_stream.close()
+
+
+@dataclass
+class _PPTXSlideObject:
+    depth: int
+    kind: str
+    identifier: Optional[str] = None
+    paragraph: int = 0
+    row: int = 0
+    column: int = 0
+    bodies: int = 0
+    table: bool = False
+    embed: Optional[str] = None
+    blip_seen: bool = False
+
+
+class _PPTXSlideXML:
+    SHAPE_TREE = ("p:sld", "p:cSld", "p:spTree")
+    NONVISUAL = {"p:sp": "p:nvSpPr", "p:graphicFrame": "p:nvGraphicFramePr",
+                 "p:grpSp": "p:nvGrpSpPr", "p:pic": "p:nvPicPr", "p:cxnSp": "p:nvCxnSpPr"}
+    GRAPHIC_DATA = ("a:graphic", "a:graphicData")
+    TABLE = GRAPHIC_DATA + ("a:tbl",)
+    TABLE_ROW = TABLE + ("a:tr",)
+    TABLE_CELL = TABLE_ROW + ("a:tc",)
+    TABLE_BODY = TABLE_CELL + ("a:txBody",)
+
+    def __init__(self, reader, part, slide):
+        self.reader = reader
+        self.part = part
+        self.slide = slide
+        self.stack = []
+        self.objects = []
+        self.identifiers = set()
+        self.queue = collections.deque()
+        self.tree_seen = False
+        self.paragraph = None
+        self.paragraph_path = None
+        self.text_size = 0
+
+    def _identifier(self, value):
+        if not re.fullmatch(r"[+]?[0-9]{1,10}", value.strip()):
+            raise DocumentReadError("documentDamaged")
+        number = int(value)
+        if number > 4294967295 or number in self.identifiers:
+            raise DocumentReadError("documentDamaged")
+        self.identifiers.add(number)
+        return str(number)
+
+    def start(self, tag, attrs):
+        name = self.reader.local(tag)
+        self.stack.append(name)
+        depth = len(self.stack)
+        if depth > DOCUMENT_XML_DEPTH:
+            raise DocumentReadError("documentLimit")
+        if depth == 1 and name != "p:sld":
+            raise DocumentReadError("documentDamaged")
+        if depth == 3 and tuple(self.stack) == self.SHAPE_TREE:
+            if self.tree_seen:
+                raise DocumentReadError("documentDamaged")
+            self.tree_seen = True
+        if name in self.NONVISUAL:
+            self._start_object(name, depth)
+        if name == "p:cNvPr" and tuple(self.stack) == self.SHAPE_TREE + ("p:nvGrpSpPr", "p:cNvPr"):
+            self._identifier(attrs.get("id", ""))
+        if self.objects:
+            obj = self.objects[-1]
+            self._start_object_element(obj, tuple(self.stack[obj.depth:]), attrs)
+        if self.paragraph is not None and tuple(self.stack) == self.paragraph_path + ("a:br",):
+            self._append_text("\n")
+
+    def _start_object(self, name, depth):
+        if tuple(self.stack[:-1]) != self.SHAPE_TREE:
+            if not self.objects:
+                return
+            parent = self.objects[-1]
+            if parent.kind != "p:grpSp" or depth != parent.depth + 1:
+                return
+        self.reader.objects += 1
+        if self.reader.objects > PPTX_OBJECTS:
+            raise DocumentReadError("documentLimit")
+        self.objects.append(_PPTXSlideObject(depth, name))
+
+    def _start_object_element(self, obj, relative, attrs):
+        if relative == (self.NONVISUAL[obj.kind], "p:cNvPr"):
+            if obj.identifier is not None:
+                raise DocumentReadError("documentDamaged")
+            obj.identifier = self._identifier(attrs.get("id", ""))
+        elif obj.kind == "p:graphicFrame":
+            self._start_table_element(obj, relative, attrs)
+        elif obj.kind == "p:sp":
+            self._start_text_element(obj, relative, ("p:txBody",), "shape")
+        elif obj.kind == "p:pic" and self.reader.ocr_reader is not None and relative == ("p:blipFill", "a:blip"):
+            embeds = [attrs[key] for prefix in self.reader.REL_PREFIXES
+                      if (key := prefix.rstrip("/") + "}embed") in attrs]
+            obj.embed = embeds[0] if len(embeds) == 1 and not obj.blip_seen else None
+            obj.blip_seen = True
+
+    def _start_table_element(self, obj, relative, attrs):
+        if relative == self.GRAPHIC_DATA:
+            obj.table = attrs.get("uri") in tuple(ns + "/table" for ns in self.reader.DRAWING)
+        elif relative == self.TABLE:
+            if not obj.table:
+                raise DocumentReadError("documentDamaged")
+        elif relative == self.TABLE_ROW:
+            obj.row += 1
+            if obj.row > PPTX_TABLE_ROWS:
+                raise DocumentReadError("documentLimit")
+            obj.column = 0
+        elif relative == self.TABLE_CELL:
+            self.reader.cells += 1
+            if self.reader.cells > PPTX_TABLE_CELLS:
+                raise DocumentReadError("documentLimit")
+            obj.column += 1
+            obj.paragraph = obj.bodies = 0
+        else:
+            self._start_text_element(obj, relative, self.TABLE_BODY, "table")
+
+    def _start_text_element(self, obj, relative, body_path, kind):
+        if relative == body_path:
+            obj.bodies += 1
+            if obj.bodies > 1:
+                raise DocumentReadError("documentDamaged")
+        elif relative == body_path + ("a:p",):
+            self._start_paragraph(obj, kind)
+
+    def _start_paragraph(self, obj, kind):
+        if obj.identifier is None or self.paragraph is not None:
+            raise DocumentReadError("documentDamaged")
+        self.reader.paragraphs += 1
+        obj.paragraph += 1
+        if self.reader.paragraphs > DOCUMENT_PARAGRAPHS:
+            raise DocumentReadError("documentLimit")
+        position = dict(kind="pptxParagraph", part=self.part, slide=self.slide,
+                        objectID=obj.identifier, objectKind=kind, paragraph=obj.paragraph)
+        if kind == "table":
+            position.update(row=obj.row, column=obj.column)
+        self.paragraph, self.paragraph_path, self.text_size = (position, []), tuple(self.stack), 0
+
+    def _append_text(self, value):
+        size = len(value.encode("utf-8"))
+        self.text_size += size
+        self.reader.text_bytes += size
+        if self.text_size > DOCUMENT_PARAGRAPH_BYTES or self.reader.text_bytes > DOCUMENT_TEXT_BYTES:
+            raise DocumentReadError("documentLimit")
+        self.paragraph[1].append(value)
+
+    def data(self, value):
+        if self.paragraph is not None and tuple(self.stack) == self.paragraph_path + ("a:r", "a:t"):
+            self._append_text(value)
+
+    def end(self, tag):
+        if self.paragraph is not None and tuple(self.stack) == self.paragraph_path:
+            position, runs = self.paragraph
+            self.queue.append((position, "".join(runs)))
+            self.paragraph = self.paragraph_path = None
+        if self.objects:
+            self._end_object_element(self.objects[-1])
+        self.stack.pop()
+
+    def _end_object_element(self, obj):
+        if obj.kind == "p:graphicFrame" and tuple(self.stack[obj.depth:]) == self.TABLE_CELL and obj.bodies != 1:
+            raise DocumentReadError("documentDamaged")
+        if obj.depth != len(self.stack):
+            return
+        self.objects.pop()
+        if obj.identifier is None:
+            raise DocumentReadError("documentDamaged")
+        if self.reader.ocr_reader is not None and obj.kind == "p:pic":
+            position = dict(kind="pptxOCR", part=self.part, slide=self.slide,
+                            objectID=obj.identifier, objectKind="picture")
+            self.queue.append((position, obj.embed))
 
 
 class PPTXTextReader(ZIPDocumentReader):
@@ -3981,127 +4304,22 @@ class PPTXTextReader(ZIPDocumentReader):
 
     def paragraphs_in(self, archive, part, slide):
         parser = self.parser()
-        stack, objects, seen, queue = [], [], set(), collections.deque()
-        paragraph = None
-        paragraph_path = None
-        text_size = 0
-        tree_seen = False
-        def identifier(value):
-            if not re.fullmatch(r"[+]?[0-9]{1,10}", value.strip()):
-                raise DocumentReadError("documentDamaged")
-            number = int(value)
-            if number > 4294967295 or number in seen:
-                raise DocumentReadError("documentDamaged")
-            seen.add(number)
-            return str(number)
-        def start(tag, attrs):
-            nonlocal paragraph, paragraph_path, text_size, tree_seen
-            name = self.local(tag)
-            stack.append(name)
-            if len(stack) > DOCUMENT_XML_DEPTH:
-                raise DocumentReadError("documentLimit")
-            if len(stack) == 1 and name != "p:sld":
-                raise DocumentReadError("documentDamaged")
-            if stack == ["p:sld", "p:cSld", "p:spTree"]:
-                if tree_seen:
-                    raise DocumentReadError("documentDamaged")
-                tree_seen = True
-            if name in ("p:sp", "p:graphicFrame", "p:grpSp", "p:pic", "p:cxnSp") and (stack[:-1] == ["p:sld", "p:cSld", "p:spTree"] or (objects and objects[-1]["type"] == "p:grpSp" and len(stack) == objects[-1]["depth"] + 1)):
-                if stack[:3] != ["p:sld", "p:cSld", "p:spTree"]:
-                    return
-                self.objects += 1
-                if self.objects > PPTX_OBJECTS:
-                    raise DocumentReadError("documentLimit")
-                objects.append(dict(depth=len(stack), type=name, id=None, paragraph=0, row=0, column=0, bodies=0, table=False))
-            if stack == ["p:sld", "p:cSld", "p:spTree", "p:nvGrpSpPr", "p:cNvPr"]:
-                identifier(attrs.get("id", ""))
-            if not objects:
-                return
-            obj = objects[-1]
-            relative = stack[obj["depth"]:]
-            nonvisual = {"p:sp": "p:nvSpPr", "p:graphicFrame": "p:nvGraphicFramePr", "p:grpSp": "p:nvGrpSpPr", "p:pic": "p:nvPicPr", "p:cxnSp": "p:nvCxnSpPr"}[obj["type"]]
-            if relative == [nonvisual, "p:cNvPr"]:
-                if obj["id"] is not None:
-                    raise DocumentReadError("documentDamaged")
-                obj["id"] = identifier(attrs.get("id", ""))
-            if self.ocr_reader is not None and obj["type"] == "p:pic" and relative == ["p:blipFill", "a:blip"]:
-                embeds = [attrs[key] for prefix in self.REL_PREFIXES
-                          if (key := prefix.rstrip("/") + "}embed") in attrs]
-                obj["embed"] = embeds[0] if len(embeds) == 1 and "embed" not in obj else None
-            table_path = ["a:graphic", "a:graphicData", "a:tbl"]
-            if obj["type"] == "p:graphicFrame" and relative == ["a:graphic", "a:graphicData"]:
-                obj["table"] = attrs.get("uri") in tuple(ns + "/table" for ns in self.DRAWING)
-            if obj["type"] == "p:graphicFrame" and relative == table_path and not obj["table"]:
-                raise DocumentReadError("documentDamaged")
-            if obj["type"] == "p:graphicFrame" and relative == table_path + ["a:tr"]:
-                obj["row"] += 1
-                if obj["row"] > PPTX_TABLE_ROWS:
-                    raise DocumentReadError("documentLimit")
-                obj["column"] = 0
-            if obj["type"] == "p:graphicFrame" and relative == table_path + ["a:tr", "a:tc"]:
-                self.cells += 1
-                if self.cells > PPTX_TABLE_CELLS:
-                    raise DocumentReadError("documentLimit")
-                obj["column"] += 1
-                obj["paragraph"] = obj["bodies"] = 0
-            if (obj["type"] == "p:sp" and relative == ["p:txBody"]) or (obj["type"] == "p:graphicFrame" and relative == table_path + ["a:tr", "a:tc", "a:txBody"]):
-                obj["bodies"] += 1
-                if obj["bodies"] > 1:
-                    raise DocumentReadError("documentDamaged")
-            shape_text = obj["type"] == "p:sp" and relative == ["p:txBody", "a:p"]
-            table_text = obj["type"] == "p:graphicFrame" and relative == table_path + ["a:tr", "a:tc", "a:txBody", "a:p"]
-            if shape_text or table_text:
-                if obj["id"] is None or paragraph is not None:
-                    raise DocumentReadError("documentDamaged")
-                self.paragraphs += 1
-                obj["paragraph"] += 1
-                if self.paragraphs > DOCUMENT_PARAGRAPHS:
-                    raise DocumentReadError("documentLimit")
-                position = dict(kind="pptxParagraph", part=part, slide=slide, objectID=obj["id"], objectKind="shape" if shape_text else "table", paragraph=obj["paragraph"])
-                if table_text:
-                    position.update(row=obj["row"], column=obj["column"])
-                paragraph, paragraph_path, text_size = (position, []), tuple(stack), 0
-            if paragraph is not None and tuple(stack) == paragraph_path + ("a:br",):
-                append("\n")
-        def append(value):
-            nonlocal text_size
-            size = len(value.encode("utf-8"))
-            text_size += size
-            self.text_bytes += size
-            if text_size > DOCUMENT_PARAGRAPH_BYTES or self.text_bytes > DOCUMENT_TEXT_BYTES:
-                raise DocumentReadError("documentLimit")
-            paragraph[1].append(value)
-        def data(value):
-            if paragraph is not None and tuple(stack) == paragraph_path + ("a:r", "a:t"):
-                append(value)
-        def end(tag):
-            nonlocal paragraph, paragraph_path
-            if paragraph is not None and tuple(stack) == paragraph_path:
-                position, runs = paragraph
-                queue.append((position, "".join(runs)))
-                paragraph = paragraph_path = None
-            if objects and objects[-1]["type"] == "p:graphicFrame" and stack[objects[-1]["depth"]:] == ["a:graphic", "a:graphicData", "a:tbl", "a:tr", "a:tc"] and objects[-1]["bodies"] != 1:
-                raise DocumentReadError("documentDamaged")
-            if objects and objects[-1]["depth"] == len(stack):
-                obj = objects.pop()
-                if obj["id"] is None:
-                    raise DocumentReadError("documentDamaged")
-                if self.ocr_reader is not None and obj["type"] == "p:pic":
-                    queue.append((dict(kind="pptxOCR", part=part, slide=slide,
-                                       objectID=obj["id"], objectKind="picture"), obj.get("embed")))
-            stack.pop()
-        parser.StartElementHandler, parser.EndElementHandler, parser.CharacterDataHandler = start, end, data
+        state = _PPTXSlideXML(self, part, slide)
+        parser.StartElementHandler = state.start
+        parser.EndElementHandler = state.end
+        parser.CharacterDataHandler = state.data
         for chunk in self.chunks(archive, part):
             try:
                 parser.Parse(chunk, False)
             except (DocumentReadError, xml.parsers.expat.ExpatError):
-                while queue:
-                    yield queue.popleft()
+                # Fertige Absätze können vor einem Fehler im selben Block belegen.
+                while state.queue:
+                    yield state.queue.popleft()
                 raise
-            while queue:
-                yield queue.popleft()
+            while state.queue:
+                yield state.queue.popleft()
         parser.Parse(b"", True)
-        if not tree_seen:
+        if not state.tree_seen:
             raise DocumentReadError("documentDamaged")
 
     def picture_sections(self, archive, position, relation, deadline):
@@ -4254,7 +4472,7 @@ class PDFTextReader:
                         raise DocumentReadError(self.read_error_reason)
                     break
             response = json.loads(data)
-            if not isinstance(response, dict) or type(response.get("schemaVersion")) is not int or response["schemaVersion"] != 1 \
+            if not has_schema_version(response, (1,)) \
                     or type(response.get("ok")) is not bool:
                 raise DocumentReadError(self.read_error_reason)
             if not response["ok"]:
@@ -4335,7 +4553,7 @@ def validated_ocr_blocks(blocks, position):
                 or not isinstance(block["text"], str) or not block["text"]:
             raise DocumentReadError("ocrReadError")
         confidence, region = block["confidence"], block["region"]
-        if type(confidence) not in (int, float) or not math.isfinite(confidence) or not 0.5 <= confidence <= 1 \
+        if type(confidence) not in (int, float) or not math.isfinite(confidence) or not OCR_MINIMUM_CONFIDENCE <= confidence <= 1 \
                 or not isinstance(region, list) or len(region) != 4 \
                 or any(type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1 for value in region) \
                 or region[2] <= 0 or region[3] <= 0 or region[0] + region[2] > 1.000001 or region[1] + region[3] > 1.000001:
@@ -4345,7 +4563,7 @@ def validated_ocr_blocks(blocks, position):
         except UnicodeError:
             raise DocumentReadError("ocrReadError")
         total += size
-        if size > 65536 or total > OCR_TEXT_BYTES:
+        if size > OCR_BLOCK_BYTES or total > OCR_TEXT_BYTES:
             raise DocumentReadError("ocrLimit")
         sections.append((dict(position, block=index, confidence=confidence, region=region), block["text"]))
     return sections
@@ -4578,7 +4796,7 @@ def parse_finder_attribute(field, data):
 
 def validate_finder_snapshot(value):
     if (not isinstance(value, dict) or set(value) != {"schemaVersion", "sourceGeneration", "fields"}
-            or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1
+            or not has_schema_version(value, (1,))
             or not isinstance(value["fields"], dict) or not set(value["fields"]).issubset(FINDER_ATTRIBUTES)):
         raise ValueError("ungültiger Finder-Snapshot")
     if len(json.dumps(value, ensure_ascii=False).encode("utf-8")) > MAX_FINDER_SNAPSHOT_BYTES:
@@ -4678,7 +4896,7 @@ class FileProbe:
                                               # lesbaren Datenstrom
         # Dokumentleser haben eigene laufende Fristen. Nur rohe Inhaltsströme
         # dürfen auch mitten in einer Datei auf die Fortsetzung warten.
-        if search.quick_deadline is not None and not search.document_mode:
+        if search.quick_deadline is not None and not search.options.document_mode:
             def paused_chunks(*args, **kwargs):
                 for chunk in chunker(*args, **kwargs):
                     search.check_quick_pause()
@@ -4716,15 +4934,15 @@ class FileProbe:
         self._metadata = MISSING
         self._finder_metadata = MISSING
         self._content_lines = MISSING
-        self.preview_generation = getattr(search, "preview_source_generation", None)
-        if search.document_mode and self.preview_generation is None:
+        self.preview_generation = search.preview_source_generation
+        if search.options.document_mode and self.preview_generation is None:
             self.preview_generation = source_generation(filesystem_path)
         self.content_preview = (ContentPreviewCapture(self)
-                                if getattr(search, "content_preview", False)
+                                if search.options.content_preview
                                 and search.preview_remaining > 0 else None)
 
     def local_content_allowed(self, record=True):
-        if self.search.local_only and not self.in_archive:
+        if self.search.options.local_only and not self.in_archive:
             reason = local_content_reason(self.filesystem_path)
             if reason is not None:
                 if record and not self.local_content_checked:
@@ -4801,9 +5019,9 @@ class FileProbe:
 
     def finder_metadata(self):
         if self._finder_metadata is MISSING:
-            query = self.search.criteria_query
+            query = self.search.options.criteria_query
             fields = list(query.finder_fields) if query is not None else []
-            if self.search.include_finder_metadata:
+            if self.search.options.include_finder_metadata:
                 fields = list(FINDER_ATTRIBUTES)
             if self.in_archive:
                 self._finder_metadata = dict(schemaVersion=1, sourceGeneration=None,
@@ -4813,7 +5031,7 @@ class FileProbe:
         return self._finder_metadata
 
     def final_finder_metadata(self):
-        if self.search.include_finder_metadata:
+        if self.search.options.include_finder_metadata:
             self.finder_metadata()
         if self._finder_metadata is MISSING:
             return None
@@ -4857,7 +5075,7 @@ class FileProbe:
         None, wenn auch nur ein Begriff fehlt. Bei EINEM Begriff eine Liste
         mit einem Eintrag."""
         if self._content_lines is MISSING:
-            if self.search.criteria_content_matchers or self.search.document_mode:
+            if self.search.criteria_content_matchers or self.search.options.document_mode:
                 results = [self.criteria_content().resolve(matcher)
                            for matcher in self.search.matchers]
                 self._content_lines = ([result[1] for result in results]
@@ -4868,16 +5086,16 @@ class FileProbe:
         return self._content_lines
 
     def matching_pieces(self, normalize):
-        if not self.search.document_mode:
+        if not self.search.options.document_mode:
             with self.content_stream() as stream:
                 yield from iter_matching_pieces(self.chunker(stream, free_bytes=self.dimension_bytes),
-                    normalize, self.search.text_encoding, self.decoder_info)
+                    normalize, self.search.options.text_encoding, self.decoder_info)
             return
-        image_ocr = self.search.ocr and self.extension in OCR_EXTENSIONS
+        image_ocr = self.search.options.ocr and self.extension in OCR_EXTENSIONS
         if self.extension != ".pdf" and self.extension not in PACKAGE_DOCUMENT_READERS and not image_ocr:
             raise DocumentReadError("documentUnsupported")
-        pdf_ocr = self.search.pdf_ocr and self.extension == ".pdf"
-        pptx_ocr = self.search.pptx_ocr and self.extension == ".pptx"
+        pdf_ocr = self.search.options.pdf_ocr and self.extension == ".pdf"
+        pptx_ocr = self.search.options.pptx_ocr and self.extension == ".pptx"
         seconds = PDF_OCR_SECONDS if pdf_ocr else DOCUMENT_SECONDS
         deadline = time.monotonic() + seconds
         previous_handler = signal.getsignal(signal.SIGALRM)
@@ -5223,7 +5441,7 @@ class CriteriaContentScan:
                         return
             finally:
                 pieces.close()
-            negative = {condition.matcher for condition in (probe.search.criteria_query.conditions if probe.search.criteria_query else [])
+            negative = {condition.matcher for condition in (probe.search.options.criteria_query.conditions if probe.search.options.criteria_query else [])
                         if isinstance(condition, ContentCondition) and condition.negate}
             if negative.intersection(self.pending) and probe.decoder_info.get("hadReplacement"):
                 probe.search.report_warning("%s: ungültige Zeichenfolgen ersetzt; Abwesenheit von Inhalt bleibt unbekannt" % probe.label, reason="invalidDecoding", path=probe.label)
@@ -5258,7 +5476,7 @@ class CriteriaContentScan:
             if allow_query_decision and matcher not in self.results and len(self.results) > before:
                 self.probe.peek_content = True
                 try:
-                    decided = self.probe.search.criteria_query.root.evaluate(self.probe)
+                    decided = self.probe.search.options.criteria_query.root.evaluate(self.probe)
                 finally:
                     self.probe.peek_content = False
                 if decided is not None:
@@ -5344,8 +5562,7 @@ def parse_criteria_query(document, date_resolver=None):
     """Validiert den ganzen Baum, bevor ein Suchobjekt angefasst wird."""
     if (not isinstance(document, dict)
             or set(document) != {"schemaVersion", "root"}
-            or type(document["schemaVersion"]) is not int
-            or document["schemaVersion"] not in (1, 2, 3)):
+            or not has_schema_version(document, (1, 2, 3))):
         raise ValueError("Kriterien brauchen schemaVersion 1/2/3 und root")
     date_resolver = date_resolver or DateRangeResolver()
     identifiers = set()
@@ -5987,82 +6204,215 @@ def linux_birthtime(path, expected):
         return None
 
 
+def format_document_position(position: dict[str, Any]) -> str:
+    kind = position["kind"]
+    line = position["line"]
+    if kind == "xlsxCell":
+        return "Blatt %s, Zelle %s, Zeile %d" % (position["sheet"], position["cell"], line)
+    if kind == "pdfPage":
+        return "Seite %d Zeile %d" % (position["page"], line)
+    if kind == "pdfTextPage":
+        return "PDF-Seite %d Zeile %d (Textebene)" % (position["page"], line)
+    if kind == "pdfOCR":
+        return ("PDF-Seite %d OCR-Bereich %d Zeile %d (erkannt, ungefähre Seitenposition)"
+                % (position["page"], position["block"], line))
+    if kind == "imageOCR":
+        return ("OCR-Bereich %d Zeile %d (erkannt, ungefähre Bildposition)"
+                % (position["block"], line))
+    if kind == "pptxOCR":
+        return ("Folie %d Bild %s OCR-Bereich %d Zeile %d (erkannt, ungefähre Bildposition)"
+                % (position["slide"], position["objectID"], position["block"], line))
+    if kind in ("docxParagraph", "odtParagraph", "epubParagraph", "pptxParagraph"):
+        return "%s Absatz %d Zeile %d" % (position["part"], position["paragraph"], line)
+    raise ValueError("Unbekannte Dokumentposition: %s" % kind)
+
+
+@dataclass(frozen=True)
+class HitRecord:
+    """Ein Suchbeleg mit Rohpfaden für Aktionen und getrennten Anzeigewerten."""
+
+    path: str
+    kind: str
+    is_directory: bool
+    line: Optional[int] = None
+    size: Optional[int] = None
+    filesystem_path: Optional[str] = None
+    archive_members: Optional[Sequence[str]] = None
+    field: Optional[str] = None
+    value: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    modified: Optional[float] = None
+    created: Optional[float] = None
+    terms: Optional[list[dict[str, Any]]] = None
+    criteria_evidence: Optional[list[dict[str, Any]]] = None
+    content_encoding: Optional[str] = None
+    content_preview: Optional[dict[str, Any]] = None
+    document_position: Optional[dict[str, Any]] = None
+    document_generation: Optional[dict[str, Any]] = None
+    finder_metadata: Optional[dict[str, Any]] = None
+
+    def json_record(self, search_root: Optional[str], path_bytes: bool) -> dict[str, Any]:
+        members = list(self.archive_members or ())
+        record = {"path": json_safe_text(self.path), "type": self.kind,
+                  "isDirectory": self.is_directory}
+        raw_filesystem_path = (self.filesystem_path
+                               if self.filesystem_path is not None else self.path)
+        record["filesystemPath"] = json_safe_text(raw_filesystem_path)
+        record["archiveMembers"] = [json_safe_text(item)
+                                    for item in members]
+        if search_root is not None:
+            record["searchRoot"] = json_safe_text(search_root)
+        if members:
+            # Die sichtbaren Namen dürfen bei ungültigem UTF-8 dasselbe
+            # Ersatzzeichen tragen. Diese parallele Liste hält die echte
+            # Identität auseinander und macht --extract-json verlustfrei.
+            record["archiveMemberBytes"] = [archive_member_bytes(item)
+                                            for item in members]
+        if self.line is not None:
+            record["line"] = self.line
+        if self.size is not None:
+            record["size"] = self.size
+        if self.field is not None:
+            record["field"] = self.field
+            record["value"] = self.value
+        if self.width is not None and self.height is not None:
+            record["width"] = self.width
+            record["height"] = self.height
+        if self.modified is not None:
+            record["modified"] = self.modified
+        if self.created is not None:
+            record["created"] = self.created
+        if self.terms:
+            record["terms"] = self.terms
+        if self.content_encoding is not None:
+            record["contentEncoding"] = self.content_encoding
+        if self.criteria_evidence is not None:
+            record["criteriaEvidence"] = self.criteria_evidence
+        if self.finder_metadata is not None:
+            record["finderMetadata"] = self.finder_metadata
+        if self.content_preview is not None:
+            record["contentPreview"] = self.content_preview
+        if self.document_generation is not None:
+            record["documentSourceGeneration"] = self.document_generation
+        if self.document_position is not None:
+            record["documentPosition"] = self.document_position
+        if path_bytes:
+            record["filesystemPathBytes"] = base64.b64encode(os.fsencode(raw_filesystem_path)).decode("ascii")
+            if search_root is not None:
+                record["searchRootPathBytes"] = base64.b64encode(os.fsencode(search_root)).decode("ascii")
+            # Alte Leser sehen keinen Pfad und können keine verlustbehaftete Aktion ausführen.
+            record = {"type": "hitV2", "schemaVersion": 2, "hit": record}
+        return record
+
+    def text(self) -> str:
+        if self.document_position is not None:
+            positions = [item["documentPosition"] for item in self.terms or ()
+                         if "documentPosition" in item] or [self.document_position]
+            return self.path + ":" + ", ".join(map(format_document_position, positions))
+        if self.terms and self.terms[0].get("line") is not None:
+            return self.path + ":" + ",".join(str(item["line"]) for item in self.terms)
+        if self.terms and self.terms[0].get("field") is not None:
+            return self.path + ":" + " | ".join(
+                "%s: %s" % (item["field"], item["value"]) for item in self.terms)
+        text = self.path + (":%d" % self.line if self.line is not None else "")
+        if self.field is not None:
+            text += ":%s: %s" % (self.field, self.value)
+        return text
+
+
+@dataclass(frozen=True)
+class SearchOptions:
+    content_mode: bool
+    archive_depth: int
+    as_json: bool
+    progress: bool = False
+    only: str = "both"
+    include_hidden: bool = False
+    max_depth: Optional[int] = None
+    max_archive_member_bytes: int = DEFAULT_MAX_ARCHIVE_MEMBER_BYTES
+    max_archive_total_bytes: int = DEFAULT_MAX_ARCHIVE_TOTAL_BYTES
+    max_archive_ratio: float = DEFAULT_MAX_ARCHIVE_RATIO
+    content_probe: Optional[ContentProbe] = None
+    metadata_mode: bool = False
+    metadata_fields: Optional[Sequence[str]] = None
+    min_width: Optional[int] = None
+    max_width: Optional[int] = None
+    min_height: Optional[int] = None
+    max_height: Optional[int] = None
+    exiftool_path: Optional[str] = None
+    exclusions: Sequence[str] = ()
+    min_size: Optional[int] = None
+    max_size: Optional[int] = None
+    modified_from: Optional[float] = None
+    modified_to: Optional[float] = None
+    created_from: Optional[float] = None
+    created_to: Optional[float] = None
+    extra_matchers: Sequence[Callable[[str], bool]] = ()
+    criteria_query: Optional[CriteriaQuery] = None
+    text_encoding: str = "utf-8"
+    content_preview: bool = False
+    search_report: Optional[SearchReport] = None
+    document_mode: bool = False
+    include_finder_metadata: bool = False
+    local_only: bool = False
+    ocr: bool = False
+    pdf_ocr: bool = False
+    pptx_ocr: bool = False
+    json_path_bytes: bool = False
+
+
 class Search:
-    """Kapselt eine Suche: Muster, Optionen und das Einsammeln der Treffer.
+    """Verwaltet Traversierung, Archivbudgets, Diagnose und Ausgabe eines Suchlaufs."""
 
-    Die Klasse hält bewusst wenig Zustand: matcher (die Testfunktion),
-    die Optionen und den Trefferzustand für den Exit-Code.
-    """
-
-    def __init__(self, matcher, content_mode, archive_depth, as_json,
-                 progress=False, only="both", include_hidden=False,
-                 max_depth=None,
-                 max_archive_member_bytes=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
-                 max_archive_total_bytes=DEFAULT_MAX_ARCHIVE_TOTAL_BYTES,
-                 max_archive_ratio=DEFAULT_MAX_ARCHIVE_RATIO,
-                 content_probe=None, metadata_mode=False,
-                 metadata_fields=None, min_width=None, max_width=None,
-                 min_height=None, max_height=None, exiftool_path=None,
-                 exclusions=(), min_size=None, max_size=None,
-                 modified_from=None, modified_to=None,
-                 created_from=None, created_to=None, extra_matchers=(),
-                 criteria_query=None, text_encoding="utf-8", content_preview=False, search_report=None,
-                 document_mode=False, include_finder_metadata=False, local_only=False, ocr=False, pdf_ocr=False, pptx_ocr=False, json_path_bytes=False):
+    def __init__(self, matcher: Optional[Callable[[str], bool]], content_mode: bool,
+                 archive_depth: int, as_json: bool, **settings: Any):
+        options = SearchOptions(content_mode, archive_depth, as_json, **settings)
+        self.options = options
         self.quick_deadline = None
-        self.report = search_report
-        self.local_only = local_only
+        self.report = options.search_report
         self.search_root = None
-        self.document_mode = document_mode
-        self.ocr = ocr
-        self.pdf_ocr = pdf_ocr
-        self.pptx_ocr = pptx_ocr
-        self.json_path_bytes = json_path_bytes
-        self.include_finder_metadata = include_finder_metadata
-        self.pdf_reader = (PDFOCRTextReader if pdf_ocr else PDFTextReader)(find_pdf_helper()) if document_mode else None
-        self.ocr_reader = OCRTextReader(find_ocr_helper()) if document_mode and (ocr or pptx_ocr) else None
-        self.text_encoding = text_encoding
-        self.content_preview = content_preview
+        pdf_reader_type = PDFOCRTextReader if options.pdf_ocr else PDFTextReader
+        self.pdf_reader = pdf_reader_type(find_pdf_helper()) if options.document_mode else None
+        self.ocr_reader = (OCRTextReader(find_ocr_helper())
+                           if options.document_mode and (options.ocr or options.pptx_ocr) else None)
         self.preview_remaining = MAX_PREVIEW_TOTAL_BYTES
         self.preview_source_generation = None
         self.matcher = matcher                # Funktion text -> bool
         # Mehrwortsuche (--term): weitere Testfunktionen, die ZUSÄTZLICH
         # zutreffen müssen — im selben Ziel (Name, Inhalt oder Metadaten),
         # aber nicht in derselben Zeile bzw. demselben Wert.
-        if matcher is None and extra_matchers:
+        if matcher is None and options.extra_matchers:
             # main() macht den ersten Begriff zum Muster; ein direkter
             # Aufrufer, der nur weitere Begriffe gibt, bekäme sonst still
             # eine Suche OHNE Textkriterium.
             raise ValueError("extra_matchers ohne matcher: der erste "
                              "Begriff gehört in matcher")
         self.matchers = ([] if matcher is None
-                         else [matcher] + list(extra_matchers))
+                         else [matcher] + list(options.extra_matchers))
         # Die Begriffe im Klartext, für die Belege in der Ausgabe; main()
         # setzt sie, Tests dürfen sie weglassen.
         self.terms = [getattr(m, "term", "") for m in self.matchers]
-        self.exclusions = Exclusions(exclusions)
-        self.needs_relative_path = (criteria_query is not None
-                                    and criteria_query.needs_relative_path)
-        self.criteria_query = criteria_query
-        self.criteria_content_matchers = [] if criteria_query is None else criteria_query.content_matchers
-        self.content_probe = content_probe    # ContentProbe oder None:
-                                              # billiger Vortest vor der
-                                              # zeilenweisen Inhaltssuche
+        self.exclusions = Exclusions(options.exclusions)
+        query = options.criteria_query
+        self.needs_relative_path = query is not None and query.needs_relative_path
+        self.criteria_content_matchers = [] if query is None else query.content_matchers
         # Wogegen das Muster läuft: "name", "content" oder "metadata" —
         # oder None, wenn es gar kein Muster gibt. Dann filtern allein die
         # Maß-/Faktengrenzen, und die Suche hat kein Textkriterium.
         if matcher is None:
             self.text_mode = None
-        elif content_mode or document_mode:
+        elif options.content_mode or options.document_mode:
             self.text_mode = "content"
-        elif metadata_mode:
+        elif options.metadata_mode:
             self.text_mode = "metadata"
         else:
             self.text_mode = "name"
-        self.metadata_fields = list(metadata_fields or METADATA_TEXT_FIELDS)
+        self.metadata_fields = list(options.metadata_fields or METADATA_TEXT_FIELDS)
         # Die Kriterienliste — siehe Kommentar über NameCriterion.
         criteria = []
-        if criteria_query is not None:
-            criteria.append(criteria_query)
+        if query is not None:
+            criteria.append(query)
         if self.text_mode == "name":
             criteria.append(NameCriterion(self.matchers))
         elif self.text_mode == "content":
@@ -6070,17 +6420,17 @@ class Search:
         elif self.text_mode == "metadata":
             criteria.append(MetadataCriterion(self.matchers,
                                               self.metadata_fields))
-        self.wants_size = min_size is not None or max_size is not None
-        if any(limit is not None for limit in (
-                min_size, max_size, modified_from, modified_to, created_from, created_to)):
-            criteria.append(FileFactsCriterion(min_size, max_size, modified_from,
-                                               modified_to, created_from, created_to))
+        self.wants_size = options.min_size is not None or options.max_size is not None
+        facts = (options.min_size, options.max_size, options.modified_from,
+                 options.modified_to, options.created_from, options.created_to)
+        if any(limit is not None for limit in facts):
+            criteria.append(FileFactsCriterion(*facts))
         self.wants_dimensions = any(
             limit is not None
-            for limit in (min_width, max_width, min_height, max_height))
+            for limit in (options.min_width, options.max_width, options.min_height, options.max_height))
         if self.wants_dimensions:
-            criteria.append(DimensionCriterion(min_width, max_width,
-                                               min_height, max_height))
+            criteria.append(DimensionCriterion(options.min_width, options.max_width,
+                                               options.min_height, options.max_height))
         self.criteria = sorted(criteria, key=lambda item: item.cost)
         # Ordner können Namen und Zeitpunkte erfüllen, aber weder Datei-
         # größe noch Inhalt, Pixelmaße oder exiftool-Metadaten.
@@ -6089,28 +6439,15 @@ class Search:
                                       and not self.wants_size)
         # exiftool: Pfad (oder None) und der erst bei Bedarf gestartete
         # Prozess. Angefordert werden nur die Felder, die dieser Lauf braucht.
-        self.exiftool_path = exiftool_path
         self._exiftool = MISSING
         self.exiftool_fields = []
         if self.text_mode == "metadata":
             self.exiftool_fields.extend(self.metadata_fields)
-        if criteria_query is not None:
-            self.exiftool_fields.extend(criteria_query.metadata_fields)
-        if self.wants_dimensions or (criteria_query is not None and criteria_query.needs_dimensions):
+        if query is not None:
+            self.exiftool_fields.extend(query.metadata_fields)
+        if self.wants_dimensions or (query is not None and query.needs_dimensions):
             self.exiftool_fields.extend(["ImageWidth", "ImageHeight"])
         self.exiftool_fields = list(dict.fromkeys(self.exiftool_fields))
-        self.archive_depth = archive_depth    # 0 = Archive ignorieren,
-                                              # 1 = in Archive schauen,
-                                              # 2 = auch Archive IN Archiven …
-        self.only = only                      # "both"/"files"/"dirs" —
-                                              # Treffer auf einen Typ begrenzen
-        self.include_hidden = include_hidden  # unsichtbare (Punkt-)Dateien
-                                              # und -Ordner mitdurchsuchen?
-        self.max_depth = max_depth            # None = unbegrenzt tief;
-                                              # 1 = nur direkt im Startpfad
-                                              # (zählt wie `find -maxdepth`)
-        self.as_json = as_json                # Ausgabeformat JSONL statt Text
-        self.progress = progress              # laufend melden, wo wir suchen
         self.found_any = False                # für den Exit-Code (0 vs. 1)
         # Zahl der bisher gemeldeten Treffer. search_archive() liest sie,
         # um den Rückfall auf „ganz normale Datei" auszuschließen, sobald
@@ -6118,23 +6455,24 @@ class Search:
         # Datei ein zweites Mal, jetzt als Dateitreffer.
         self.emitted = 0
         self.archive_budget = ArchiveBudget(
-            max_archive_member_bytes,
-            max_archive_total_bytes,
-            max_archive_ratio,
+            options.max_archive_member_bytes,
+            options.max_archive_total_bytes,
+            options.max_archive_ratio,
         )
         self._last_progress = None            # Zeitstempel fürs Drosseln
                                               # (None = noch nie gemeldet;
                                               # nicht 0.0 — time.monotonic()
                                               # startet je nach Python nahe 0)
 
+
     # ---------- Ausgabe ----------
 
     def type_allowed(self, is_directory):
         """Filtert Treffer nach Typ (Drei-Wege-Umschalter der GUI):
         "files" nur Dateien, "dirs" nur Ordner, "both" (Default) beides."""
-        if self.only == "files":
+        if self.options.only == "files":
             return not is_directory
-        if self.only == "dirs":
+        if self.options.only == "dirs":
             return is_directory
         return True
 
@@ -6144,112 +6482,13 @@ class Search:
         die auf macOS/Unix übliche Konvention, deckt den Finder-Fall ab."""
         return name.startswith(".")
 
-    def emit(self, path, kind, line=None, size=None, filesystem_path=None,
-             archive_members=None, is_dir=None, field=None, value=None,
-             width=None, height=None, modified=None, created=None,
-             terms=None, criteria_evidence=None, content_encoding=None,
-             content_preview=None, document_position=None, document_generation=None,
-             finder_metadata=None):
-        """Gibt EINEN Treffer aus. kind ist "file", "dir" oder "member"
-        (member = Eintrag innerhalb eines Archivs). line ist bei
-        Inhaltssuche die Zeilennummer des ersten Treffers, size die
-        Dateigröße in Bytes (bei Ordnern None).
-
-        `is_dir` sagt ausdrücklich, ob der Treffer ein Verzeichnis ist. Der
-        Typ `member` allein verrät das nicht: Ein Ordner IM Archiv kam vorher
-        genauso an wie eine Datei im Archiv, und die Oberfläche zeigte ihn als
-        Datei an, filterte ihn beim Ordner-Umschalter falsch und erzeugte beim
-        Öffnen eine leere Datei (Review-Fund 2026-08-17). Ohne Angabe folgt es
-        dem Typ.
-
-        `field`/`value` nennen bei einer Metadatensuche das Feld und den
-        gefundenen Wert, `width`/`height` die Pixelmaße, wenn ein Maßfilter
-        sie ermittelt hat. Alle vier sind optional und ändern den bisherigen
-        Pflichtsatz nicht.
-
-        `modified`/`created` sind Änderungs- und Erstellungszeit als
-        Sekunden seit 1970 (Unix-Zeit, Gleitkomma). Beide sind optional:
-        Ein Zip- oder Tar-Eintrag kennt nur seine Änderungszeit, ein
-        bsdtar-Eintrag und eine einzeln komprimierte Datei (`.gz`) keine
-        von beiden. Die Oberflächen zeigen daraus die Spalten
-        „Änderungsdatum" und „Erstellungsdatum".
-
-        `terms` gibt es nur bei der Mehrwortsuche (ab zwei Begriffen): je
-        Begriff ein dict mit `term` und — bei Inhalt — `line` bzw. — bei
-        Metadaten — `field` und `value`. `line`/`field`/`value` nennen
-        weiter den ERSTEN Begriff, damit ältere Leser nichts verlieren."""
+    def emit(self, hit: HitRecord) -> None:
         self.found_any = True
         self.emitted += 1
-        directory = kind == "dir" if is_dir is None else bool(is_dir)
-        if self.as_json:
-            members = list(archive_members or ())
-            record = {"path": json_safe_text(path), "type": kind,
-                      "isDirectory": directory}
-            raw_filesystem_path = (filesystem_path
-                                   if filesystem_path is not None else path)
-            record["filesystemPath"] = json_safe_text(raw_filesystem_path)
-            record["archiveMembers"] = [json_safe_text(item)
-                                        for item in members]
-            if self.search_root is not None:
-                record["searchRoot"] = json_safe_text(self.search_root)
-            if members:
-                # Die sichtbaren Namen dürfen bei ungültigem UTF-8 dasselbe
-                # Ersatzzeichen tragen. Diese parallele Liste hält die echte
-                # Identität auseinander und macht --extract-json verlustfrei.
-                record["archiveMemberBytes"] = [archive_member_bytes(item)
-                                                for item in members]
-            if line is not None:
-                record["line"] = line
-            if size is not None:
-                record["size"] = size
-            if field is not None:
-                record["field"] = field
-                record["value"] = value
-            if width is not None and height is not None:
-                record["width"] = width
-                record["height"] = height
-            if modified is not None:
-                record["modified"] = modified
-            if created is not None:
-                record["created"] = created
-            if terms:
-                record["terms"] = terms
-            if content_encoding is not None:
-                record["contentEncoding"] = content_encoding
-            if criteria_evidence is not None:
-                record["criteriaEvidence"] = criteria_evidence
-            if finder_metadata is not None:
-                record["finderMetadata"] = finder_metadata
-            if content_preview is not None:
-                record["contentPreview"] = content_preview
-            if document_generation is not None:
-                record["documentSourceGeneration"] = document_generation
-            if document_position is not None:
-                record["documentPosition"] = document_position
-            if self.json_path_bytes:
-                record["filesystemPathBytes"] = base64.b64encode(os.fsencode(raw_filesystem_path)).decode("ascii")
-                if self.search_root is not None:
-                    record["searchRootPathBytes"] = base64.b64encode(os.fsencode(self.search_root)).decode("ascii")
-                # Alte Leser sehen keinen Pfad und können keine verlustbehaftete Aktion ausführen.
-                record = {"type": "hitV2", "schemaVersion": 2, "hit": record}
-            text = json.dumps(record, ensure_ascii=False)
-        elif document_position is not None:
-            positions = [item["documentPosition"] for item in terms or [] if "documentPosition" in item] or [document_position]
-            text = path + ":" + ", ".join(("PDF-Seite %d OCR-Bereich %d Zeile %d (erkannt, ungefähre Seitenposition)" % (item["page"], item["block"], item["line"]) if item["kind"] == "pdfOCR" else "PDF-Seite %d Zeile %d (Textebene)" % (item["page"], item["line"]) if item["kind"] == "pdfTextPage" else "OCR-Bereich %d Zeile %d (erkannt, ungefähre Bildposition)" % (item["block"], item["line"]) if item["kind"] == "imageOCR" else
-                                          "Folie %d Bild %s OCR-Bereich %d Zeile %d (erkannt, ungefähre Bildposition)" % (item["slide"], item["objectID"], item["block"], item["line"]) if item["kind"] == "pptxOCR" else
-                                          "Seite %d Zeile %d" % (item["page"], item["line"]) if item["kind"] == "pdfPage" else
-                                          "%s Absatz %d Zeile %d" % (item["part"], item["paragraph"], item["line"])) for item in positions)
-        elif terms and terms[0].get("line") is not None:
-            # Mehrere Begriffe: die Zeilen aller Begriffe in ihrer
-            # Reihenfolge, mit Komma — „pfad:3,17".
-            text = path + ":" + ",".join(str(item["line"]) for item in terms)
-        elif terms and terms[0].get("field") is not None:
-            text = path + ":" + " | ".join(
-                "%s: %s" % (item["field"], item["value"]) for item in terms)
+        if self.options.as_json:
+            text = json.dumps(hit.json_record(self.search_root, self.options.json_path_bytes), ensure_ascii=False)
         else:
-            text = path + (":%d" % line if line is not None else "")
-            if field is not None:
-                text += ":%s: %s" % (field, value)
+            text = hit.text()
         write_output(text)
 
     def omission(self, reason, path=None):
@@ -6279,7 +6518,7 @@ class Search:
         Trefferliste bleibt."""
         if self.report is not None:
             self.report.emit()
-        if not self.progress:
+        if not self.options.progress:
             return
         now = time.monotonic()
         ocr_transition = stage == "pdfOCR" and (getattr(self, "_last_progress_stage", None) != "pdfOCR"
@@ -6289,7 +6528,7 @@ class Search:
         self._last_progress_stage = stage
         self._last_progress_path = path
         self._last_progress = now
-        if self.as_json:
+        if self.options.as_json:
             value = {"type": "progress", "path": json_safe_text(path)}
             if stage is not None:
                 value.update(stage=stage, page=page, pages=pages)
@@ -6305,9 +6544,9 @@ class Search:
         Bedarf, None ohne exiftool oder ohne angeforderte Felder."""
         if self._exiftool is MISSING:
             self._exiftool = None
-            if self.exiftool_path and self.exiftool_fields:
+            if self.options.exiftool_path and self.exiftool_fields:
                 try:
-                    self._exiftool = ExifToolStream(self.exiftool_path,
+                    self._exiftool = ExifToolStream(self.options.exiftool_path,
                                                     self.exiftool_fields,
                                                     warn=(self.warn if self.report is None else
                                                         lambda message: self.report_warning(message, reason="metadataUnavailable")))
@@ -6335,7 +6574,7 @@ class Search:
         zuletzt."""
         close_error = None
         try:
-            query = self.criteria_query
+            query = self.options.criteria_query
             if query is None or query.maximum_cost == 0:
                 for criterion in self.criteria:
                     if not criterion.test(probe):
@@ -6399,7 +6638,7 @@ class Search:
             self.omission("finderMetadataChanged", probe.label)
             return
         preview = None
-        if self.content_preview:
+        if self.options.content_preview:
             if probe.content_preview is None:
                 preview = dict(schemaVersion=1, status="budgetExceeded", snippets=[])
             else:
@@ -6410,21 +6649,19 @@ class Search:
                     self.preview_remaining = 0
                 else:
                     self.preview_remaining -= count
-        self.emit(display, kind, line=line, size=size,
-                  filesystem_path=filesystem_path,
-                  archive_members=archive_members, is_dir=probe.is_dir,
-                  field=field, value=value,
-                  width=dims[0] if dims else None,
-                  height=dims[1] if dims else None,
-                  modified=modified, created=created, terms=terms,
-                  criteria_evidence=probe.criteria_evidence,
-                  finder_metadata=finder,
-                  content_encoding=probe.decoder_info.get("decoder"),
-                  content_preview=preview,
-                  document_position=(probe.document_positions.get(self.matcher) or
-                      next((item["documentPosition"] for item in probe.criteria_evidence or []
-                            if "documentPosition" in item), None)),
-                  document_generation=(probe.preview_generation if probe.decoder_info.get("decoder") in DOCUMENT_READERS.values() else None))
+        document_position = probe.document_positions.get(self.matcher) or next(
+            (item["documentPosition"] for item in probe.criteria_evidence or ()
+             if "documentPosition" in item), None)
+        encoding = probe.decoder_info.get("decoder")
+        self.emit(HitRecord(
+            display, kind, probe.is_dir, line=line, size=size,
+            filesystem_path=filesystem_path, archive_members=archive_members,
+            field=field, value=value, width=dims[0] if dims else None,
+            height=dims[1] if dims else None, modified=modified, created=created,
+            terms=terms, criteria_evidence=probe.criteria_evidence, finder_metadata=finder,
+            content_encoding=encoding, content_preview=preview, document_position=document_position,
+            document_generation=probe.preview_generation if encoding in DOCUMENT_READERS.values() else None,
+        ))
 
     @staticmethod
     def file_chunks(handle, free_bytes=0):
@@ -6449,7 +6686,7 @@ class Search:
         # Inhaltssuche und hat den Anfang des Eintrags bereits gegen das
         # Gesamtbudget gezählt. Genau diese Bytes sind hier frei.
         head_bytes = probe.dimension_bytes
-        if self.content_probe is None:
+        if self.options.content_probe is None:
             with probe.content_stream() as handle:
                 return self.match_content_all(
                     probe.chunker(handle, free_bytes=head_bytes),
@@ -6467,7 +6704,7 @@ class Search:
                 yield chunk
 
         with probe.content_stream() as handle:
-            if not self.content_probe.hits(
+            if not self.options.content_probe.hits(
                     tally(probe.chunker(handle, free_bytes=head_bytes))):
                 return None
         with probe.content_stream() as handle:
@@ -6503,7 +6740,7 @@ class Search:
         warned = None
         normalize = any(hasattr(matcher, "canonical_matcher") for matcher in matchers)
         for number, text, complete, canonical, uncertain in iter_matching_pieces(
-                chunks, normalize, self.text_encoding, decoder_info):
+                chunks, normalize, self.options.text_encoding, decoder_info):
             for index, matcher in remaining[:]:
                 matched = match_content_piece(matcher, text, complete, canonical, uncertain)
                 if matched is True:
@@ -6545,7 +6782,7 @@ class Search:
         normalize = hasattr(matcher, "canonical_matcher")
         warned = None
         for number, text, complete, canonical, uncertain in iter_matching_pieces(
-                chunks, normalize, self.text_encoding, decoder_info):
+                chunks, normalize, self.options.text_encoding, decoder_info):
             matched = match_content_piece(matcher, text, complete, canonical, uncertain)
             if matched is True:
                 if preview is not None:
@@ -6574,7 +6811,7 @@ class Search:
         previous = self.search_root
         self.search_root = root if os.path.isabs(root) else os.path.abspath(root)
         try:
-            with local_content_policy(self.local_only):
+            with local_content_policy(self.options.local_only):
                 self._search_path(root)
         finally:
             self.search_root = previous
@@ -6591,7 +6828,7 @@ class Search:
         ):
             self.check_quick_pause()
             self.report_progress(dirpath)
-            if not self.include_hidden:
+            if not self.options.include_hidden:
                 # Unsichtbare Ordner gar nicht erst betreten (spart auch das
                 # Durchsuchen von .git & Co.) und unsichtbare Dateien
                 # überspringen. dirnames IN PLACE ändern, damit os.walk folgt.
@@ -6627,8 +6864,8 @@ class Search:
             # dessen Unterordner noch erlaubt wären, weiter absteigen — sonst
             # käme eine Ebene zu viel mit (`--max-depth 1` = nur direkt im
             # Startpfad, wie `find -maxdepth 1`).
-            if self.max_depth is not None \
-                    and self.depth_of(root, dirpath) + 1 >= self.max_depth:
+            if self.options.max_depth is not None \
+                    and self.depth_of(root, dirpath) + 1 >= self.options.max_depth:
                 for name in dirnames:
                     self.omission("folderDepth", os.path.join(dirpath, name))
                 dirnames[:] = []
@@ -6695,7 +6932,7 @@ class Search:
 
     def visit_file(self, path, root=None):
         self.check_quick_pause()
-        if not self.content_preview:
+        if not self.options.content_preview:
             return self._visit_file(path, root)
         previous = self.preview_source_generation
         self.preview_source_generation = source_generation(path)
@@ -6711,10 +6948,10 @@ class Search:
         if self.path_is_excluded(path, root):
             return
         name = os.path.basename(path)
-        archive_kind = None if self.document_mode and os.path.splitext(name.lower())[1] in PACKAGE_DOCUMENT_READERS else classify_archive(name)
+        archive_kind = None if self.options.document_mode and os.path.splitext(name.lower())[1] in PACKAGE_DOCUMENT_READERS else classify_archive(name)
         if self.report is not None and archive_kind is None and name.lower().endswith(
                 BSDTAR_NATIVE_EXTENSIONS + BSDTAR_ZSTD_TAR_EXTENSIONS + (ZSTD_SINGLE_EXTENSION,)):
-            self.omission("archiveDepth" if self.archive_depth < 1 else
+            self.omission("archiveDepth" if self.options.archive_depth < 1 else
                           "archiveMetadata" if self.text_mode == "metadata" else
                           "toolUnavailable", path)
         # Bei einer Metadatensuche lohnt der Blick ins Archiv nicht: Ein
@@ -6725,11 +6962,11 @@ class Search:
         # tarfile den Pfad selbst öffnen — an `open_regular_file()` vorbei.
         # Eine benannte Pipe namens `x.zip` ließ sonst den ganzen Lauf
         # hängen, sogar die reine Namenssuche.
-        descend = (archive_kind is not None and self.archive_depth >= 1
+        descend = (archive_kind is not None and self.options.archive_depth >= 1
                    and self.text_mode != "metadata"
                    and os.path.isfile(path))
         if archive_kind is not None and not descend:
-            self.omission("archiveDepth" if self.archive_depth < 1 else
+            self.omission("archiveDepth" if self.options.archive_depth < 1 else
                           "archiveMetadata" if self.text_mode == "metadata" else
                           "notRegularFile", path)
         # Wird NICHT in das Archiv geschaut — weil --no-archives bzw.
@@ -6749,7 +6986,7 @@ class Search:
             probe.content_available = content_available
             self.evaluate(probe, path, "file")
 
-        if descend and self.local_only:
+        if descend and self.options.local_only:
             reason = local_content_reason(path)
             if reason is not None:
                 self.report_warning("%s: %s; Archivinhalt ausgelassen" % (path, REPORT_REASONS[reason][1]),
@@ -6761,7 +6998,7 @@ class Search:
             if self.type_allowed(False) and self.text_mode != "content":
                 as_plain_file(content_available=False)
             container_matched = self.emitted > before
-            opened = self.search_archive(path, None, archive_kind, path, self.archive_depth)
+            opened = self.search_archive(path, None, archive_kind, path, self.options.archive_depth)
             if not opened and not container_matched and self.type_allowed(False):
                 as_plain_file()
             return
@@ -6774,12 +7011,12 @@ class Search:
             # Inhalt aus dem Archiv kommen sollte. Ist sie keines, muss
             # sie nachträglich als normale Datei geprüft werden.
             if not self.search_archive(path, None, archive_kind, path,
-                                       self.archive_depth):
+                                       self.options.archive_depth):
                 as_plain_file()
             return
         if descend:
             self.search_archive(path, None, archive_kind, path,
-                                self.archive_depth)
+                                self.options.archive_depth)
 
     # ---------- Archive ----------
 
@@ -6812,7 +7049,7 @@ class Search:
         # entschieden wird.
         if kind in SINGLE_COMPRESSION_KINDS \
                 and not announces_archive_format(
-                    key, self.archive_head(key, fs_path, fileobj)):
+                    key, archive_head(key, fs_path, fileobj)):
             return False
         emitted_before = self.emitted
         try:
@@ -6836,7 +7073,7 @@ class Search:
                     # Datei zum beschädigten Archiv mit Warnung.
                     envelope = tar_envelope_kind(
                         os.path.basename(display.rstrip("/")),
-                        self.archive_head("tar", fs_path, fileobj))
+                        archive_head("tar", fs_path, fileobj))
                     if envelope is None:
                         raise
                     if fileobj is not None:
@@ -6885,35 +7122,13 @@ class Search:
             # zweites Mal, jetzt als Dateitreffer.
             if self.emitted == emitted_before \
                     and not announces_archive_format(
-                        key, self.archive_head(key, fs_path, fileobj)):
+                        key, archive_head(key, fs_path, fileobj)):
                 return False
             if isinstance(err, FORMAT_MISMATCH_ERRORS):
                 self.report_warning("%s: beschädigtes Archiv: %s" % (display, err), reason="damagedArchive", path=display)
             else:
                 self.report_warning("%s: %s" % (display, err), path=display, error=err)
         return True
-
-    @staticmethod
-    def archive_head(key, fs_path, fileobj):
-        """Der Anfang des Archivs für die Signaturprüfung.
-
-        Gelesen wird nur, was das Format `key` wirklich braucht — vier
-        Bytes für ein Zip, 36 KB für ein ISO.
-
-        Lässt der Anfang sich nicht lesen, gilt die Datei als nicht
-        angekündigt und wird als ganz normale Datei behandelt — der stille
-        Rückfall ist der schonendere der beiden Wege."""
-        length = signature_head_bytes(key)
-        if not length:
-            return b""
-        try:
-            if fileobj is not None:
-                fileobj.seek(0)
-                return fileobj.read(length)
-            with open_regular_file(fs_path) as handle:
-                return handle.read(length)
-        except EXPECTED_ARCHIVE_ERRORS:
-            return b""
 
     @staticmethod
     def member_is_hidden(member_path):
@@ -6955,7 +7170,7 @@ class Search:
         name = os.path.basename(member_path.rstrip("/"))
 
         # Unsichtbare Archiv-Einträge wie im Dateisystem überspringen.
-        if not self.include_hidden and self.member_is_hidden(member_path):
+        if not self.options.include_hidden and self.member_is_hidden(member_path):
             self.omission("hidden", full_display)
             return
 
@@ -6977,7 +7192,7 @@ class Search:
                               archive_members=member_chain)
             return
 
-        nested_kind = None if self.document_mode and os.path.splitext(name.lower())[1] in PACKAGE_DOCUMENT_READERS else classify_archive(name)
+        nested_kind = None if self.options.document_mode and os.path.splitext(name.lower())[1] in PACKAGE_DOCUMENT_READERS else classify_archive(name)
         if self.report is not None and nested_kind is None and name.lower().endswith(
                 BSDTAR_NATIVE_EXTENSIONS + BSDTAR_ZSTD_TAR_EXTENSIONS + (ZSTD_SINGLE_EXTENSION,)):
             self.omission("archiveDepth" if depth - 1 < 1 else "toolUnavailable", full_display)
@@ -7194,7 +7409,7 @@ class Search:
                 # nicht bei einer zu langen: Die beweist ein echtes Archiv.
                 name = os.path.basename(display.rstrip("/"))
                 if name.lower().endswith(ZSTD_SINGLE_EXTENSION):
-                    envelope = tar_envelope_kind(name, self.archive_head(
+                    envelope = tar_envelope_kind(name, archive_head(
                         ZSTD_SINGLE_EXTENSION, fs_path, fileobj))
                     if envelope is not None:
                         self.walk_single(envelope, fs_path, fileobj, display,
@@ -7359,6 +7574,164 @@ def snapshot_position(record, local_only=False):
     return result
 
 
+@dataclass(frozen=True)
+class ArchiveLevel:
+    path: str
+    name: str
+    kind: Optional[str]
+    data: Optional[bytes] = None
+
+    def source(self):
+        return self.path if self.data is None else io.BytesIO(self.data)
+
+    def envelope(self, signature: str) -> Optional[str]:
+        if self.data is None:
+            head = archive_head(signature, self.path, None)
+        else:
+            head = self.data[:signature_head_bytes(signature)]
+        return tar_envelope_kind(self.name, head)
+
+
+class ArchiveLeafReader:
+    def __init__(self, budget: ArchiveBudget, display: str, ambiguous: bool):
+        self.budget = budget
+        self.display = display
+        self.ambiguous = ambiguous
+
+    def read_chain(self, path: str, members: list[str]):
+        level = ArchiveLevel(path, os.path.basename(path.rstrip("/")), classify_archive(path))
+        index = 0
+        while index < len(members):
+            result = self.read_level(level, members[index:])
+            if isinstance(result, str):
+                # Falsch benannte Tar-Hülle. Dieselbe Archivstufe erneut lesen.
+                level = ArchiveLevel(path, level.name, result, level.data)
+                continue
+            member, used, data = result
+            index += used
+            if index == len(members):
+                return member, data
+            level = ArchiveLevel(path, os.path.basename(member.rstrip("/")), classify_archive(member), data)
+        raise ValueError("Archivkette ist leer")
+
+    def read_level(self, level: ArchiveLevel, remaining: list[str]):
+        kind = level.kind
+        if kind == "zip":
+            return self.read_zip(level, remaining)
+        if kind == "tar":
+            return self.read_tar(level, remaining)
+        if kind == "bsdtar":
+            return self.read_bsdtar(level, remaining)
+        if kind is None:
+            raise ArchiveReadError("kein unterstütztes Archiv")
+        expected = single_member_name(level.name, kind)
+        member, used = pick_member(remaining, [expected] if self.ambiguous else None)
+        if member != expected:
+            raise KeyError(member)
+        with single_opener(kind)(level.source(), "rb") as handle:
+            return member, used, self.budget.read_all(handle, self.display)
+
+    def read_zip(self, level: ArchiveLevel, remaining: list[str]):
+        with zipfile.ZipFile(level.source()) as archive:
+            member, used = pick_member(remaining, archive.namelist() if self.ambiguous else None)
+            try:
+                info = archive.getinfo(member)
+            except KeyError:
+                if member + "/" in archive.namelist():
+                    raise DirectoryMemberError(member) from None
+                raise
+            if info.is_dir():
+                raise DirectoryMemberError(member)
+            with archive.open(info, "r") as handle:
+                data = self.budget.read_all(handle, self.display, info.file_size, info.compress_size)
+        return member, used, data
+
+    def read_tar(self, level: ArchiveLevel, remaining: list[str]):
+        try:
+            if level.data is None:
+                archive = tarfile.open(level.path, mode="r:*")
+            else:
+                archive = tarfile.open(fileobj=io.BytesIO(level.data), mode="r:*")
+        except tarfile.ReadError:
+            envelope = level.envelope("tar")
+            if envelope is None:
+                raise
+            return envelope
+        with archive:
+            members = bounded_tar_members(archive)
+            names = None
+            if self.ambiguous:
+                names = [name for item in members
+                         for name in ((item.name, item.name.rstrip("/") + "/")
+                                      if item.isdir() else (item.name,))]
+            member, used = pick_member(remaining, names)
+            # Der TAR-Katalog speichert Verzeichnisnamen ohne abschließendes /.
+            wanted = (member, member.rstrip("/"))
+            info = next((item for item in reversed(members) if item.name in wanted), None)
+            if info is None:
+                raise KeyError(member)
+            if info.isdir():
+                raise DirectoryMemberError(member)
+            handle = archive.extractfile(member)
+            if handle is None:
+                raise KeyError(member)
+            with handle:
+                data = self.budget.read_all(handle, self.display, info.size)
+        return member, used, data
+
+    def read_bsdtar(self, level: ArchiveLevel, remaining: list[str]):
+        tool, _, env = external_archive_tools()
+        temp_path = None
+        path = level.path
+        try:
+            if level.data is not None:
+                # bsdtar muss auch bei inneren Archiven wahlfrei lesen können.
+                with tempfile.NamedTemporaryFile(delete=False) as temp:
+                    temp_path = path = temp.name
+                    temp.write(level.data)
+            return self.read_bsdtar_member(tool, path, env, level, remaining)
+        finally:
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+    def read_bsdtar_member(self, tool, path, env, level: ArchiveLevel, remaining: list[str]):
+        def zstd_envelope():
+            if level.name.lower().endswith(ZSTD_SINGLE_EXTENSION):
+                return level.envelope(ZSTD_SINGLE_EXTENSION)
+            return None
+
+        names = None
+        if self.ambiguous:
+            raw, errors, status = bsdtar_list(tool, path, env)
+            if status != 0:
+                envelope = zstd_envelope()
+                if envelope is not None:
+                    return envelope
+                raise ArchiveReadError(errors.decode("utf-8", "replace").strip()
+                                       or "bsdtar konnte das Archiv nicht lesen")
+            names = [name.rstrip("/") for name in bsdtar_listing_names(raw)]
+        member, used = pick_member(remaining, names)
+        try:
+            # -n beschränkt die Auswahl auf den Eintrag selbst.
+            process = subprocess.Popen([tool, "-xqOnf", path, "--", bsdtar_escape(member)],
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+            with ToolStream(process, self.display) as handle:
+                data = self.budget.read_all(handle, self.display)
+        except ArchiveReadError:
+            # Erst eine gescheiterte Auflistung belegt den Wechsel zur Einzelkompression.
+            envelope = None if self.ambiguous else zstd_envelope()
+            if envelope is None or bsdtar_list(tool, path, env)[2] == 0:
+                raise
+            return envelope
+        # Bei null Bytes unterscheidet der Katalog leere Dateien von Ordnern.
+        if not data and bsdtar_member_is_directory(tool, path, env, member):
+            raise DirectoryMemberError(member)
+        return member, used, data
+
+
 def extract_result(result_path=None, filesystem_path=None, archive_members=None,
                    archive_member_bytes=None,
                    max_archive_member_bytes=DEFAULT_MAX_ARCHIVE_MEMBER_BYTES,
@@ -7420,216 +7793,11 @@ def extract_result(result_path=None, filesystem_path=None, archive_members=None,
         write_result([os.path.abspath(fs_path)])
         return 0
 
-    kind = classify_archive(fs_path)
-    data = None    # Bytes des aktuellen Archivs (None = liegt als Datei vor)
-    # Name des Archivs der aktuellen Ebene — bei Einzelkompression bestimmt
-    # er den einzig gültigen Eintragsnamen (Dateiname ohne Endung).
-    container_name = os.path.basename(fs_path.rstrip("/"))
     budget = ArchiveBudget(max_archive_member_bytes,
                            max_archive_total_bytes,
                            max_archive_ratio)
     try:
-        # Ebene für Ebene absteigen: erst das Archiv auf der Platte
-        # öffnen, dann ggf. innere Archive aus dem Speicher heraus.
-        # `index` zeigt auf den nächsten Teil der !/-Kette; eine Ebene kann
-        # mehrere Teile verbrauchen, wenn der Eintragsname "!/" enthält.
-        index = 0
-        while index < len(members):
-            remaining = members[index:]
-            if kind is None:
-                print("favenio: fehler: kein unterstütztes Archiv: %s"
-                      % display_path, file=sys.stderr)
-                return 2
-            if kind == "zip":
-                source = io.BytesIO(data) if data is not None else fs_path
-                with zipfile.ZipFile(source) as archive:
-                    names = archive.namelist() if ambiguous else None
-                    member, used = pick_member(remaining, names)
-                    try:
-                        info = archive.getinfo(member)
-                    except KeyError:
-                        # Ein Ordner steht im Zip-Katalog MIT Schrägstrich,
-                        # im Treffer ohne. Ohne diese Prüfung meldete
-                        # `--extract 'paket.zip!/ordner'` „There is no item
-                        # named 'ordner'", obwohl der Eintrag existiert.
-                        if (member + "/") in archive.namelist():
-                            raise DirectoryMemberError(member) from None
-                        raise
-                    if info.is_dir():
-                        # Mit Schrägstrich (`paket.zip!/ordner/`) findet
-                        # getinfo() den Ordner direkt; ohne diese Prüfung
-                        # entstand eine leere Datei mit Exit 0
-                        # (Code-Review 2026-09-18).
-                        raise DirectoryMemberError(member)
-                    with archive.open(info, "r") as handle:
-                        data = budget.read_all(
-                            handle, display_path, info.file_size,
-                            info.compress_size)
-            elif kind == "tar":
-                try:
-                    if data is not None:
-                        archive = tarfile.open(fileobj=io.BytesIO(data),
-                                               mode="r:*")
-                    else:
-                        archive = tarfile.open(fs_path, mode="r:*")
-                except tarfile.ReadError:
-                    # Dieselbe Regel wie in search_archive(): Steckt in der
-                    # Hülle kein Tar, ist es eine einzeln komprimierte
-                    # Datei. Suche und --extract MÜSSEN denselben
-                    # Eintragsnamen sehen, sonst findet pick_member() einen
-                    # gefundenen Eintrag nicht wieder.
-                    head = data[:signature_head_bytes("tar")] \
-                        if data is not None \
-                        else Search.archive_head("tar", fs_path, None)
-                    envelope = tar_envelope_kind(container_name, head)
-                    if envelope is None:
-                        raise
-                    kind = envelope
-                    continue
-                with archive:
-                    tar_members = bounded_tar_members(archive)
-                    names = ([name for item in tar_members
-                              for name in ((item.name, item.name.rstrip("/") + "/")
-                                           if item.isdir() else (item.name,))]
-                             if ambiguous else None)
-                    member, used = pick_member(remaining, names)
-                    # tarfile speichert Ordnernamen ohne Schrägstrich; ein
-                    # Aufruf mit `paket.tar!/ordner/` endete deshalb mit
-                    # einem nackten KeyError (Code-Review 2026-09-18).
-                    wanted = (member, member.rstrip("/"))
-                    tar_member = next((item for item in reversed(tar_members)
-                                       if item.name in wanted), None)
-                    if tar_member is None:
-                        raise KeyError(member)
-                    if tar_member.isdir():
-                        # Sonst lieferte extractfile() None, und die
-                        # Meldung bestand nur aus dem nackten Namen.
-                        raise DirectoryMemberError(member)
-                    handle = archive.extractfile(member)
-                    if handle is None:
-                        raise KeyError(member)
-                    with handle:
-                        data = budget.read_all(
-                            handle, display_path, tar_member.size)
-            elif kind == "bsdtar":
-                bsdtar, _, env = external_archive_tools()
-                temp_path = None
-                path = fs_path
-                try:
-                    if data is not None:
-                        # Inneres Archiv liegt im Speicher: bsdtar braucht
-                        # eine echte Datei (wahlfreier Zugriff).
-                        temp_handle = tempfile.NamedTemporaryFile(
-                            delete=False)
-                        with temp_handle:
-                            temp_handle.write(data)
-                        temp_path = temp_handle.name
-                        path = temp_path
-                    names = None
-                    # Bei `.tar.zst` entscheidet wie in walk_bsdtar() eine
-                    # GESCHEITERTE Auflistung, ob in der Zstandard-Hülle
-                    # überhaupt ein Tar steckt — dieselbe Regel, sonst wäre
-                    # ein gefundener Treffer `notiz.tar.zst!/notiz.tar`
-                    # nicht auszupacken. Gefragt wird erst, wenn bsdtar
-                    # gescheitert ist: Ein echtes tar.zst soll nicht für
-                    # eine vorsorgliche Auflistung ein zweites Mal
-                    # entpackt werden.
-                    def zst_envelope():
-                        if not container_name.lower().endswith(
-                                ZSTD_SINGLE_EXTENSION):
-                            return None
-                        head = data[:signature_head_bytes(
-                            ZSTD_SINGLE_EXTENSION)] if data is not None \
-                            else Search.archive_head(
-                                ZSTD_SINGLE_EXTENSION, fs_path, None)
-                        return tar_envelope_kind(container_name, head)
-
-                    if ambiguous:
-                        # Eintragsliste nur im mehrdeutigen Fall erfragen —
-                        # sie kostet einen eigenen bsdtar-Prozess.
-                        # Derselbe Weg wie in walk_bsdtar — Suche und
-                        # --extract müssen denselben Eintragsnamen sehen.
-                        # Der Status wird ausgewertet: Blieb er früher
-                        # unbeachtet, war `names` bei einem kaputten
-                        # Archiv einfach leer, pick_member() fiel auf
-                        # remaining[0] zurück und der Nutzer bekam eine
-                        # Meldung über einen fehlenden Eintrag statt über
-                        # das unlesbare Archiv.
-                        raw, errors, status = bsdtar_list(bsdtar, path, env)
-                        if status != 0:
-                            envelope = zst_envelope()
-                            if envelope is not None:
-                                kind = envelope
-                                continue
-                            raise ArchiveReadError(
-                                errors.decode("utf-8", "replace").strip()
-                                or "bsdtar konnte das Archiv nicht lesen")
-                        # rstrip("/") wie in walk_bsdtar: Ein Ordnereintrag
-                        # steht im Treffer ohne Schrägstrich, und genau
-                        # diesen Namen sucht pick_member() hier wieder.
-                        names = [name.rstrip("/") for name
-                                 in bsdtar_listing_names(raw)]
-                    member, used = pick_member(remaining, names)
-                    try:
-                        # `-n`: Das Muster trifft nur den Eintrag selbst.
-                        # Ohne es liefert ein Ordner-Eintrag alle Dateien
-                        # darunter aneinandergehängt (belegt 2026-09-17
-                        # mit 7z, ISO und tar.zst), und die Prüfung auf
-                        # null Bytes unten sähe ihn nie.
-                        proc = subprocess.Popen(
-                            [bsdtar, "-xqOnf", path, "--",
-                             bsdtar_escape(member)],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, env=env)
-                        # Erst nach dem Schließen übernehmen: ToolStream
-                        # meldet den Fehlerstatus erst in close(), und
-                        # zst_envelope() braucht dann noch die alten Bytes.
-                        with ToolStream(proc, display_path) as handle:
-                            extracted = budget.read_all(handle, display_path)
-                        data = extracted
-                    except ArchiveReadError:
-                        # Nur bei `.tar.zst` und nur, wenn auch die
-                        # Auflistung scheitert (sonst ist es ein echtes
-                        # Archiv mit einem anderen Fehler).
-                        envelope = None if ambiguous else zst_envelope()
-                        if envelope is None:
-                            raise
-                        _, _, status = bsdtar_list(bsdtar, path, env)
-                        if status == 0:
-                            raise
-                        kind = envelope
-                        continue
-                    # Ein Ordner-Eintrag schreibt nichts und endet mit
-                    # Status 0 — genau wie eine leere Datei. Nur in diesem
-                    # Sonderfall wird der Typ über die Auflistung erfragt;
-                    # sonst entstand still eine leere Datei mit Exit 0,
-                    # während Zip und Tar den Ordner schon benannten.
-                    # Außerhalb des `try`: DirectoryMemberError ist ein
-                    # ArchiveReadError und gehört nicht in den Hüllenzweig.
-                    if not data and bsdtar_member_is_directory(
-                            bsdtar, path, env, member):
-                        raise DirectoryMemberError(member)
-                finally:
-                    if temp_path is not None:
-                        try:
-                            os.unlink(temp_path)
-                        except OSError:
-                            pass
-            else:  # Einzelkompression: kind ist die Endung, z. B. ".gz"
-                expected = single_member_name(container_name, kind)
-                member, used = pick_member(
-                    remaining, [expected] if ambiguous else None)
-                if member != expected:
-                    raise KeyError(member)
-                opener = single_opener(kind)
-                source = io.BytesIO(data) if data is not None else fs_path
-                with opener(source, "rb") as handle:
-                    data = budget.read_all(handle, display_path)
-            # Endung des gerade gelesenen Eintrags bestimmt, ob die
-            # nächste Ebene wieder ein Archiv ist.
-            container_name = os.path.basename(member.rstrip("/"))
-            kind = classify_archive(member)
-            index += used
+        member, data = ArchiveLeafReader(budget, display_path, ambiguous).read_chain(fs_path, members)
     except EXPECTED_ARCHIVE_ERRORS as err:
         print("favenio: fehler: %s: %s" % (display_path, err),
               file=sys.stderr)
@@ -7670,7 +7838,7 @@ DUPLICATE_MAX_SECONDS = 300
 def duplicate_request(document):
     if (not isinstance(document, dict) or not {"schemaVersion", "items"} <= set(document)
             or set(document) - {"schemaVersion", "items", "limits"}
-            or type(document["schemaVersion"]) is not int or document["schemaVersion"] not in (1, 2, 3)
+            or not has_schema_version(document, (1, 2, 3))
             or not isinstance(document["items"], list) or len(document["items"]) > DUPLICATE_MAX_ITEMS):
         raise ValueError("Dublettenauftrag braucht Schema 1/2/3 und höchstens 50000 Dateitreffer")
     limits = document.get("limits", {})
@@ -8018,7 +8186,7 @@ def main(argv=None):
                     "einzelne gz/bz2/xz; mit bsdtar/zstd auch 7z, iso "
                     "und zst).",
         epilog="Exit-Codes: 0 = Treffer gefunden, 1 = keine Treffer, "
-               "2 = Fehler. Ausgabeformat für Skripte/Agenten: --json.",
+               "2 = Fehler. Ausgabeformat für Skripte und Automatisierung: --json.",
     )
     parser.add_argument("pattern", nargs="?",
                         help="Suchmuster: „enthält“-Text, Glob (* ? [) "
@@ -8230,33 +8398,13 @@ def main(argv=None):
         return 2
 
 
-def run_parsed(args, parser):
-    if args.json_path_bytes and not args.json:
-        parser.error("--json-path-bytes benötigt --json")
-    if args.duplicates_file is not None:
-        allowed = {"duplicates_file", "local_only", "json"}
-        defaults = vars(parser.parse_args([]))
-        if any(value != defaults[key] for key, value in vars(args).items() if key not in allowed):
-            parser.error("Dublettenprüfung kann nicht mit Suche oder anderen Aktionen kombiniert werden")
-        try:
-            return check_duplicate_file(args.duplicates_file, args.local_only)
-        except (ValueError, UnicodeError, OSError, ArchiveReadError, RecursionError) as error:
-            parser.error("Dublettenauftrag: %s" % error)
-
+def read_cli_dates(args, parser):
     try:
         date_resolver = DateRangeResolver(args.date_reference_time, args.date_resolution_json)
-        if args.resolve_date_range is not None:
-            allowed = {"resolve_date_range", "date_reference_time"}
-            defaults = vars(parser.parse_args([]))
-            if any(value != defaults[key] for key, value in vars(args).items() if key not in allowed):
-                parser.error("Kalenderauflösung kann nicht mit Suche oder anderen Aktionen kombiniert werden")
-            date_resolver.resolve(date_json(args.resolve_date_range), "preview")
-            write_result([json.dumps({"type": "dateResolution", "value": date_resolver.snapshot()}, ensure_ascii=True)])
-            return 0
         if args.date_ranges_json is not None:
             document = date_json(args.date_ranges_json)
             if (not isinstance(document, dict) or set(document) != {"schemaVersion", "ranges"}
-                    or type(document["schemaVersion"]) is not int or document["schemaVersion"] != 1
+                    or not has_schema_version(document, (1,))
                     or not isinstance(document["ranges"], dict) or not document["ranges"]
                     or not set(document["ranges"]).issubset({"modified", "created"})):
                 raise ValueError("Datumsfilter brauchen schemaVersion 1 und modified/created unter ranges")
@@ -8270,108 +8418,104 @@ def run_parsed(args, parser):
                 setattr(args, field + "_to", entry["upperEpoch"])
     except (ValueError, argparse.ArgumentTypeError, OverflowError, OSError, RecursionError) as err:
         parser.error("Datumsbereich: %s" % err)
+    return date_resolver
 
-    if args.filter_results is not None or args.validate_result_filter:
-        allowed = {"filter_results", "results_root", "validate_result_filter", "criteria_json", "criteria_file", "json", "date_reference_time", "date_resolution_json"}
-        defaults = vars(parser.parse_args([]))
-        if any(value != defaults[key] for key, value in vars(args).items() if key not in allowed):
-            parser.error("Ansichtsfilter kann nicht mit Suche oder anderen Ausgabeaktionen kombiniert werden")
-        if args.validate_result_filter and args.filter_results is not None:
-            parser.error("Filterprüfung kann nicht zugleich eine Trefferliste lesen")
-        if args.validate_result_filter and args.results_root is not None:
-            parser.error("--results-root braucht --filter-results")
-        if args.criteria_json is None and args.criteria_file is None:
-            parser.error("Ansichtsfilter braucht --criteria-json oder --criteria-file")
-        if args.filter_results == "-" and args.criteria_file == "-":
-            parser.error("Kriterien und Trefferliste können nicht zugleich stdin lesen")
-        try:
-            query = read_criteria_query(args.criteria_json, args.criteria_file, date_resolver)
-            validate_result_filter(query)
-            date_resolver.finish()
-            if args.validate_result_filter:
-                result = {"type": "validation", "schemaVersion": 1, "valid": True}
-                if date_resolver.entries:
-                    result["dateResolution"] = date_resolver.snapshot()
-                write_result([json.dumps(result)])
-                return 0
-            if date_resolver.entries:
-                write_output(json.dumps({"type": "dateResolution", "value": date_resolver.snapshot()}), flush=True)
-            return filter_result_file(args.filter_results, query, args.results_root)
-        except (ValueError, OSError, UnicodeError, RecursionError, ArchiveReadError) as err:
-            parser.error("Ansichtsfilter: %s" % err)
-    if args.results_root is not None:
-        parser.error("--results-root braucht --filter-results")
 
-    if args.preview_request is not None:
-        if args.pattern or args.paths or args.criteria_json or args.criteria_file or args.extract or args.extract_json or args.snapshot_position_json or args.list_metadata_fields or args.finder_metadata or args.date_ranges_json is not None or args.date_reference_time is not None or args.date_resolution_json is not None:
-            parser.error("Nachladen kann nicht mit Suche oder anderen Ausgabeaktionen kombiniert werden")
-        try:
-            if len(args.preview_request.encode("utf-8")) > PREVIEW_REQUEST_BYTES:
-                raise ValueError("Nachladeauftrag ist größer als 128 KiB")
-            result = load_content_preview(json.loads(args.preview_request), local_only=args.local_only)
-        except (ValueError, OSError, UnicodeError, re.error, RecursionError) as error:
-            parser.error("Nachladen: %s" % error)
-        if "filesystemPathBytes" in result:
-            result = dict(type="hitV2", schemaVersion=2, hit=result)
-        write_result([json.dumps(result, ensure_ascii=True)])
-        return 0
-
-    if args.content_preview and not args.json:
-        parser.error("--content-preview braucht --json")
-    if args.finder_metadata and not args.json:
-        parser.error("--finder-metadata braucht --json")
-    if args.finder_metadata and (args.extract or args.extract_json or args.snapshot_position_json
-                                 or args.list_metadata_fields or args.validate_criteria):
-        parser.error("Finder-Erfassung kann nicht mit Ausgabeaktionen kombiniert werden")
-
-    if args.quick_pause_after is not None and not (
-            args.search_report and 0 <= args.quick_pause_after <= 3600):
-        parser.error("--quick-pause-after braucht --search-report und 0 bis 3600 Sekunden")
-    if args.search_report and not args.json:
-        parser.error("--search-report braucht --json")
-    criteria_query = None
-    has_criteria = args.criteria_json is not None or args.criteria_file is not None
-    if args.validate_criteria and not has_criteria:
-        parser.error("--validate-criteria braucht --criteria-json oder --criteria-file")
-    if has_criteria:
-        if (args.snapshot_position_json or args.extract or args.extract_json
-                or args.list_metadata_fields):
-            parser.error("Kriterien können nicht mit Ausgabeaktionen kombiniert werden")
-        try:
-            criteria_query = read_criteria_query(args.criteria_json, args.criteria_file, date_resolver)
-        except (ValueError, OSError, UnicodeError, RecursionError, ArchiveReadError) as err:
-            parser.error("ungültige Kriterien: %s" % err)
-    if args.validate_criteria:
-        try:
-            date_resolver.finish()
-        except ValueError as err:
-            parser.error("Datumsbereich: %s" % err)
-        result = {"type": "validation", "schemaVersion": 1, "valid": True}
-        if date_resolver.entries:
-            result["dateResolution"] = date_resolver.snapshot()
-        write_result([json.dumps(result)])
-        return 0
+def finish_cli_dates(date_resolver, parser):
     try:
         date_resolver.finish()
-    except ValueError as err:
-        parser.error("Datumsbereich: %s" % err)
+    except ValueError as error:
+        parser.error("Datumsbereich: %s" % error)
 
-    if args.snapshot_position_json:
-        if args.extract or args.extract_json or args.list_metadata_fields:
-            parser.error("Positionsprüfung kann nicht mit anderen Ausgabeaktionen kombiniert werden")
-        try:
-            record = json.loads(args.snapshot_position_json)
-            if args.encoding != "utf-8" and isinstance(record, dict):
-                if "encoding" in record and record["encoding"] != args.encoding:
-                    raise ValueError("widersprüchliche Textkodierung im Positionsauftrag")
-                record["encoding"] = args.encoding
-            position = snapshot_position(record, local_only=args.local_only)
-        except (ValueError, OSError, ArchiveReadError, re.error, OverflowError) as err:
-            parser.error("Positionsprüfung fehlgeschlagen: %s" % err)
-        write_result([json.dumps(position, ensure_ascii=True, sort_keys=True)])
-        return 0
 
-    # Extraktions-Modus: kein Suchlauf, nur einen Treffer auspacken.
+def write_criteria_validation(date_resolver):
+    result = {"type": "validation", "schemaVersion": 1, "valid": True}
+    if date_resolver.entries:
+        result["dateResolution"] = date_resolver.snapshot()
+    write_result([json.dumps(result)])
+    return 0
+
+
+def run_duplicate_check(args, parser):
+    try:
+        return check_duplicate_file(args.duplicates_file, args.local_only)
+    except (ValueError, UnicodeError, OSError, ArchiveReadError, RecursionError) as error:
+        parser.error("Dublettenauftrag: %s" % error)
+
+
+def run_date_resolution(args, parser):
+    date_resolver = read_cli_dates(args, parser)
+    try:
+        date_resolver.resolve(date_json(args.resolve_date_range), "preview")
+    except (ValueError, argparse.ArgumentTypeError, OverflowError, OSError, RecursionError) as error:
+        parser.error("Datumsbereich: %s" % error)
+    write_result([json.dumps({"type": "dateResolution", "value": date_resolver.snapshot()}, ensure_ascii=True)])
+    return 0
+
+
+def run_result_filter(args, parser):
+    if args.criteria_json is None and args.criteria_file is None:
+        parser.error("Ansichtsfilter braucht --criteria-json oder --criteria-file")
+    if args.filter_results == "-" and args.criteria_file == "-":
+        parser.error("Kriterien und Trefferliste können nicht zugleich stdin lesen")
+    date_resolver = read_cli_dates(args, parser)
+    try:
+        query = read_criteria_query(args.criteria_json, args.criteria_file, date_resolver)
+        validate_result_filter(query)
+        date_resolver.finish()
+        if args.validate_result_filter:
+            return write_criteria_validation(date_resolver)
+        if date_resolver.entries:
+            write_output(json.dumps({"type": "dateResolution", "value": date_resolver.snapshot()}), flush=True)
+        return filter_result_file(args.filter_results, query, args.results_root)
+    except (ValueError, OSError, UnicodeError, RecursionError, ArchiveReadError) as error:
+        parser.error("Ansichtsfilter: %s" % error)
+
+
+def run_preview_request(args, parser):
+    try:
+        if len(args.preview_request.encode("utf-8")) > PREVIEW_REQUEST_BYTES:
+            raise ValueError("Nachladeauftrag ist größer als 128 KiB")
+        result = load_content_preview(json.loads(args.preview_request), local_only=args.local_only)
+    except (ValueError, OSError, UnicodeError, re.error, RecursionError) as error:
+        parser.error("Nachladen: %s" % error)
+    if "filesystemPathBytes" in result:
+        result = dict(type="hitV2", schemaVersion=2, hit=result)
+    write_result([json.dumps(result, ensure_ascii=True)])
+    return 0
+
+
+def read_cli_criteria(args, parser, date_resolver):
+    try:
+        return read_criteria_query(args.criteria_json, args.criteria_file, date_resolver)
+    except (ValueError, OSError, UnicodeError, RecursionError, ArchiveReadError) as error:
+        parser.error("ungültige Kriterien: %s" % error)
+
+
+def run_criteria_validation(args, parser):
+    if args.criteria_json is None and args.criteria_file is None:
+        parser.error("--validate-criteria braucht --criteria-json oder --criteria-file")
+    date_resolver = read_cli_dates(args, parser)
+    read_cli_criteria(args, parser, date_resolver)
+    finish_cli_dates(date_resolver, parser)
+    return write_criteria_validation(date_resolver)
+
+
+def run_snapshot_position(args, parser):
+    try:
+        record = json.loads(args.snapshot_position_json)
+        if args.encoding != "utf-8" and isinstance(record, dict):
+            if "encoding" in record and record["encoding"] != args.encoding:
+                raise ValueError("widersprüchliche Textkodierung im Positionsauftrag")
+            record["encoding"] = args.encoding
+        position = snapshot_position(record, local_only=args.local_only)
+    except (ValueError, OSError, ArchiveReadError, re.error, OverflowError) as error:
+        parser.error("Positionsprüfung fehlgeschlagen: %s" % error)
+    write_result([json.dumps(position, ensure_ascii=True, sort_keys=True)])
+    return 0
+
+
+def run_extraction(args, parser):
     extract_options = {
         "max_archive_member_bytes": args.max_archive_member_bytes,
         "max_archive_total_bytes": args.max_archive_total_bytes,
@@ -8379,37 +8523,100 @@ def run_parsed(args, parser):
         "materialization_root": args.extract_root,
         "local_only": args.local_only,
     }
-    if args.extract and args.extract_json:
-        parser.error("--extract und --extract-json schließen sich aus")
-    if args.extract:
+    if args.extract is not None:
         return extract_result(args.extract, **extract_options)
-    if args.extract_json:
-        try:
-            record = unwrap_hit(json.loads(args.extract_json))
-            filesystem_path = hit_filesystem_path(record)
-            archive_members = record.get("archiveMembers", [])
-            archive_member_bytes = record.get("archiveMemberBytes")
-            if not isinstance(filesystem_path, str) \
-                    or not isinstance(archive_members, list) \
-                    or not all(isinstance(item, str)
-                               for item in archive_members) \
-                    or (archive_member_bytes is not None
-                        and (not isinstance(archive_member_bytes, list)
-                             or not all(isinstance(item, str)
-                                        for item in archive_member_bytes))):
-                raise ValueError("ungültige Feldtypen")
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as err:
-            print("favenio: fehler: ungültiger strukturierter Treffer: %s"
-                  % err, file=sys.stderr)
-            return 2
-        return extract_result(filesystem_path=filesystem_path,
-                              archive_members=archive_members,
-                              archive_member_bytes=archive_member_bytes,
-                              **extract_options)
+    try:
+        record = unwrap_hit(json.loads(args.extract_json))
+        filesystem_path = hit_filesystem_path(record)
+        archive_members = record.get("archiveMembers", [])
+        archive_member_bytes = record.get("archiveMemberBytes")
+        if not isinstance(filesystem_path, str) \
+                or not isinstance(archive_members, list) \
+                or not all(isinstance(item, str)
+                           for item in archive_members) \
+                or (archive_member_bytes is not None
+                    and (not isinstance(archive_member_bytes, list)
+                         or not all(isinstance(item, str)
+                                    for item in archive_member_bytes))):
+            raise ValueError("ungültige Feldtypen")
+    except (KeyError, TypeError, ValueError) as err:
+        print("favenio: fehler: ungültiger strukturierter Treffer: %s"
+              % err, file=sys.stderr)
+        return 2
+    return extract_result(filesystem_path=filesystem_path,
+                          archive_members=archive_members,
+                          archive_member_bytes=archive_member_bytes,
+                          **extract_options)
 
-    if args.list_metadata_fields:
-        write_result(METADATA_TEXT_FIELDS)
-        return 0
+
+def run_metadata_field_listing(args, parser):
+    write_result(METADATA_TEXT_FIELDS)
+    return 0
+
+
+CRITERIA_ARGUMENTS = frozenset({"criteria_json", "criteria_file", "json",
+                                "date_reference_time", "date_resolution_json"})
+EXTRACTION_ARGUMENTS = frozenset({"extract_root", "local_only", "max_archive_member_bytes",
+                                  "max_archive_total_bytes", "max_archive_ratio"})
+CLI_MODES = {
+    "duplicates_file": (run_duplicate_check, {"local_only", "json"}),
+    "resolve_date_range": (run_date_resolution, {"date_reference_time"}),
+    "filter_results": (run_result_filter, CRITERIA_ARGUMENTS | {"results_root"}),
+    "validate_result_filter": (run_result_filter, CRITERIA_ARGUMENTS),
+    "preview_request": (run_preview_request, {"local_only", "json", "json_path_bytes"}),
+    "validate_criteria": (run_criteria_validation, CRITERIA_ARGUMENTS | {"date_ranges_json", "local_only"}),
+    "snapshot_position_json": (run_snapshot_position, {"encoding", "local_only", "json"}),
+    "extract": (run_extraction, EXTRACTION_ARGUMENTS),
+    "extract_json": (run_extraction, EXTRACTION_ARGUMENTS),
+    "list_metadata_fields": (run_metadata_field_listing, set()),
+}
+
+
+def run_parsed(args, parser):
+    if args.json_path_bytes and not args.json:
+        parser.error("--json-path-bytes benötigt --json")
+
+    # Ein ausdrücklich angegebener Standardwert bleibt wie bisher neutral.
+    changed = [name for name, value in vars(args).items() if value != parser.get_default(name)]
+    selected = [name for name in CLI_MODES if name in changed]
+    if len(selected) > 1:
+        parser.error("Betriebsarten schließen sich aus: %s" % ", ".join(map(cli_option, selected)))
+    if selected:
+        mode, = selected
+        handler, allowed = CLI_MODES[mode]
+        incompatible = [cli_option(name) for name in changed if name != mode and name not in allowed]
+        if incompatible:
+            parser.error("%s kann nicht mit %s kombiniert werden" %
+                         (cli_option(mode), ", ".join(incompatible)))
+        return handler(args, parser)
+
+    if args.results_root is not None:
+        parser.error("--results-root braucht --filter-results")
+    if args.extract_root is not None:
+        parser.error("--extract-root braucht --extract oder --extract-json")
+    return run_search(args, parser)
+
+
+def cli_option(name):
+    if name in ("pattern", "paths"):
+        return name.upper()
+    return "--" + name.replace("_", "-")
+
+
+def run_search(args, parser):
+    if args.content_preview and not args.json:
+        parser.error("--content-preview braucht --json")
+    if args.finder_metadata and not args.json:
+        parser.error("--finder-metadata braucht --json")
+    if args.quick_pause_after is not None and not (
+            args.search_report and 0 <= args.quick_pause_after <= 3600):
+        parser.error("--quick-pause-after braucht --search-report und 0 bis 3600 Sekunden")
+    if args.search_report and not args.json:
+        parser.error("--search-report braucht --json")
+    date_resolver = read_cli_dates(args, parser)
+    has_criteria = args.criteria_json is not None or args.criteria_file is not None
+    criteria_query = read_cli_criteria(args, parser, date_resolver) if has_criteria else None
+    finish_cli_dates(date_resolver, parser)
 
     dimension_limits = {
         "min_width": args.min_width, "max_width": args.max_width,
@@ -8568,12 +8775,14 @@ def run_parsed(args, parser):
                                       "documentTextBytes": DOCUMENT_TEXT_BYTES,
                                       "documentPageBytes": DOCUMENT_PAGE_BYTES,
                                       "documentSeconds": DOCUMENT_SECONDS,
-                                      "pdfOCRPages": PDF_OCR_PAGES, "pdfOCRRenderedPages": 16, "pdfOCRDPI": 150,
-                                      "pdfOCRRenderPixels": 6_000_000, "pdfOCRTotalRenderPixels": 32_000_000, "pdfOCRRenderEdge": 4096, "pdfOCRSeconds": PDF_OCR_SECONDS,
+                                      "pdfOCRPages": PDF_OCR_PAGES, "pdfOCRRenderedPages": PDF_OCR_RENDERED_PAGES,
+                                      "pdfOCRDPI": PDF_OCR_DPI, "pdfOCRRenderPixels": PDF_OCR_RENDER_PIXELS,
+                                      "pdfOCRTotalRenderPixels": PDF_OCR_TOTAL_RENDER_PIXELS, "pdfOCRRenderEdge": PDF_OCR_RENDER_EDGE,
+                                      "pdfOCRSeconds": PDF_OCR_SECONDS,
                                       "ocrLanguages": ["de-DE", "en-US"], "ocrPixels": OCR_PIXELS,
                                       "ocrEdge": OCR_EDGE, "ocrBlocks": OCR_BLOCKS, "ocrTextBytes": OCR_TEXT_BYTES,
-                                      "ocrMinimumConfidence": 0.5, "ocrMinimumTextHeight": 0.003,
-                                      "ocrMaximumBitDepth": 16, "ocrColorModels": ["RGB", "Gray"],
+                                      "ocrMinimumConfidence": OCR_MINIMUM_CONFIDENCE, "ocrMinimumTextHeight": VISION_MINIMUM_TEXT_HEIGHT,
+                                      "ocrMaximumBitDepth": VISION_MAXIMUM_BIT_DEPTH, "ocrColorModels": ["RGB", "Gray"],
                                       "docxParts": DOCUMENT_PARTS, "docxParagraphs": DOCUMENT_PARAGRAPHS,
                                       "docxParagraphBytes": DOCUMENT_PARAGRAPH_BYTES,
                                       "docxXMLBytes": DOCUMENT_XML_BYTES, "docxTotalXMLBytes": DOCUMENT_TOTAL_XML_BYTES,

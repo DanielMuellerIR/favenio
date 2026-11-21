@@ -1,4 +1,6 @@
 FROM rust:1.99.1-bookworm AS rust
+RUN rustup component add rustfmt clippy
+
 FROM swift:6.2.1-noble
 COPY --from=rust /usr/local/cargo /usr/local/cargo
 COPY --from=rust /usr/local/rustup /usr/local/rustup

@@ -18,7 +18,7 @@ import zipfile
 from test_favenio import TempTreeTest, favenio, run
 from test_criteria import arguments, group, leaf
 from pdf_fixture import pdf_bytes
-from swift_test_support import run_process, run_probe, suite_binary
+from swift_test_support import native_document_helper_sources, run_process, run_probe, suite_binary
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -31,8 +31,13 @@ class DocumentTextTests(TempTreeTest):
         cls.addClassCleanup(cls.tools.cleanup)
         cls.helper = Path(cls.tools.name, 'favenio-pdf')
         cls.encrypt = Path(cls.tools.name, 'encrypt')
-        for source, output in [('pdf/main.swift', cls.helper), ('tests/pdf_encrypt_fixture.swift', cls.encrypt)]:
-            result = run_process(['swiftc', '-O', *([str(REPO / 'ocr/VisionText.swift')] if source == 'pdf/main.swift' else []), str(REPO / source), '-o', str(output)], timeout=30)
+        builds = [
+            (native_document_helper_sources("pdf", cls.tools.name), cls.helper),
+            ((REPO / "tests/pdf_encrypt_fixture.swift",), cls.encrypt),
+        ]
+        for sources, output in builds:
+            result = run_process(["swiftc", "-O", *(str(source) for source in sources),
+                                  "-o", str(output)], timeout=30)
             if result.returncode:
                 raise RuntimeError(result.stderr)
         suite_binary()
@@ -57,6 +62,31 @@ class DocumentTextTests(TempTreeTest):
         path = str(path or self.path)
         return dict(schemaVersion=1, hit=hit, filePath=path, fileGeneration=favenio.source_generation(path),
                     queryIndex=0, occurrence=occurrence, context=context)
+
+    def test_helper_replies_per_line_and_close_discards_open_document(self):
+        requests = [
+            {"operation": "open", "path": str(self.path)},
+            {"operation": "page", "index": 0},
+            {"operation": "close"},
+            {"operation": "page", "index": 0},
+        ]
+        payload = "".join(json.dumps(item) + "\n" for item in requests)
+        result = run_process([str(self.helper)], input=payload)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(replies[0], dict(schemaVersion=1, ok=True, pageCount=3, pdfOCRCapability=1))
+        self.assertTrue(replies[1]["ok"])
+        self.assertIn("needle", replies[1]["text"])
+        self.assertEqual(replies[2:], [
+            dict(schemaVersion=1, ok=True),
+            dict(schemaVersion=1, ok=False, reason="documentDamaged"),
+        ])
+
+    def test_helper_rejects_oversized_request_after_valid_line(self):
+        complete = json.dumps({"operation": "close"})
+        result = run_process([str(self.helper)], input=complete + "\n" + " " * 65_537 + "\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout), dict(schemaVersion=1, ok=True))
 
     def test_compressed_text_first_page_and_source_bound_even_without_preview(self):
         self.assertIn(b'/FlateDecode', self.path.read_bytes())

@@ -536,7 +536,7 @@ final class ThumbnailGridController: NSObject, NSCollectionViewDataSource, NSCol
             NotificationCenter.default.addObserver(
                 forName: NSWindow.didBecomeKeyNotification, object: owner.window, queue: .main
             ) { [weak self] _ in self?.scheduleVisible() })
-        if UserDefaults.standard.bool(forKey: "resultView.thumbnails") { setGrid(true, persist: false) }
+        if favenioPreferences.bool(forKey: "resultView.thumbnails") { setGrid(true, persist: false) }
     }
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
@@ -556,7 +556,7 @@ final class ThumbnailGridController: NSObject, NSCollectionViewDataSource, NSCol
         isGrid = active
         modeControl.selectedSegment = active ? 1 : 0
         sortPopup.isHidden = !active
-        if persist { UserDefaults.standard.set(active, forKey: "resultView.thumbnails") }
+        if persist { favenioPreferences.set(active, forKey: "resultView.thumbnails") }
         scroll.documentView = active ? collection : owner.tableView
         scroll.hasHorizontalScroller = active ? false : originalHorizontal
         if active {

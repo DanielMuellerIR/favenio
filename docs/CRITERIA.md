@@ -18,10 +18,12 @@ per UND. Die Bedingungen besitzen eigene Operatoren und Optionen. `--regex`,
 herkömmlichen Suchbegriffe. Inhalts- und Metadatenbedingungen dürfen im Baum unterschiedliche Ziele
 innerhalb desselben Objekts kombinieren; bisherige CLI-Optionen bleiben nutzbar.
 
-`--validate-criteria` prüft ausschließlich den angegebenen Baum, ohne einen
+`--validate-criteria` prüft den angegebenen Baum, ohne einen
 Suchpfad zu besuchen. Erfolg schreibt ein JSONL-Objekt
 `{"type":"validation","schemaVersion":1,"valid":true}` und endet mit 0;
 ungültige Kriterien behalten den beschriebenen Fehler-/Exit-2-Vertrag.
+Explizite Kalenderbereiche aus `--date-ranges-json` werden dabei ebenfalls
+validiert und als `dateResolution` zurückgegeben.
 Der grafische Editor nutzt diese Prüfung auch für Python-RegEx-Muster und
 interpretiert Suchbedingungen nicht in Swift.
 

@@ -1,4 +1,4 @@
-"""Auch Kinder mit eigener Prozessgruppe müssen nach einer Probe enden."""
+"""Aufräumen der Swift-Proben und Quellgrenzen der statischen Wächter."""
 import json
 import os
 import signal
@@ -9,7 +9,7 @@ import time
 import unittest
 from pathlib import Path
 
-from swift_test_support import run_process
+from swift_test_support import run_process, swift_function
 
 
 class ProbeProcessCleanupTests(unittest.TestCase):
@@ -65,3 +65,19 @@ class ProbeProcessCleanupTests(unittest.TestCase):
                             os.kill(pid, signal.SIGKILL)
                         except ProcessLookupError:
                             pass
+
+class SwiftStructureBoundaryTests(unittest.TestCase):
+    def test_braces_in_strings_and_comments_do_not_change_the_boundary(self):
+        variants = {
+            'escaped string': r'let text = "an escaped quote: \" and a brace: }"',
+            'raw string': r'let text = #"raw closing } and interpolation \#(value( "}" ))"#',
+            'multiline string': 'let text = """\n        a multiline brace }\n        """',
+            'nested interpolation': r'let text = "\(String(describing: { "}" }()))"',
+            'line comment': '// }',
+            'nested block comment': '/* { /* nested } */ { */',
+        }
+        for name, statement in variants.items():
+            with self.subTest(name=name):
+                function = 'func fixture() {\n    ' + statement + '\n    if ready { finish() }\n}'
+                source = '// Datei\n' + function + '\nfunc next() { use(other) }\n'
+                self.assertEqual(swift_function(source, 'func fixture()'), function)

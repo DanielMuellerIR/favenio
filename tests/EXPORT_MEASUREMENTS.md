@@ -1,7 +1,7 @@
 # Hintergrundexport: Messung 2026-09-05
 
-Reproduktion: `python3 tests/benchmark_export.py --baseline 5c2243d --repetitions 3`.
-Rohwerte: `export-measurements-2026-09-05.jsonl`.
+Reproduktion im Checkout `f39d984` mit macOS und Swift:
+`python3 tests/benchmark_export.py --baseline 5c2243d --repetitions 3`.
 
 macOS/Apple M5, Swift `-O`; 100.000 künstliche Treffer mit Pfad, Größe sowie
 Änderungs- und Erstellungszeit, drei frische Prozesse je Format und Variante.
@@ -57,7 +57,8 @@ neben einem späteren Exportstatus sichtbar bleiben.
 
 ## Serializer-Optimierung 2026-09-08
 
-Reproduktion: `python3 tests/benchmark_export.py --baseline 87104d1 --repetitions 3`.
+Reproduktion im Checkout `b91e15e` mit macOS und Swift:
+`python3 tests/benchmark_export.py --baseline 87104d1 --repetitions 3`.
 Beide Varianten verwenden jetzt den Hintergrundexport; alte Versionen ohne
 `ExportWriter` bleiben als synchrone Baseline ausführbar. Die Variantenreihenfolge
 wechselt je Wiederholung. Alle Prozesse laufen mit festem Arbeitsverzeichnis und

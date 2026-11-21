@@ -1,6 +1,6 @@
+import hashlib
 import os
 import plistlib
-import re
 import signal
 import shutil
 import subprocess
@@ -9,6 +9,12 @@ import time
 import unittest
 import unittest.mock
 from pathlib import Path
+
+from shell_script_fixture import APPS as FIXTURE_APPS
+from shell_script_fixture import COMMIT as FIXTURE_COMMIT
+from shell_script_fixture import SIGN_ID as FIXTURE_SIGN_ID
+from shell_script_fixture import ScriptFixture
+from test_favenio import favenio
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -24,24 +30,6 @@ def applications_touching_lines(source):
         if "/Applications" in code or "pkill" in code or "killall" in code:
             hits.append(line.strip())
     return hits
-
-
-def shell_function(source, name):
-    """Schneidet eine zsh-Funktion samt Rumpf aus einem Skript.
-
-    Gezählt werden die geschweiften Klammern ab der Signatur. Das trägt für
-    die kleinen Funktionen dieses Repos, in denen keine Klammer in einem
-    Text steht — sonst müsste hier ein Parser stehen."""
-    start = source.index(name + "() {")
-    depth = 0
-    for index in range(start, len(source)):
-        if source[index] == "{":
-            depth += 1
-        elif source[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return source[start:index + 1]
-    raise AssertionError("Funktion %r ist nicht abgeschlossen" % name)
 
 
 def run_into_head(arguments, lines, **options):
@@ -95,126 +83,6 @@ class BuildSafetyTest(unittest.TestCase):
                                                 + command + "\n"),
                     [command])
 
-    def test_release_checks_staple_and_gatekeeper_without_installing(self):
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        self.assertIn('xcrun stapler validate "$DMG_PATH"', source)
-        self.assertIn('spctl --assess --type open', source)
-        self.assertNotIn(" /Applications/Favenio.app", source)
-        self.assertNotIn(" /Applications/FavenioQuick.app", source)
-
-    def test_release_binds_the_artifact_to_a_clean_commit(self):
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        self.assertIn("git status --porcelain --untracked-files=normal", source)
-        self.assertGreaterEqual(source.count("git rev-parse --verify HEAD"), 2)
-        self.assertIn('BUILD_COMMIT=$(git rev-parse --verify HEAD)', source)
-        self.assertIn('git worktree add --detach "$ISOLATED_SOURCE"', source)
-        self.assertIn('FAVENIO_RELEASE_ISOLATED=1', source)
-        self.assertIn('commit $BUILD_COMMIT', source)
-
-    def test_release_finishes_privately_and_never_overwrites_an_artifact(self):
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        self.assertIn('mktemp -d "$PWD/.build/release.XXXXXX"', source)
-        self.assertIn('ln "$DMG_PATH" "$FINAL_DMG_PATH"', source)
-        self.assertLess(source.index('ln "$DMG_PATH" "$FINAL_DMG_PATH"'),
-                        source.index('ln "$WORK_SHA_PATH" "$FINAL_SHA_PATH"'))
-        self.assertIn('FINAL_LOCK_PATH="$DIST/.Favenio-${VERSION}.release-lock"', source)
-        self.assertIn('FINAL_LOCK_SOURCE="$DIST/.Favenio-${VERSION}.release-lock.$$"', source)
-        self.assertIn('if ! ln "$FINAL_LOCK_SOURCE" "$FINAL_LOCK_PATH"; then', source)
-        self.assertIn('"$FINAL_LOCK_PATH" -ef "$FINAL_LOCK_SOURCE"', source)
-        self.assertLess(source.index('trap favenio_release_unlock EXIT'),
-                        source.index(': > "$FINAL_LOCK_SOURCE"'))
-        self.assertLess(source.index('if ! ln "$FINAL_LOCK_SOURCE" "$FINAL_LOCK_PATH"; then'),
-                        source.index('if [ -e "$FINAL_DMG_PATH" ]'))
-        self.assertIn('rm -f "$FINAL_DMG_PATH"', source)
-        self.assertIn('"$FINAL_DMG_PATH" -ef "$DMG_PATH"', source)
-        self.assertIn('"$FINAL_SHA_PATH" -ef "$WORK_SHA_PATH"', source)
-        self.assertNotIn('rm -f "$DMG_PATH"', source)
-
-    def test_release_checks_the_bundles_as_strictly_as_an_install(self):
-        # Die Kopie in release.sh prüfte nur Signatur und Ticket und ließ
-        # `spctl` weg: Ein Release ging damit über eine schwächere Hürde
-        # als eine lokale Installation. Beide rufen jetzt dieselbe
-        # Funktion aus notarize-lib.sh.
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        self.assertIn('notarize_verify_installed "$VERIFY_MOUNT/$app"',
-                      source)
-        self.assertNotIn('codesign --verify --strict "$VERIFY_MOUNT/$app"',
-                         source)
-        self.assertNotIn('stapler validate "$VERIFY_MOUNT/$app"', source)
-
-    def test_release_cleans_up_on_a_sigterm(self):
-        # Gemessen am 2026-09-03 mit zsh 5.9, Signal an die ganze
-        # Prozessgruppe: Ein EXIT-Trap läuft bei SIGINT und SIGHUP mit, bei
-        # SIGTERM nicht. Hier wiegt das schwerer als in install.sh, weil
-        # MOUNT_DIR ein FESTER Pfad ist: Ein liegengebliebenes
-        # /Volumes/Favenio lässt jeden weiteren Lauf absichtlich abbrechen,
-        # bis jemand von Hand auswirft.
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        self.assertIn("trap favenio_release_cleanup EXIT", source)
-        self.assertIn("trap 'exit 1' HUP INT TERM", source)
-        self.assertIn('MOUNT_DIR="/Volumes/$VOL_NAME"', source)
-
-    def test_signal_at_verify_attach_still_detaches_the_image(self):
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        attach = source[source.index('VERIFY_MOUNT=$(mktemp -d)'):]
-        attach = attach[:attach.index('for app in')]
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            script = (
-                'set -euo pipefail\n'
-                'STAGING="$1/stage"; mkdir "$STAGING"\n'
-                'DMG_PATH="$STAGING/image"; WORK_SHA_PATH=""\n'
-                'FINAL_DMG_PATH="$1/final"; FINAL_SHA_PATH="$1/final.sha"\n'
-                'FINAL_LOCK_PATH="$1/lock"; FINAL_LOCK_SOURCE="$1/lock-source"\n'
-                'VERIFY_MOUNT=""; VERIFY_MOUNTED=0; BUILD_MOUNTED=0\n'
-                'DETACH_LOG="$1/detach.log"\n'
-                'hdiutil() {\n'
-                '  if [ "$1" = attach ]; then kill -TERM $$;\n'
-                '  else print -r -- "$2" >> "$DETACH_LOG"; fi\n'
-                '}\n'
-                + shell_function(source, 'favenio_release_unlock') + '\n'
-                + shell_function(source, 'favenio_mount_unlock') + '\n'
-                + shell_function(source, 'favenio_release_cleanup') + '\n'
-                + "trap favenio_release_cleanup EXIT\ntrap 'exit 1' TERM\n"
-                + attach)
-            result = subprocess.run(['zsh', '-c', script, 'probe', str(root)],
-                                    capture_output=True, text=True, timeout=10)
-            self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertTrue((root / 'detach.log').exists(), result.stderr)
-
-    def test_release_mounts_where_the_finder_can_address_the_disk(self):
-        """Das Finder-Layout spricht die Platte als `disk "$VOL_NAME"` an.
-        Der Finder führt ein Volume aber unter dem ORDNERNAMEN seines
-        Mountpoints, nicht unter seinem Volume-Namen: Unter einem eigenen
-        Mountpoint gibt es `disk "Favenio"` gar nicht (Fehler -1700), und der
-        Standardlauf von release.sh bricht in Schritt 3 ab. Beide Zeilen
-        gehören deshalb zusammen."""
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        if 'tell disk "$VOL_NAME"' in source:
-            self.assertIn('MOUNT_DIR="/Volumes/$VOL_NAME"', source)
-        # Der feste Pfad bleibt nur zulässig, solange ein fremdes Volume
-        # gleichen Namens den Lauf abbricht und nur ein eigener Attach wieder
-        # ausgehängt wird.
-        self.assertIn('if [ -d "$MOUNT_DIR" ]; then', source)
-        self.assertIn("BUILD_MOUNTED=1", source)
-        self.assertIn('if [ "$BUILD_MOUNTED" = "1" ]; then', source)
-
-    def test_release_checks_the_update_feed_of_both_bundles(self):
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        self.assertIn('favenio_verify_feed_url "$VERIFY_MOUNT/$app"', source)
-
-    def test_release_requires_and_checks_the_developer_team(self):
-        source = (REPO / "release.sh").read_text(encoding="utf-8")
-        self.assertIn("favenio_require_team_id", source)
-        self.assertIn(
-            'favenio_verify_identity "$VERIFY_MOUNT/$app" "$app"', source)
-
-    def test_install_distinguishes_an_incomplete_rollback(self):
-        install = (REPO / "install.sh").read_text(encoding="utf-8")
-        library = (REPO / "notarize-lib.sh").read_text(encoding="utf-8")
-        self.assertIn("3 = Rollback unvollständig", install)
-        self.assertIn("return 3", library)
-
     def test_install_help_shows_the_complete_header(self):
         """`--help` gibt den Kopfkommentar aus. Als der Kopf um die
         Exit-Code-Erklärung wuchs, schnitt die dort fest eingetragene Endzeile
@@ -234,56 +102,6 @@ class BuildSafetyTest(unittest.TestCase):
         self.assertIn("VERIFY OK: <quelle>", help_text)
         # Der Block endet vor dem Code: keine Shell-Zeile in der Hilfe.
         self.assertNotIn("set -euo pipefail", help_text)
-
-    def test_expected_feed_url_matches_the_build_script(self):
-        """notarize-lib.sh prüft gegen eine Kopie des Defaults aus
-        build-app.sh. Läuft die auseinander, prüft die Installation gegen
-        eine URL, die gar nicht mehr gebaut wird."""
-        build = (REPO / "build-app.sh").read_text(encoding="utf-8")
-        library = (REPO / "notarize-lib.sh").read_text(encoding="utf-8")
-        self.assertIn(
-            'SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-%s}"'
-            % InstallFromDmgTest.FEED_URL, build)
-        self.assertIn('FAVENIO_FEED_URL="%s"' % InstallFromDmgTest.FEED_URL,
-                      library)
-
-    def test_expected_update_key_matches_the_build_script(self):
-        """Denselben Halt braucht der öffentliche Sparkle-Schlüssel. Er steht
-        in build-app.sh (baut ihn in beide Info.plists), im Appcast-Workflow
-        und seit dem Ausbau der Kanalprüfung auch in notarize-lib.sh — gegen
-        DIESE Kopie prüfen install.sh und release.sh jedes Bundle. Die ersten
-        beiden Kopien hält test_appcast_workflow zusammen, die dritte war
-        ungeprüft."""
-        build = (REPO / "build-app.sh").read_text(encoding="utf-8")
-        library = (REPO / "notarize-lib.sh").read_text(encoding="utf-8")
-        self.assertEqual((REPO / "common/update-public-key.txt").read_text().strip(), InstallFromDmgTest.SPARKLE_KEY)
-        self.assertIn('SPARKLE_PUBLIC_KEY=$(cat common/update-public-key.txt)', build)
-        self.assertIn(
-            'FAVENIO_SPARKLE_PUBLIC_KEY="%s"' % InstallFromDmgTest.SPARKLE_KEY,
-            library)
-
-    def test_feed_url_is_not_interpolated_into_plist_xml(self):
-        """Eine URL darf XML-Zeichen wie `&` enthalten. Der Wert muss daher
-        vom Plist-Werkzeug serialisiert werden statt roh im Here-Dokument zu
-        landen."""
-        source = (REPO / "build-app.sh").read_text(encoding="utf-8")
-        self.assertNotIn("<string>${SPARKLE_FEED_URL}</string>", source)
-        self.assertIn(
-            '/usr/bin/plutil -replace SUFeedURL -string "$SPARKLE_FEED_URL"',
-            source)
-        self.assertIn("set_sparkle_feed_url Favenio.app", source)
-        self.assertIn("set_sparkle_feed_url FavenioQuick.app", source)
-
-    def test_ad_hoc_build_omits_hardened_runtime(self):
-        """Ohne Developer-ID haben App und Framework keine gemeinsame
-        Team-ID. Hardened Runtime würde Sparkle dann beim Laden ablehnen."""
-        source = (REPO / "build-app.sh").read_text(encoding="utf-8")
-        self.assertIn(
-            'if [ -n "$SIGN_ID" ] && [ "$SIGN_ID" != "-" ]; then', source)
-        self.assertIn('NESTED_SIGN=(--force --sign -)', source)
-        self.assertIn(
-            'APP_SIGN=(--force --entitlements assets/favenio.entitlements '
-            '--sign -)', source)
 
     def test_ci_explicitly_exercises_ad_hoc_build(self):
         workflow = (REPO / ".github/workflows/ci.yml").read_text(
@@ -421,123 +239,8 @@ class InstallTransactionTest(unittest.TestCase):
         self.assertEqual(self.marker(self.dest, "FavenioQuick.app"), "neu")
         # Und der Fortschritt steht nicht auf stdout, wo ein Leser ihn
         # abschneiden könnte.
-        self.assertIn('installiert und geprüft." >&2',
-                      (REPO / "notarize-lib.sh").read_text(encoding="utf-8"))
-
-    def test_a_reader_that_stops_early_on_the_progress_cannot_hang_the_swap(self):
-        """`install.sh 2>&1 | head -n N` darf den Austausch nicht aufhängen.
-
-        Der Test oben liest nur stdout; mit `2>&1` landet der Fortschritt von
-        stderr aber doch in der Pipe. Gemessen am 2026-09-17 mit zsh 5.9:
-        Trifft SIGPIPE ein EINGEBAUTES `echo` innerhalb einer Funktion,
-        während `trap 'exit 2' PIPE` gesetzt ist, läuft dieser Trap endlos
-        (rund 99 % CPU). Mit `head -n 1` stand der Lauf so nach dem
-        zweiten Tausch, aber vor dem Aufräumen — Sperre, Ablageordner und
-        Sicherungsordner mit den alten Bundles im Ziel —, und nur SIGKILL
-        beendete ihn."""
-        install = (REPO / "install.sh").read_text(encoding="utf-8")
-        script = Path(self.tmp.name) / "install-pipe.zsh"
-        # Oberste Ebene wie in install.sh: dessen echter Aufräum-Trap, die
-        # Signalliste samt PIPE und hinter dem Austausch nur noch Ausgabe.
-        # Vor jeder Zeile, die SIGPIPE treffen soll, wartet der Lauf kurz —
-        # bis dahin hat `head` die Pipe sicher geschlossen.
-        script.write_text("""
-set -euo pipefail
-source "%s/notarize-lib.sh"
-MOUNT=""
-INSTALLED=0
-%s
-trap cleanup EXIT
-trap 'exit 2' HUP INT TERM PIPE
-notarize_verify_installed() {
-    case "$1" in
-        */.favenio-install.*) ;;
-        *) sleep 0.3 ;;
-    esac
-    return 0
-}
-favenio_install_bundles "%s" "%s"
-INSTALLED=1
-sleep 0.3
-echo "────────────────────────────────────────────"
-echo "INSTALL OK: test"
-""" % (REPO, shell_function(install, "cleanup"), self.source, self.dest),
-            encoding="utf-8")
-        # Zeile 1 und 2 sind die Fortschrittszeilen beider Bundles. N=1:
-        # SIGPIPE trifft die zweite, also mitten in der Transaktion. N=2:
-        # SIGPIPE trifft die Schlusszeilen nach dem Austausch.
-        for lines in (1, 2):
-            with self.subTest(lines=lines):
-                shutil.rmtree(self.dest)
-                for app in ("Favenio.app", "FavenioQuick.app"):
-                    self.make_bundle(os.path.join(self.dest, app), "alt")
-                status, output = run_into_head(["zsh", str(script)], lines,
-                                               cwd=REPO)
-                self.assertIsNotNone(status, "Lauf hing:\n%s" % output)
-                self.assertEqual(status, 0, output)
-                self.assertEqual(self.leftovers(), [])
-                self.assertEqual(self.marker(self.dest, "Favenio.app"), "neu")
-                self.assertEqual(self.marker(self.dest, "FavenioQuick.app"),
-                                 "neu")
-
-    def test_both_scripts_treat_sigpipe_like_the_other_soft_signals(self):
-        """Ohne `PIPE` endet ein `| head` mit Status 141 und ohne Aufräumen:
-        in `install.sh` blieben DMG und Sperre liegen, in `release.sh` der
-        FESTE Mountpoint `/Volumes/Favenio`, der jeden weiteren Release-Lauf
-        abbrechen lässt."""
-        for name, expected in (("install.sh", "trap 'exit 2' HUP INT TERM PIPE"),
-                               ("release.sh", "trap 'exit 1' HUP INT TERM PIPE")):
-            with self.subTest(script=name):
-                source = (REPO / name).read_text(encoding="utf-8")
-                self.assertIn(expected, source)
-
-    def test_only_child_processes_write_the_output_of_the_scripts(self):
-        """Die Tests mit `| head` laufen über install.sh und notarize_apps;
-        release.sh selbst lässt sich ohne Build und Notarisierung nicht
-        starten. Denselben Schutz bekommt es nur, wenn ZWEI Dinge gelten:
-        Jede Ausgabe läuft über das `echo` aus notarize-lib.sh, also erst
-        NACH dem `source`, und kein eingebautes print/printf schreibt
-        außerhalb von `$(...)`. Sonst träfe SIGPIPE wieder die Shell, und
-        die Aufräumung hinge in `hdiutil detach … 2>/dev/null` — mit
-        /Volumes/Favenio eingehängt."""
-        probe = subprocess.run(
-            ["zsh", "-fc", 'source "$1"; whence -w echo', "zsh",
-             str(REPO / "notarize-lib.sh")],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        self.assertEqual(probe.stdout.decode("utf-8", "replace").strip(),
-                         "echo: function")
-        names = ("install.sh", "release.sh", "notarize-lib.sh")
-        # Kommentare fallen weg; `$#` und `${#…}` bleiben, weil vor ihrem
-        # `#` kein Leerraum steht.
-        code = {name: [re.sub(r"(^|\s)#.*$", "", line) for line
-                       in (REPO / name).read_text(encoding="utf-8").splitlines()]
-                for name in names}
-        for name in ("install.sh", "release.sh"):
-            with self.subTest(script=name):
-                lines = code[name]
-                first_echo = next(index for index, line in enumerate(lines)
-                                  if re.search(r"\becho\b", line))
-                self.assertLess(lines.index("source ./notarize-lib.sh"),
-                                first_echo)
-        callers = "\n".join("\n".join(lines) for lines in code.values())
-        for name in names:
-            function = None
-            for line in code[name]:
-                header = re.match(r"(\w+)\(\) \{", line)
-                if header:
-                    function = header.group(1)
-                elif line.startswith("}"):
-                    function = None
-                if not re.match(r"\s*(print|printf)\b", line):
-                    continue
-                with self.subTest(script=name, line=line.strip()):
-                    # Erlaubt nur in einer Funktion, die ausschließlich als
-                    # `$(funktion …)` aufgerufen wird.
-                    self.assertIsNotNone(function)
-                    calls = re.findall(r"(\$\()?\b%s\b(?!\(\))"
-                                       % re.escape(function), callers)
-                    self.assertTrue(calls)
-                    self.assertEqual([call for call in calls if not call], [])
+        self.assertNotIn(b"installiert und gepr", piped.stdout)
+        self.assertIn(b"RC=0", piped.stdout)
 
     def test_a_blocked_target_path_reports_exit_two_not_three(self):
         """Exit 3 verspricht einen unvollständigen Rollback und verbleibende
@@ -1493,54 +1196,6 @@ class ReleaseRefusesInheritedSparkleVariablesTest(unittest.TestCase):
         self.assertNotIn("Schritt 1/5", output)
 
 
-class InstallSignalAndPromiseTest(unittest.TestCase):
-    """Zwei Zusagen von install.sh, die sich nur am Skript selbst prüfen
-    lassen — ein echter Lauf bräuchte /Applications und eine
-    Notarisierung."""
-
-    SCRIPT = (REPO / "install.sh").read_text(encoding="utf-8")
-
-    def test_a_sigterm_still_runs_the_cleanup(self):
-        # Gemessen am 2026-09-03 mit zsh 5.9, Signal an die ganze
-        # Prozessgruppe: Ein EXIT-Trap läuft bei SIGINT (Ctrl-C) und bei
-        # SIGHUP mit, bei SIGTERM aber NICHT — dann blieben das
-        # eingehängte DMG und die Installationssperre liegen.
-        self.assertIn("trap cleanup EXIT", self.SCRIPT)
-        self.assertIn("trap 'exit 2' HUP INT TERM", self.SCRIPT)
-
-    def test_exit_two_keeps_its_promise_after_the_swap(self):
-        # Exit 2 verspricht: installierter Stand UNVERÄNDERT. Nach dem
-        # Austausch stimmt das nicht mehr; erreichbar über ein
-        # Abbruchsignal während der letzten echo-Zeilen (früher auch über
-        # `install.sh | head`).
-        self.assertIn("INSTALLED=0", self.SCRIPT)
-        self.assertIn('[ "$INSTALLED" = "1" ] && exit 0', self.SCRIPT)
-        # Die Marke muss NACH dem Austausch gesetzt werden, sonst
-        # verspricht sie das Falsche.
-        self.assertLess(self.SCRIPT.index("favenio_install_bundles"),
-                        self.SCRIPT.index("INSTALLED=1"))
-
-    def test_the_three_checks_have_only_one_home(self):
-        # Signatur, Gatekeeper und Ticket kommen aus notarize-lib.sh;
-        # install.sh darf sie nicht ein zweites Mal ausschreiben.
-        self.assertIn('notarize_verify_installed "$SOURCE_DIR/$app"',
-                      self.SCRIPT)
-        # Gemeint sind nur die BUNDLE-Prüfungen. Das DMG selbst prüft
-        # install.sh weiterhin direkt (`stapler validate "$DMG"`,
-        # `spctl --assess --type open`) — ein anderes Objekt mit einer
-        # anderen Anforderung, das gehört nicht in dieselbe Funktion.
-        for werkzeug in ("codesign", "spctl", "stapler"):
-            self.assertNotIn('%s' % werkzeug + ' --verify --strict "$SOURCE_DIR',
-                             self.SCRIPT, werkzeug)
-        for aufruf in ('codesign --verify --strict "$SOURCE_DIR/$app"',
-                       'spctl --assess --type execute "$SOURCE_DIR/$app"',
-                       'stapler validate "$SOURCE_DIR/$app"'):
-            self.assertNotIn(aufruf, self.SCRIPT, aufruf)
-        # Und das DMG wird weiterhin selbst geprüft.
-        self.assertIn('stapler validate "$DMG"', self.SCRIPT)
-        self.assertIn("spctl --assess --type open", self.SCRIPT)
-
-
 class NotarizeStageCleanupTest(unittest.TestCase):
     """`notarize_apps` legt ein mktemp-Verzeichnis mit Kopien beider Bundles
     an (rund 40 MB) plus das Zip. Beide Aufrufer rufen die Funktion NACKT
@@ -1749,7 +1404,7 @@ class FeedUrlTest(unittest.TestCase):
             echo "RC=$?"
         fi
         """ % (REPO, path)
-        result = subprocess.run(["zsh", "-c", script], cwd=REPO,
+        result = subprocess.run(["zsh", "-c", script], cwd=self.tmp.name,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT)
         return result.stdout.decode("utf-8", "replace")
@@ -1797,198 +1452,292 @@ class InstallExitCodeTest(unittest.TestCase):
                              result.stdout.decode("utf-8", "replace"))
 
 
-class SelfTestGateTest(unittest.TestCase):
-    """Das Bau-Tor darf einen abgestürzten Selbsttest nicht durchwinken.
+class StubbedScriptTest(unittest.TestCase):
+    def fixture(self, script):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        return ScriptFixture(temporary.name, script)
 
-    `NSApp.terminate(nil)` beendet den Prozess mit Status 0. Ein Selbsttest,
-    der unterwegs darüber stirbt, ist am Exit-Status nicht von einem
-    bestandenen zu unterscheiden — am 2026-09-10 lief `build-app.sh` genau
-    so mit Erfolg durch, während der Selbsttest der Schnellsuche mitten im
-    Lauf endete. Erfolgskriterium ist deshalb die Schlusszeile."""
 
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.gate = shell_function(
-            (REPO / "build-app.sh").read_text(encoding="utf-8"), "run_selftest")
+class SelfTestGateTest(StubbedScriptTest):
+    def test_build_rejects_premature_and_failed_selftests(self):
+        for scenario, evidence in (
+            ("missing-marker", "Prüfung lief"),
+            ("early-marker", "Ausgabe nach der Erfolgsmeldung"),
+            ("duplicate-marker", "SELFTEST OK — doppelt"),
+            ("failing-selftest", "SELFTEST FEHLER: Fixture"),
+            ("irregular-failure", "erreichte die reguläre Fehlerrückkehr nicht"),
+        ):
+            with self.subTest(scenario=scenario):
+                fixture = self.fixture("build-app.sh")
+                result = fixture.run(FIXTURE_SCENARIO=scenario)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(evidence, result.stdout)
+                self.assertNotIn("BUILD OK:", result.stdout)
+                self.assertFalse(any("--check-bundle" in call for call in fixture.calls("fixture-selftest")))
 
-    def fake_binary(self, body):
-        """Eine Attrappe, die sich wie ein --selftest-Binary verhält."""
-        path = os.path.join(self.tmp.name, "fake-selftest")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write("#!/bin/zsh\n" + body + "\n")
-        os.chmod(path, 0o755)
-        return path
-
-    def run_gate(self, body):
-        script = "set -euo pipefail\n%s\nif run_selftest %s; then echo RC=0; else echo RC=$?; fi" % (
-            self.gate, self.fake_binary(body))
-        result = subprocess.run(["zsh", "-c", script], cwd=REPO,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT)
-        return result.stdout.decode("utf-8", "replace")
-
-    def test_a_finished_selftest_passes(self):
-        output = self.run_gate('echo "SELFTEST OK — alles gut"')
-        self.assertIn("RC=0", output)
-        self.assertIn("SELFTEST OK", output)
-
-    def test_a_selftest_that_quits_early_with_status_zero_is_rejected(self):
-        # Genau der Fall NSApp.terminate: einiges geprüft, dann Ende mit 0.
-        output = self.run_gate('echo "Pruefung 1 lief"; exit 0')
-        self.assertIn("RC=1", output)
-        self.assertIn("ohne 'SELFTEST OK'", output)
-        # Die Ausgabe des Laufs bleibt sichtbar, sonst sucht niemand die
-        # Stelle, an der er abbrach.
-        self.assertIn("Pruefung 1 lief", output)
-
-    def test_an_early_marker_followed_by_output_is_rejected(self):
-        output = self.run_gate(
-            'echo "SELFTEST OK — zu frueh"; echo "Abbruch danach"; exit 0')
-        self.assertIn("RC=1", output)
-        self.assertIn("Abbruch danach", output)
-
-    def test_a_failing_selftest_is_rejected_with_its_output(self):
-        output = self.run_gate('echo "SELFTEST FEHLER: kaputt"; exit 1')
-        self.assertIn("RC=1", output)
-        self.assertIn("SELFTEST FEHLER: kaputt", output)
-
-    def test_both_bundles_go_through_the_gate(self):
-        source = (REPO / "build-app.sh").read_text(encoding="utf-8")
-        self.assertIn("run_selftest Favenio.app/Contents/MacOS/Favenio",
-                      source)
-        self.assertIn(
-            "run_selftest FavenioQuick.app/Contents/MacOS/FavenioQuick",
-            source)
-        # Kein Weg am Tor vorbei.
-        self.assertNotIn("MacOS/Favenio --selftest", source)
-        self.assertNotIn("MacOS/FavenioQuick --selftest", source)
-
-    def test_deferred_build_does_not_start_an_app(self):
-        gate = shell_function(
-            (REPO / "build-app.sh").read_text(encoding="utf-8"),
-            "run_build_selftests")
+    def test_both_test_and_product_bundles_run_unless_deferred(self):
         for deferred in ("0", "1"):
             with self.subTest(deferred=deferred):
-                script = ('set -euo pipefail\n'
-                          'run_selftest() { echo "START=$1"; }\n'
-                          + gate + '\nrun_build_selftests\n')
-                environment = dict(os.environ,
-                                   FAVENIO_DEFER_SELFTEST=deferred)
-                result = subprocess.run(
-                    ["zsh", "-c", script], env=environment,
-                    capture_output=True, text=True, timeout=5)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                starts = [line for line in result.stdout.splitlines()
-                          if line.startswith("START=")]
-                self.assertEqual(starts, [] if deferred == "1" else [
-                    "START=Favenio.app/Contents/MacOS/Favenio",
-                    "START=FavenioQuick.app/Contents/MacOS/FavenioQuick"])
+                fixture = self.fixture("build-app.sh")
+                result = fixture.run(FAVENIO_DEFER_SELFTEST=deferred)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn("BUILD OK:", result.stdout)
+                main = ".build/selftests/FavenioMainSelfTest.app/Contents/MacOS/Favenio"
+                quick = ".build/selftests/FavenioQuickSelfTest.app/Contents/MacOS/FavenioQuick"
+                self.assertEqual(fixture.calls("fixture-selftest"), [] if deferred == "1" else [
+                    [main], [quick], [main, "--fail-date"], [quick, "--fail-preferences"],
+                    [quick, "--fail-scope-capture"],
+                    ["Favenio.app/Contents/MacOS/Favenio", "--check-bundle"],
+                    ["FavenioQuick.app/Contents/MacOS/FavenioQuick", "--check-bundle"],
+                ])
 
-    def test_each_app_prints_the_expected_line_exactly_once(self):
-        """Das Tor sucht `SELFTEST OK`. Steht die Zeile mehrfach oder gar
-        nicht in der Quelle, prüft es nichts Verlässliches mehr."""
-        for name in ("gui/FavenioGUI.swift", "quick/FavenioQuick.swift"):
-            with self.subTest(app=name):
-                source = (REPO / name).read_text(encoding="utf-8")
-                printed = [line for line in source.splitlines()
-                           if 'print("SELFTEST OK' in line]
-                self.assertEqual(len(printed), 1, printed)
+    def test_feed_url_round_trips_xml_characters_in_both_bundles(self):
+        fixture = self.fixture("build-app.sh")
+        feed = "https://fixtures.invalid/appcast.xml?channel=a&build=1"
+        result = fixture.run(SPARKLE_FEED_URL=feed, FAVENIO_DEFER_SELFTEST="1")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        for name in FIXTURE_APPS:
+            info = fixture.source / name / "Contents" / "Info.plist"
+            self.assertEqual(plistlib.loads(info.read_bytes())["SUFeedURL"], feed)
+
+    def test_explicit_and_automatic_ad_hoc_build_omit_hardened_runtime(self):
+        for sign_id in ("", "-", FIXTURE_SIGN_ID):
+            with self.subTest(sign_id=sign_id):
+                fixture = self.fixture("build-app.sh")
+                result = fixture.run(FAVENIO_SIGN_ID=sign_id, FAVENIO_DEFER_SELFTEST="1")
+                self.assertEqual(result.returncode, 0, result.stdout)
+                signatures = [call for call in fixture.calls("codesign")
+                              if "--sign" in call and not call[-1].startswith(".build/selftests/")]
+                self.assertEqual({call[-1] for call in signatures if "--entitlements" in call}, set(FIXTURE_APPS))
+                self.assertTrue(any("/Frameworks/" in call[-1] for call in signatures))
+                for call in signatures:
+                    self.assertEqual(call[call.index("--sign") + 1], sign_id or "-")
+                    self.assertEqual("runtime" in call, sign_id == FIXTURE_SIGN_ID)
 
 
-class ReleaseMountOwnershipTest(unittest.TestCase):
-    def run_mount_fixture(self, scenario):
-        source = (REPO / 'release.sh').read_text(encoding='utf-8')
-        section = source[source.index('# Alle Release-Versionen'):source.index('# ditto statt cp -R')]
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            stage = root / 'stage'
-            stage.mkdir()
-            mount = root / 'mount'
-            image = stage / 'own.dmg'
-            image.touch()
-            for name, path, device in [('own', image, '/dev/ownFixture'),
-                                       ('foreign', root / 'foreign.dmg', '/dev/foreignFixture')]:
-                (root / (name + '.plist')).write_bytes(plistlib.dumps({'images': [{
-                    'image-path': str(path), 'system-entities': [{
-                        'mount-point': str(mount), 'dev-entry': device}]}]}))
-            (root / 'partial.plist').write_bytes(plistlib.dumps({'images': [{
-                'image-path': str(image), 'system-entities': [{'dev-entry': '/dev/ownFixture'}]}]}))
-            (root / 'info.plist').write_bytes(plistlib.dumps({'images': []}))
-            lock = root / 'mount.lock'
-            if scenario == 'locked':
-                lock.write_text('foreign lock')
-            functions = '\n'.join(shell_function(source, name) for name in (
-                'favenio_mount_unlock', 'favenio_build_device',
-                'favenio_detach_build', 'favenio_release_cleanup'))
-            script = '''set -euo pipefail
-ROOT="$1"; SCENARIO="$2"; STAGING="$ROOT/stage"
-RW_DMG="$STAGING/own.dmg"; MOUNT_DIR="$ROOT/mount"; VOL_NAME="Fixture"
-MOUNT_LOCK_PATH="$ROOT/mount.lock"
-BUILD_MOUNTED=0; VERIFY_MOUNTED=0; VERIFY_MOUNT=""; WORK_SHA_PATH=""
-FINAL_DMG_PATH="$ROOT/final.dmg"; FINAL_SHA_PATH="$ROOT/final.sha"; DMG_PATH="$STAGING/final.dmg"
-favenio_release_unlock() { :; }
-ln() {
-    if [ "$SCENARIO" = cross-device ] && [ "${1:h}" != "${2:h}" ]; then
-        print -u2 'ln: Cross-device link'; return 1
-    fi
-    command ln "$@"
+class InstallScriptBehaviorTest(StubbedScriptTest):
+    def assert_installed(self, fixture, marker):
+        self.assertEqual({path.name for path in fixture.dest.iterdir()}, set(FIXTURE_APPS))
+        for app in FIXTURE_APPS:
+            self.assertEqual((fixture.dest / app / "marker").read_text(), marker)
+        self.assertEqual(list(fixture.temp.iterdir()), [])
+
+    def test_gatekeeper_and_signatures_are_required_for_both_bundles(self):
+        for scenario, diagnostic in (
+            ("bad-signature", "Signatur von"),
+            ("bad-bundle-gatekeeper", "Gatekeeper akzeptiert"),
+            ("bad-bundle-ticket", "kein angeheftetes Notary-Ticket"),
+            ("bad-dmg-gatekeeper", "Gatekeeper akzeptiert"),
+            ("bad-dmg-ticket", "kein angeheftetes Notary-Ticket"),
+        ):
+            with self.subTest(scenario=scenario):
+                fixture = self.fixture("install.sh")
+                result = fixture.run("--dmg", str(fixture.dmg), FIXTURE_SCENARIO=scenario)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn(diagnostic, result.stdout)
+                self.assertNotIn("Schritt 3/3", result.stdout)
+                self.assertEqual(bool(fixture.calls("hdiutil")), scenario.startswith("bad-bundle") or scenario == "bad-signature")
+                self.assert_installed(fixture, "alt")
+
+    def test_signal_while_mounted_leaves_installed_bundles_untouched(self):
+        for scenario in ("term-during-verification", "pipe-during-verification"):
+            with self.subTest(scenario=scenario):
+                fixture = self.fixture("install.sh")
+                result = fixture.run("--dmg", str(fixture.dmg), FIXTURE_SCENARIO=scenario)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertEqual([call[0] for call in fixture.calls("hdiutil")], ["attach", "detach"])
+                self.assert_installed(fixture, "alt")
+
+    def test_bad_second_bundle_at_destination_rolls_back_both(self):
+        fixture = self.fixture("install.sh")
+        result = fixture.run("--dmg", str(fixture.dmg), FIXTURE_SCENARIO="install-second-bundle-rejected")
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("installierte FavenioQuick.app ist nicht notarisiert/gültig", result.stdout)
+        self.assert_installed(fixture, "alt")
+
+    def test_interrupt_at_success_message_keeps_both_bundles_and_status_zero(self):
+        fixture = self.fixture("install.sh")
+        with (fixture.source / "notarize-lib.sh").open("a", encoding="utf-8") as library:
+            library.write('''
+functions[fixture_original_echo]=$functions[echo]
+echo() {
+    if [[ "$1" == "INSTALL OK:"* ]]; then kill -TERM $$; fi
+    fixture_original_echo "$@"
 }
-hdiutil() {
-    case "$1" in
-        create) if [ "$SCENARIO" = foreign ]; then
-                    mkdir "$MOUNT_DIR"; cp "$ROOT/foreign.plist" "$ROOT/info.plist"
-                fi ;;
-        attach) print attach >> "$ROOT/actions"
-                if [ "$SCENARIO" = foreign ]; then return 1; fi
-                cp "$ROOT/own.plist" "$ROOT/info.plist"
-                if [ "$SCENARIO" = partial ]; then cp "$ROOT/partial.plist" "$ROOT/info.plist"; fi
-                if [[ "$SCENARIO" = signal || "$SCENARIO" = partial ]]; then kill -TERM $$; fi ;;
-        info) cat "$ROOT/info.plist" ;;
-        detach) print -r -- "$2" >> "$ROOT/detached" ;;
-        *) return 9 ;;
-    esac
-}
-'''
-            script += source[source.index('MOUNT_LOCK_SOURCE='):source.index('\nfavenio_mount_unlock()')]
-            script += functions + "\ntrap favenio_release_cleanup EXIT\ntrap 'exit 1' TERM\n"
-            script += section + '\nfavenio_detach_build\nBUILD_MOUNTED=0\n'
-            result = subprocess.run(['zsh', '-c', script, 'probe', str(root), scenario],
-                                    capture_output=True, text=True, timeout=10)
-            detached = (root / 'detached').read_text() if (root / 'detached').exists() else ''
-            if scenario == 'foreign':
-                self.assertNotEqual(result.returncode, 0)
-                self.assertTrue(mount.is_dir())
-                self.assertEqual(detached, '')
-            elif scenario == 'locked':
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(lock.read_text(), 'foreign lock')
-                self.assertFalse((root / 'actions').exists())
-                self.assertEqual(detached, '')
-            else:
-                self.assertEqual(result.returncode, 1 if scenario in ('signal', 'partial') else 0, result.stderr)
-                self.assertEqual(detached, '/dev/ownFixture\n')
-            if scenario != 'locked':
-                self.assertFalse(lock.exists(), result.stdout + result.stderr)
-            self.assertEqual(list(root.glob('mount.lock.*')), [])
+''')
+        result = fixture.run("--dmg", str(fixture.dmg))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("INSTALL OK:", result.stdout)
+        self.assert_installed(fixture, "neu")
 
-    def test_foreign_mount_appearing_during_create_survives_failed_attach(self):
-        self.run_mount_fixture('foreign')
+    def test_early_pipeline_reader_keeps_both_bundles_and_does_not_hang(self):
+        for lines in (1, 6, 8):
+            with self.subTest(lines=lines):
+                fixture = self.fixture("install.sh")
+                status, output = run_into_head(
+                    [*fixture.command, "--dmg", str(fixture.dmg)], lines,
+                    cwd=fixture.source, env=fixture.environment(FIXTURE_SCENARIO="slow-install-output"))
+                self.assertEqual(status, 0, output)
+                self.assert_installed(fixture, "neu")
 
-    def test_signal_during_attach_detaches_only_the_own_image(self):
-        self.run_mount_fixture('signal')
 
-    def test_signal_before_mountpoint_creation_detaches_only_the_own_device(self):
-        self.run_mount_fixture('partial')
+class ReleaseScriptBehaviorTest(StubbedScriptTest):
+    def run_release(self, fixture, scenario="", **environment):
+        return fixture.run(FAVENIO_RELEASE_ISOLATED="1", FIXTURE_SCENARIO=scenario, **environment)
 
-    def test_normal_detach_uses_the_proven_device(self):
-        self.run_mount_fixture('normal')
+    def assert_clean(self, fixture):
+        self.assertEqual(list(fixture.temp.iterdir()), [])
+        self.assertFalse(fixture.mount_lock.exists())
+        self.assertEqual(list(fixture.root.glob("mount.lock.*")), [])
+        self.assertEqual(list((fixture.source / ".build").glob("release.*")), [])
+        self.assertEqual(list((fixture.source / ".build").glob("release-source.*")), [])
+        self.assertEqual(list((fixture.source / "dist").glob(".Favenio-*")), [])
+        self.assertFalse(fixture.calls("killall") + fixture.calls("pkill"))
 
-    def test_common_mount_lock_blocks_another_release_and_is_preserved(self):
-        self.run_mount_fixture('locked')
+    def assert_refused(self, fixture, result, diagnostic=None):
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("RELEASE OK:", result.stdout)
+        if diagnostic:
+            self.assertIn(diagnostic, result.stdout)
+        self.assertEqual(list((fixture.source / "dist").iterdir())
+                         if (fixture.source / "dist").exists() else [], [])
+        self.assert_clean(fixture)
 
-    def test_mount_lock_does_not_depend_on_the_checkout_filesystem(self):
-        self.run_mount_fixture('cross-device')
+    def test_clean_commit_runs_in_detached_checkout_and_publishes_verified_pair(self):
+        fixture = self.fixture("release.sh")
+        result = fixture.run()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn(f"commit {FIXTURE_COMMIT}", result.stdout)
+        [add] = [call for call in fixture.calls("git") if call[:2] == ["worktree", "add"]]
+        self.assertEqual(add[2], "--detach")
+        self.assertEqual(add[-1], FIXTURE_COMMIT)
+        self.assertFalse((fixture.source / FIXTURE_APPS[0]).exists())
+        [image] = (fixture.source / "dist").glob("*.dmg")
+        checksum = image.with_suffix(".dmg.sha256").read_text().split()
+        self.assertEqual(checksum, [hashlib.sha256(image.read_bytes()).hexdigest(), image.name])
+        [verify_image] = [call for call in fixture.calls("spctl") if "open" in call]
+        self.assertEqual(Path(verify_image[-1]).name, image.name)
+        for app in FIXTURE_APPS:
+            [verify] = [call for call in fixture.calls("spctl")
+                        if "execute" in call and Path(call[-1]).is_absolute() and Path(call[-1]).name == app]
+            self.assertTrue(any(call[:2] == ["stapler", "validate"] and call[-1] == verify[-1]
+                                for call in fixture.calls("xcrun")))
+        finder_script = (fixture.root / "finder.applescript").read_text()
+        self.assertIn(f'tell disk "{fixture.mount.name}"', finder_script)
+        self.assert_clean(fixture)
+
+    def test_dirty_start_and_changed_checkout_are_rejected(self):
+        for scenario in ("dirty", "dirty-after-build", "head-changed"):
+            with self.subTest(scenario=scenario):
+                fixture = self.fixture("release.sh")
+                result = fixture.run(FIXTURE_SCENARIO=scenario)
+                self.assert_refused(fixture, result, "Arbeitsbaum ist nicht sauber" if scenario == "dirty" else "Quellstand hat sich")
+                self.assertEqual(bool(fixture.calls("fixture-build")), scenario != "dirty")
+
+    def test_missing_or_foreign_team_cannot_be_released(self):
+        for team, diagnostic in (("", "Keine Entwickler-Team-ID"),
+                                 ("invalid", "Die Entwickler-Team-ID muss")):
+            with self.subTest(team=team):
+                fixture = self.fixture("release.sh")
+                result = self.run_release(fixture, FAVENIO_TEAM_ID=team)
+                self.assert_refused(fixture, result, diagnostic)
+                self.assertFalse(fixture.calls("fixture-build"))
+        fixture = self.fixture("release.sh")
+        result = self.run_release(fixture, "foreign-team")
+        self.assert_refused(fixture, result, "nicht vom erwarteten Entwickler-Team")
+
+    def test_bundle_and_dmg_verification_fail_closed(self):
+        for scenario, diagnostic in (
+            ("bad-signature", "Signatur von"),
+            ("bad-bundle-gatekeeper", "Gatekeeper akzeptiert"),
+            ("bad-bundle-ticket", "kein angeheftetes Notary-Ticket"),
+            ("bad-dmg-gatekeeper", "Schritt 5/5"),
+            ("bad-dmg-ticket", "Schritt 5/5"),
+            ("foreign-feed", "sucht Updates unter"),
+        ):
+            with self.subTest(scenario=scenario):
+                fixture = self.fixture("release.sh")
+                if scenario == "foreign-feed":
+                    fixture.write_plist(FIXTURE_APPS[1], SUFeedURL="https://fixtures.invalid/appcast.xml")
+                self.assert_refused(fixture, self.run_release(fixture, scenario), diagnostic)
+                self.assertFalse(any(Path(call[-1]).suffix == ".dmg" for call in fixture.calls("ln")))
+
+    def test_link_failure_or_interrupt_rolls_back_only_own_artifact(self):
+        for scenario in ("checksum-link-fails", "signal-before-checksum-link", "concurrent-artifact"):
+            with self.subTest(scenario=scenario):
+                fixture = self.fixture("release.sh")
+                result = self.run_release(fixture, scenario)
+                if scenario == "concurrent-artifact":
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    [image] = (fixture.source / "dist").iterdir()
+                    self.assertEqual(image.read_bytes(), b"foreign artifact")
+                    self.assert_clean(fixture)
+                else:
+                    self.assert_refused(fixture, result)
+
+    def test_existing_release_lock_and_artifacts_are_preserved(self):
+        for existing in (f".Favenio-{favenio.__version__}.release-lock", f"Favenio-{favenio.__version__}.dmg",
+                         f"Favenio-{favenio.__version__}.dmg.sha256"):
+            with self.subTest(existing=existing):
+                fixture = self.fixture("release.sh")
+                dist = fixture.source / "dist"
+                dist.mkdir()
+                foreign = dist / existing
+                foreign.write_text("foreign file", encoding="utf-8")
+                result = self.run_release(fixture)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(list(dist.iterdir()), [foreign])
+                self.assertEqual(foreign.read_text(), "foreign file")
+                self.assertFalse(fixture.calls("hdiutil"))
+
+    def test_mount_lock_and_foreign_volume_both_prevent_cleanup_of_foreign_state(self):
+        fixture = self.fixture("release.sh")
+        fixture.mount_lock.write_text("foreign lock", encoding="utf-8")
+        result = self.run_release(fixture)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(fixture.mount_lock.read_text(), "foreign lock")
+        self.assertEqual(list(fixture.root.glob("mount.lock.*")), [])
+        self.assertFalse(fixture.calls("hdiutil"))
+        for scenario in ("preexisting-volume", "foreign"):
+            with self.subTest(scenario=scenario):
+                fixture = self.fixture("release.sh")
+                if scenario == "preexisting-volume":
+                    fixture.mount.mkdir()
+                self.assert_refused(fixture, self.run_release(fixture, scenario))
+                self.assertTrue(fixture.mount.is_dir())
+                self.assertFalse(any(call[0] == "detach" for call in fixture.calls("hdiutil")))
+
+    def test_interrupt_during_attach_detaches_only_the_image_from_this_run(self):
+        for scenario in ("term-during-attach", "partial", "term-during-verification", "pipe-during-verification"):
+            with self.subTest(scenario=scenario):
+                fixture = self.fixture("release.sh")
+                result = self.run_release(fixture, scenario)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assert_refused(fixture, result)
+                detach = [call[1] for call in fixture.calls("hdiutil") if call[0] == "detach"]
+                self.assertEqual(detach[0], "/dev/ownFixture")
+                if scenario.endswith("verification"):
+                    [attach] = [call for call in fixture.calls("hdiutil") if "-nobrowse" in call]
+                    self.assertEqual(detach[1:], [attach[attach.index("-mountpoint") + 1]])
+                else:
+                    self.assertEqual(len(detach), 1)
+                self.assertFalse(fixture.mount.exists())
+
+    def test_mount_lock_works_when_checkout_is_on_a_different_filesystem(self):
+        fixture = self.fixture("release.sh")
+        result = self.run_release(fixture, "cross-device")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("detach", [call[0] for call in fixture.calls("hdiutil")])
+        self.assert_clean(fixture)
+
+    def test_release_completes_with_an_early_pipeline_reader(self):
+        fixture = self.fixture("release.sh")
+        status, output = run_into_head(fixture.command, 1, cwd=fixture.source,
+                                       env=fixture.environment())
+        self.assertEqual(status, 0, output)
+        self.assertEqual(len(list((fixture.source / "dist").iterdir())), 2)
+        self.assert_clean(fixture)
 
 
 if __name__ == "__main__":

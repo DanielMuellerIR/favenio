@@ -64,7 +64,20 @@ def main():
         hit = search(scan, 'München', '--pdf-ocr')
         assert hit['documentPosition']['reader'] == 'poppler-tesseract-v1', hit
         assert hit['documentPosition']['kind'] == 'pdfOCR', hit
-    print('LINUX DOCUMENT OK: real PDF text, next page, changed reader rejected, German image OCR, scanned PDF OCR')
+        helper = engine.resolve().parent / 'helpers/favenio-document'
+        for label, dimensions in (('edge', (2048, 100)), ('area', (1600, 1600))):
+            oversized = root / f'ocr-limit-{label}.pdf'
+            oversized.write_bytes(pdf_bytes([[]], page_size=dimensions))
+            requests = [dict(operation='open', path=str(oversized)),
+                        dict(operation='ocrPage', index=0), dict(operation='close')]
+            raw = ''.join(json.dumps(request) + '\n' for request in requests)
+            process = subprocess.run([str(helper)], input=raw, text=True, capture_output=True,
+                                     check=True, timeout=15)
+            opened, rejected, closed = (json.loads(line) for line in process.stdout.splitlines())
+            assert opened['ok'] and opened['pageCount'] == 1, opened
+            assert not rejected['ok'] and rejected['reason'] == 'pdfOCRLimit', (label, rejected)
+            assert closed['ok'], closed
+    print('LINUX DOCUMENT OK: real PDF text, next page, changed reader rejected, German image OCR, scanned PDF OCR, edge and area rejected')
 
 
 if __name__ == '__main__': main()

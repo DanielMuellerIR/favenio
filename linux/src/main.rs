@@ -8,6 +8,7 @@ mod handoff;
 mod locations;
 mod menus;
 mod model;
+mod model_search;
 mod render;
 mod results;
 mod thumbnails;
@@ -15,10 +16,13 @@ mod tools;
 use base64::Engine;
 use gtk::{gdk, gio, glib, prelude::*};
 use model::Model;
+use model_search::{Configuration, ResultOrder, SearchOption};
 use serde_json::{json, Value};
 use std::os::unix::ffi::OsStringExt;
 use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 
+const SEARCH_MODES: [&str; 4] = ["name", "content", "metadata", "document"];
+const SEARCH_SCOPES: [&str; 3] = ["both", "files", "dirs"];
 const SORT_KEYS: [&str; 10] = [
     "name",
     "size",
@@ -56,12 +60,9 @@ struct Ui {
     excludes: gtk::TextView,
     criteria: RefCell<Option<Value>>,
     criteria_enabled: gtk::CheckButton,
-    store: gio::ListStore,
-    selection: gtk::MultiSelection,
+    results: results::ResultView,
+    evidence: evidence::EvidencePane,
     status: gtk::Label,
-    preview: gtk::TextView,
-    preview_enabled: gtk::CheckButton,
-    evidence_query: gtk::DropDown,
     evidence_identity: RefCell<Option<String>>,
     evidence_occurrence: std::cell::Cell<u64>,
     evidence_load: RefCell<Option<String>>,
@@ -74,12 +75,7 @@ struct Ui {
     actions: RefCell<std::collections::HashMap<String, (String, Value)>>,
     preview_window: RefCell<Option<gtk::Window>>,
     all_hits: RefCell<Vec<Value>>,
-    grouping: gtk::DropDown,
-    sorting: gtk::DropDown,
-    ascending: gtk::CheckButton,
     collapsed: RefCell<std::collections::HashSet<String>>,
-    grid: gtk::GridView,
-    result_stack: gtk::Stack,
     projection_dirty: std::cell::Cell<bool>,
     arrival_prefix: std::cell::Cell<bool>,
     last_projection: RefCell<std::time::Instant>,
@@ -100,7 +96,7 @@ struct Ui {
     drag_results: RefCell<std::collections::HashMap<String, Value>>,
     suppress_quick: std::cell::Cell<bool>,
     quick_epoch: std::cell::Cell<u64>,
-    last_configuration: RefCell<Option<Value>>,
+    last_configuration: RefCell<Option<Configuration>>,
     initial_selection: RefCell<std::collections::HashSet<String>>,
 }
 fn text(view: &gtk::TextView) -> String {
@@ -146,15 +142,25 @@ fn strings(value: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 impl Ui {
-    fn options(&self) -> Vec<Value> {
-        let modes = ["name", "content", "metadata", "document"];
+    fn options(&self) -> Vec<SearchOption> {
+        let mode = SEARCH_MODES
+            .get(self.mode.selected() as usize)
+            .copied()
+            .unwrap_or("name");
+        let scope = SEARCH_SCOPES
+            .get(self.only.selected() as usize)
+            .copied()
+            .unwrap_or("both");
         let mut out = vec![
-            json!({"name":"mode","value":modes[self.mode.selected() as usize]}),
-            json!({"name":"only","value":(["both","files","dirs"][self.only.selected() as usize])}),
-            json!({"name":"encoding","value":self.encodings[self.encoding.selected() as usize]}),
+            SearchOption::new("mode", mode),
+            SearchOption::new("only", scope),
+            SearchOption::new("encoding", self.selected_encoding()),
         ];
         for (key, control) in &self.checks {
-            out.push(json!({"name":key,"value":if control.is_active(){"1"}else{"0"}}));
+            out.push(SearchOption::new(
+                key,
+                if control.is_active() { "1" } else { "0" },
+            ));
         }
         for (key, control) in &self.filters {
             if self.date_values.iter().any(|(field, value)| {
@@ -163,18 +169,18 @@ impl Ui {
                 continue;
             }
             if !control.text().is_empty() {
-                out.push(json!({"name":key,"value":control.text().to_string()}));
+                out.push(SearchOption::new(key, control.text().to_string()));
             }
         }
         for value in lines(&self.terms) {
-            out.push(json!({"name":"term","value":value}));
+            out.push(SearchOption::new("term", value));
         }
         for value in lines(&self.excludes) {
-            out.push(json!({"name":"exclude","value":value}));
+            out.push(SearchOption::new("exclude", value));
         }
         if self.criteria_enabled.is_active() {
             if let Some(tree) = self.criteria.borrow().as_ref() {
-                out.push(json!({"name":"criteria","value":tree.to_string()}));
+                out.push(SearchOption::new("criteria", tree.to_string()));
             }
         }
         let dates: std::collections::BTreeMap<_, _> = self
@@ -183,25 +189,44 @@ impl Ui {
             .filter_map(|(field, value)| value.borrow().clone().map(|value| (field.clone(), value)))
             .collect();
         if !dates.is_empty() {
-            out.push(json!({"name":"date-ranges","value":json!({"schemaVersion":1,"ranges":dates}).to_string()}));
+            out.push(SearchOption::new(
+                "date-ranges",
+                json!({"schemaVersion":1,"ranges":dates}).to_string(),
+            ));
         }
         let continuation = self
             .retained_options
             .borrow()
             .iter()
             .any(|v| v["name"] == "__continuation");
-        out.extend(
-            self.retained_options
-                .borrow()
-                .iter()
-                .filter(|v| {
-                    ["finder-metadata", "local-only"].contains(&v["name"].as_str().unwrap_or(""))
-                        || (v["name"] == "field" && self.mode.selected() == 2)
-                        || (continuation && v["name"] == "date-reference-time")
-                })
-                .cloned(),
-        );
+        out.extend(self.retained_options.borrow().iter().filter_map(|option| {
+            let name = option["name"].as_str()?;
+            let value = option["value"].as_str()?;
+            (["finder-metadata", "local-only"].contains(&name)
+                || (name == "field" && mode == "metadata")
+                || (continuation && name == "date-reference-time"))
+                .then(|| SearchOption::new(name, value))
+        }));
         out
+    }
+    fn selected_encoding(&self) -> &str {
+        self.encodings
+            .get(self.encoding.selected() as usize)
+            .map(String::as_str)
+            .unwrap_or("utf-8")
+    }
+    fn sort_key(&self) -> &'static str {
+        SORT_KEYS
+            .get(self.results.sorting.selected() as usize)
+            .copied()
+            .unwrap_or("name")
+    }
+    fn result_order<'a>(&self, run: &'a Option<String>) -> ResultOrder<'a> {
+        ResultOrder {
+            run_id: run.as_deref().unwrap_or(""),
+            sort: self.sort_key(),
+            ascending: self.results.ascending.is_active(),
+        }
     }
     fn quick_changed(self: &Rc<Self>) {
         if !self.quick || self.suppress_quick.get() {
@@ -216,17 +241,15 @@ impl Ui {
                 return;
             }
             let mut config = ui.configuration();
-            config.as_object_mut().unwrap().remove("continuation");
+            config.continuation = None;
             if ui.last_configuration.borrow().as_ref() == Some(&config) {
                 return;
             }
             if ui.query.text().trim().is_empty() {
-                let mut validation = config.clone();
-                validation["pattern"] = json!("");
-                validation["operation"] = json!("arguments");
-                if ui.model.call(validation).is_err() {
+                config.pattern.clear();
+                if ui.model.validate_search(config).is_err() {
                     let _ = ui.model.call(json!({"operation":"cancel"}));
-                    ui.store.remove_all();
+                    ui.results.store.remove_all();
                     ui.all_hits.borrow_mut().clear();
                     ui.status
                         .set_text("Suchmuster oder positiven Filter eingeben.");
@@ -259,23 +282,22 @@ impl Ui {
             return Err(error);
         }
         let mut request = self.configuration();
-        request["pattern"] = json!(self.query.text().trim().to_owned());
-        request["operation"] = json!("start");
-        request["quick"] = json!(self.quick);
-        request["contentPreview"] = json!(self.preview_enabled.is_active());
-        if let Some(reference) = reference {
-            request["dateReferenceTime"] = reference.clone();
-        }
+        request.pattern = self.query.text().trim().to_owned();
         self.retained_options
             .borrow_mut()
             .retain(|v| v["name"] != "__continuation");
-        match self.model.call(request) {
-            Ok(value) => {
+        match self.model.start(
+            request,
+            self.quick,
+            self.evidence.enabled.is_active(),
+            reference,
+        ) {
+            Ok(run_id) => {
                 self.reset_transient_actions();
                 let mut snapshot = self.configuration();
-                snapshot.as_object_mut().unwrap().remove("continuation");
+                snapshot.continuation = None;
                 *self.last_configuration.borrow_mut() = Some(snapshot);
-                self.store.remove_all();
+                self.results.store.remove_all();
                 self.all_hits.borrow_mut().clear();
                 self.arrival_prefix.set(true);
                 self.result_count.set(0);
@@ -284,8 +306,8 @@ impl Ui {
                 self.ended.set(false);
                 *self.run_state.borrow_mut() = "running".into();
                 self.warning_count.set(0);
-                self.preview.buffer().set_text("");
-                *self.run.borrow_mut() = value["runID"].as_str().map(str::to_owned);
+                self.evidence.text.buffer().set_text("");
+                *self.run.borrow_mut() = Some(run_id);
                 *self.report.borrow_mut() = None;
                 self.report_text.borrow_mut().clear();
                 self.status.set_text("Suche läuft …");
@@ -298,11 +320,9 @@ impl Ui {
         }
     }
     fn poll(self: &Rc<Self>) {
-        let result = self
-            .model
-            .call(json!({"operation":"poll","runID":self.run.borrow().as_deref().unwrap_or("")}));
-        let Ok(result) = result else { return };
-        for event in result["events"].as_array().into_iter().flatten() {
+        let result = self.model.poll(self.run.borrow().as_deref().unwrap_or(""));
+        let Ok(events) = result else { return };
+        for event in &events {
             match event["kind"].as_str() {
                 Some("batch") => {
                     if let Some(hits) = event["hits"].as_array() {
@@ -311,7 +331,7 @@ impl Ui {
                     }
                     self.status.set_text(&format!(
                         "{} Treffer · {}",
-                        self.store.n_items(),
+                        self.results.store.n_items(),
                         event["progress"].as_str().unwrap_or("Suche läuft …")
                     ));
                 }
@@ -477,7 +497,7 @@ impl Ui {
             }
             self.quick_changed();
         }
-        if self.preview_enabled.is_active()
+        if self.evidence.enabled.is_active()
             && self.last_evidence_check.borrow().elapsed() > Duration::from_secs(1)
         {
             *self.last_evidence_check.borrow_mut() = std::time::Instant::now();
@@ -486,7 +506,7 @@ impl Ui {
                     .model
                     .call(json!({"operation":"previewStatus","raw":hit["raw"]}))
                 {
-                    self.preview.buffer().set_text(&error);
+                    self.evidence.text.buffer().set_text(&error);
                 }
             }
         }
@@ -549,9 +569,15 @@ impl Ui {
         }
     }
     fn selected(&self) -> Vec<Value> {
-        (0..self.store.n_items())
-            .filter(|&i| self.selection.is_selected(i))
-            .filter_map(|i| self.store.item(i)?.downcast::<glib::BoxedAnyObject>().ok())
+        (0..self.results.store.n_items())
+            .filter(|&i| self.results.selection.is_selected(i))
+            .filter_map(|i| {
+                self.results
+                    .store
+                    .item(i)?
+                    .downcast::<glib::BoxedAnyObject>()
+                    .ok()
+            })
             .map(|o| o.borrow::<Value>().clone())
             .filter(|v| v["kind"] != "group")
             .collect()
@@ -785,25 +811,22 @@ fn build(
     } else {
         "org.favenio.Main"
     };
-    if let (Some(display), Ok(executable)) = (gdk::Display::default(), std::env::current_exe()) {
-        gtk::IconTheme::for_display(&display)
-            .add_search_path(executable.parent().unwrap().join("icons"));
+    if let (Some(display), Ok(folder)) = (gdk::Display::default(), executable_folder()) {
+        gtk::IconTheme::for_display(&display).add_search_path(folder.join("icons"));
     }
     let window = gtk::ApplicationWindow::builder()
         .application(app)
         .icon_name(icon_name)
         .title(if quick { "FavenioQuick" } else { "Favenio" })
         .default_width(if quick { 700 } else { 1180 })
-        .default_height(if quick { 800 } else { 800 })
+        .default_height(800)
         .build();
     let body = column();
-    for (edge, set) in [(12, 0)] {
-        let _ = set;
-        body.set_margin_top(edge);
-        body.set_margin_bottom(edge);
-        body.set_margin_start(edge);
-        body.set_margin_end(edge);
-    }
+    let margin = 12;
+    body.set_margin_top(margin);
+    body.set_margin_bottom(margin);
+    body.set_margin_start(margin);
+    body.set_margin_end(margin);
     let top = row();
     let stop = gtk::Button::with_label("Stopp");
     let query = gtk::SearchEntry::builder()
@@ -989,161 +1012,19 @@ fn build(
         )
         .build();
     body.append(&expander);
-    let store = gio::ListStore::new::<glib::BoxedAnyObject>();
-    let selection = gtk::MultiSelection::new(Some(store.clone()));
-    let table = gtk::ColumnView::new(Some(selection.clone()));
-    table.set_hexpand(true);
-    table.set_vexpand(true);
-    table.add_css_class("data-table");
-    let columns = if quick {
-        vec![("Name", "name", 260), ("Pfad", "folder", 300)]
-    } else {
-        vec![
-            ("Name", "name", 230),
-            ("Größe", "size", 80),
-            ("Pfad", "folder", 320),
-            ("Typ", "type", 130),
-            ("Änderungsdatum", "modified", 150),
-            ("Erstellungsdatum", "created", 150),
-            ("Fundstelle", "location", 160),
-            ("Maße", "dimensions", 120),
-            ("Finder-Tags", "finderTags", 180),
-            ("Finder-Kommentar", "finderComment", 220),
-        ]
-    };
-    let mut table_factories = Vec::new();
-    for (title, key, width) in columns {
-        let factory = gtk::SignalListItemFactory::new();
-        factory.connect_setup(|_, item| {
-            let item = item.downcast_ref::<gtk::ListItem>().unwrap();
-            let l = label("");
-            l.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            item.set_child(Some(&l));
-        });
-        factory.connect_bind(move |_, item| {
-            let item = item.downcast_ref::<gtk::ListItem>().unwrap();
-            let object = item.item().and_downcast::<glib::BoxedAnyObject>().unwrap();
-            let value = object.borrow::<Value>();
-            let l = item.child().and_downcast::<gtk::Label>().unwrap();
-            let cell = if ["modified", "created"].contains(&key) && value[key].is_number() {
-                value[key]
-                    .as_f64()
-                    .and_then(|v| glib::DateTime::from_unix_local(v.floor() as i64).ok())
-                    .and_then(|v| v.format("%x %H:%M").ok())
-                    .map(|s| s.to_string())
-                    .unwrap_or_default()
-            } else if key == "size" && value[key].is_number() {
-                glib::format_size(value[key].as_u64().unwrap_or(0)).to_string()
-            } else if let Some(s) = value[key].as_str() {
-                s.to_owned()
-            } else if value[key].is_number() {
-                value[key].to_string()
-            } else {
-                String::new()
-            };
-            l.set_text(&cell);
-            l.set_tooltip_text(Some(value["path"].as_str().unwrap_or("")));
-        });
-        table_factories.push(factory.clone());
-        let c = gtk::ColumnViewColumn::new(Some(title), Some(factory));
-        if key != "location" {
-            c.set_sorter(Some(&gtk::CustomSorter::new(|_, _| gtk::Ordering::Equal)));
-        }
-        c.set_resizable(true);
-        c.set_fixed_width(width);
-        table.append_column(&c);
-    }
-    let grouping = gtk::DropDown::from_strings(&[
-        "Keine Gruppierung",
-        "Nach Ordner",
-        "Nach Endung",
-        "Nach Quellarchiv",
-    ]);
-    let sorting = gtk::DropDown::from_strings(&[
-        "Name",
-        "Größe",
-        "Pfad",
-        "Typ",
-        "Geändert",
-        "Erstellt",
-        "Bildmaße",
-        "Finder-Tags",
-        "Finder-Kommentar",
-        "Eingangsreihenfolge",
-    ]);
-    let ascending = gtk::CheckButton::with_label("Aufsteigend");
-    ascending.set_active(true);
-    let group_controls = row();
-    group_controls.append(&grouping);
-    group_controls.append(&sorting);
-    group_controls.append(&ascending);
-    let collapse = gtk::Button::with_label("Alle einklappen");
-    let expand = gtk::Button::with_label("Alle ausklappen");
-    group_controls.append(&collapse);
-    group_controls.append(&expand);
-    let view_mode = gtk::DropDown::from_strings(&["Liste", "Miniaturen"]);
-    group_controls.append(&view_mode);
+    let results = results::ResultView::new(quick);
     if quick {
         filters_body.append(
             &gtk::ScrolledWindow::builder()
                 .hscrollbar_policy(gtk::PolicyType::Automatic)
                 .vscrollbar_policy(gtk::PolicyType::Never)
-                .child(&group_controls)
+                .child(&results.group_controls)
                 .build(),
         );
     } else {
-        body.append(&group_controls);
+        body.append(&results.group_controls);
     }
-    let grid_factory = gtk::SignalListItemFactory::new();
-    grid_factory.connect_setup(|_, item| {
-        let i = item.downcast_ref::<gtk::ListItem>().unwrap();
-        let b = column();
-        let icon = gtk::Image::from_icon_name("text-x-generic-symbolic");
-        icon.set_pixel_size(64);
-        b.append(&icon);
-        let l = label("");
-        l.set_wrap(true);
-        l.set_max_width_chars(22);
-        b.append(&l);
-        b.set_size_request(160, 110);
-        i.set_child(Some(&b));
-    });
-    grid_factory.connect_bind(|_, item| {
-        let i = item.downcast_ref::<gtk::ListItem>().unwrap();
-        let o = i.item().and_downcast::<glib::BoxedAnyObject>().unwrap();
-        let v = o.borrow::<Value>();
-        let b = i.child().and_downcast::<gtk::Box>().unwrap();
-        let icon = b.first_child().and_downcast::<gtk::Image>().unwrap();
-        icon.set_icon_name(Some(if v["isDirectory"] == true {
-            "folder-symbolic"
-        } else {
-            "text-x-generic-symbolic"
-        }));
-        let l = b.last_child().and_downcast::<gtk::Label>().unwrap();
-        l.set_text(v["name"].as_str().or(v["title"].as_str()).unwrap_or(""));
-        b.set_tooltip_text(v["path"].as_str());
-    });
-    let grid = gtk::GridView::new(Some(selection.clone()), Some(grid_factory.clone()));
-    grid.set_min_columns(1);
-    grid.set_max_columns(12);
-    let result_stack = gtk::Stack::new();
-    result_stack.add_named(
-        &gtk::ScrolledWindow::builder()
-            .child(&table)
-            .vexpand(true)
-            .min_content_height(180)
-            .build(),
-        Some("list"),
-    );
-    result_stack.add_named(
-        &gtk::ScrolledWindow::builder()
-            .child(&grid)
-            .vexpand(true)
-            .build(),
-        Some("grid"),
-    );
-    result_stack.set_vexpand(true);
-    body.append(&result_stack);
+    body.append(&results.stack);
     let action_row = gtk::Grid::builder()
         .column_spacing(6)
         .row_spacing(6)
@@ -1197,37 +1078,10 @@ fn build(
     } else {
         body.append(&utility_row);
     }
-    let preview_enabled = gtk::CheckButton::with_label("Fundstellenvorschau");
-    preview_enabled.set_active(false);
-    body.append(&preview_enabled);
-    let navigation = row();
-    let evidence_query = gtk::DropDown::from_strings(&["Fundstelle"]);
-    let previous_evidence = gtk::Button::with_label("Vorherige");
-    let next_evidence = gtk::Button::with_label("Nächste");
-    let context_evidence = gtk::Button::with_label("Mehr Kontext");
-    let cancel_evidence = gtk::Button::with_label("Abbrechen");
-    for widget in [
-        evidence_query.clone().upcast::<gtk::Widget>(),
-        previous_evidence.clone().upcast(),
-        next_evidence.clone().upcast(),
-        context_evidence.clone().upcast(),
-        cancel_evidence.clone().upcast(),
-    ] {
-        navigation.append(&widget);
-    }
-    body.append(&navigation);
-    navigation.set_visible(false);
-    let (ps, preview) = editor(100);
-    preview.set_editable(false);
-    body.append(&ps);
-    ps.set_visible(false);
-    let preview_restart = gtk::Button::with_label("Mit Vorschau neu suchen");
-    body.append(&preview_restart);
-    preview_restart.set_visible(false);
+    let evidence = evidence::EvidencePane::new(&body);
     let status = label("Return startet die Suche");
     body.append(&status);
     window.set_child(Some(&body));
-    let preview_restart_action = preview_restart.clone();
     let ui = Rc::new(Ui {
         window,
         model,
@@ -1252,12 +1106,9 @@ fn build(
         excludes,
         criteria: RefCell::new(None),
         criteria_enabled,
-        store,
-        selection,
+        results,
+        evidence,
         status,
-        preview,
-        preview_enabled,
-        evidence_query,
         evidence_identity: RefCell::new(None),
         evidence_occurrence: std::cell::Cell::new(0),
         evidence_load: RefCell::new(None),
@@ -1270,12 +1121,7 @@ fn build(
         actions: RefCell::new(Default::default()),
         preview_window: RefCell::new(None),
         all_hits: RefCell::new(Vec::new()),
-        grouping,
-        sorting,
-        ascending,
         collapsed: RefCell::new(Default::default()),
-        grid,
-        result_stack,
         projection_dirty: std::cell::Cell::new(false),
         arrival_prefix: std::cell::Cell::new(false),
         last_projection: RefCell::new(std::time::Instant::now()),
@@ -1303,12 +1149,12 @@ fn build(
         last_configuration: RefCell::new(None),
         initial_selection: RefCell::new(std::collections::HashSet::new()),
     });
-    for factory in &table_factories {
+    for factory in &ui.results.table_factories {
         ui.install_result_menu(factory);
     }
-    ui.install_result_menu(&grid_factory);
+    ui.install_result_menu(&ui.results.grid_factory);
     let weak = Rc::downgrade(&ui);
-    preview_restart_action.connect_clicked(move |_| {
+    ui.evidence.restart.connect_clicked(move |_| {
         if let Some(ui) = weak.upgrade() {
             ui.start();
         }
@@ -1320,7 +1166,7 @@ fn build(
         ));
     }
     let weak = Rc::downgrade(&ui);
-    grid_factory.connect_bind(move |_, item| {
+    ui.results.grid_factory.connect_bind(move |_, item| {
         if let Some(ui) = weak.upgrade() {
             let item = item.downcast_ref::<gtk::ListItem>().unwrap();
             if let (Some(object), Some(container)) = (
@@ -1422,25 +1268,25 @@ fn build(
         });
     }
     let weak = Rc::downgrade(&ui);
-    ui.selection.connect_selection_changed(move |_, _, _| {
-        if let Some(ui) = weak.upgrade() {
-            if !ui.rebuilding.get() {
-                ui.preview_page.set(0);
-                ui.update_preview();
+    ui.results
+        .selection
+        .connect_selection_changed(move |_, _, _| {
+            if let Some(ui) = weak.upgrade() {
+                if !ui.rebuilding.get() {
+                    ui.preview_page.set(0);
+                    ui.update_preview();
+                }
             }
-        }
-    });
+        });
     let weak = Rc::downgrade(&ui);
-    ui.preview_enabled.connect_toggled(move |_| {
+    ui.evidence.enabled.connect_toggled(move |_| {
         if let Some(ui) = weak.upgrade() {
-            ps.set_visible(ui.preview_enabled.is_active());
-            navigation.set_visible(ui.preview_enabled.is_active());
-            preview_restart.set_visible(ui.preview_enabled.is_active());
+            ui.evidence.show_controls(ui.evidence.enabled.is_active());
             ui.update_preview();
         }
     });
     let weak = Rc::downgrade(&ui);
-    table.connect_activate(move |_, position| {
+    ui.results.table.connect_activate(move |_, position| {
         if let Some(ui) = weak.upgrade() {
             ui.activate_row(position);
         }
@@ -1476,7 +1322,7 @@ fn build(
         }
         glib::Propagation::Proceed
     });
-    ui.result_stack.add_controller(key);
+    ui.results.stack.add_controller(key);
     let weak = Rc::downgrade(&ui);
     ui.window.connect_close_request(move |_| {
         if let Some(ui) = weak.upgrade() {
@@ -1490,79 +1336,7 @@ fn build(
         ui.start();
         *ui.initial_selection.borrow_mut() = strings(&config["selection"]).into_iter().collect();
     }
-    if let Some(sorter) = table.sorter().and_downcast::<gtk::ColumnViewSorter>() {
-        let weak = Rc::downgrade(&ui);
-        sorter.connect_changed(move |sorter, _| {
-            let Some(ui) = weak.upgrade() else {
-                return;
-            };
-            let title = sorter
-                .primary_sort_column()
-                .and_then(|column| column.title());
-            let index = match title.as_deref() {
-                Some("Name") => 0,
-                Some("Größe") => 1,
-                Some("Pfad") => 2,
-                Some("Typ") => 3,
-                Some("Änderungsdatum") => 4,
-                Some("Erstellungsdatum") => 5,
-                Some("Maße") => 6,
-                Some("Finder-Tags") => 7,
-                Some("Finder-Kommentar") => 8,
-                _ => return,
-            };
-            ui.sorting.set_selected(index);
-            ui.ascending
-                .set_active(sorter.primary_sort_order() == gtk::SortType::Ascending);
-            ui.refresh_projection();
-        });
-    }
-    let weak = Rc::downgrade(&ui);
-    ui.grouping.connect_selected_notify(move |_| {
-        if let Some(ui) = weak.upgrade() {
-            ui.refresh_projection();
-        }
-    });
-    let weak = Rc::downgrade(&ui);
-    ui.sorting.connect_selected_notify(move |_| {
-        if let Some(ui) = weak.upgrade() {
-            ui.ascending
-                .set_sensitive(SORT_KEYS[ui.sorting.selected() as usize] != "arrival");
-            ui.refresh_projection();
-        }
-    });
-    let weak = Rc::downgrade(&ui);
-    ui.ascending.connect_toggled(move |_| {
-        if let Some(ui) = weak.upgrade() {
-            ui.refresh_projection();
-        }
-    });
-    let weak = Rc::downgrade(&ui);
-    collapse.connect_clicked(move |_| {
-        if let Some(ui) = weak.upgrade() {
-            ui.collapse_all();
-        }
-    });
-    let weak = Rc::downgrade(&ui);
-    expand.connect_clicked(move |_| {
-        if let Some(ui) = weak.upgrade() {
-            ui.collapsed.borrow_mut().clear();
-            ui.refresh_projection();
-        }
-    });
-    let weak = Rc::downgrade(&ui);
-    view_mode.connect_selected_notify(move |v| {
-        if let Some(ui) = weak.upgrade() {
-            ui.result_stack
-                .set_visible_child_name(if v.selected() == 1 { "grid" } else { "list" });
-        }
-    });
-    let weak = Rc::downgrade(&ui);
-    ui.grid.connect_activate(move |_, position| {
-        if let Some(ui) = weak.upgrade() {
-            ui.activate_row(position);
-        }
-    });
+    results::connect_controls(&ui);
     for (action, button) in utilities {
         let weak = Rc::downgrade(&ui);
         button.connect_clicked(move |_| {
@@ -1577,10 +1351,14 @@ fn build(
             ui.retained_options
                 .borrow_mut()
                 .retain(|v| v["name"] != "field");
-            if f.selected() > 0 {
-                ui.retained_options.borrow_mut().push(
-                    json!({"name":"field","value":metadata_fields[(f.selected()-1)as usize]}),
-                );
+            if let Some(field) = f
+                .selected()
+                .checked_sub(1)
+                .and_then(|index| metadata_fields.get(index as usize))
+            {
+                ui.retained_options
+                    .borrow_mut()
+                    .push(json!({"name":"field","value":field}));
             }
         }
     });
@@ -1617,8 +1395,8 @@ fn build(
     });
     ui.window.add_controller(global_key);
     for widget in [
-        table.clone().upcast::<gtk::Widget>(),
-        ui.grid.clone().upcast::<gtk::Widget>(),
+        ui.results.table.clone().upcast::<gtk::Widget>(),
+        ui.results.grid.clone().upcast::<gtk::Widget>(),
     ] {
         let source = gtk::DragSource::new();
         source.set_actions(gdk::DragAction::COPY);
@@ -1629,39 +1407,7 @@ fn build(
         });
         widget.add_controller(source);
     }
-    for (button, delta, context) in [
-        (previous_evidence, -1, false),
-        (next_evidence, 1, false),
-        (context_evidence, 0, true),
-    ] {
-        let weak = Rc::downgrade(&ui);
-        button.connect_clicked(move |_| {
-            if let Some(ui) = weak.upgrade() {
-                ui.navigate_evidence(delta, context);
-            }
-        });
-    }
-    let weak = Rc::downgrade(&ui);
-    cancel_evidence.connect_clicked(move |_| {
-        if let Some(ui) = weak.upgrade() {
-            let _ = ui.model.call(json!({"operation":"cancelPreview"}));
-            ui.evidence_load.borrow_mut().take();
-            ui.status
-                .set_text("Nachladen abgebrochen. Bisheriger Beleg bleibt erhalten.");
-        }
-    });
-    let weak = Rc::downgrade(&ui);
-    ui.evidence_query.connect_selected_notify(move |_| {
-        if let Some(ui) = weak.upgrade() {
-            ui.evidence_occurrence.set(0);
-            ui.evidence_at_end.set(false);
-            let _ = ui.model.call(json!({"operation":"cancelPreview"}));
-            ui.evidence_load.borrow_mut().take();
-            if let Some(hit) = ui.selected().first() {
-                ui.render_evidence(&hit["preview"]);
-            }
-        }
-    });
+    evidence::connect_navigation(&ui);
     ui.window.present();
     if needs_scope {
         ui.status.set_text("Zuerst einen Suchbereich wählen.");
@@ -1669,12 +1415,10 @@ fn build(
     }
     ui.query.grab_focus();
     glib::timeout_add_local_once(Duration::from_secs(15), || {
-        if let Ok(executable) = std::env::current_exe() {
-            let _ = std::process::Command::new(
-                executable.parent().unwrap().join("helpers/favenio-update"),
-            )
-            .args(["--check", "--notify"])
-            .spawn();
+        if let Ok(folder) = executable_folder() {
+            let _ = std::process::Command::new(folder.join("helpers/favenio-update"))
+                .args(["--check", "--notify"])
+                .spawn();
         }
     });
     glib::timeout_add_local(Duration::from_millis(40), move || {
@@ -1686,6 +1430,14 @@ fn build(
         glib::ControlFlow::Continue
     });
 }
+fn executable_folder() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    executable
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| "Programmordner fehlt.".to_string())
+}
+
 fn installation_lease() -> Result<Option<std::fs::File>, String> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
@@ -1759,8 +1511,13 @@ fn main() {
             }
         }
     }
-    let executable = std::env::current_exe().expect("Programmdatei fehlt");
-    let folder = executable.parent().unwrap().to_path_buf();
+    let folder = match executable_folder() {
+        Ok(folder) => folder,
+        Err(error) => {
+            eprintln!("favenio: {error}");
+            std::process::exit(2)
+        }
+    };
     let engine = folder.join("favenio.py");
     std::env::set_var("FAVENIO_ENGINE", engine);
     if arguments.iter().any(|s| s == "--control-capabilities") {

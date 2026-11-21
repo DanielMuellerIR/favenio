@@ -1,31 +1,303 @@
 use super::*;
 
+pub(super) struct ResultView {
+    pub store: gio::ListStore,
+    pub selection: gtk::MultiSelection,
+    pub table: gtk::ColumnView,
+    pub table_factories: Vec<gtk::SignalListItemFactory>,
+    pub grid: gtk::GridView,
+    pub grid_factory: gtk::SignalListItemFactory,
+    pub stack: gtk::Stack,
+    pub grouping: gtk::DropDown,
+    pub sorting: gtk::DropDown,
+    pub ascending: gtk::CheckButton,
+    pub group_controls: gtk::Box,
+    pub collapse: gtk::Button,
+    pub expand: gtk::Button,
+    pub view_mode: gtk::DropDown,
+}
+
+impl ResultView {
+    pub fn new(quick: bool) -> Self {
+        let store = gio::ListStore::new::<glib::BoxedAnyObject>();
+        let selection = gtk::MultiSelection::new(Some(store.clone()));
+        let table = gtk::ColumnView::new(Some(selection.clone()));
+        table.set_hexpand(true);
+        table.set_vexpand(true);
+        table.add_css_class("data-table");
+        let columns = if quick {
+            vec![("Name", "name", 260), ("Pfad", "folder", 300)]
+        } else {
+            vec![
+                ("Name", "name", 230),
+                ("Größe", "size", 80),
+                ("Pfad", "folder", 320),
+                ("Typ", "type", 130),
+                ("Änderungsdatum", "modified", 150),
+                ("Erstellungsdatum", "created", 150),
+                ("Fundstelle", "location", 160),
+                ("Maße", "dimensions", 120),
+                ("Finder-Tags", "finderTags", 180),
+                ("Finder-Kommentar", "finderComment", 220),
+            ]
+        };
+        let mut table_factories = Vec::new();
+        for (title, key, width) in columns {
+            let factory = gtk::SignalListItemFactory::new();
+            factory.connect_setup(|_, item| {
+                let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+                let l = label("");
+                l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                item.set_child(Some(&l));
+            });
+            factory.connect_bind(move |_, item| {
+                let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+                let object = item.item().and_downcast::<glib::BoxedAnyObject>().unwrap();
+                let value = object.borrow::<Value>();
+                let l = item.child().and_downcast::<gtk::Label>().unwrap();
+                let cell = if ["modified", "created"].contains(&key) && value[key].is_number() {
+                    value[key]
+                        .as_f64()
+                        .and_then(|v| glib::DateTime::from_unix_local(v.floor() as i64).ok())
+                        .and_then(|v| v.format("%x %H:%M").ok())
+                        .map(|s| s.to_string())
+                        .unwrap_or_default()
+                } else if key == "size" && value[key].is_number() {
+                    glib::format_size(value[key].as_u64().unwrap_or(0)).to_string()
+                } else if let Some(s) = value[key].as_str() {
+                    s.to_owned()
+                } else if value[key].is_number() {
+                    value[key].to_string()
+                } else {
+                    String::new()
+                };
+                l.set_text(&cell);
+                l.set_tooltip_text(Some(value["path"].as_str().unwrap_or("")));
+            });
+            table_factories.push(factory.clone());
+            let c = gtk::ColumnViewColumn::new(Some(title), Some(factory));
+            if key != "location" {
+                c.set_sorter(Some(&gtk::CustomSorter::new(|_, _| gtk::Ordering::Equal)));
+            }
+            c.set_resizable(true);
+            c.set_fixed_width(width);
+            table.append_column(&c);
+        }
+        let grouping = gtk::DropDown::from_strings(&[
+            "Keine Gruppierung",
+            "Nach Ordner",
+            "Nach Endung",
+            "Nach Quellarchiv",
+        ]);
+        let sorting = gtk::DropDown::from_strings(&[
+            "Name",
+            "Größe",
+            "Pfad",
+            "Typ",
+            "Geändert",
+            "Erstellt",
+            "Bildmaße",
+            "Finder-Tags",
+            "Finder-Kommentar",
+            "Eingangsreihenfolge",
+        ]);
+        let ascending = gtk::CheckButton::with_label("Aufsteigend");
+        ascending.set_active(true);
+        let group_controls = row();
+        group_controls.append(&grouping);
+        group_controls.append(&sorting);
+        group_controls.append(&ascending);
+        let collapse = gtk::Button::with_label("Alle einklappen");
+        let expand = gtk::Button::with_label("Alle ausklappen");
+        group_controls.append(&collapse);
+        group_controls.append(&expand);
+        let view_mode = gtk::DropDown::from_strings(&["Liste", "Miniaturen"]);
+        group_controls.append(&view_mode);
+        let grid_factory = gtk::SignalListItemFactory::new();
+        grid_factory.connect_setup(|_, item| {
+            let i = item.downcast_ref::<gtk::ListItem>().unwrap();
+            let b = column();
+            let icon = gtk::Image::from_icon_name("text-x-generic-symbolic");
+            icon.set_pixel_size(64);
+            b.append(&icon);
+            let l = label("");
+            l.set_wrap(true);
+            l.set_max_width_chars(22);
+            b.append(&l);
+            b.set_size_request(160, 110);
+            i.set_child(Some(&b));
+        });
+        grid_factory.connect_bind(|_, item| {
+            let i = item.downcast_ref::<gtk::ListItem>().unwrap();
+            let o = i.item().and_downcast::<glib::BoxedAnyObject>().unwrap();
+            let v = o.borrow::<Value>();
+            let b = i.child().and_downcast::<gtk::Box>().unwrap();
+            let icon = b.first_child().and_downcast::<gtk::Image>().unwrap();
+            icon.set_icon_name(Some(if v["isDirectory"] == true {
+                "folder-symbolic"
+            } else {
+                "text-x-generic-symbolic"
+            }));
+            let l = b.last_child().and_downcast::<gtk::Label>().unwrap();
+            l.set_text(v["name"].as_str().or(v["title"].as_str()).unwrap_or(""));
+            b.set_tooltip_text(v["path"].as_str());
+        });
+        let grid = gtk::GridView::new(Some(selection.clone()), Some(grid_factory.clone()));
+        grid.set_min_columns(1);
+        grid.set_max_columns(12);
+        let result_stack = gtk::Stack::new();
+        result_stack.add_named(
+            &gtk::ScrolledWindow::builder()
+                .child(&table)
+                .vexpand(true)
+                .min_content_height(180)
+                .build(),
+            Some("list"),
+        );
+        result_stack.add_named(
+            &gtk::ScrolledWindow::builder()
+                .child(&grid)
+                .vexpand(true)
+                .build(),
+            Some("grid"),
+        );
+        result_stack.set_vexpand(true);
+        Self {
+            store,
+            selection,
+            table,
+            table_factories,
+            grid,
+            grid_factory,
+            stack: result_stack,
+            grouping,
+            sorting,
+            ascending,
+            group_controls,
+            collapse,
+            expand,
+            view_mode,
+        }
+    }
+}
+
+pub(super) fn connect_controls(ui: &Rc<Ui>) {
+    if let Some(sorter) = ui
+        .results
+        .table
+        .sorter()
+        .and_downcast::<gtk::ColumnViewSorter>()
+    {
+        let weak = Rc::downgrade(ui);
+        sorter.connect_changed(move |sorter, _| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let title = sorter
+                .primary_sort_column()
+                .and_then(|column| column.title());
+            let index = match title.as_deref() {
+                Some("Name") => 0,
+                Some("Größe") => 1,
+                Some("Pfad") => 2,
+                Some("Typ") => 3,
+                Some("Änderungsdatum") => 4,
+                Some("Erstellungsdatum") => 5,
+                Some("Maße") => 6,
+                Some("Finder-Tags") => 7,
+                Some("Finder-Kommentar") => 8,
+                _ => return,
+            };
+            ui.results.sorting.set_selected(index);
+            ui.results
+                .ascending
+                .set_active(sorter.primary_sort_order() == gtk::SortType::Ascending);
+            ui.refresh_projection();
+        });
+    }
+    let weak = Rc::downgrade(ui);
+    ui.results.grouping.connect_selected_notify(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.refresh_projection();
+        }
+    });
+    let weak = Rc::downgrade(ui);
+    ui.results.sorting.connect_selected_notify(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.results
+                .ascending
+                .set_sensitive(ui.sort_key() != "arrival");
+            ui.refresh_projection();
+        }
+    });
+    let weak = Rc::downgrade(ui);
+    ui.results.ascending.connect_toggled(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.refresh_projection();
+        }
+    });
+    let weak = Rc::downgrade(ui);
+    ui.results.collapse.connect_clicked(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.collapse_all();
+        }
+    });
+    let weak = Rc::downgrade(ui);
+    ui.results.expand.connect_clicked(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.collapsed.borrow_mut().clear();
+            ui.refresh_projection();
+        }
+    });
+    let weak = Rc::downgrade(ui);
+    ui.results.view_mode.connect_selected_notify(move |v| {
+        if let Some(ui) = weak.upgrade() {
+            ui.results
+                .stack
+                .set_visible_child_name(if v.selected() == 1 { "grid" } else { "list" });
+        }
+    });
+    let weak = Rc::downgrade(ui);
+    ui.results.grid.connect_activate(move |_, position| {
+        if let Some(ui) = weak.upgrade() {
+            ui.activate_row(position);
+        }
+    });
+}
+
 impl Ui {
-    pub(super) fn configuration(&self) -> Value {
-        let mut value = json!({"pattern":self.query.text().to_string(),"roots":lines(&self.roots),"options":self.options()});
+    pub(super) fn configuration(&self) -> Configuration {
+        let mut configuration = Configuration {
+            pattern: self.query.text().to_string(),
+            roots: lines(&self.roots),
+            options: self.options(),
+            root_bytes: None,
+            continuation: self
+                .retained_options
+                .borrow()
+                .iter()
+                .find(|option| option["name"] == "__continuation")
+                .map(|proof| proof["value"].clone()),
+        };
         if let Some((display, paths)) = self.root_identity.borrow().as_ref() {
             if text(&self.roots) == *display {
                 use std::os::unix::ffi::OsStrExt;
-                value["roots"] = json!(paths
+                configuration.roots = paths
                     .iter()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .collect::<Vec<_>>());
-                value["rootBytes"] = json!(paths
-                    .iter()
-                    .map(|p| base64::engine::general_purpose::STANDARD
-                        .encode(p.as_os_str().as_bytes()))
-                    .collect::<Vec<_>>());
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .collect();
+                configuration.root_bytes = Some(
+                    paths
+                        .iter()
+                        .map(|path| {
+                            base64::engine::general_purpose::STANDARD
+                                .encode(path.as_os_str().as_bytes())
+                        })
+                        .collect(),
+                );
             }
         }
-        if let Some(proof) = self
-            .retained_options
-            .borrow()
-            .iter()
-            .find(|v| v["name"] == "__continuation")
-        {
-            value["continuation"] = proof["value"].clone();
-        }
-        value
+        configuration
     }
     pub(super) fn apply_configuration(&self, value: &Value) {
         self.suppress_quick.set(true);
@@ -54,13 +326,13 @@ impl Ui {
                 .unwrap_or("")
         };
         self.mode.set_selected(
-            ["name", "content", "metadata", "document"]
+            SEARCH_MODES
                 .iter()
                 .position(|s| *s == get("mode"))
                 .unwrap_or(0) as u32,
         );
         self.only.set_selected(
-            ["both", "files", "dirs"]
+            SEARCH_SCOPES
                 .iter()
                 .position(|s| *s == get("only"))
                 .unwrap_or(0) as u32,
@@ -139,7 +411,7 @@ impl Ui {
         self.warning_count
             .set(value["warningCount"].as_u64().unwrap_or(0));
         self.collapsed.borrow_mut().clear();
-        self.selection.unselect_all();
+        self.results.selection.unselect_all();
         *self.initial_selection.borrow_mut() = value["selection"]
             .as_array()
             .into_iter()
@@ -159,23 +431,29 @@ impl Ui {
             self.warning_count.get()
         ));
     }
-    fn projection(&self, collapse_all: bool) -> Result<Value, String> {
-        self.model.call(json!({"operation":"projection","runID":self.run.borrow().as_deref().unwrap_or(""),
-            "mode":(["none","folder","fileExtension","archive"][self.grouping.selected()as usize]),
-            "sort":(SORT_KEYS[self.sorting.selected()as usize]),
-            "ascending":self.ascending.is_active(),"collapsed":self.collapsed.borrow().iter().collect::<Vec<_>>(),"collapseAll":collapse_all}))
+    fn projection(&self, collapse_all: bool) -> Result<model_search::Projection, String> {
+        let mode = ["none", "folder", "fileExtension", "archive"]
+            .get(self.results.grouping.selected() as usize)
+            .copied()
+            .unwrap_or("none");
+        self.model.projection(
+            self.result_order(&self.run.borrow()),
+            mode,
+            self.collapsed.borrow().iter().map(String::as_str).collect(),
+            collapse_all,
+        )
     }
     pub(super) fn refresh_streaming_results(&self) {
         if !self.arrival_prefix.get()
-            || self.grouping.selected() != 0
-            || SORT_KEYS[self.sorting.selected() as usize] != "arrival"
+            || self.results.grouping.selected() != 0
+            || self.sort_key() != "arrival"
             || !self.initial_selection.borrow().is_empty()
         {
             self.refresh_projection();
             return;
         }
         let source = self.all_hits.borrow();
-        let start = self.store.n_items();
+        let start = self.results.store.n_items();
         let incoming = &source[start as usize..];
         if incoming.is_empty() {
             return;
@@ -188,7 +466,7 @@ impl Ui {
         self.result_count.set(source.len() as u64);
         self.result_generation.set(self.result_generation.get() + 1);
         // Die bisherigen GTK-Objekte bleiben stehen und behalten ihre Auswahl.
-        self.store.splice(start, 0, &rows);
+        self.results.store.splice(start, 0, &rows);
     }
     pub(super) fn refresh_projection(&self) {
         let mut selected: std::collections::HashSet<_> = self
@@ -200,50 +478,41 @@ impl Ui {
         let Ok(value) = self.projection(false) else {
             return;
         };
-        self.arrival_prefix
-            .set(value["arrivalPrefix"].as_bool() == Some(true));
-        self.result_count
-            .set(value["visible"].as_u64().unwrap_or(0));
+        self.arrival_prefix.set(value.arrival_prefix);
+        self.result_count.set(value.visible);
         self.result_generation.set(self.result_generation.get() + 1);
         let source = self.all_hits.borrow();
         let mut objects = Vec::new();
-        for row in value["rows"].as_array().into_iter().flatten() {
-            let item = if row["kind"] == "group" {
-                let mut r = row.clone();
-                r["name"] = json!(format!(
-                    "{} {} ({})",
-                    if self
-                        .collapsed
-                        .borrow()
-                        .contains(row["key"].as_str().unwrap_or(""))
-                    {
+        for row in value.rows {
+            let item = match row {
+                model_search::ProjectionRow::Group { key, title, count } => {
+                    let arrow = if self.collapsed.borrow().contains(&key) {
                         "▸"
                     } else {
                         "▾"
-                    },
-                    row["title"].as_str().unwrap_or(""),
-                    row["count"]
-                ));
-                r
-            } else {
-                let Some(index) = row["index"].as_u64() else {
-                    continue;
-                };
-                let Some(hit) = source.get(index as usize) else {
-                    continue;
-                };
-                hit.clone()
+                    };
+                    let name = format!("{arrow} {title} ({count})");
+                    json!({"kind":"group", "key":key, "title":title, "count":count, "name":name})
+                }
+                model_search::ProjectionRow::Hit { index } => {
+                    let Some(hit) = source.get(index) else {
+                        continue;
+                    };
+                    hit.clone()
+                }
             };
             objects.push(glib::BoxedAnyObject::new(item));
         }
         self.rebuilding.set(true);
-        self.store.splice(0, self.store.n_items(), &objects);
+        self.results
+            .store
+            .splice(0, self.results.store.n_items(), &objects);
         for (i, item) in objects.iter().enumerate() {
             if item.borrow::<Value>()["id"]
                 .as_str()
                 .is_some_and(|id| selected.contains(id))
             {
-                self.selection.select_item(i as u32, false);
+                self.results.selection.select_item(i as u32, false);
                 if let Some(id) = item.borrow::<Value>()["id"].as_str() {
                     self.initial_selection.borrow_mut().remove(id);
                 }
@@ -254,9 +523,10 @@ impl Ui {
     }
     pub(super) fn collapse_all(&self) {
         if let Ok(value) = self.projection(true) {
-            for row in value["rows"].as_array().into_iter().flatten() {
-                if let Some(key) = row["key"].as_str() {
-                    self.collapsed.borrow_mut().insert(key.to_owned());
+            let mut collapsed = self.collapsed.borrow_mut();
+            for row in value.rows {
+                if let model_search::ProjectionRow::Group { key, .. } = row {
+                    collapsed.insert(key);
                 }
             }
         }
@@ -264,6 +534,7 @@ impl Ui {
     }
     pub(super) fn activate_row(self: &Rc<Self>, position: u32) {
         let Some(item) = self
+            .results
             .store
             .item(position)
             .and_downcast::<glib::BoxedAnyObject>()
@@ -279,7 +550,7 @@ impl Ui {
             drop(c);
             self.refresh_projection();
         } else {
-            self.selection.select_item(position, true);
+            self.results.selection.select_item(position, true);
             self.act("open");
         }
     }

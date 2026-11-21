@@ -1,9 +1,13 @@
 import json
+import plistlib
 import re
 import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
-from swift_test_support import run_probe, swift_function
+from swift_test_support import run_probe, suite_binary, swift_function
+from test_favenio import favenio
 
 
 # Gegen das Repo, nicht gegen das Arbeitsverzeichnis: Ein Lauf aus einem
@@ -12,122 +16,17 @@ REPO = Path(__file__).resolve().parent.parent
 COMMON = "\n".join((REPO / "common" / (name + ".swift")).read_text(encoding="utf-8") for name in ("FavenioCore", "SearchModel", "SearchConfiguration", "SearchProcess", "ResultFilterModel", "DuplicateModel"))
 GUI = (REPO / "gui/FavenioGUI.swift").read_text(encoding="utf-8")
 QUICK = (REPO / "quick/FavenioQuick.swift").read_text(encoding="utf-8")
-
-
-def favenio_constant(name):
-    """Der Wert einer Konstante aus favenio.py — repo-relativ gelesen."""
-    quelle = (REPO / "favenio.py").read_text(encoding="utf-8")
-    treffer = re.search(r"^%s = (.+)$" % re.escape(name), quelle, re.M)
-    assert treffer is not None, "Konstante %s fehlt in favenio.py" % name
-    return str(eval(treffer.group(1), {"__builtins__": {}}, {}))
+MAIN_SELFTEST = (REPO / "gui/FavenioMainSelfTest.swift").read_text(encoding="utf-8")
 
 
 class SwiftGuardTests(unittest.TestCase):
-    def test_gui_search_callbacks_are_bound_to_active_run(self):
-        self.assertIn("final class SearchRunner", COMMON)
-        self.assertGreaterEqual(GUI.count("self.activeSearchRun === run"), 2)
-        self.assertNotIn("var lineBuffer = Data()", GUI)
-        self.assertNotIn("var searchProcess: Process?", GUI)
-
-    def test_descending_comparator_is_strict(self):
-        # Nur die Vergleichsfunktion selbst prüfen, nicht die ganze Datei:
-        # Ein dateiweites Muster wie "return false" trifft irgendwann eine
-        # fremde Zeile und die Wache wird stillschweigend gegenstandslos.
-        compare = swift_function(COMMON, "func compareHits")
-        # Die naive Umkehrung macht aus einem Gleichstand ein „kleiner" in
-        # BEIDE Richtungen.
-        self.assertNotIn("return ascending ? result : !result", compare)
-        # Gleichstand endet ausdrücklich mit „nicht kleiner".
-        self.assertIn("== .orderedAscending", compare)
-        # Und der Headless-Selbsttest prüft die Ordnung zur Laufzeit.
-        self.assertIn("!compareHits(tied, tied", GUI)
-        self.assertIn("compareHits($0, $1", swift_function(COMMON, "func hitComparator()"))
+    def test_both_frontends_use_the_shared_comparator(self):
         for frontend in (GUI, QUICK):
             self.assertIn("hitComparator()", swift_function(frontend, "func flushPending()"))
 
-    def test_gui_table_updates_always_go_through_one_place(self):
-        """Sortierung und Auswahlerhalt haengen an applyHitsToTable(). Wer
-        daneben direkt reloadData() ruft, umgeht beides — genau daran krankten
-        continueSearch() und loadResults()."""
-        controller = GUI[GUI.index("final class MainController"):]
-        self.assertIn("func applyHitsToTable(keepingSelection", controller)
-        apply_function = swift_function(
-            GUI, "func applyHitsToTable(keepingSelection")
-        outside = controller.replace(apply_function, "")
-        self.assertNotIn("tableView.reloadData()", outside)
-
-    def test_both_menus_grey_out_actions_for_a_folder_in_an_archive(self):
-        """Ein Ordner im Archiv hat keine Datei hinter sich; materializeHit()
-        liefert dafuer nil. Vorher boten beide Kontextmenues Vorschau, Oeffnen
-        und Im Finder zeigen trotzdem an und taten auf Klick kommentarlos
-        nichts. Die Bedingung steht EINMAL im Kern und wird nicht in den Apps
-        nachgebaut."""
-        self.assertIn("var hasOpenableFile: Bool", COMMON)
-        builder = swift_function(COMMON, "func populateHitContextMenu(")
-        # Kommentare dürfen keinen dieser Belege liefern. Genau das machte die
-        # vorige Suche nach „Ordner im Archiv" wirkungslos.
-        code = "\n".join(line.split("//", 1)[0] for line in builder.splitlines())
-        compact = " ".join(code.split())
-        self.assertIn(
-            'NSMenuItem(title: "Ordner im Archiv — keine Datei " '
-            '+ "zum Öffnen"', compact)
-        self.assertIn("openWithItem.isEnabled = openable", code)
-        self.assertIn("if openable {", code)
-        self.assertIn("openWithItem.submenu = submenu", code)
-        # „Öffnen mit" darf nur Apps anbieten, die JEDEN öffnenbaren Treffer
-        # der Auswahl öffnen — ctxOpenWith übergibt später alle URLs an die
-        # eine gewählte App (Review-Fund 2026-08-21).
-        self.assertIn("commonApplicationsFor(applicationHits)", code)
-        self.assertNotIn("applicationsFor(applicationHit)", code)
-        self.assertIn("action: openable ? selectors.preview : nil", code)
-        self.assertIn("action: openable ? selectors.open : nil", code)
-        self.assertIn("action: openable ? selectors.reveal : nil", code)
-        self.assertIn("action: selectors.copyPath", code)
-        # Der Menüaufbau steht EINMAL in der Basisklasse. Bis 0.34.16 lief
-        # dieser Wächter in einer Schleife über beide Apps und prüfte
-        # dieselben Zeichenketten zweimal — der Beleg dafür, dass der Block
-        # doppelt stand.
-        menu = swift_function(COMMON, "func populateHitMenu(")
-        self.assertIn("populateHitContextMenu(", menu)
-        # Die wirksame Zeilenmenge entscheidet; bei gemischter Auswahl
-        # genügt ein öffnenbarer Treffer, egal worauf rechtsgeklickt
-        # wurde. Menü und spätere Aktion benutzen actionRows().
-        self.assertIn("actionRows().compactMap", menu)
-        # ALLE öffnenbaren Treffer, nicht nur der erste.
-        self.assertIn("filter { $0.hasOpenableFile }", menu)
-        self.assertIn("applicationHits: applicationHits", menu)
-        self.assertIn("copyPath: #selector(ctxCopyPath)", menu)
-        # Die Bereichsprüfung stand früher nur in der Schnellsuche.
-        self.assertIn("hitIndex(forTableRow: contextRow) != nil", menu)
-        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
-            with self.subTest(app=name):
-                body = swift_function(source, "func menuNeedsUpdate(")
-                self.assertIn("populateHitMenu(menu)", body)
-                # Keine neue Kopie neben der Basisklasse.
-                self.assertNotIn("populateHitContextMenu(", body)
-        # Und der Headless-Selbsttest prueft die Auskunft gegen die Wirklichkeit.
-        self.assertIn("materializeHit(archiveFolder) == nil", GUI)
-
-    def test_space_key_preview_only_opens_with_a_real_file(self):
-        """Die Leertaste ruft togglePreview() direkt, am Kontextmenue vorbei.
-        Fuer einen Ordner im Archiv gibt es keine Datei; das Panel ginge leer
-        auf. Deshalb baut togglePreview() die Vorschau-URLs SELBST auf und
-        bricht bei leerer Liste mit einem Hinweis ab."""
-        # Seit 0.28.2 steht togglePreview() EINMAL in der Basisklasse
-        # HitListController (common), beide Apps erben es.
-        toggle = swift_function(COMMON, "@objc func togglePreview() {")
-        self.assertIn("guard !previewURLs.isEmpty else {", toggle)
-        self.assertIn("showActionIssue(selection)", toggle)
-        # Ob es überhaupt eine Datei gibt, steht OHNE Auspacken fest
-        # (hasOpenableFile) — sonst liefe für einen Archivordner erst ein
-        # Kern-Prozess, der nichts zu tun hat.
-        self.assertIn("selected.contains(where: { $0.hasOpenableFile })",
-                      toggle)
-        # Das Panel wird erst NACH dem Auspacken gezeigt (nur nach vorn
-        # geholt, siehe test_quicklook_keeps_the_focus…): Der Aufbau der
-        # Liste läuft asynchron, orderFront steht in der Completion.
-        self.assertLess(toggle.index("requestPreview(rows: rows)"),
-                        toggle.index("panel.orderFront(nil)"))
+    def test_archive_context_menu_enables_only_available_actions(self):
+        report = run_probe("archive-menu")
+        self.assertEqual(report.stdout.strip(), "ARCHIVE MENU OK")
 
     def test_archive_hits_are_never_extracted_on_the_main_thread(self):
         """Bis 0.31.4 las materialize() stdout synchron und wartete mit
@@ -136,8 +35,7 @@ class SwiftGuardTests(unittest.TestCase):
         brauchte (tests/MATERIALIZATION_MEASUREMENTS.md). Die Apps rufen nur
         noch die Completion-Fassung; die synchrone bleibt dem
         Headless-Selbsttest vorbehalten."""
-        selftest = swift_function(GUI, "func runSelfTest() -> Int32 {")
-        for source, name in ((GUI.replace(selftest, ""), "FavenioGUI"),
+        for source, name in ((GUI, "FavenioGUI"),
                              (QUICK, "FavenioQuick")):
             with self.subTest(app=name):
                 self.assertNotIn("materializeHit(", source)
@@ -163,40 +61,6 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("guard self.previewRequest === request else { return }",
                       preview)
 
-    def test_both_apps_pass_additional_terms_from_the_filter_view(self):
-        """Mehrwortsuche: Die Begriffe stehen in der gemeinsamen Filteransicht
-        und erreichen ueber SearchConfiguration Argumente, URL und Vorlage —
-        die Semantik (UND ueber das ganze Objekt) lebt allein im Kern."""
-        self.assertIn("let termsEditor = PlaceholderTextView()", COMMON)
-        self.assertIn('args.append("--term=" + term)', COMMON)
-        self.assertIn('URLQueryItem(name: "term", value: $0)', COMMON)
-        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
-            with self.subTest(app=name):
-                getter = swift_function(source, "var searchConfiguration: SearchConfiguration {")
-                self.assertIn("configuration.terms = filterView.terms", getter)
-        apply = swift_function(GUI, "func applyConfiguration(")
-        self.assertIn("filterView.terms = configuration.terms", apply)
-
-    def test_search_templates_fill_the_window_through_one_place_without_searching(self):
-        """Quick-Uebergabe und Vorlage schreiben die Optionen ueber
-        applyConfiguration() in die Oberflaeche; Laden startet KEINE Suche
-        und erhält fehlende gespeicherte Suchbereiche sichtbar."""
-        self.assertIn("struct SearchTemplate: Equatable", COMMON)
-        self.assertIn("static let version = 10", COMMON)
-        self.assertIn('"search-templates.json"', COMMON)
-        handoff = swift_function(GUI, "func handleFavenioURL(")
-        self.assertIn("let configuration = SearchConfiguration.fromQueryItems(items)", handoff)
-        self.assertIn("applyConfiguration(configuration)", handoff)
-        self.assertNotIn("archivesCheckbox.state =", handoff)
-        apply_template = swift_function(GUI, "func applyTemplate(")
-        self.assertIn("applyConfiguration(template.configuration)", apply_template)
-        self.assertIn("template.missingRootMessage", apply_template)
-        for forbidden in ("startSearch()", "launchSearch("):
-            self.assertNotIn(forbidden, apply_template)
-        # Die Regex-Vorlagen bleiben eine getrennte Einfuegehilfe.
-        self.assertIn("let regexTemplates: [RegexTemplate]", (REPO / "common/RegexTemplates.swift").read_text())
-        self.assertIn("@objc func insertTemplate(_ sender: NSMenuItem)", GUI)
-
     def test_a_new_hit_list_cancels_extractions_and_checks_the_root(self):
         """Jeder Weg zu einer NEUEN Trefferliste bricht Vorschau/Öffnen der
         alten ab (sonst „Packe aus…" über leerer Tabelle, Panel mit altem
@@ -216,29 +80,6 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("SearchRoots(roots).liveProblem",
                       swift_function(QUICK, "func startSearch() {"))
         self.assertIn("cancelMaterializations(reportCancellation: false)", swift_function(QUICK, "func clearHits()"))
-        # Die Vorlagentabelle hängt an den ECHTEN Delegate-Namen.
-        self.assertIn("func tableView(_ templateTable: NSTableView, viewFor", GUI)
-        self.assertNotIn("func templateTable(_ templateTable", GUI)
-
-    def test_drag_and_drop_promises_files_instead_of_extracting_on_grab(self):
-        """pasteboardWriterForRow verlangt sofort eine Antwort. Was schon als
-        Datei vorliegt, geht als URL; ein noch nicht ausgepackter Eintrag als
-        NSFilePromiseProvider, den der Finder beim Ablegen einloest — ueber
-        denselben Manager, im Hintergrund."""
-        for frontend in (GUI, QUICK):
-            writer = swift_function(frontend, "pasteboardWriterForRow row: Int)")
-            self.assertIn("hitPasteboardWriter(index)", writer)
-        writer = swift_function(COMMON, "func hitPasteboardWriter(")
-        self.assertIn("MaterializationManager.shared.knownURL(for: hit)", writer)
-        self.assertIn("NSFilePromiseProvider(fileType:", writer)
-        self.assertNotIn("materializeHit(", writer)
-        promise = swift_function(COMMON, "                             writePromiseTo url: URL,")
-        self.assertIn("MaterializationManager.shared.request(hit)", promise)
-        self.assertIn("copyItem(at: source, to: url)", promise)
-        self.assertIn("NSFilePromiseProviderDelegate", COMMON)
-        issue = swift_function(COMMON, "func hitActionIssue(")
-        self.assertIn("Ordner im Archiv", issue)
-        self.assertIn("Kein Treffer ausgewählt", issue)
 
     def test_trashing_is_one_bulk_call_and_never_touches_an_archive_entry(self):
         """Der Papierkorb muss so schnell sein wie im Finder: EIN
@@ -288,37 +129,6 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("#selector(removeFromResults(_:))", validate)
         self.assertIn("#selector(trashSelected(_:))", validate)
 
-    def test_both_list_actions_are_visible_in_the_menu_with_their_keys(self):
-        """Ein Kuerzel, das nirgends steht, ist Geheimwissen. Beide Aktionen
-        stehen im Ablage-Menue UND im Rechtsklick-Menue, aus demselben
-        Bauplan, mit ihrem Kuerzel daneben."""
-        builder = swift_function(COMMON, "func populateResultListMenu(")
-        self.assertIn('"Aus Trefferliste entfernen"', builder)
-        self.assertIn('"In den Papierkorb legen"', builder)
-        self.assertIn("keyEquivalent: backspaceKeyEquivalent", builder)
-        self.assertIn("trash.keyEquivalentModifierMask = [.command]", builder)
-        self.assertIn("remove.keyEquivalentModifierMask = []", builder)
-        # Und der Headless-Selbsttest prueft die gebauten Punkte am echten
-        # NSMenu — ein Kommentar im Quelltext kann diese Wache nicht erfuellen.
-        self.assertIn('resultMenu.items', GUI)
-        for caller in ("func installFileMenu(", "func menuNeedsUpdate("):
-            self.assertIn("addResultListItems(to:",
-                          swift_function(GUI, caller), caller)
-
-    def test_footer_numbers_are_written_from_state_not_stored_as_a_sentence(self):
-        """Die Fusszeile wird aus dem Zustand formuliert. Wer die fertige
-        Zahl irgendwo anders hineinschreibt, hat spaeter eine Zeile, die der
-        Liste nicht mehr folgt — dieselbe Falle wie in FavenioQuick."""
-        controller = GUI[GUI.index("final class MainController"):]
-        status = swift_function(GUI, "func statusText(")
-        outside = controller.replace(status, "")
-        self.assertNotIn("hits.count) Treffer", outside)
-        self.assertIn("hitStatisticsText(", status)
-        # Die Auswahl erst ab zwei markierten Zeilen — sonst stuende dort
-        # fast immer „1 ausgewaehlt", was niemandem hilft.
-        text = swift_function(COMMON, "func hitStatisticsText(")
-        self.assertIn("if selected >= 2", text)
-
     def test_streaming_updates_the_statistics_incrementally(self):
         """flushPending() laeuft waehrend eines langen Laufs sehr oft. Wer
         dort die ganze Liste neu aufsummiert, macht aus dem Streamen einen
@@ -327,8 +137,6 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("for hit in pending { statistics.add(hit) }", flush)
         self.assertNotIn("HitStatistics.over", flush)
         self.assertNotIn(".over(hits)", flush)
-        # Beide Wege muessen dasselbe ergeben; der Selbsttest vergleicht sie.
-        self.assertIn("stepwise.folders == atOnce.folders", GUI)
 
     def test_quicklook_keeps_the_focus_in_the_main_window(self):
         """Sonst gehen Pfeil hoch/runter an das Vorschaufenster und man kann
@@ -393,11 +201,6 @@ class SwiftGuardTests(unittest.TestCase):
             with self.subTest(app=label):
                 self.assertNotIn(".subtracting([.capsLock", source)
 
-    def test_progress_only_batches_refresh_gui_status(self):
-        launch = swift_function(GUI, "func launchSearch(pattern: String,")
-        self.assertIn("self.progressPath = progress", launch)
-        self.assertIn("self.refreshStatus()", launch)
-
     def test_the_live_stream_parses_every_line_only_once(self):
         """parseProgress und parseHit hintereinander parsten jede Trefferzeile
         zweimal. Gemessen am 2026-09-03 mit swiftc -O ueber 100 000 Zeilen:
@@ -432,24 +235,6 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("self.window.isKeyWindow", guard)
         self.assertIn("NSApp.terminate(nil)", monitor)
 
-    def test_quick_handoff_states_regex_and_case_explicitly(self):
-        """Die Schnellsuche sucht immer ohne Regex und ohne Gross/klein; die
-        Haupt-App liest beide Werte und schaltet sie beim Fortsetzen aus.
-        Der Vertrag steht in der URL selbst, statt als fehlender Wert vom
-        Leser erraten zu werden."""
-        handoff = swift_function(QUICK, "func openMainApp(")
-        self.assertIn("] + options.queryItems", handoff)
-        sender = swift_function(QUICK, "func openInMainApp(")
-        self.assertIn("(hasSearched ? lastSearchConfiguration : nil) ?? searchConfiguration.forNewRun()", sender)
-        self.assertIn("options: configuration, mainAppURL:", sender)
-        configuration = swift_function(QUICK, "var searchConfiguration:")
-        self.assertNotIn("configuration.regex =", configuration)
-        self.assertNotIn("configuration.caseSensitive =", configuration)
-        self.assertIn("var regex = false", COMMON)
-        self.assertIn("var caseSensitive = false", COMMON)
-        self.assertIn('regexCheckbox.state = configuration.regex', GUI)
-        self.assertIn('caseCheckbox.state = configuration.caseSensitive', GUI)
-
     def test_export_job_preserves_current_search_and_prevents_second_job(self):
         # Worker, Einzeljob-Sperre, Main-Completion und atomare Fehlerfälle
         # prüft die ausführbare Exportprobe. Hier bleibt die GUI-Anbindung.
@@ -463,48 +248,6 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("exportStatus.map", refresh)
         for signature in ("func exportAllHits(", "func exportSelectedHits("):
             self.assertIn("guard !exportIsBusy", swift_function(GUI, signature))
-
-    def test_path_export_is_offered_in_the_form_pipes_really_need(self):
-        """Ein Dateiname darf unter macOS jedes Zeichen ausser / und NUL
-        enthalten — auch einen Zeilenumbruch. Deshalb gibt es die Pfadliste
-        zusaetzlich NUL-getrennt; nur die uebertraegt jeden Namen unversehrt
-        an `xargs -0`."""
-        self.assertIn("case pathsNUL", COMMON)
-        export = swift_function(COMMON, "func exportData(")
-        self.assertIn("$0.append($1.exportedPathBytes); $0.append(0)", export)
-        self.assertIn("return jsonlData(for: hits)", export)
-        # Die BOM ist kein Schmuck: ohne sie liest Excel UTF-8 als Latin-1.
-        self.assertIn("Data([0xEF, 0xBB, 0xBF])", export)
-        self.assertIn("csvField(", export)
-
-    def test_menu_actions_from_the_main_menu_ignore_a_stale_click_row(self):
-        """`contextRow` merkt sich den Rechtsklick. Aus dem Hauptmenue und
-        vom Tastenkuerzel gibt es keinen Klickort — dort muss die Auswahl
-        gelten, sonst trifft ⌘⌫ die Datei eines frueheren Rechtsklicks."""
-        rows = swift_function(GUI, "func rows(for sender: Any?)")
-        self.assertIn("item.menu === tableView.menu", rows)
-        self.assertIn("return actionRows()", rows)
-        self.assertIn("return selectedHitIndices", rows)
-
-    def test_quick_drops_old_hits_on_every_keystroke(self):
-        """Zwischen Tastendruck und dem 0,6-s-Debounce standen die Treffer des
-        ALTEN Suchtexts weiter in der Liste, der Uebergabeknopf blieb aktiv.
-        ⌘↩ schickte der Haupt-App in diesem Fenster alte Treffer unter neuem
-        Suchtext."""
-        change = swift_function(QUICK, "func controlTextDidChange(")
-        self.assertIn("clearHits()", change)
-        self.assertIn("guard !query.isEmpty", change)
-        self.assertLess(change.index("clearHits()"),
-                        change.index("guard !query.isEmpty"))
-        clear = swift_function(QUICK, "func clearHits()")
-        for line in ("hits = []", "openButton.isEnabled = false",
-                     "runScopeMismatch = nil", "previewURLs = []",
-                     "reloadKeepingSelection([])", "showInfo(Self.hint)",
-                     "closeOpenPreview()"):
-            self.assertIn(line, clear)
-        reload = swift_function(QUICK, "func reloadKeepingSelection(")
-        self.assertIn("resultGrouping.rebuild()", reload)
-        self.assertIn("tableView.reloadData()", reload)
 
     def test_quick_command_return_hands_off_even_before_the_first_hit(self):
         """Die Haupt-App setzt die Suche selbst fort; deshalb ist ⌘↩ auch im
@@ -536,190 +279,36 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn("infoLabel.toolTip", outside)
         self.assertNotIn("infoLabel.textColor", outside)
 
-    def test_pixel_fields_search_only_on_return(self):
-        """Ein NSTextField schickt seine Action per Voreinstellung auch beim
-        Ende des Bearbeitens — also schon, wenn man ohne Änderung in die
-        Trefferliste klickt oder die Filter zuklappt (das versteckte Feld gibt
-        den Fokus ab). Die Suche startete dann neu und löschte die sichtbaren
-        Treffer (Probe 2026-09-17: Fokuswechsel und Verstecken je eine Action,
-        mit `sendsActionOnEndEditing = false` keine, Return weiter eine).
-        Eine Änderung deckt `controlTextDidChange` ab."""
-        for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
-            with self.subTest(app=name):
-                build = swift_function(source, "func buildWindow()")
-                self.assertIn(
-                    "(field.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = false",
-                    build)
-
-    def test_quick_failure_text_keeps_a_tooltip(self):
-        """Der Grund eines gescheiterten Laufs ist oft länger als die
-        Infozeile (die fremde Xcode-Lizenzzeile braucht rund 1075 pt bei
-        282 pt Platz). Ohne Tooltip blieb der Rest unsichtbar."""
-        finish = swift_function(QUICK, "func finish(")
-        self.assertIn("showInfo(errorText, detail: errorText +", finish)
-        self.assertIn('controller.lastInfo.detail?.contains(errorText) == true', QUICK)
-
-    def test_quick_disclosure_selftest_restores_defaults_before_exit(self):
-        """`exit(1)` lässt kein `defer` mehr laufen. Scheiterte eine Prüfung
-        im Block, blieb der gespeicherte Aufklapp-Zustand des Entwicklers
-        gelöscht. Die Prüfung liefert deshalb einen Fehlertext, und erst der
-        Aufrufer beendet den Prozess."""
-        check = swift_function(QUICK, "func quickFilterDisclosureSelfTest()")
-        self.assertIn("defer", check)
-        self.assertNotIn("exit(", check)
-
     def test_filter_disclosure_exists_once(self):
         """Aufbau, Umschalten, Zählen und Titel des Schalters „Weitere Filter"
         standen bis 0.34.22 wörtlich in beiden Controllern; die Zählung von
         Leerraum in Maßfeldern war deshalb auch zweimal falsch. Neue Kopien
         in den Apps sind verboten."""
         self.assertIn("final class FilterDisclosure", COMMON)
-        self.assertIn("PixelLimitInput($0.stringValue) != .empty",
-                      swift_function(COMMON, "var activeCount: Int"))
         for source, name in ((GUI, "FavenioGUI"), (QUICK, "FavenioQuick")):
             with self.subTest(app=name):
                 self.assertIn("FilterDisclosure(", source)
-                self.assertIn("filterDisclosureSelfTest(", source)
                 for copy in ("func toggleFilters", "func setFiltersExpanded",
                              "func refreshFiltersTitle", "var activeFilterCount",
                              ".bezelStyle = .disclosure"):
                     self.assertNotIn(copy, source)
 
-    def test_the_main_footer_has_a_single_writer(self):
-        """Text und Tooltip der Fußzeile gehören zusammen: Das Feld kürzt in
-        der Mitte, der Tooltip zeigt das Ganze.
+    def test_clearing_quick_hits_closes_the_preview_panel(self):
+        self.assertIn("closeOpenPreview()", swift_function(QUICK, "func clearHits()"))
 
-        Bis 0.34.18 setzten `presentActionIssue`, `removeFromResults` und
-        `trashSelected` nur den Text — daneben stand weiter der Tooltip der
-        alten Kennzahlenzeile. Die Schnellsuche hat dafür längst `showInfo`
-        als einzigen Schreiber."""
-        writer = swift_function(GUI, "func showStatus(")
-        self.assertIn("statusLabel.stringValue", writer)
-        self.assertIn("statusLabel.toolTip", writer)
-        # Außerhalb von showStatus() und dem einmaligen Aufbau des Fensters
-        # fasst niemand die Fußzeile an. Der Selbsttest LIEST sie; er steht
-        # vor der Controllerklasse.
-        controller = GUI[GUI.index("final class MainController"):]
-        outside = controller.replace(writer, "")
-        self.assertNotIn("statusLabel.stringValue =", outside)
-        self.assertNotIn("statusLabel.toolTip =", outside)
-
-    def test_loading_a_template_colours_the_pattern_and_keeps_new_hits(self):
-        """`applyConfiguration` färbt zuletzt — aber noch den ALTEN Text.
-
-        Ohne ein erneutes Färben stand ein geladenes Regex-Muster ungefärbt
-        im Feld, bis der nächste Tastendruck kam. Und `stopSearch()` allein
-        ließ bis zu 150 ms Nachschub unsichtbar in `pending` liegen; dafür
-        gibt es `stopSearchForChangedCriteria()`."""
-        body = swift_function(GUI, "func applyTemplate(")
-        self.assertIn("stopSearchForChangedCriteria()", body)
-        self.assertLess(body.index("searchField.stringValue = template.pattern"),
-                        body.index("recolorRegexField()"))
-
-    def test_quick_uses_a_regular_window(self):
-        build = QUICK[
-            QUICK.index("func buildWindow()"):
-            QUICK.index("func buildTable()")
-        ]
-        self.assertIn("window = NSWindow(", build)
-        self.assertIn(".miniaturizable", build)
-        self.assertNotIn("NSPanel(", build)
-        self.assertNotIn("level = .floating", build)
-
-    def test_only_the_own_window_of_quick_quits_the_app(self):
-        """Der Controller ist auch Delegat des Quick-Look-Panels.
-
-        `HitListController` setzt `panel.delegate = self`, und
-        `QLPreviewPanelDelegate` erbt `NSWindowDelegate`. Ein
-        `QLPreviewPanel` meldet sein `orderOut` als `windowWillClose`
-        (2026-09-10 gegen das echte Panel gemessen; ein gewöhnliches
-        `NSWindow` tut das nicht). Ohne die Prüfung auf das eigene Fenster
-        beendete deshalb jedes Schließen der Vorschau die ganze App — auch
-        der nächste Tastendruck im Suchfeld, weil `clearHits()` die Vorschau
-        schließt. Der Selbsttest prüft das Verhalten; hier steht die
-        Quelltextwache, damit die Zeile nicht beim nächsten Umbau wegfällt.
-        """
-        closing = swift_function(QUICK, "func windowWillClose(")
-        self.assertIn("notification.object as? NSWindow === window", closing)
-        self.assertLess(closing.index("guard notification.object"),
-                        closing.index("NSApp.terminate"))
-        # Und die Vorschau schließt wirklich an mehreren Stellen.
-        self.assertIn("closeOpenPreview()",
-                      swift_function(QUICK, "func clearHits()"))
-
-    def test_neither_search_field_searches_while_typing(self):
-        """NSSearchField schickt seine Action von selbst, rund 0,45 s nach
-        jeder Tipppause — beide Apps schalten das ab.
-
-        Gemessen am 2026-09-10: „Rechnung*" mit normalen Denkpausen
-        getippt feuerte in der Standardeinstellung dreimal, mit diesen
-        beiden Werten kein einziges Mal. In der Haupt-App leert jeder
-        Aufruf die sichtbare Trefferliste und startet einen neuen
-        Kernprozess; ihr Platzhalter verspricht „Return startet die
-        Suche", und eine Entprellung wie in der Schnellsuche gibt es
-        dort nicht."""
-        for name, source, builder in (
-            ("gui", GUI, "func buildWindow()"),
-            ("quick", QUICK, "func buildWindow()"),
-        ):
-            with self.subTest(app=name):
-                build = swift_function(source, builder)
-                self.assertIn("sendsWholeSearchString = true", build)
-                self.assertIn("sendsSearchStringImmediately = false", build)
-
-    def test_quick_table_is_resizable_sortable_and_scrolls_horizontally(self):
-        table = swift_function(QUICK, "func buildTable()")
-        self.assertIn('NSSortDescriptor(key: "name"', table)
-        self.assertIn('NSSortDescriptor(key: "path"', table)
-        self.assertIn("allowsColumnResizing = true", table)
-        self.assertIn("hasHorizontalScroller = true", table)
-        self.assertIn(".noColumnAutoresizing", table)
-        self.assertNotIn("headerView = nil", table)
-
-    def test_quick_type_filter_reaches_search_and_main_handoff(self):
-        start = QUICK[
-            QUICK.index("func startSearch()"):
-            QUICK.index("func showProgress")
-        ]
-        self.assertIn("configuration.only = selectedOnly", QUICK)
-        self.assertIn("searchConfiguration.forNewRun()", start)
-        self.assertIn("frozenConfiguration.arguments(", start)
-        handoff = QUICK[
-            QUICK.index("func openMainApp("):
-            QUICK.index("func locateMainApp()")
-        ]
-        self.assertIn("] + options.queryItems", handoff)
-        sender = swift_function(QUICK, "func openInMainApp(")
-        self.assertIn("configuration: format.hasFrozenOptions ? configuration : nil", sender)
-        self.assertIn("options: configuration, mainAppURL:", sender)
-        # Seit 0.33.0 schreibt applyConfiguration() die Optionen in die
-        # Oberflaeche; die Uebergabe ruft sie.
+    def test_main_applies_the_handoff_type_filter(self):
         handler = swift_function(GUI, "func handleFavenioURL(")
         self.assertIn("applyConfiguration(", handler)
         apply = swift_function(GUI, "func applyConfiguration(")
         self.assertIn("configuration.only", apply)
+
+    def test_quick_pause_does_not_truncate_the_result_list(self):
         continuation = QUICK[
             QUICK.index("func flushPending()"):
             QUICK.index("func finish(")
         ]
         self.assertNotIn('"Top \\(Self.maxQuickHits)', continuation)
         self.assertIn("openButton.toolTip", QUICK)
-
-    def test_structured_hits_and_materialization_cache_are_used(self):
-        self.assertIn("let filesystemPath: String", COMMON)
-        self.assertIn("let archiveMembers: [String]", COMMON)
-        # Der Schlüssel ist die IDENTITÄT, nicht der ganze Treffer: Anzeige
-        # und Suchbelege ändern sich mit der Suche, das Objekt dahinter
-        # nicht. Bis 0.34.14 waren derselbe Eintrag aus Namens- und aus
-        # Inhaltssuche zwei Cache-Einträge und zwei Unterprozesse.
-        self.assertIn("private var cache: [HitIdentity:", COMMON)
-        self.assertIn("private var jobs: [HitIdentity: Job]", COMMON)
-        self.assertNotIn("private var cache: [Hit:", COMMON)
-        self.assertNotIn("private var jobs: [Hit: Job]", COMMON)
-        self.assertIn('"Favenio-\\(UUID().uuidString)"', COMMON)
-        self.assertNotIn('"Favenio-(UUID().uuidString)"', COMMON)
-        self.assertIn("func cleanupMaterializedHits()", COMMON)
-        self.assertNotIn('path.contains("!/")', COMMON)
 
     def test_handoff_is_atomic_bounded_streamed_and_consumed(self):
         self.assertIn("options: .atomic", swift_function(COMMON, "func writeQuickHandoff("))
@@ -743,22 +332,7 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("let resultsFile: URL", QUICK)
         self.assertIn("try writeQuickHandoff(seed, selection: seedSelection", QUICK)
 
-    def test_quick_fallback_reuses_the_structured_handoff_url(self):
-        # Schlägt die LaunchServices-Zuordnung des URL-Schemas fehl, darf der
-        # direkte App-Start nicht nur Suchtext und Trefferdatei übergeben. Der
-        # identische URL-Datensatz enthält auch Wurzel und Suchoptionen.
-        fallback = QUICK[
-            QUICK.index("func openMainApp("):
-            QUICK.index("func locateMainApp()")
-        ]
-        self.assertIn("guard let handoffURL = components.url", fallback)
-        self.assertIn(
-            'configuration.arguments = ["--handoff-url", '
-            "handoffURL.absoluteString]", fallback)
-        self.assertIn("configuration.createsNewApplicationInstance = true",
-                      fallback)
-        self.assertNotIn('configuration.arguments = ["--query"', fallback)
-
+    def test_main_startup_consumes_the_structured_handoff_url(self):
         startup = GUI[
             GUI.index("func applicationDidFinishLaunching"):
             GUI.index("func applicationDidBecomeActive")
@@ -772,85 +346,6 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertNotIn('"--results-file"', startup)
         self.assertNotIn('"--query"', startup)
 
-    def test_quick_drops_stale_finder_folders_before_refresh(self):
-        # Ein Timeout oder eine verweigerte Abfrage darf nicht den Finder-
-        # Ordner der VORIGEN Aktivierung als aktuellen Bereich stehen lassen.
-        became_active = QUICK[
-            QUICK.index("func applicationDidBecomeActive"):
-            QUICK.index("func windowWillClose")
-        ]
-        self.assertLess(
-            became_active.index("scopeFinderFolders = []"),
-            became_active.index("refreshFinderFoldersAsync()"),
-        )
-        apply = QUICK[
-            QUICK.index("func applyScopeOutcome("):
-            QUICK.index("func scopeWaitExpired()")
-        ]
-        self.assertIn("scopeFinderFolders = outcome.folders", apply)
-
-    def test_quick_restarts_finder_refresh_for_the_latest_activation(self):
-        # Läuft beim erneuten Aktivieren noch die Finder-Abfrage der vorigen
-        # Aktivierung, muss deren Antwort verworfen und danach eine aktuelle
-        # Abfrage gestartet werden.
-        became_active = QUICK[
-            QUICK.index("func applicationDidBecomeActive"):
-            QUICK.index("func windowWillClose")
-        ]
-        self.assertIn("scopeRefreshGeneration += 1", became_active)
-        refresh = swift_function(QUICK, "func refreshFinderFoldersAsync()")
-        self.assertIn("queuedScopeRefreshGeneration", refresh)
-        self.assertIn("generation == self.scopeRefreshGeneration", refresh)
-        self.assertGreaterEqual(refresh.count("refreshFinderFoldersAsync()"), 2)
-
-    def test_quick_drops_old_hits_before_waiting_for_the_finder(self):
-        # Wartet die Schnellsuche auf den Finder-Ordner, kehrt startSearch()
-        # früh zurück. Die Treffer der VORIGEN Suche müssen davor weg sein —
-        # sonst übergibt ⌘↩ der Haupt-App alte Treffer unter neuem Suchtext.
-        start = QUICK[
-            QUICK.index("func startSearch()"):
-            QUICK.index("func showProgress")
-        ]
-        self.assertIn("clearHits()", start)
-        self.assertLess(start.index("clearHits()"),
-                        start.index("guard !query.isEmpty"))
-        self.assertLess(start.index("clearHits()"),
-                        start.index("selectedSearchRoots"))
-
-    def test_quick_keeps_the_scope_warning_while_hits_arrive(self):
-        # Eine Warnung zum Suchbereich darf nicht vom Trefferzähler
-        # überschrieben werden — beim Top-20-Stopp käme sie sonst nie wieder.
-        flush = QUICK[
-            QUICK.index("func flushPending()"):
-            QUICK.index("func finish(")
-        ]
-        self.assertIn("showScopeProblem(summary + \" \" + problem)", flush)
-
-    def test_quick_keeps_the_late_finder_note_for_the_running_search(self):
-        # Meldet sich der Finder erst, während die Suche schon im
-        # Ersatzordner läuft, ist scopeProblem nil — der Hinweis „Suche läuft
-        # in X, Finder-Ordner ist Y" hing deshalb nur bis zum ersten
-        # Trefferpaket in der Info-Zeile. Er wird jetzt gemerkt und an allen
-        # drei Stellen mitgelesen.
-        apply = QUICK[
-            QUICK.index("func applyScopeOutcome("):
-            QUICK.index("func scopeWaitExpired()")
-        ]
-        self.assertIn(
-            "runScopeMismatch = (searched: searchRoot, finder: front)", apply)
-        for name, following, expected in (
-                ("func clearHits()", "func startSearch()",
-                 "runScopeMismatch = nil"),
-                ("func flushPending()", "func finish(", "runScopeNoteText()"),
-                ("func finish(", "func openInMainApp", "runScopeNoteText()")):
-            body = QUICK[QUICK.index(name):QUICK.index(following)]
-            self.assertIn(expected, body, name)
-        progress = QUICK[
-            QUICK.index("func showProgress"):
-            QUICK.index("func flushPending()")
-        ]
-        self.assertIn("(scopeProblem ?? runScopeNoteText()) == nil", progress)
-
     def test_streaming_core_does_not_collect_duplicate_results(self):
         self.assertNotIn("var hitsRaw", COMMON)
         self.assertIn("-> SearchExit", COMMON)
@@ -863,85 +358,33 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("process.terminationReason", COMMON)
         self.assertIn("searchExitIsError(exit.status, reason: exit.reason)", GUI)
         self.assertIn("searchExitIsError(exit.status, reason: exit.reason)", QUICK)
-        self.assertIn(".uncaughtSignal", GUI)
+        self.assertIn(".uncaughtSignal", MAIN_SELFTEST)
 
     def test_open_finder_consent_is_never_timed_out(self):
         # Ein noch offener TCC-Dialog gehört dem Nutzer. Ein künstlicher
         # Timeout würde den osascript-Prozess und damit die wartende Freigabe
         # verwerfen; der Notaus gilt nur bei bereits entschiedenem Zugriff.
-        finder = COMMON[
-            COMMON.index("func finderWindowFoldersAsync("):
-            COMMON.index("func runFinderScopeDiagnostic()")
-        ]
+        source = (REPO / "common/FinderScope.swift").read_text(encoding="utf-8")
+        finder = swift_function(source, "func finderWindowFoldersAsync(")
         self.assertNotIn("consentPending ? 180", finder)
         self.assertIn("if !consentPending {", finder)
         self.assertIn("deadline: .now() + 6", finder)
         self.assertIn("killer = nil", finder)
 
-    def test_the_search_never_throws_away_the_reason_it_failed(self):
-        """stderr des Kerns trägt den Grund — er darf nicht ins Leere gehen.
-
-        Bis 0.27.1 hing er auf nullDevice: Ein fehlendes exiftool, ein
-        ungültiger regulärer Ausdruck und ein gelöschter Startordner kamen
-        alle als „Suche fehlgeschlagen." an, und die Schnellsuche riet zu
-        einer Neuinstallation, die nichts half.
-        """
-        streaming = swift_function(
-            COMMON, "private func read(arguments: [String],")
-        self.assertNotIn("standardError = FileHandle.nullDevice", streaming)
-        self.assertIn("process.standardError = errPipe", streaming)
-        # Nebenläufig leeren, sonst hält eine volle Pipe den Kern an.
-        self.assertIn("diagnostics.collect(from: errPipe)", streaming)
-        launch = streaming.index("try process.run()")
-        self.assertLess(streaming.index("diagnostics.collect(from: errPipe)"),
-                        launch,
-                        "stderr muss VOR dem Start geleert werden")
-
+    def test_both_frontends_route_search_through_the_shared_runner(self):
         for source, signature in ((GUI, "func launchSearch(pattern: String,"),
                                   (QUICK, "func startSearch()")):
             start = swift_function(source, signature)
             self.assertIn("SearchRunner()", start)
             self.assertNotIn("Process()", start)
 
-    def test_both_apps_name_the_reason_instead_of_guessing(self):
-        body = swift_function(
-            GUI, "func finishSearchRun(_ run: SearchRunner, exit: SearchExit)")
-        self.assertIn("searchFailureText(", body, "GUI")
-        # Die Schnellsuche wertet das Ende in startSearch() aus.
+    def test_quick_names_the_reason_instead_of_guessing(self):
         self.assertIn("searchFailureText(",
-                      swift_function(QUICK, "func startSearch()"), "Quick")
-        # Der falsche Rat der Schnellsuche darf nicht zurückkehren.
+                      swift_function(QUICK, "func startSearch()"))
         self.assertNotIn("erneut installieren", QUICK)
-        # Und kein Frontend darf den Grund durch einen festen Satz ersetzen.
-        self.assertNotIn('.failed("Suche fehlgeschlagen.")', GUI)
 
-    def test_skipped_objects_are_counted_while_streaming(self):
-        """Gezählt wird beim Durchlaufen, nicht aus einem gedeckelten Text.
-
-        Ein Lauf über einen unlesbaren Baum erzeugt beliebig viele
-        Warnungen; „470 Objekte übersprungen" wäre falsch, wenn es 5000
-        waren.
-        """
-        append = swift_function(COMMON, "func append(_ chunk: Data)")
-        self.assertIn("warnings += 1", swift_function(
-            COMMON, "private func consume(_ line: String)"))
-        self.assertIn("while let newline = carry.firstIndex(of: 0x0A)",
-                      append)
-        # Beide Oberflächen zeigen die Zahl auch an.
-        for label, source in (("GUI", GUI), ("Quick", QUICK)):
-            self.assertIn("skippedNote(skippedCount)", source, label)
-
-    def test_the_diagnostics_reader_can_never_block(self):
-        """`availableData` blockiert, solange die Schreibseite offen ist.
-
-        Genau das passiert, wenn `process.run()` gescheitert ist: Das Kind
-        hat die Pipe nie bekommen, und niemand sonst schließt sie.
-        """
-        finish = swift_function(COMMON, "func finish(_ pipe: Pipe)")
-        schliessen = finish.index("fileHandleForWriting.close()")
-        lesen = finish.index("availableData")
-        self.assertLess(schliessen, lesen,
-                        "Schreibseite muss VOR dem Lesen geschlossen werden")
+    def test_quick_shows_skipped_object_counts(self):
+        self.assertIn("skippedNote(skippedCount)", QUICK)
 
     # --- Vertragswachen der Metadaten- und Maßsuche (0.26.0) ---
     # Sie standen bis 0.27.2 versehentlich in
@@ -969,18 +412,6 @@ class SwiftGuardTests(unittest.TestCase):
                 self.assertNotIn("contentCheckbox", source)
                 self.assertIn("configuration.mode = selectedMode", source)
                 self.assertIn("configuration.pixelTexts =", source)
-    def test_metadata_field_list_comes_from_the_core(self):
-        """Die kuratierte Feldliste ist EINE Konstante in favenio.py. Swift
-        fragt sie per --list-metadata-fields ab statt sie abzuschreiben —
-        sonst driften Kern und Menue auseinander."""
-        self.assertIn("--list-metadata-fields", COMMON)
-        self.assertIn("metadataFieldList()", GUI)
-        # „Keywords" darf der Selbsttest nennen (er prüft die Liste); eine
-        # abgeschriebene Liste verriete sich an den selteneren Feldern.
-        for field in ("Caption-Abstract", "PersonInImage", "XPKeywords"):
-            self.assertNotIn('"%s"' % field, GUI)
-            self.assertNotIn('"%s"' % field, QUICK)
-            self.assertNotIn('"%s"' % field, COMMON)
     def test_size_filters_reach_the_core_and_allow_an_empty_pattern(self):
         """Ohne Muster nur mit Maßfilter: SearchConfiguration.arguments laesst das Muster
         als echten leeren argv-Eintrag (der Kern läuft ohne Textkriterium; ein künstliches
@@ -997,128 +428,29 @@ class SwiftGuardTests(unittest.TestCase):
         self.assertIn("if mode == .content", arguments)
         self.assertIn("if mode == .metadata", arguments)
         self.assertIn("guard !pattern.isEmpty || searchConfiguration.hasPositiveFilter", GUI)
-        self.assertIn("guard !query.isEmpty || searchConfiguration.hasPositiveFilter", QUICK)
-    def test_a_size_only_search_can_be_handed_over_and_continued(self):
-        """Der Knopf „Alle in Favenio" und ⌘↩ brachen bei leerem Suchfeld ab,
-        obwohl die Schnellsuche mit gesetztem Maßfilter laeuft; die
-        Fortsetzung in der Haupt-App ebenso. Beide Uebergabewege haengen
-        jetzt an derselben Bedingung wie der Suchstart."""
-        handover = swift_function(QUICK, "@objc func openInMainApp() {")
-        self.assertIn("guard !query.isEmpty || searchConfiguration.hasPositiveFilter",
-                      handover)
-        # ⌘↩ geht nicht ueber den Knopf, sondern ueber den Tastaturmonitor —
-        # der muss dieselbe Bedingung tragen, sonst faellt die Taste bei
-        # leerem Suchfeld kommentarlos ins Feld durch.
-        launched = swift_function(
-            QUICK, "func applicationDidFinishLaunching(")
+
+    def test_quick_size_handoff_shortcut_accepts_a_filter_without_text(self):
+        # Die Button-Übergabe und die Fortsetzung werden nativ geprüft.
+        # Ein echtes ⌘↩-Ereignis braucht ein aktives Tastaturfenster.
+        launched = swift_function(QUICK, "func applicationDidFinishLaunching(")
         self.assertIn("|| self.searchConfiguration.hasPositiveFilter", launched)
-        continue_search = swift_function(
-            GUI, "func continueSearch(payload: QuickHandoffPayload) {")
-        self.assertIn("guard !pattern.isEmpty || searchConfiguration.hasPositiveFilter",
-                      continue_search)
-    def test_a_size_only_result_line_names_the_size_filter(self):
-        """Ohne Suchbegriff schrieb die Endmeldung „für „"" mit leeren
-        Anfuehrungszeichen. Bei einer reinen Maßsuche nennt sie stattdessen
-        den Filter, nach dem wirklich gesucht wurde."""
-        finish = swift_function(
-            QUICK, "func finish(query: String, errorText: String?) {")
-        self.assertIn("searchConfiguration.filterSummary", finish)
-        self.assertIn("query.isEmpty", finish)
-    def test_area_sort_cannot_overflow(self):
-        """Die Maß-Spalte sortiert nach Flaeche. Ein praeparierter Bildkopf
-        mit 0xffffffff je Kante liess `width * height` ueber Int.max laufen
-        und beendete die App; der Kern lehnt solche Kopfmaße zusaetzlich ab."""
-        compare = swift_function(COMMON, "func compareHits")
-        # Sortiert wird über die gedeckelte Fläche, nicht über eine
-        # fangende Multiplikation im Vergleicher selbst.
-        self.assertIn("lhs.pixelArea, rhs.pixelArea", compare)
-        area = swift_function(COMMON, "var pixelArea")
-        self.assertIn("multipliedReportingOverflow", area)
-        # Die zweite Hälfte gehört dem Kern: Er lehnt unplausible
-        # Kopfmaße ab. Geprüft wird das VERHALTEN, nicht der Name der
-        # Konstante — ein `assertIn("MAX_IMAGE_EDGE", …)` auf den
-        # Quelltext bestätigte nur sich selbst.
-        grenze = favenio_constant("MAX_IMAGE_EDGE")
-        self.assertEqual(grenze, str(2 ** 31 - 1))
 
-
-@unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")
-class QuickScopeRefreshBehaviourTest(unittest.TestCase):
-    """Führt die echten Refresh- und Apply-Funktionen in einer kleinen
-    Attrappe aus. So lassen sich überlappende Finder-Antworten und verweigerte
-    Automation deterministisch prüfen, ohne die TCC-Einstellungen des Macs zu
-    verändern."""
-
-
-    @classmethod
-    def setUpClass(cls):
-        result = run_probe('scope-refresh')
-        cls.lines = dict(line.split('|', 1) for line in result.stdout.splitlines() if line)
-
-    def test_old_answer_is_dropped_and_latest_refresh_is_started(self):
-        self.assertEqual(self.lines["NACH_ALT"], "[]|false|1|true")
-
-    def test_denied_answer_uses_the_visible_fallback_state(self):
-        self.assertEqual(
-            self.lines["NACH_DENIED"], "[]|true|true|1|1|1|false")
-
-    def test_resolved_scope_without_a_search_restores_the_idle_hint(self):
-        self.assertEqual(self.lines["IDLE_RESTORED"], "Suchhinweis")
-
-    def test_late_finder_answer_preserves_the_scope_of_a_finished_search(self):
-        self.assertEqual(self.lines["SPAET_true"], "/ersatz|/finder")
-        self.assertEqual(self.lines["SPAET_false"], "nil|nil")
-
-    def test_late_finder_answer_keeps_warnings_and_search_errors_visible(self):
-        for outcome in ("Keine Treffer. — 1 Objekt übersprungen.", "Suche fehlgeschlagen."):
-            self.assertEqual(self.lines["STATUS_" + outcome], outcome + " Bereichshinweis")
-            self.assertEqual(self.lines["RESTORED_" + outcome], outcome)
-
-    def test_handoff_rejection_keeps_the_actual_scope_warning_visible(self):
-        self.assertEqual(self.lines["HANDOFF_SCOPE"], "1 Treffer. Bereichshinweis · Übergabe abgelehnt")
-        self.assertEqual(self.lines["HANDOFF_RESTORED"], "Übergabe abgelehnt")
-
-
-@unittest.skipUnless(shutil.which("swiftc"), "swiftc nicht verfügbar")
-class QuickScopeNoteBehaviourTest(unittest.TestCase):
-    """runScopeNoteText() hängt nur vom Zustand ab und lässt sich deshalb
-    wirklich AUSFÜHREN: Die Funktion wird unverändert aus
-    quick/FavenioQuick.swift geschnitten, in eine Attrappe mit denselben
-    Zustandsfeldern gesetzt und übersetzt. So ist der sichtbare Satz geprüft
-    und nicht nur die Schreibweise im Quelltext."""
-
-
-    @classmethod
-    def setUpClass(cls):
-        result = run_probe('scope-note')
-        cls.lines = dict(line.split('|', 1) for line in result.stdout.splitlines() if line)
-
-    def test_the_note_speaks_in_the_present_only_while_searching(self):
-        self.assertEqual(
-            self.lines["LAEUFT"],
-            "Suche läuft in /eins — Finder-Ordner ist /zwei "
-            "(Return sucht dort).")
-
-    def test_a_finished_search_is_not_called_running(self):
-        # finish() und der Top-20-Stopp zeigen die Zeile NACH cancelSearch().
-        self.assertEqual(
-            self.lines["FERTIG"],
-            "Gesucht wurde in /eins — Finder-Ordner ist /zwei "
-            "(Return sucht dort).")
-
-    def test_an_own_choice_drops_the_note_about_the_finder_folder(self):
-        # „Return sucht dort" stimmte nach einer eigenen Bereichswahl nicht
-        # mehr: Return sucht dann im selbst gewählten Ordner.
-        self.assertEqual(self.lines["GEWAEHLT"], "nil")
-
-    def test_without_a_mismatch_there_is_no_note(self):
-        self.assertEqual(self.lines["OHNE"], "nil")
+    def test_area_sort_uses_saturated_areas_and_a_strict_order(self):
+        report = json.loads(run_probe("hit-sorting").stdout)
+        self.assertEqual(report["ascending"], [
+            "no dimensions", "narrow", "square", "a tie", "b tie", "oversized",
+        ])
+        self.assertEqual(report["descending"], [
+            "oversized", "a tie", "b tie", "square", "narrow", "no dimensions",
+        ])
+        self.assertEqual(report["ascendingReflexive"], [])
+        self.assertEqual(report["descendingReflexive"], [])
+        self.assertEqual(favenio.MAX_IMAGE_EDGE, 2 ** 31 - 1)
 
 
 class PixelFieldValidationGuards(unittest.TestCase):
-    def test_both_frontends_gate_search_and_run_field_selftests(self):
+    def test_both_frontends_validate_pixel_fields_at_search_entry_points(self):
         for source in (GUI, QUICK):
-            self.assertIn("pixelFieldSelfTest(", source)
             self.assertIn("func validatePixelInputs()", source)
             self.assertIn("validatePixelFields(pixelFields)", source)
             start = swift_function(source, "func startSearchWithReference(" if source is GUI else "func startSearch()")
@@ -1169,36 +501,7 @@ class ParsePixelLimitBehaviourTest(unittest.TestCase):
         self.assertEqual(self.gelesen["10.500"], "10500")
 
 
-class MainAppResultListTest(unittest.TestCase):
-    """Drei Stellen der Trefferliste, an denen die Haupt-App entweder
-    abstuerzte, einfror oder die falsche Datei traf."""
-
-    def test_the_cell_builder_never_reads_past_the_end(self):
-        # applyHitsToTable verkleinert `hits` VOR dem reloadData(), und
-        # dazwischen laufen noch sortHits() und deselectAll(nil) —
-        # NSTableView haelt solange die alte Zeilenzahl. Fragt AppKit dann
-        # eine Zelle jenseits des Endes an, endet die App mit
-        # "Index out of range". Die Schnellsuche hatte die Pruefung immer.
-        # Seit 0.34.16 steht der Zellbau samt Prüfung EINMAL in der
-        # Basisklasse; beide Apps gehen durch dieselbe Stelle.
-        builder = swift_function(COMMON, "func hitCell(")
-        self.assertIn("guard hitIndex(forTableRow: row) != nil else { return nil }", builder)
-        for label, source in (("GUI", GUI), ("Quick", QUICK)):
-            body = swift_function(
-                source, "                   viewFor tableColumn:")
-            self.assertIn("hitCell(tableView, column: column, row: row)",
-                          body, label)
-            # Keine neue Kopie des Zellbaus neben der Basisklasse.
-            self.assertNotIn("NSTableCellView()", body, label)
-
-    def test_the_preview_panel_never_reads_past_the_end(self):
-        # Das Panel fragt seinen ALTEN Index auch dann noch ab, wenn die
-        # Liste inzwischen kuerzer ist: ⌫ oder ⌘⌫ kuerzt previewURLs und
-        # ruft danach reloadData().
-        body = swift_function(COMMON, "    func previewPanel(_ panel: "
-                                      "QLPreviewPanel!,\n"
-                                      "                      previewItemAt")
-        self.assertIn("index < previewURLs.count", body)
+class MainAppResultMergeGuard(unittest.TestCase):
 
     def test_fresh_hits_are_merged_instead_of_resorting_everything(self):
         """Jeder Nachschub sortierte die GANZE Liste neu — der Flush laeuft
@@ -1217,61 +520,69 @@ class MainAppResultListTest(unittest.TestCase):
         self.assertIn("mergingSortedValues(hits, fresh, using: comparator)", merge)
         self.assertIn("while left < existing.endIndex", swift_function(COMMON, "func mergingSortedValues"))
 
-    def test_a_double_click_on_nothing_uses_the_selection(self):
-        """`clickedRow` ist -1 bei einem Doppelklick unter der letzten
-        Zeile. Vorher blieb der contextRow eines frueheren Rechtsklicks
-        stehen: Zeile 2 markiert, auf Zeile 7 rechtsgeklickt, Menue mit ⎋
-        geschlossen, dann in den leeren Bereich doppelgeklickt — geoeffnet
-        wurde Datei 7."""
-        body = swift_function(COMMON, "@objc func openSelected()")
-        self.assertIn("contextRow = tableView.clickedRow", body)
-        self.assertNotIn("if tableView.clickedRow >= 0", body)
-        ctx = swift_function(COMMON, "@objc func ctxOpen()")
-        self.assertNotIn("openSelected()", ctx)
-        self.assertIn("openActionRows()", ctx)
-        # Der Menüaufbau steht seit 0.34.16 in der Basisklasse; beide Apps
-        # gehen durch dieselbe Stelle.
-        self.assertIn("open: #selector(ctxOpen)",
-                      swift_function(COMMON, "func populateHitMenu("))
-        for source in (GUI, QUICK):
-            self.assertNotIn("func openSelected()", source)
-            self.assertNotIn("func ctxOpen()", source)
-            self.assertIn("populateHitMenu(menu)",
-                          swift_function(source, "func menuNeedsUpdate("))
-
 
 class ParsedHitTypeTest(unittest.TestCase):
-    """`isDirectory` kommt vom Kern und darf nicht erraten werden.
+    def test_unknown_directory_type_is_rejected_and_valid_hits_round_trip(self):
+        archive_dir = {"path": "/fixture/a.zip!/dir", "type": "member",
+                       "filesystemPath": "/fixture/a.zip", "archiveMembers": ["dir"]}
+        variants = [
+            {**archive_dir, "isDirectory": True},
+            {**archive_dir, "isDirectory": False},
+            {**archive_dir, "isDirectory": "false"},
+            archive_dir,
+            {"path": "/fixture/file", "type": "file", "filesystemPath": "/fixture/file",
+             "archiveMembers": [], "isDirectory": False},
+            {"path": "/fixture/dir", "type": "dir", "filesystemPath": "/fixture/dir",
+             "archiveMembers": [], "isDirectory": True},
+        ]
+        input_lines = json.dumps([json.dumps(value) for value in variants])
+        report = json.loads(run_probe("hit-transport", input=input_lines).stdout)
+        self.assertEqual(report["parsed"], [True, False, None, None, False, True])
+        self.assertEqual(report["serialized"], [variants[index] for index in (0, 1, 4, 5)])
 
-    Ein ORDNER im Archiv kommt als `member` an und saehe ohne das Feld aus
-    wie eine Datei — genau der Review-Fund vom 2026-08-17, bei dem ein
-    Doppelklick eine leere Datei erzeugte. Der Vertrag in AGENTS.md sagt
-    dazu woertlich: „Die Frontends duerfen den Typ nicht aus dem Pfad oder
-    aus `type` erraten."
-    """
+    def test_bundled_cli_cannot_fall_back_to_the_working_directory(self):
+        binary = suite_binary()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            working = root / "project"
+            working.mkdir()
+            local_cli = working / "favenio.py"
+            local_cli.touch()
+            bundle = root / "Fixture.app" / "Contents"
+            macos = bundle / "MacOS"
+            bundle_cli = bundle / "Resources" / "favenio.py"
+            macos.mkdir(parents=True)
+            bundle_cli.parent.mkdir()
+            (bundle / "Info.plist").write_bytes(plistlib.dumps({
+                "CFBundleIdentifier": "local.favenio.fixture", "CFBundleExecutable": "TestProbe",
+                "CFBundlePackageType": "APPL",
+            }))
+            app_binary = Path(shutil.copy2(binary, macos / "TestProbe"))
+            bundle_cli.touch()
+            cases = [(binary, local_cli), (app_binary, bundle_cli), (app_binary, None)]
+            for executable, expected in cases:
+                with self.subTest(executable=executable, expected=expected):
+                    if expected is None:
+                        bundle_cli.unlink()
+                    result = subprocess.run([str(executable), "find-cli"], cwd=working,
+                                            capture_output=True, text=True, check=True, timeout=10)
+                    self.assertEqual(result.stdout.strip(), str(expected) if expected else "")
 
-    def test_a_line_without_the_field_is_rejected_not_guessed(self):
-        # Seit 0.28.2 liest parseSearchLine() die Felder; parseHit() ist nur
-        # noch eine Huelle darum.
-        body = swift_function(COMMON, "func parseSearchLine(")
-        self.assertIn('guard let isDirectory = dict["isDirectory"] as? Bool',
-                      body)
-        self.assertNotIn('?? (kind == "dir")', body)
 
-    def test_our_own_serialiser_always_writes_it(self):
-        # Sonst wäre die strenge Prüfung oben ein Datenverlust: Die
-        # Übergabe der Schnellsuche geht durch genau diesen Weg.
-        body = swift_function(COMMON, "func jsonlData(")
-        self.assertIn('"isDirectory": hit.isDirectory', body)
-
-    def test_the_bundled_core_is_never_taken_from_the_working_directory(self):
-        # Fehlt das gebündelte favenio.py, führte eine notarisierte App mit
-        # Automations- und Festplatten-Freigaben sonst fremdes Python mit
-        # ihren Rechten aus.
-        body = swift_function(COMMON, "func findCLI()")
-        self.assertIn('Bundle.main.bundleURL.pathExtension != "app"', body)
-        self.assertLess(body.index("pathExtension != \"app\""),
-                        body.index("currentDirectoryPath"))
+class MetadataFieldListTest(unittest.TestCase):
+    def test_metadata_fields_come_from_the_running_cli(self):
+        binary = suite_binary()
+        with tempfile.TemporaryDirectory() as scratch:
+            cli = Path(scratch, "favenio.py")
+            cli.write_text(
+                "import sys\nassert sys.argv[1:] == ['--list-metadata-fields']\n"
+                "print('Fixture-Keywords')\nprint('Fixture-Caption')\n",
+                encoding="utf-8")
+            for expected in (["Fixture-Keywords", "Fixture-Caption"], []):
+                result = subprocess.run([str(binary), "metadata-fields"], cwd=scratch,
+                                        capture_output=True, text=True, check=True, timeout=10)
+                self.assertEqual(json.loads(result.stdout), expected)
+                cli.unlink(missing_ok=True)
 
 
 class CsvFieldBehaviourTest(unittest.TestCase):
@@ -1382,12 +693,12 @@ class CommonApplicationsTest(unittest.TestCase):
                 report = json.loads(result.stdout)
                 self.assertEqual(report["neu"], report["alt"])
 
-    def test_a_narrowed_extension_is_not_cut_again(self):
-        # Ohne diese Wache fiele der Schnitt beim nächsten Umbau unbemerkt
-        # auf die Kosten je Treffer zurück.
-        body = swift_function(COMMON, "func commonApplicationsFor(")
-        self.assertIn("narrowed.contains(key)", body)
-        self.assertIn("continue", body)
+    def test_each_extension_is_queried_once_for_the_common_apps_menu(self):
+        names = ["a.txt", "b.TXT", "c.txt", "d.pdf", "e.PDF"]
+        result = run_probe("common-apps", "--fixture-applications", input=json.dumps(names))
+        report = json.loads(result.stdout)
+        self.assertEqual(report["neu"], ["/fixture/Editor.app"])
+        self.assertEqual(report["lookups"], ["extension:txt", "extension:pdf"])
 
     def test_directories_and_files_with_the_same_extension_are_intersected(self):
         for names in (["folder.txt/", "file.txt"], ["file.txt", "folder.txt/"],

@@ -2,12 +2,6 @@ import AppKit
 import Quartz
 
 enum ResultFilterProbe {
-    final class QuickSelectionOwner: HitListController, NSTableViewDataSource, NSTableViewDelegate {
-        func numberOfRows(in tableView: NSTableView) -> Int { resultTableRowCount }
-        // Die Methoden stammen beim Testbuild unverändert aus Quick.
-        /* QUICK_FILTER_RELOAD */
-        /* QUICK_FILTER_SELECTION */
-    }
     final class Rows: NSObject, NSTableViewDataSource {
         let owner: HitListController
         init(_ owner: HitListController) { self.owner = owner }
@@ -20,40 +14,10 @@ enum ResultFilterProbe {
         }
         return condition()
     }
-    static func run(_ arguments: [String]) throws {
+    static func run() throws {
         _ = NSApplication.shared
         let input = FileHandle.standardInput.readDataToEndOfFile()
         let hits = input.split(separator: 10).compactMap { parseHit(Data($0)) }
-        if arguments.dropFirst().first?.hasPrefix("quick-selection") == true {
-            precondition(hits.count == 1)
-            let owner = QuickSelectionOwner()
-            owner.contentPreviewController.cliPath = arguments.last
-            owner.tableView.dataSource = owner
-            owner.tableView.delegate = owner
-            owner.tableView.addTableColumn(NSTableColumn(identifier: .init("name")))
-            owner.contentPreviewView.toggle.state = .on
-            owner.contentPreviewView.syncVisibility()
-            owner.hits = hits
-            owner.tableView.reloadData()
-            if arguments.dropFirst().first == "quick-selection-grouped" { owner.resultGrouping.setMode(.folder) }
-            owner.tableView.selectRowIndexes(owner.tableRows(for: [hits[0].identity]), byExtendingSelection: false)
-            owner.refreshContentPreview()
-            let initial = wait { !owner.contentPreviewController.isLoading
-                && owner.contentPreviewView.textView.string.contains("Zeile 1")
-                && owner.contentPreviewView.nextButton.isEnabled }
-            owner.contentPreviewView.nextButton.performClick(nil)
-            let next = wait { !owner.contentPreviewController.isLoading && owner.contentPreviewView.textView.string.contains("Zeile 3") }
-            owner.hits.append(Hit(path: "/missing/other.txt", kind: "file", line: nil, size: 0,
-                filesystemPath: "/missing/other.txt", archiveMembers: [], isDirectory: false))
-            owner.reloadKeepingSelection([hits[0].identity])
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-            let report = ["initial": initial, "next": next,
-                "sameSelection": owner.selectedHitIdentities() == [hits[0].identity],
-                "navigationRetained": owner.contentPreviewView.textView.string.contains("Zeile 3")]
-            print(String(decoding: try JSONSerialization.data(withJSONObject: report), as: UTF8.self))
-            if report.values.contains(false) { exit(1) }
-            return
-        }
         precondition(hits.count == 4)
         let owner = HitListController()
         let rows = Rows(owner)

@@ -97,6 +97,137 @@ func checkRecordingComparison(sandbox: URL) -> String? {
     return nil
 }
 
+func checkNativeMainSearch(sandbox: URL) -> String? {
+    let oldRoot = sandbox.appendingPathComponent("obsolete-search")
+    let root = sandbox.appendingPathComponent("current-search")
+    let manager = FileManager.default
+    let files = ["a-needle.txt", "m-needle.txt", "z-needle.txt"].map { root.appendingPathComponent($0) }
+    let bodies = files.indices.map { Data(("stream-probe" + String(repeating: "x", count: $0) + "\n").utf8) }
+    defer {
+        try? manager.removeItem(at: oldRoot)
+        try? manager.removeItem(at: root)
+    }
+    do {
+        try manager.createDirectory(at: oldRoot, withIntermediateDirectories: false)
+        try manager.createDirectory(at: root, withIntermediateDirectories: false)
+        try Data().write(to: oldRoot.appendingPathComponent("obsolete-hit.txt"))
+        for (file, data) in zip(files, bodies) { try data.write(to: file) }
+    } catch { return "Testdateien für die Haupt-App fehlen: \(error)" }
+
+    let host = MainController()
+    host.buildWindow()
+    defer { host.stopSearch(); host.window.orderOut(nil) }
+    func waitForFinish() -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + 8
+        while host.activeSearchRun != nil && ProcessInfo.processInfo.systemUptime < deadline {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        return host.activeSearchRun == nil
+    }
+    func footer(_ text: String) -> Bool {
+        host.statusLabel.stringValue.contains(text)
+            && host.statusLabel.toolTip == host.statusLabel.stringValue
+    }
+    var sawProgressWithoutHits = false
+    var sawObsoleteProgress = false
+    let observation = host.statusLabel.observe(\.stringValue, options: [.new]) { _, change in
+        guard let label = change.newValue, label.hasPrefix("Durchsuche ") else { return }
+        if label.hasSuffix(root.lastPathComponent) && host.hits.isEmpty && host.pending.isEmpty {
+            sawProgressWithoutHits = true
+        }
+        if label.hasSuffix(oldRoot.lastPathComponent) { sawObsoleteProgress = true }
+    }
+    defer { observation.invalidate() }
+
+    host.setSearchRoot(oldRoot)
+    host.searchField.stringValue = "obsolete-hit"
+    host.startSearch()
+    guard let oldRun = host.activeSearchRun else { return "Erster Suchprozess fehlt" }
+    // Die Main-Queue bleibt bis zum Neustart stehen, damit das alte Paket
+    // zum Zeitpunkt der Ablösung bereits unterwegs ist.
+    let deadline = ProcessInfo.processInfo.systemUptime + 8
+    while oldRun.transportPeaks.packets == 0 && ProcessInfo.processInfo.systemUptime < deadline {
+        Thread.sleep(forTimeInterval: 0.005)
+    }
+    guard oldRun.transportPeaks.packets > 0, host.hits.isEmpty else {
+        return "Der erste Suchprozess hat vor der Ablösung kein Paket bereitgestellt"
+    }
+    host.setSearchRoot(root)
+    host.searchField.stringValue = "kein-passender-name"
+    host.startSearch()
+    let currentID = host.searchControl.run?.id
+    guard let newRun = host.activeSearchRun, newRun !== oldRun, oldRun.isCancelled,
+          footer("Suche läuft") else { return "Zweiter Suchlauf ersetzt den ersten nicht sauber" }
+    // Ein verspäteter Abschluss darf weder Status noch Bericht beenden, auch
+    // wenn er nach dem Wechsel und vor dem ersten Paket des neuen Laufs kommt.
+    host.finishSearchRun(oldRun, exit: SearchExit(status: 2, reason: .exit, errorMessage: "veralteter Abschluss"))
+    guard host.activeSearchRun === newRun, footer("Suche läuft"), waitForFinish(),
+          sawProgressWithoutHits, !sawObsoleteProgress, host.hits.isEmpty,
+          host.searchControl.run?.id == currentID,
+          footer("Im angefragten Umfang gesucht"),
+          host.searchReportController.snapshot?.coverage == "withinRequestedScope" else {
+        return "Veralteter Suchstand oder fehlende Fortschrittsanzeige: \(host.statusLabel.stringValue)"
+    }
+    withExtendedLifetime(oldRun) {}
+
+    host.regexCheckbox.state = .on
+    host.searchField.stringValue = "[unfertig"
+    host.startSearch()
+    guard host.activeSearchRun != nil, waitForFinish(),
+          host.hits.isEmpty, footer("Suche fehlgeschlagen"),
+          footer("unterminated character set"), host.searchControl.run?.state == "failed" else {
+        return "Kernfehler fehlt in Fußzeile oder Tooltip: \(host.statusLabel.stringValue)"
+    }
+
+    for name in ["skip-one.txt", "skip-two.txt"] {
+        guard mkfifo(root.appendingPathComponent(name).path, 0o600) == 0 else {
+            return "Testpipe für die Warnungsanzeige fehlt"
+        }
+    }
+    let seed = files.indices.dropFirst().reversed().map { index in
+        let file = files[index]
+        return Hit(path: file.path, kind: "file", line: 1, size: bodies[index].count,
+                   filesystemPath: file.path, archiveMembers: [], isDirectory: false)
+    }
+    let selection = Set(seed.map(\.identity))
+    let payload = QuickHandoffPayload(hits: seed, selection: selection, version: 2, roots: [root.path])
+    host.applyConfiguration(SearchConfiguration(mode: .content))
+    host.searchField.stringValue = "stream-probe"
+    host.tableView.sortDescriptors = [NSSortDescriptor(key: "name", ascending: true)]
+    host.loadResults(payload: payload)
+    guard host.activeSearchRun == nil, host.hits.map(\.filesystemPath) == files.dropFirst().map(\.path),
+          host.selectedHitIdentities() == selection, host.tableView.selectedRowIndexes == [0, 1],
+          footer("2 Treffer"), footer("2 ausgewählt"), footer("aus der Schnellsuche") else {
+        return "Die geladene Übergabe verliert Sortierung, Auswahl oder Kennzahlen"
+    }
+    host.continueSearch(payload: payload)
+    guard host.activeSearchRun != nil, waitForFinish(),
+          host.hits.map(\.filesystemPath) == files.map(\.path),
+          host.selectedHitIdentities() == selection, host.tableView.selectedRowIndexes == [1, 2],
+          host.statistics.totalSize == bodies.reduce(0, { $0 + $1.count }),
+          footer("3 Treffer"), footer("2 ausgewählt"), footer("2 Warnungen"),
+          host.searchControl.run?.state == "warnings" else {
+        return "Die fortgesetzte Suche verliert Treffer, Warnungen oder Auswahl: \(host.statusLabel.stringValue)"
+    }
+
+    host.tableView.selectRowIndexes([2], byExtendingSelection: false)
+    host.removeFromResults(nil)
+    guard host.hits.map(\.filesystemPath) == files.prefix(2).map(\.path),
+          (try? Data(contentsOf: files[2])) == bodies[2],
+          host.selectedHitIdentities() == [seed[1].identity],
+          footer("1 Treffer aus der Liste entfernt") else {
+        return "Entfernen gefährdet Datei, Auswahl oder sichtbare Rückmeldung"
+    }
+    host.refreshStatus()
+    guard host.statistics.totalSize == bodies[0].count + bodies[1].count,
+          footer("2 Treffer"), footer("2 Warnungen"),
+          !host.statusLabel.stringValue.contains("ausgewählt") else {
+        return "Kennzahlen oder Tooltip folgen der veränderten Auswahl und Trefferliste nicht"
+    }
+    print("MAIN SEARCH UI OK: restart, progress, diagnostics, handoff, selection and footer")
+    return nil
+}
+
 func checkEmptySearchStatus(sandbox: URL) -> String? {
     let root = sandbox.appendingPathComponent("empty-search-status")
     let locked = root.appendingPathComponent("unreadable")

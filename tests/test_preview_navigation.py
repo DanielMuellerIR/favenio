@@ -1,6 +1,8 @@
 """Gezielte Nachladeaufträge: unabhängige Originalbereiche und harte Grenzen."""
 import json
 import io
+import signal
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 import unittest
@@ -133,6 +135,34 @@ class NavigationTests(TempTreeTest):
         with mock.patch.object(favenio,'PREVIEW_LOAD_SECONDS',0.05):
             value=self.load(hit)
         self.assertEqual(value['navigation']['reason'],'readLimit')
+
+    def test_preview_in_worker_thread_still_interrupts_a_running_regex(self):
+        path = self.write("worker-regex.txt", "needle\n" + "a" * 30_000 + "!")
+        hit = self.hit(path, "needle|(a+)+$", options=["--regex"])
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            value = worker.submit(self.load, hit).result(timeout=8)
+        self.assertEqual(value["navigation"]["reason"], "readLimit")
+
+    def test_preview_leaves_an_existing_real_timer_running(self):
+        hit = self.hit(self.write("timer.txt", "needle\nneedle"))
+
+        def owner_handler(signum, frame):
+            self.fail("The caller's alarm fired unexpectedly")
+
+        previous_handler = signal.signal(signal.SIGALRM, owner_handler)
+        previous_timer = signal.setitimer(signal.ITIMER_REAL, 30.0, 7.0)
+        try:
+            value = self.load(hit)
+            self.assertEqual(value["navigation"]["reason"], "ready")
+            self.assertIs(signal.getsignal(signal.SIGALRM), owner_handler)
+            remaining, interval = signal.getitimer(signal.ITIMER_REAL)
+            self.assertGreater(remaining, 0)
+            self.assertLess(remaining, 30.0)
+            self.assertEqual(interval, 7.0)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
 
     def test_running_processes_are_killed_on_escape_off_selection_and_change(self):
         hits=[self.hit(self.write(name,'needle\nmiddle\nneedle')) for name in ['first.txt','second.txt']]

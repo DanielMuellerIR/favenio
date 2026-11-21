@@ -5,7 +5,7 @@
 #
 # Beide Bundles bekommen eine Kopie von favenio.py in ihre Resources —
 # der Python-Kern ist der einzige Suchmotor, die Apps sind nur Frontends.
-# Am Ende läuft der Headless-Selbsttest. Die Bundles bleiben bewusst im
+# Der Build prüft Produkt-Bundles und separate Selbsttests. Die Apps bleiben im
 # Projektverzeichnis: Ein Build ist keine Installation und darf eine
 # notarisierten Produktinstallation unter /Applications niemals ersetzen.
 #
@@ -22,8 +22,13 @@ cd "$(dirname "$0")"
 VERSION=$(/usr/bin/python3 -c "import favenio; print(favenio.__version__)")
 DATE=$(/usr/bin/python3 -c "import favenio; print(getattr(favenio, '__date__', ''))")
 BUNDLE_VERSION="${FAVENIO_SPARKLE_TEST_VERSION:-$VERSION}"
-SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://danielmuellerir.github.io/favenio/appcast.xml}"
+PRODUCTION_FEED_URL=$(cat common/update-feed-url.txt)
+SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-$PRODUCTION_FEED_URL}"
 SPARKLE_PUBLIC_KEY=$(cat common/update-public-key.txt)
+if [[ -z "$PRODUCTION_FEED_URL" || -z "$SPARKLE_PUBLIC_KEY" ]]; then
+    echo "FEHLER: Produktions-Update-Kanal ist unvollständig." >&2
+    exit 1
+fi
 echo "Baue Favenio $VERSION ($DATE), Bundle-Version $BUNDLE_VERSION …"
 
 # Sparkle exakt gemäß Package.resolved auflösen. SwiftPM verpackt Binär-Targets
@@ -122,24 +127,48 @@ set_sparkle_feed_url() {
 # Menü) und die im System enthaltene Swift-Concurrency-Runtime brauchen es.
 TARGET="arm64-apple-macos12.0"
 
+MAC_SOURCES=(
+    common/DuplicateModel.swift common/ResultFilterModel.swift common/CriteriaModel.swift
+    common/SearchModel.swift common/HitPresentation.swift common/SearchConfiguration.swift common/SearchProcess.swift
+    common/ContentModel.swift common/ContentPreviewLoad.swift common/DateRangeModel.swift
+    common/SearchReportModel.swift common/RegexTemplates.swift common/FavenioCore.swift
+    common/UpdateSupport.swift
+    common/SearchReport.swift common/ContentPreview.swift common/Thumbnails.swift
+    common/DuplicateCheck.swift common/Version.swift common/CriteriaEditor.swift
+    common/DateRanges.swift common/FinderMetadata.swift common/FinderScope.swift
+)
+MAIN_SOURCES=(
+    control/ControlProtocol.swift common/ControlModel.swift common/RecordingModel.swift
+    common/FastraHandoffModel.swift gui/SearchControl.swift gui/SearchRecording.swift
+    gui/FastraHandoff.swift gui/FavenioGUI.swift
+)
+
+compile_frontend() {
+    local binary="$1"
+    shift
+    swiftc -target "$TARGET" -F "$SPARKLE_SEARCH_PATH" -framework Sparkle \
+        -Xlinker -rpath -Xlinker @loader_path/../Frameworks \
+        "${MAC_SOURCES[@]}" "$@" -o "$binary"
+}
+
 # ---------- Favenio.app (große GUI) ----------
 rm -rf Favenio.app
 mkdir -p Favenio.app/Contents/MacOS Favenio.app/Contents/Resources \
     Favenio.app/Contents/Frameworks
-swiftc -O -target "$TARGET" -F "$SPARKLE_SEARCH_PATH" -framework Sparkle \
-    -Xlinker -rpath -Xlinker @loader_path/../Frameworks \
-    common/DuplicateModel.swift common/ResultFilterModel.swift common/CriteriaModel.swift common/SearchModel.swift common/SearchConfiguration.swift common/SearchProcess.swift common/ContentModel.swift common/ContentPreviewLoad.swift common/DateRangeModel.swift common/SearchReportModel.swift common/RegexTemplates.swift common/FavenioCore.swift common/SearchReport.swift common/ContentPreview.swift common/Thumbnails.swift common/DuplicateCheck.swift common/Version.swift common/CriteriaEditor.swift common/DateRanges.swift common/FinderMetadata.swift control/ControlProtocol.swift \
-    common/ControlModel.swift common/RecordingModel.swift common/FastraHandoffModel.swift gui/SearchControl.swift gui/SearchRecording.swift gui/FastraHandoff.swift gui/FastraHandoffSelfTest.swift gui/SearchControlSelfTest.swift gui/CriteriaEditorSelfTest.swift gui/FavenioGUI.swift \
-    -o Favenio.app/Contents/MacOS/Favenio
+compile_frontend Favenio.app/Contents/MacOS/Favenio -O "${MAIN_SOURCES[@]}"
 mkdir -p Favenio.app/Contents/Helpers
 swiftc -O -target "$TARGET" control/ControlProtocol.swift control/main.swift \
     -o Favenio.app/Contents/Helpers/favenio-control
 codesign "${NESTED_SIGN[@]}" Favenio.app/Contents/Helpers/favenio-control
 mkdir -p .build
-swiftc -O -target "$TARGET" ocr/VisionText.swift pdf/main.swift -o .build/favenio-pdf
+DOCUMENT_LIMITS=.build/DocumentHelperLimits.swift
+/usr/bin/python3 -B tools/generate-document-limits.py "$DOCUMENT_LIMITS"
+swiftc -O -target "$TARGET" "$DOCUMENT_LIMITS" ocr/DocumentHelperIO.swift ocr/VisionText.swift \
+    pdf/main.swift -o .build/favenio-pdf
 cp .build/favenio-pdf Favenio.app/Contents/Helpers/favenio-pdf
 codesign "${NESTED_SIGN[@]}" Favenio.app/Contents/Helpers/favenio-pdf
-swiftc -O -target "$TARGET" ocr/VisionText.swift ocr/main.swift -o .build/favenio-ocr
+swiftc -O -target "$TARGET" "$DOCUMENT_LIMITS" ocr/DocumentHelperIO.swift ocr/VisionText.swift \
+    ocr/main.swift -o .build/favenio-ocr
 cp .build/favenio-ocr Favenio.app/Contents/Helpers/favenio-ocr
 codesign "${NESTED_SIGN[@]}" Favenio.app/Contents/Helpers/favenio-ocr
 cp favenio.py Favenio.app/Contents/Resources/
@@ -202,10 +231,7 @@ rm -rf FavenioQuick.app
 mkdir -p FavenioQuick.app/Contents/MacOS \
     FavenioQuick.app/Contents/Resources \
     FavenioQuick.app/Contents/Frameworks
-swiftc -O -target "$TARGET" -F "$SPARKLE_SEARCH_PATH" -framework Sparkle \
-    -Xlinker -rpath -Xlinker @loader_path/../Frameworks \
-    common/DuplicateModel.swift common/ResultFilterModel.swift common/CriteriaModel.swift common/SearchModel.swift common/SearchConfiguration.swift common/SearchProcess.swift common/ContentModel.swift common/ContentPreviewLoad.swift common/DateRangeModel.swift common/SearchReportModel.swift common/RegexTemplates.swift common/FavenioCore.swift common/SearchReport.swift common/ContentPreview.swift common/Thumbnails.swift common/DuplicateCheck.swift common/Version.swift common/CriteriaEditor.swift common/DateRanges.swift common/FinderMetadata.swift quick/FavenioQuick.swift \
-    -o FavenioQuick.app/Contents/MacOS/FavenioQuick
+compile_frontend FavenioQuick.app/Contents/MacOS/FavenioQuick -O quick/FavenioQuick.swift
 mkdir -p FavenioQuick.app/Contents/Helpers
 cp .build/favenio-pdf FavenioQuick.app/Contents/Helpers/favenio-pdf
 codesign "${NESTED_SIGN[@]}" FavenioQuick.app/Contents/Helpers/favenio-pdf
@@ -254,6 +280,35 @@ embed_sparkle_and_licenses FavenioQuick.app
 codesign "${APP_SIGN[@]}" FavenioQuick.app
 codesign --verify --deep --strict FavenioQuick.app
 
+# Die lokalen Test-Bundles verwenden dieselben Ressourcen und Helfer. Die
+# eigene Bundle-ID trennt Einstellungen auch bei impliziten AppKit-Zugriffen.
+SELFTEST_DIR=.build/selftests
+MAIN_SELFTEST="$SELFTEST_DIR/FavenioMainSelfTest.app/Contents/MacOS/Favenio"
+QUICK_SELFTEST="$SELFTEST_DIR/FavenioQuickSelfTest.app/Contents/MacOS/FavenioQuick"
+
+build_selftest_bundle() {
+    local name="$1" target="$2" identifier="$3"
+    shift 3
+    local app="${target%/Contents/MacOS/*}"
+    rm -rf "$app"
+    ditto "$name.app" "$app"
+    local plist="$app/Contents/Info.plist"
+    /usr/bin/plutil -replace CFBundleIdentifier -string "$identifier.$(/usr/bin/uuidgen)" "$plist"
+    /usr/bin/plutil -replace CFBundleName -string "$name Selbsttest" "$plist"
+    /usr/bin/plutil -replace CFBundleDisplayName -string "$name Selbsttest" "$plist"
+    if [[ "$name" == "Favenio" ]]; then
+        /usr/bin/plutil -remove CFBundleURLTypes "$plist"
+    fi
+    compile_frontend "$target" -O -D FAVENIO_SELFTEST tests/AppKitSelfTestSupport.swift "$@"
+    codesign --force --sign - "$app"
+}
+mkdir -p "$SELFTEST_DIR"
+build_selftest_bundle Favenio "$MAIN_SELFTEST" local.favenio.selftest.main \
+    "${MAIN_SOURCES[@]}" gui/FavenioMainSelfTest.swift gui/FastraHandoffSelfTest.swift \
+    gui/SearchControlSelfTest.swift gui/CriteriaEditorSelfTest.swift
+build_selftest_bundle FavenioQuick "$QUICK_SELFTEST" local.favenio.selftest.quick \
+    quick/FavenioQuick.swift quick/FavenioQuickSelfTest.swift
+
 # Der Exit-Status allein beweist nichts: Ein Selbsttest, der sich unterwegs
 # über NSApp.terminate beendet, endet mit Status 0 — ohne je eine Prüfung
 # fertig gemacht zu haben. Am 2026-09-10 belegt: Mit absichtlich
@@ -261,33 +316,48 @@ codesign --verify --deep --strict FavenioQuick.app
 # vollständig durch und meldete Erfolg, obwohl deren Selbsttest mitten im
 # Lauf starb. Deshalb ist die Schlusszeile das Erfolgskriterium.
 run_selftest() {
-    local binary="$1" output last_line
-    if ! output=$("$binary" --selftest 2>&1); then
+    local binary="$1" output
+    if ! output=$("$binary" 2>&1); then
         printf '%s\n' "$output"
-        echo "FEHLER: $binary --selftest ist gescheitert." >&2
+        echo "FEHLER: $binary ist gescheitert." >&2
         return 1
     fi
     printf '%s\n' "$output"
-    last_line=$(printf '%s\n' "$output" | awk 'NF { line = $0 } END { print line }')
-    if [[ "$last_line" != "SELFTEST OK — "* ]]; then
-        echo "FEHLER: $binary --selftest endete ohne 'SELFTEST OK'." >&2
+    if ! awk '/^SELFTEST OK — / { count++ } NF { last = $0 }
+        END { exit !(count == 1 && last ~ /^SELFTEST OK — /) }' <<< "$output"; then
+        echo "FEHLER: $binary endete ohne genau eine Schlusszeile 'SELFTEST OK'." >&2
         echo "Ein Selbsttest, der sich über NSApp.terminate beendet, endet" >&2
         echo "ebenfalls mit Status 0 — hier zählt nur die Schlusszeile." >&2
         return 1
     fi
 }
 
+run_selftest_failure() {
+    local binary="$1" argument="$2" expected="$3" output result=0
+    output=$("$binary" "$argument" 2>&1) || result=$?
+    printf '%s\n' "$output"
+    if [[ "$result" != "1" ]] \
+        || ! grep -Fqx -- "SELFTEST FEHLER: $expected" <<< "$output" \
+        || [[ "$(printf '%s\n' "$output" | awk 'NF { line = $0 } END { print line }')" != "SELFTEST ISOLATION OK" ]]; then
+        echo "FEHLER: $binary $argument erreichte die reguläre Fehlerrückkehr nicht." >&2
+        return 1
+    fi
+}
+
 run_build_selftests() {
-    # App-Abnahmen können ein Notary-Ticket schon vor dem ersten Start
-    # verlangen. Dann werden die Selbsttests nach der Notarisierung am
-    # geprüften Bundle nachgeholt; der Build allein belegt sie nicht.
     if [[ "${FAVENIO_DEFER_SELFTEST:-0}" == "1" ]]; then
-        echo "App-Selbsttests aufgeschoben — nach Notarisierung separat ausführen."
+        echo "Selbsttests und Bundle-Prüfungen aufgeschoben."
         return 0
     fi
-    echo "== Headless-Selbsttest =="
-    run_selftest Favenio.app/Contents/MacOS/Favenio
-    run_selftest FavenioQuick.app/Contents/MacOS/FavenioQuick
+    echo "== Headless-Selbsttests =="
+    run_selftest "$MAIN_SELFTEST"
+    run_selftest "$QUICK_SELFTEST"
+    run_selftest_failure "$MAIN_SELFTEST" --fail-date "Erzwungener Fehler im Datumstest"
+    run_selftest_failure "$QUICK_SELFTEST" --fail-preferences "Erzwungener Fehler nach Änderung der Finder-Spalten"
+    run_selftest_failure "$QUICK_SELFTEST" --fail-scope-capture "Bildaufnahme fehlgeschlagen (Status 1)"
+    echo "== Produkt-Bundles =="
+    FAVENIO_EXPECTED_UPDATE_FEED="${SPARKLE_FEED_URL:-}" Favenio.app/Contents/MacOS/Favenio --check-bundle
+    FAVENIO_EXPECTED_UPDATE_FEED="${SPARKLE_FEED_URL:-}" FavenioQuick.app/Contents/MacOS/FavenioQuick --check-bundle
 }
 run_build_selftests
 

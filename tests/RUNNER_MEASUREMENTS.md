@@ -1,6 +1,7 @@
 # Suchtransport: Messung 2026-09-05
 
-Reproduktion: `python3 tests/benchmark_runner.py --baseline e04db96`.
+Reproduktion im Checkout `9669e01` mit macOS und Swift:
+`python3 tests/benchmark_runner.py --baseline e04db96`.
 macOS/Apple M5, Swift `-O`, System-Python. Je drei frische Prozesse; derselbe
 Python-Erzeuger schreibt 100.000 eindeutige JSONL-Treffer, alle Empfänger halten
 alle Treffer in einem Array. Der alte GUI-Weg zerlegt/parst auf Main; der alte

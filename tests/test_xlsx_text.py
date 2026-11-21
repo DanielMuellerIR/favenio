@@ -139,6 +139,17 @@ class XLSXTextTests(TempTreeTest):
         # Alle Zellen referenzieren nur den bereits bekannten ersten String.
         self.assertEqual(self.negative()[0],0)
 
+    def test_shared_string_error_preserves_cached_values_and_later_cells(self):
+        self.path.write_bytes(xlsx_bytes(
+            first=cell('A1', 0)+cell('A2', 1)+cell('A3', 0)+cell('A4', 'Rest', kind='str'),
+            strings='<si><t>Jahresbericht</t></si><si><t>_xD800_</t></si>', second=''))
+        code, hits, report, errors = self.search('--term=Rest')
+        self.assertEqual(code, 0, errors)
+        self.assertIn('documentDamaged', [reason['id'] for reason in report['reasons']])
+        self.assertEqual([term['documentPosition']['cell'] for term in hits[0]['terms']], ['A1', 'A4'])
+        preview = favenio.load_content_preview(self.request(hits[0]))['contentPreview']
+        self.assertEqual(preview['snippets'][0]['documentPosition']['cell'], 'A3')
+
     def test_corrupt_package_metadata_xml_dtd_and_duplicate_cells(self):
         variants=[b'broken',xlsx_bytes(first='<c r="A1" t="str"><v>value</v><is><t>conflict</t></is></c>',second=''),xlsx_bytes(first=cell('A1',0)+cell('A1',0)),xlsx_bytes(first=cell('XFE1',0)),xlsx_bytes(first=cell('A1048577',0)),xlsx_bytes(first=cell('A1',rich('_xD800_'),kind='inlineStr'),second='')]
         for data in variants:

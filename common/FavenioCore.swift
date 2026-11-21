@@ -4,132 +4,23 @@
 // Wichtigstes Prinzip: Der eigentliche Suchmotor ist und bleibt favenio.py.
 // Die Swift-Apps sind nur Frontends — sie starten den Python-Kern als
 // Unterprozess und lesen dessen JSONL-Ausgabe (--json). So gibt es genau
-// EINE Suchlogik, die auch headless (CLI, AI-Agenten) identisch arbeitet.
+// EINE Suchlogik für die Apps, CLI und Automatisierung.
 
 import AppKit
 import Darwin
 import Quartz   // QLPreviewPanel (QuickLook-Vorschau)
-import Sparkle
 import UniformTypeIdentifiers
 
 /// Pfad zum System-Python (auf jedem Mac mit Xcode-CLT vorhanden).
 let pythonPath = "/usr/bin/python3"
 
-/// Erzeugt pro App-Prozess genau einen langlebigen Sparkle-Controller.
-/// Die aufrufenden Controller halten ihn als Feld über die gesamte Laufzeit.
-func makeUpdaterController() -> SPUStandardUpdaterController {
-    SPUStandardUpdaterController(
-        startingUpdater: true,
-        updaterDelegate: nil,
-        userDriverDelegate: nil
-    )
-}
+#if !FAVENIO_SELFTEST
+let favenioPreferences = UserDefaults.standard
+#endif
 
-/// Verdrahtet „Nach Updates suchen …" direkt auf Sparkle. Dadurch validiert
-/// Sparkle den Eintrag auch während einer laufenden Suche oder Installation.
-func installUpdateMenuItem(
-    updaterController: SPUStandardUpdaterController
-) {
-    guard let appMenu = NSApp.mainMenu?.item(at: 0)?.submenu else { return }
-    let identifier = NSUserInterfaceItemIdentifier("Favenio.CheckForUpdates")
-
-    if let existing = appMenu.items.first(where: {
-        $0.identifier == identifier
-    }) {
-        existing.action =
-            #selector(SPUStandardUpdaterController.checkForUpdates(_:))
-        existing.target = updaterController
-        return
-    }
-
-    let item = NSMenuItem(
-        title: "Nach Updates suchen …",
-        action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
-        keyEquivalent: ""
-    )
-    item.identifier = identifier
-    item.target = updaterController
-
-    let quitIndex = appMenu.items.firstIndex(where: {
-        $0.action == #selector(NSApplication.terminate(_:))
-    }) ?? appMenu.items.count
-    appMenu.insertItem(item, at: quitIndex)
-    appMenu.insertItem(.separator(), at: quitIndex + 1)
-}
-
-/// Prüft ohne Fenster oder Netzwerkzugriff die sicherheitsrelevante
-/// Sparkle-Konfiguration des tatsächlich gebauten App-Bundles.
-func validateSparkleConfiguration(
-    expectedBundleIdentifier: String
-) -> String? {
-    let info = Bundle.main.infoDictionary ?? [:]
-    guard Bundle.main.bundleIdentifier == expectedBundleIdentifier else {
-        return "unerwartete Bundle-ID"
-    }
-    guard let feed = info["SUFeedURL"] as? String,
-          let feedURL = URL(string: feed),
-          feedURL.scheme == "https",
-          feedURL.host != nil else {
-        return "Sparkle-Feed ist keine gültige HTTPS-URL"
-    }
-    guard info["SUPublicEDKey"] as? String == favenioSparklePublicKey,
-          info["SUEnableAutomaticChecks"] as? Bool == true,
-          info["SUAutomaticallyUpdate"] as? Bool == false,
-          info["SUAllowsAutomaticUpdates"] as? Bool == false,
-          info["SUEnableSystemProfiling"] as? Bool == false,
-          info["SUVerifyUpdateBeforeExtraction"] as? Bool == true,
-          info["SURequireSignedFeed"] as? Bool == true else {
-        return "Sparkle-Signatur-, Update- oder Datenschutzwerte fehlen"
-    }
-    guard let frameworks = Bundle.main.privateFrameworksURL,
-          FileManager.default.fileExists(
-              atPath: frameworks.appendingPathComponent(
-                  "Sparkle.framework"
-              ).path
-          ) else {
-        return "Sparkle.framework fehlt im App-Bundle"
-    }
-
-    // Der normale App-Start erzeugt NSApplication vor dem Controller. Der
-    // Headless-Pfad muss dieselbe Grundlage ohne Runloop ausdrücklich anlegen.
-    _ = NSApplication.shared
-    // Separater, nicht gestarteter Controller: kein Feed-Abruf, aber der Test
-    // beweist, dass Framework, Selector und Menüverdrahtung wirklich laden.
-    let controller = SPUStandardUpdaterController(
-        startingUpdater: false,
-        updaterDelegate: nil,
-        userDriverDelegate: nil
-    )
-    installMainMenu(appName: "Favenio Selbsttest")
-    installUpdateMenuItem(updaterController: controller)
-    guard let item = NSApp.mainMenu?.item(at: 0)?.submenu?.items.first(
-        where: {
-            $0.identifier
-                == NSUserInterfaceItemIdentifier("Favenio.CheckForUpdates")
-        }
-    ),
-    item.action == #selector(
-        SPUStandardUpdaterController.checkForUpdates(_:)
-    ),
-    item.target === controller else {
-        return "Update-Menüpunkt zielt nicht direkt auf Sparkle"
-    }
-    return nil
-}
-
-/// Ein einzelner Suchtreffer, wie ihn `favenio.py --json` liefert.
-/// Zwischenspeicher der Typbeschreibungen, EINER je Endung.
-///
-/// `UTType(filenameExtension:)` samt `localizedDescription` ist eine
-/// Datenbankabfrage: gemessen am 2026-09-03 mit 11,65 µs je Aufruf. Die
-/// Sortierung nach der Typ-Spalte ruft sie ZWEIMAL je Vergleich, und die
-/// Trefferliste wird während des Streamens mehrmals pro Sekunde neu
-/// sortiert — bei 100 000 Treffern kostete ein einzelner Sortierlauf
-/// dadurch 47,3 s auf dem Main-Thread, das Fenster stand.
-///
-/// Die Antwort hängt ausschließlich an der Endung, ein Eintrag je Endung
-/// genügt also. Die Sperre ist nötig, weil auch der Zellenaufbau und ein
-/// künftiger Hintergrundpfad hier hereinkommen können.
+/// Speichert die lokalisierte Typbeschreibung je Dateiendung. Ohne Cache
+/// würde die Sortierung während der Suche LaunchServices je Vergleich zweimal
+/// abfragen und die Trefferliste auf dem Hauptthread blockieren.
 final class TypeDescriptionCache {
     private let lock = NSLock()
     private var byExtension: [String: String] = [:]
@@ -503,28 +394,6 @@ func validatePixelFields(_ fields: [NSTextField]) -> (limits: PixelLimits, error
         field.setAccessibilityHelp(error)
     }
     return (validation.limits, validation.errors.compactMap { $0 }.first)
-}
-
-/// Läuft in beiden Bundle-Selbsttests an den echten Controller-Feldern,
-/// ohne Fenster zu öffnen oder einen Suchprozess zu starten.
-func pixelFieldSelfTest(_ fields: [NSTextField], validate: () -> Bool) -> String? {
-    for (inputs, valid) in [(["", "", "", ""], true),
-                            (["1.000 px", "1000", "", ""], true),
-                            (["-1", "", "", ""], false),
-                            (["10.5", "", "", ""], false),
-                            ([String(Int.max) + "0", "", "", ""], false),
-                            (["1001", "1000", "", ""], false),
-                            (["", "", "2", "1"], false),
-                            (["", "", "1", "2"], true)] {
-        for (field, input) in zip(fields, inputs) { field.stringValue = input }
-        guard validate() == valid else { return "Maßvalidierung falsch: \(inputs)" }
-        guard valid ? fields.allSatisfy({ $0.toolTip == nil })
-                    : fields.contains(where: { $0.toolTip != nil && $0.textColor == .systemRed })
-        else { return "Maßfelder markieren Fehler nicht korrekt: \(inputs)" }
-    }
-    for field in fields { field.stringValue = "" }
-    _ = validate()
-    return nil
 }
 
 /// Wie das Suchmuster gelesen wird: gegen Namen, Inhalt oder Metadaten.
@@ -1134,14 +1003,14 @@ final class FilterDisclosure: NSObject {
 
     @objc func toggle(_ sender: Any?) {
         setExpanded(!isExpanded)
-        UserDefaults.standard.set(isExpanded, forKey: defaultsKey)
+        favenioPreferences.set(isExpanded, forKey: defaultsKey)
     }
 
     /// Den gespeicherten Zustand anwenden. Erst NACH dem Einhängen in den
     /// Stack aufrufen: `NSStackView(views:)` hängt eine schon versteckte
     /// Ansicht sichtbar ein.
     func restoreSavedState() {
-        setExpanded(UserDefaults.standard.bool(forKey: defaultsKey))
+        setExpanded(favenioPreferences.bool(forKey: defaultsKey))
     }
 
     /// Blendet Filteransicht und Maßzeile ein oder aus. Der Stack entfernt
@@ -1173,40 +1042,6 @@ final class FilterDisclosure: NSObject {
         }
         titleButton.title = title
     }
-}
-
-/// Gemeinsamer Selbsttest des Aufklapp-Schalters an einem frisch gebauten
-/// Controller OHNE gespeicherten Zustand. Das Beiseitelegen und
-/// Zurückschreiben des Entwickler-Zustands bleibt beim Aufrufer: Es muss den
-/// Fensterbau umschließen, der den Zustand liest.
-func filterDisclosureSelfTest(_ filters: FilterDisclosure) -> String? {
-    guard !filters.isExpanded, !filters.extraViews.isEmpty,
-          filters.extraViews.allSatisfy({ $0.isHidden }) else {
-        return "Weitere Filter sind beim Start nicht zugeklappt"
-    }
-    filters.toggle(nil)
-    guard filters.isExpanded, filters.extraViews.allSatisfy({ !$0.isHidden }),
-          filters.disclosureButton.state == .on,
-          UserDefaults.standard.bool(forKey: filters.defaultsKey) else {
-        return "Aufklapp-Schalter zeigt die Filter nicht"
-    }
-    filters.toggle(nil)
-    // Nur Return startet eine Suche aus einem Maßfeld. Mit der Voreinstellung
-    // schickt ein NSTextField seine Action auch beim bloßen Fokusverlust —
-    // und beim Zuklappen, weil das versteckte Feld den Fokus abgibt.
-    guard filters.pixelFields.allSatisfy({
-        ($0.cell as? NSTextFieldCell)?.sendsActionOnEndEditing == false }) else {
-        return "Maßfelder suchen schon beim Fokusverlust"
-    }
-    filters.filterView.exclusions = ["node_modules"]
-    filters.filterView.rawFacts = ["min-size": "1 MiB"]
-    filters.pixelFields[0].stringValue = "100"
-    filters.pixelFields[1].stringValue = " "   // leer laut PixelLimitInput
-    filters.refreshTitle()
-    guard filters.titleButton.title.contains("3 aktiv") else {
-        return "Zugeklappter Schalter nennt aktive Filter nicht"
-    }
-    return nil
 }
 
 /// Vollständiges Ende eines Suchprozesses. `status` allein reicht nicht:
@@ -1288,7 +1123,7 @@ func hasFullDiskAccess() -> Bool {
 /// getrennt (beide Bundles brauchen den Zugriff separat).
 func maybePromptFullDiskAccess(appName: String) {
     let suppressKey = "FavenioSuppressFullDiskAccessPrompt"
-    if UserDefaults.standard.bool(forKey: suppressKey) { return }
+    if favenioPreferences.bool(forKey: suppressKey) { return }
     if hasFullDiskAccess() { return }
 
     let alert = NSAlert()
@@ -1317,328 +1152,17 @@ func maybePromptFullDiskAccess(appName: String) {
             NSWorkspace.shared.open(url)
         }
     case .alertThirdButtonReturn:
-        UserDefaults.standard.set(true, forKey: suppressKey)
+        favenioPreferences.set(true, forKey: suppressKey)
     default:
         break   // „Später" → beim nächsten Start erneut fragen
     }
 }
 
-/// Ergebnis der Finder-Abfrage. Eine leere Ordnerliste ist NICHT aussagekräftig
-/// genug: „kein Fenster offen" und „Automation verboten" führen beide zu null
-/// Ordnern, verlangen aber völlig verschiedene Reaktionen. Deshalb trägt jeder
-/// Fehlschlag hier seinen Grund mit; die Frontends dürfen ihn nicht verschlucken
-/// und stillschweigend im Benutzerordner suchen.
-enum FinderScopeOutcome {
-    case folders([String])   // mindestens ein Finder-Ordner, vorderster zuerst
-    case noWindow            // Finder erreichbar, aber kein Ordnerfenster offen
-    case denied              // Automations-Zugriff auf den Finder verweigert
-    case failed(String)      // Zeitüberschreitung oder anderer Fehler
-}
-
-extension FinderScopeOutcome {
-    /// Die ermittelten Ordner (bei jedem Fehlschlag leer).
-    var folders: [String] {
-        if case .folders(let folders) = self { return folders }
-        return []
-    }
-
-    /// Kurztext für die Oberfläche; `nil`, wenn alles geklappt hat.
-    /// Bewusst inklusive der Folge („Suchbereich bleibt …"), damit der Nutzer
-    /// nicht selbst raten muss, wo gerade gesucht wird.
-    var problemText: String? {
-        switch self {
-        case .folders:
-            return nil
-        case .noWindow:
-            return "Kein Finder-Fenster offen — Suchbereich manuell wählen."
-        case .denied:
-            return "Finder-Zugriff nicht erlaubt — Suchbereich manuell wählen "
-                 + "(Systemeinstellungen → Datenschutz & Sicherheit → "
-                 + "Automation)."
-        case .failed(let reason):
-            return "Finder-Ordner nicht ermittelbar (\(reason)) — Suchbereich "
-                 + "manuell wählen."
-        }
-    }
-
-    /// Maschinenlesbares Kürzel für die Diagnose auf der Kommandozeile.
-    var statusName: String {
-        switch self {
-        case .folders:  return "folders"
-        case .noWindow: return "no-window"
-        case .denied:   return "denied"
-        case .failed:   return "failed"
-        }
-    }
-}
-
-/// Öffnet die Automations-Freigabe in den Systemeinstellungen.
-func openAutomationSettings() {
-    if let url = URL(string: "x-apple.systempreferences:"
-        + "com.apple.preference.security?Privacy_Automation") {
-        NSWorkspace.shared.open(url)
-    }
-}
-
-// Rückgabewerte von `AEDeterminePermissionToAutomateTarget`. Die Konstanten
-// stehen in Apples Carbon-Headern; hier ausgeschrieben, damit der Code ohne
-// zusätzliche Importe lesbar bleibt.
-private let kAEEventNotPermitted: OSStatus = -1743          // ausdrücklich verboten
-private let kAEEventWouldRequireUserConsent: OSStatus = -1744  // noch nicht gefragt
-
-/// Fragt TCC OHNE Apple-Event und OHNE Dialog, ob wir den Finder steuern dürfen.
-///
-/// Das ist der einzige Weg, „verboten" sofort zu erkennen, statt es aus einem
-/// hängenden Unterprozess zu erschließen: Apple-Events an einen verbotenen
-/// Empfänger können beliebig lange stehen bleiben, und ein Timeout ist dann nur
-/// geraten. `askUserIfNeeded: false` verhindert, dass dieser Aufruf selbst einen
-/// Dialog auslöst — der Consent-Dialog gehört an die echte Abfrage.
-/// Ergebnis: `noErr` = erlaubt, -1743 = verboten, -1744 = noch nicht gefragt.
-func finderAutomationPermission() -> OSStatus {
-    guard let target = NSAppleEventDescriptor(
-        bundleIdentifier: "com.apple.finder").aeDesc else { return noErr }
-    return AEDeterminePermissionToAutomateTarget(
-        target, typeWildCard, typeWildCard, false)
-}
-
-/// Wartet macOS gerade auf die Entscheidung des Nutzers? Dann darf die
-/// Oberfläche nicht „Finder antwortet nicht" behaupten.
-func finderAutomationConsentPending() -> Bool {
-    finderAutomationPermission() == kAEEventWouldRequireUserConsent
-}
-
-/// Ermittelt die offenen Finder-Fenster (Ordner des vorderen Tabs),
-/// VORDERSTES zuerst — ASYNCHRON und ohne den Main-Thread zu blockieren.
-/// `completion` läuft auf dem Main-Thread und bekommt bei Fehlschlag den
-/// Grund mitgeliefert (siehe `FinderScopeOutcome`).
-///
-/// WARUM per `osascript`-UNTERPROZESS (statt NSAppleScript im eigenen Prozess):
-/// Den Finder abzufragen ist ein Apple-Event, dessen Antwort der Apple-Event-
-/// Manager an den MAIN-Thread des Prozesses zustellt. In einer laufenden
-/// `NSApplication` (unsere Accessory-App) blockiert ein synchroner
-/// `NSAppleScript.executeAndReturnError` dann ewig — egal ob auf einem
-/// Hintergrund-Thread (die Antwort landet nie bei ihm) oder auf dem Main-Thread
-/// (er wartet auf eine Antwort, die nur er selbst zustellen könnte → Deadlock).
-/// Beide In-Prozess-Wege wurden im echten App-Kontext als Hänger verifiziert
-/// (2026-07-13). Ein separater `osascript`-Prozess hat seinen eigenen
-/// Event-Loop und kehrt sauber zurück — genau wie das nc_pin-AppleScript-Applet.
-/// TCC ordnet den Apple-Event dabei korrekt UNSERER App als verantwortlichem
-/// Prozess zu (Favenios `NSAppleEventsUsageDescription` → korrekter Prompt);
-/// die entgegengesetzte Handoff-Notiz („osascript scheidet aus") war falsch.
-/// (Finder-Tabs sind per AppleScript nicht einzeln adressierbar — pro Fenster
-/// kommt der Ordner des vorderen Tabs.)
-func finderWindowFoldersAsync(
-    completion: @escaping (FinderScopeOutcome) -> Void
-) {
-    // Hintergrund-Thread nur, damit das Starten/Warten des Unterprozesses den
-    // Main-Thread nicht anfasst; die eigentliche Apple-Event-Arbeit macht
-    // osascript in seinem eigenen Prozess.
-    DispatchQueue.global(qos: .userInitiated).async {
-        // Zuerst TCC fragen, ohne Event und ohne Dialog. Ist die Automation
-        // verboten, ist das SOFORT klar — kein Unterprozess, kein Warten, kein
-        // geratener Timeout.
-        let permission = finderAutomationPermission()
-        if permission == kAEEventNotPermitted {
-            DispatchQueue.main.async { completion(.denied) }
-            return
-        }
-        // Steht die Entscheidung noch aus, zeigt macOS gleich einen Dialog. Bis
-        // der Nutzer geklickt hat, darf nichts abgebrochen werden; sonst würde
-        // die App genau die Freigabe wegwerfen, auf die sie wartet.
-        let consentPending = permission == kAEEventWouldRequireUserConsent
-
-        // VORDERSTES Fenster über `front Finder window` — die Klasse
-        // `Finder window` schließt Info- und andere Hilfsfenster aus, `front
-        // window` würde an einem geöffneten Info-Fenster scheitern. Die übrigen
-        // Fenster kommen in EINEM Zug; `Finder windows` ist nicht zuverlässig
-        // front-to-back sortiert, deshalb steht das vorderste separat vorn.
-        //
-        // Gemessen am 2026-07-25 (13 offene Finder-Fenster, Median aus 7 Läufen):
-        //   Schleife über die Fenster (je ein Apple-Event)   11 600 ms
-        //   frühere Fassung, `as alias` + `POSIX path of`       185 ms
-        //   diese Fassung, `URL of`                             147 ms
-        //   davon reiner osascript-Prozessstart                  34 ms
-        // Die Fensterliste kostet gegenüber der Einzelabfrage nur ~2 ms: Es
-        // lohnt NICHT, sie wegzulassen — teuer ist der erste Apple-Event, nicht
-        // die Menge. `as alias` kostet dagegen echte Zeit, weil es je Eintrag
-        // zusätzliche Auflösungen auslöst. Diese Abfrage deshalb weder auf eine
-        // Fenster-Schleife noch auf `as alias` zurückbauen.
-        //
-        // `text item delimiters` ist eine AppleScript-Eigenschaft und muss
-        // AUSSERHALB des `tell application "Finder"`-Blocks gesetzt werden —
-        // sonst versucht AppleScript, sie am Finder zu setzen (Fehler -10006).
-        let source = """
-        set frontURL to ""
-        set allURLs to {}
-        tell application "Finder"
-            with timeout of 4 seconds
-                try
-                    set frontURL to URL of (target of front Finder window)
-                end try
-                try
-                    set allURLs to URL of (target of every Finder window)
-                end try
-            end timeout
-        end tell
-        if class of allURLs is not list then set allURLs to {allURLs}
-        set out to {}
-        if frontURL is not "" then set end of out to frontURL
-        repeat with u in allURLs
-            set p to u as text
-            if p is not "" and out does not contain p then set end of out to p
-        end repeat
-        set text item delimiters to linefeed
-        return out as text
-        """
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", source]
-        let outPipe = Pipe()
-        // stderr wird gelesen, NICHT verworfen: Nur dort steht, ob TCC den
-        // Apple-Event verboten hat (-1743/-1744) oder der Finder nicht
-        // antwortet (-1712). Ohne diesen Text bliebe jeder Fehlschlag stumm.
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        var outcome: FinderScopeOutcome
-        do {
-            try process.run()
-            // Not-Aus, falls osascript trotz AppleScript-Timeout klemmt. 6 s
-            // sind gegenüber gemessenen 147 ms reichlich; wartet dagegen ein
-            // Consent-Dialog auf den Nutzer, wird nicht abgebrochen. Der
-            // Abbruch wird gemeldet, nicht zu „keine Ordner" verschwiegen.
-            let killed = Atomic(false)
-            let killer: DispatchWorkItem?
-            if !consentPending {
-                let work = DispatchWorkItem {
-                    if process.isRunning {
-                        killed.set(true)
-                        process.terminate()
-                    }
-                }
-                killer = work
-                DispatchQueue.global().asyncAfter(deadline: .now() + 6,
-                                                  execute: work)
-            } else {
-                // Ein offener Systemdialog hat bewusst KEIN Zeitlimit. Nur
-                // der Nutzer darf diese TCC-Entscheidung beenden; ein Notaus
-                // würde die wartende Freigabe verwerfen.
-                killer = nil
-            }
-            // Beide Pipes gleichzeitig leeren: Läuft stderr voll, während wir
-            // nur stdout lesen, blockiert der Unterprozess.
-            let group = DispatchGroup()
-            let out = Atomic(Data())
-            let err = Atomic(Data())
-            DispatchQueue.global().async(group: group) {
-                out.set(outPipe.fileHandleForReading.readDataToEndOfFile())
-            }
-            DispatchQueue.global().async(group: group) {
-                err.set(errPipe.fileHandleForReading.readDataToEndOfFile())
-            }
-            group.wait()
-            process.waitUntilExit()
-            killer?.cancel()
-
-            let text = String(data: out.get(), encoding: .utf8) ?? ""
-            let errorText = (String(data: err.get(), encoding: .utf8) ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            var folders: [String] = []
-            for line in text.split(separator: "\n",
-                                   omittingEmptySubsequences: true)
-                            .map(String.init) {
-                // Der Finder liefert `file://`-URLs; Sonderzeichen sind darin
-                // prozentkodiert und werden erst von URL richtig aufgelöst.
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                guard !trimmed.isEmpty else { continue }
-                var path = URL(string: trimmed)?.path ?? trimmed
-                // Ordner-URLs enden auf „/"; Pfade im Rest der App nicht.
-                if path.count > 1 && path.hasSuffix("/") { path.removeLast() }
-                if !path.isEmpty && !folders.contains(path) {
-                    folders.append(path)
-                }
-            }
-
-            if killed.get() {
-                outcome = .failed("Finder antwortet nicht")
-            } else if process.terminationStatus == 0 {
-                outcome = folders.isEmpty ? .noWindow : .folders(folders)
-            } else if errorText.contains("-1743")
-                        || errorText.contains("-1744")
-                        || errorText.localizedCaseInsensitiveContains(
-                            "not authorized") {
-                outcome = .denied
-            } else if errorText.contains("-1712") {
-                outcome = .failed("Zeitüberschreitung beim Finder")
-            } else {
-                outcome = .failed(firstLine(of: errorText)
-                                  ?? "osascript-Fehler "
-                                     + "\(process.terminationStatus)")
-            }
-        } catch {
-            outcome = .failed("osascript nicht startbar")
-        }
-        let result = outcome
-        DispatchQueue.main.async { completion(result) }
-    }
-}
-
-/// Headless-Diagnose (`--finder-scope`): fragt den Finder genau so wie die App
-/// und schreibt eine JSON-Zeile nach stdout. Weil die Abfrage aus DEM Bundle
-/// läuft, das auch TCC bewertet, zeigt sie den echten Zugriffsstatus — anders
-/// als dasselbe AppleScript aus dem Terminal.
-/// Exit-Codes wie im Kern: 0 = Ordner ermittelt, 1 = kein Fenster, 2 = Fehler
-/// (auch verweigerter Zugriff).
-func runFinderScopeDiagnostic() -> Never {
-    // Der Freigabestatus steht getrennt im Ergebnis: Er beantwortet ohne
-    // Rateverfahren, ob ein leeres Ergebnis an TCC oder am Finder liegt.
-    let permission = finderAutomationPermission()
-    let permissionName: String
-    switch permission {
-    case noErr:                          permissionName = "granted"
-    case kAEEventNotPermitted:           permissionName = "denied"
-    case kAEEventWouldRequireUserConsent: permissionName = "pending"
-    default:                             permissionName = "error \(permission)"
-    }
-    finderWindowFoldersAsync { outcome in
-        var payload: [String: Any] = [
-            "status": outcome.statusName,
-            "permission": permissionName,
-            "folders": outcome.folders,
-        ]
-        if let problem = outcome.problemText { payload["problem"] = problem }
-        if let data = try? JSONSerialization.data(withJSONObject: payload),
-           let line = String(data: data, encoding: .utf8) {
-            print(line)
-        }
-        switch outcome {
-        case .folders:  exit(0)
-        case .noWindow: exit(1)
-        default:        exit(2)
-        }
-    }
-    // Die Antwort kommt über die Main-Queue; ohne laufenden Runloop käme sie nie.
-    RunLoop.main.run()
-    exit(2)   // wird nie erreicht
-}
-
-/// Erste nicht-leere Zeile eines Fehlertexts (osascript hängt gern mehrere an).
-private func firstLine(of text: String) -> String? {
-    text.split(separator: "\n").map(String.init).first {
-        !$0.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-}
-
-/// Winziger Thread-sicherer Behälter — die beiden Pipe-Leser laufen auf eigenen
-/// Queues und geben ihr Ergebnis hier ab.
-private final class Atomic<Value> {
-    private var value: Value
-    private let lock = NSLock()
-    init(_ value: Value) { self.value = value }
-    func get() -> Value { lock.lock(); defer { lock.unlock() }; return value }
-    func set(_ newValue: Value) { lock.lock(); value = newValue; lock.unlock() }
-}
+let searchTextModeToolTip = """
+Suchziel für Namen, Rohinhalt, Dokumenttext oder Metadaten wählen.
+Dokumenttext umfasst PDF, DOCX, ODT, EPUB, XLSX und PPTX.
+OCR für Bilder, PDF-Seiten ohne Text und Bilder in PPTX lässt sich separat in den Filtern einschalten.
+"""
 
 /// Die wichtigsten Ordner als (Anzeigename, Pfad) — für das Ordner-Popup der
 /// großen GUI und das Bereichs-Menü der Schnellsuche.
@@ -2527,10 +2051,6 @@ final class ResultFilterController: NSObject {
 /// Was Haupt-App und Schnellsuche an ihrer Trefferliste GLEICH tun: die
 /// wirksame Zeilenmenge bestimmen, Treffer materialisieren, Quick Look
 /// zeigen und blättern, „Öffnen mit", „Im Finder zeigen" und „Pfad kopieren".
-/// Bis 0.28.2 standen diese 123 Zeilen wörtlich gleich in beiden Apps und
-/// liefen bereits auseinander: Der Fokus-Fix der Vorschau landete zuerst nur
-/// in der Haupt-App, die Indexprüfung zuerst nur in der Schnellsuche
-/// (CodeQA-Fund frontend-adapter-duplication, 2026-09-03).
 ///
 /// Eine Basisklasse statt einer Protokoll-Erweiterung, weil die Methoden
 /// hier `@objc` sein müssen — als Selector-Ziele der Menüs und als die
@@ -2600,14 +2120,14 @@ class HitListController: NSObject, QLPreviewPanelDataSource,
     }
     func restoreFinderColumnVisibility() {
         for key in ["finderTags", "finderComment"] {
-            tableView.tableColumn(withIdentifier: .init(key))?.isHidden = !UserDefaults.standard.bool(forKey: "finderColumn." + key)
+            tableView.tableColumn(withIdentifier: .init(key))?.isHidden = !favenioPreferences.bool(forKey: "finderColumn." + key)
         }
         if finderColumnsVisible { onFinderColumnsShown?() }
     }
     @objc private func toggleFinderColumn(_ item: NSMenuItem) {
         guard let key = item.representedObject as? String, let column = tableView.tableColumn(withIdentifier: .init(key)) else { return }
         column.isHidden.toggle()
-        UserDefaults.standard.set(!column.isHidden, forKey: "finderColumn." + key)
+        favenioPreferences.set(!column.isHidden, forKey: "finderColumn." + key)
         if !column.isHidden { onFinderColumnsShown?() }
     }
     func renderFinderColumn(_ column: NSTableColumn, cell: NSTableCellView, hit: Hit) -> Bool {
@@ -3237,195 +2757,4 @@ func applyUITestAppearance(_ app: NSApplication) {
     app.appearance = NSAppearance(named: requested == "dark" ? .darkAqua : .aqua)
     let actual = app.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])?.rawValue ?? "unknown"
     fputs("FAVENIO TEST APPEARANCE: \(actual)\n", stderr)
-}
-
-func resultFilterListSelfTest(_ owner: HitListController, terminate: () -> Void) -> String? {
-    func wait(_ condition: () -> Bool) -> Bool {
-        let until = ProcessInfo.processInfo.systemUptime + 8
-        while !condition(), ProcessInfo.processInfo.systemUptime < until {
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
-        }
-        return condition()
-    }
-    defer { owner.resultFilter.stopForTermination() }
-    let first = Hit(path: "/missing/keep-a.txt", kind: "file", line: 7, size: 8,
-        filesystemPath: "/missing/keep-a.txt", archiveMembers: [], isDirectory: false)
-    let other = Hit(path: "/missing/other.txt", kind: "file", line: nil, size: nil,
-        filesystemPath: "/missing/other.txt", archiveMembers: [], isDirectory: false)
-    owner.replaceFilteredHits([first, other], keepingSelection: [first.identity])
-    let filter = owner.resultFilter
-    filter.criteria.applyJSON(CriteriaNode(field: "name", value: "keep-").json)
-    filter.apply()
-    guard wait({ !filter.isFiltering }), owner.hits == [first],
-          owner.selectedHitIdentities() == [first.identity], filter.sourceCount == 2 else {
-        return "Ansichtsfilter verliert Quellmenge, Belege oder Auswahl"
-    }
-    let incoming = Hit(path: "/missing/keep-stream.txt", kind: "file", line: 9, size: 10,
-        filesystemPath: "/missing/keep-stream.txt", archiveMembers: [], isDirectory: false)
-    owner.pending = [incoming]
-    owner.flushResultFilterPending()
-    guard wait({ !filter.isFiltering }), owner.hits.count == 2, filter.sourceCount == 3,
-          owner.selectedHitIdentities() == [first.identity] else { return "Filter-Nachschub verändert Auswahl oder Quelle" }
-    filter.reset()
-    guard owner.hits.count == 3, !filter.isActive, owner.selectedHitIdentities() == [first.identity] else {
-        return "Filterreset verliert Originaltreffer oder Auswahl"
-    }
-    filter.clearForSearch()
-    let name = String(repeating: "a", count: 100) + "X.txt"
-    let slow = Hit(path: "/missing/" + name, kind: "file", line: nil, size: 0,
-        filesystemPath: "/missing/" + name, archiveMembers: [], isDirectory: false)
-    owner.replaceFilteredHits([slow], keepingSelection: [])
-    filter.criteria.applyJSON(CriteriaNode(field: "name", matchOperator: "regex", value: "(a+)+$").json)
-    filter.apply()
-    guard wait({ filter.runningProcessIdentifier != nil }), let pid = filter.runningProcessIdentifier else {
-        return "Filter-Lifecycle-Gegenprobe startet keinen eigenen Prozess"
-    }
-    terminate()
-    guard wait({ kill(pid, 0) != 0 }), !filter.isFiltering else { return "App-Ende lässt Filterprozess zurück" }
-    return nil
-}
-
-func resultGroupingListSelfTest(_ owner: HitListController) -> String? {
-    let a = Hit(path: "/missing/a/keep-first.txt", kind: "file", line: 7, size: 8,
-        filesystemPath: "/missing/a/keep-first.txt", archiveMembers: [], isDirectory: false)
-    let b = Hit(path: "/missing/b/other.md", kind: "file", line: nil, size: 9,
-        filesystemPath: "/missing/b/other.md", archiveMembers: [], isDirectory: false)
-    let c = Hit(path: "/missing/a/keep-last.txt", kind: "file", line: 11, size: 10,
-        filesystemPath: "/missing/a/keep-last.txt", archiveMembers: [], isDirectory: false)
-    let source = [a, b, c]
-    owner.replaceFilteredHits(source, keepingSelection: [a.identity, b.identity])
-    let groups = owner.resultGrouping
-    defer {
-        owner.resultFilter.stopForTermination()
-        groups.setMode(.none)
-        owner.resultFilter.clearForSearch()
-        owner.replaceFilteredHits([], keepingSelection: [])
-    }
-    groups.setMode(.folder)
-    guard owner.resultTableRowCount == 5, owner.selectedHitIdentities() == [a.identity, b.identity],
-          owner.actionRows().count == 2 else { return "Ordnergruppen verlieren Auswahl oder Trefferabbildung" }
-    guard let header = (0..<owner.resultTableRowCount).first(where: { groups.projection.group(at: $0) != nil }) else {
-        return "Gruppenüberschrift fehlt"
-    }
-    owner.contextRow = header
-    guard owner.actionRows().isEmpty, owner.hitCell(owner.tableView,
-        column: owner.tableView.tableColumns[0], row: header) == nil else { return "Gruppenüberschrift wird als Datei behandelt" }
-    owner.contextRow = -1
-    groups.collapseAll()
-    guard owner.hits.count == 3, groups.projection.displayedHitCount == 0,
-          owner.selectedHitIdentities().isEmpty, owner.resultTableRowCount == 2 else {
-        return "Einklappen verliert Treffer oder behält unsichtbare Auswahl"
-    }
-    let incoming = Hit(path: "/missing/a/keep-stream.txt", kind: "file", line: 13, size: 12,
-        filesystemPath: "/missing/a/keep-stream.txt", archiveMembers: [], isDirectory: false)
-    owner.appendFilteredHits([incoming], keepingSelection: [])
-    guard owner.hits.count == 4, groups.projection.displayedHitCount == 0,
-          let row = owner.revealTableRow(for: a.identity), owner.hitIndex(forTableRow: row).map({ owner.hits[$0].identity }) == a.identity else {
-        return "Nachschub oder ausdrückliches Aufklappen verliert Gruppenidentität"
-    }
-    owner.tableView.selectRowIndexes([row], byExtendingSelection: false)
-    groups.setMode(.fileExtension)
-    guard owner.selectedHitIdentities() == [a.identity] else { return "Gruppierungswechsel wählt eine andere Datei" }
-    groups.collapseAll()
-    owner.resultFilter.criteria.applyJSON(CriteriaNode(field: "name", value: "keep-").json)
-    owner.resultFilter.apply()
-    let until = ProcessInfo.processInfo.systemUptime + 8
-    while owner.resultFilter.isFiltering && ProcessInfo.processInfo.systemUptime < until {
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
-    }
-    guard !owner.resultFilter.isFiltering, owner.resultFilter.errorMessage == nil,
-          owner.hits.count == 3, owner.resultFilter.sourceCount == 4,
-          groups.projection.displayedHitCount == 0 else { return "Ansichtsfilter und Klappzustand verlieren Quellmenge oder Darstellung" }
-    owner.resultFilter.reset()
-    groups.expandAll()
-    guard owner.hits.count == 4, groups.projection.displayedHitCount == 4 else {
-        return "Filterreset/Aufklappen verliert Originaltreffer"
-    }
-    groups.collapseAll()
-    owner.resultFilter.clearForSearch()
-    owner.replaceFilteredHits(source, keepingSelection: [])
-    guard groups.projection.displayedHitCount == 3 else { return "Neue Suche behält alte eingeklappte Gruppen" }
-    let archived = Hit(path: "/missing/outer!/source.zip!/folder!/a.txt", kind: "member", line: nil, size: 1,
-        filesystemPath: "/missing/outer!/source.zip", archiveMembers: ["folder!/a.txt"], isDirectory: false)
-    owner.replaceFilteredHits([a, archived], keepingSelection: [a.identity, archived.identity])
-    let menu = NSMenu()
-    let chain = menu.addItem(withTitle: "Archivkette anzeigen…", action: #selector(HitListController.ctxArchiveChain), keyEquivalent: "")
-    chain.target = owner
-    menu.update()
-    guard !chain.isEnabled else { return "Menüautomatik aktiviert Archivkette für mehrere Treffer" }
-    owner.tableView.selectRowIndexes(owner.tableRows(for: [archived.identity]), byExtendingSelection: false)
-    menu.update()
-    guard chain.isEnabled,
-          sourceArchiveURLs(for: [a, archived, archived]).map({ $0.path }) == [archived.filesystemPath],
-          archiveChainText(for: archived).contains("Treffer: folder!/a.txt") else {
-        return "Archivketten-Menü oder Quellarchiv verwendet falsche Identität"
-    }
-    if let scroll = owner.tableView.enclosingScrollView {
-        let long = String(repeating: "long-", count: 100)
-        let layoutHits = (0..<20).map { index in
-            Hit(path: "/missing/group-\(index)-\(long)/a.txt", kind: "file", line: nil, size: 1,
-                filesystemPath: "/missing/group-\(index)-\(long)/a.txt", archiveMembers: [], isDirectory: false)
-        }
-        owner.replaceFilteredHits(layoutHits, keepingSelection: [])
-        groups.setMode(.folder)
-        owner.window?.contentView?.layoutSubtreeIfNeeded()
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
-        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-        guard let row = owner.tableView.rowView(atRow: 0, makeIfNecessary: true),
-              let header = descendants(row).first(where: { $0 is ResultGroupHeaderView }),
-              let count = descendants(header).compactMap({ $0 as? NSTextField }).first(where: { $0.stringValue == "1 Treffer" }),
-              let scroller = scroll.verticalScroller else { return "Native Gruppen-Geometrie fehlt" }
-        func headerFits() -> Bool {
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
-            header.layoutSubtreeIfNeeded()
-            let frame = count.convert(count.bounds, to: owner.tableView)
-            let right = min(owner.tableView.visibleRect.maxX, scroller.convert(scroller.bounds, to: owner.tableView).minX)
-            return frame.minX >= owner.tableView.visibleRect.minX && abs(frame.maxX - right) < 1
-        }
-        guard headerFits() else {
-            return "Gruppentrefferzahl liegt außerhalb des freien nativen Tabellenbereichs"
-        }
-        scroll.contentView.scroll(to: NSPoint(x: 100, y: scroll.contentView.bounds.minY))
-        guard scroll.contentView.bounds.minX == 100, headerFits() else {
-            return "Native Gruppenzeile verliert ihre Ausrichtung nach Scrollen und Ereignisschleife"
-        }
-        print("RESULT GROUP HEADER OK: native window, scroller, scroll and count geometry")
-    }
-    return nil
-}
-
-func finderColumnsSelfTest(_ owner: HitListController) -> String? {
-    let keys = ["finderTags", "finderComment"]
-    let saved = keys.map { ($0, UserDefaults.standard.object(forKey: "finderColumn." + $0)) }
-    let hidden = keys.map { owner.tableView.tableColumn(withIdentifier: .init($0))?.isHidden }
-    let callback = owner.onFinderColumnsShown
-    var shown = 0
-    owner.onFinderColumnsShown = { shown += 1; callback?() }
-    defer {
-        owner.onFinderColumnsShown = callback
-        for (index, key) in keys.enumerated() {
-            if let value = saved[index].1 { UserDefaults.standard.set(value, forKey: "finderColumn." + key) }
-            else { UserDefaults.standard.removeObject(forKey: "finderColumn." + key) }
-            if let value = hidden[index] { owner.tableView.tableColumn(withIdentifier: .init(key))?.isHidden = value }
-        }
-    }
-    guard let menu = owner.tableView.headerView?.menu else { return "Finder-Spaltenmenü fehlt" }
-    for key in keys {
-        guard let column = owner.tableView.tableColumn(withIdentifier: .init(key)),
-              let index = menu.items.firstIndex(where: { $0.representedObject as? String == key }) else { return "Finder-Spalteneintrag fehlt: " + key }
-        column.isHidden = true
-        menu.update()
-        guard menu.items[index].isEnabled, menu.items[index].state == .off else { return "Versteckte Finder-Spalte hat falschen Menüzustand" }
-        menu.performActionForItem(at: index)
-        menu.update()
-        guard !column.isHidden, menu.items[index].state == .on,
-              UserDefaults.standard.bool(forKey: "finderColumn." + key) else { return "Native Menüaktion blendet Finder-Spalte nicht ein: " + key }
-        menu.performActionForItem(at: index)
-        menu.update()
-        guard column.isHidden, menu.items[index].state == .off,
-              !UserDefaults.standard.bool(forKey: "finderColumn." + key) else { return "Native Menüaktion blendet Finder-Spalte nicht aus: " + key }
-    }
-    guard shown == 2 else { return "Finder-Spalten aktivieren die Erfassung nicht genau beim Einblenden" }
-    print("FINDER COLUMNS OK: native NSMenu actions, checkmarks, visibility, capture callback")
-    return nil
 }

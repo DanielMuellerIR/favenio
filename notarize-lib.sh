@@ -48,17 +48,8 @@ FAVENIO_BUNDLE_IDS=(
     "FavenioQuick.app" "local.favenio.quick"
 )
 
-# Der Produktions-Update-Feed. Quelle ist der Default in build-app.sh; hier
-# steht die Kopie, gegen die install.sh und release.sh prüfen. Ein Test
-# (tests/test_build_safety.py) hält beide Stellen zusammen.
-FAVENIO_FEED_URL="https://danielmuellerir.github.io/favenio/appcast.xml"
-# Der öffentliche Sparkle-Schlüssel, gegen den die App den Appcast prüft, und
-# die Pflicht zur Feed-Signatur. Beide gehören zum Update-Kanal genauso dazu wie
-# die Feed-URL: Ein gültig signiertes DMG mit falschem Schlüssel oder
-# abgeschalteter Signaturpflicht würde Updates ablehnen bzw. einen unsignierten
-# Feed akzeptieren (Review-Fund 2026-08-17). Muss zu SPARKLE_PUBLIC_KEY in
-# build-app.sh passen.
-FAVENIO_SPARKLE_PUBLIC_KEY="H504COadHZVAKo+/XD0jzXT5PJzghkS2t/DDYmuHPDg="
+# %x bezeichnet die eingebundene Datei auch beim Aufruf aus einem anderen Ordner.
+typeset -r FAVENIO_UPDATE_CONFIG_DIR="${${(%):-%x}:A:h}/common"
 
 # Signier-Identität und Notary-Profil FRÜH prüfen: lieber vor dem Build
 # scheitern als nach mehreren Minuten Arbeit.
@@ -313,17 +304,23 @@ favenio_verify_identity() {
 favenio_verify_feed_url() {
     local bundle_path="$1" app="$2"
     local plist="$bundle_path/Contents/Info.plist"
-    local actual key signed
+    local actual key signed expected_feed expected_key
+    if ! expected_feed=$(/bin/cat "$FAVENIO_UPDATE_CONFIG_DIR/update-feed-url.txt") ||
+       ! expected_key=$(/bin/cat "$FAVENIO_UPDATE_CONFIG_DIR/update-public-key.txt") ||
+       [[ -z "$expected_feed" || -z "$expected_key" ]]; then
+        echo "FEHLER: Produktions-Update-Kanal ist unvollständig." >&2
+        return 2
+    fi
     actual=$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' \
         "$plist" 2>/dev/null || true)
-    if [ "$actual" != "$FAVENIO_FEED_URL" ]; then
+    if [ "$actual" != "$expected_feed" ]; then
         echo "FEHLER: $app sucht Updates unter '${actual:-keiner URL}' statt" >&2
-        echo "'$FAVENIO_FEED_URL' — vermutlich ein geerbtes SPARKLE_FEED_URL." >&2
+        echo "'$expected_feed' — vermutlich ein geerbtes SPARKLE_FEED_URL." >&2
         return 2
     fi
     key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' \
         "$plist" 2>/dev/null || true)
-    if [ "$key" != "$FAVENIO_SPARKLE_PUBLIC_KEY" ]; then
+    if [ "$key" != "$expected_key" ]; then
         echo "FEHLER: $app prüft den Appcast mit '${key:-keinem Schlüssel}'" >&2
         echo "statt mit dem Produktionsschlüssel — Updates würden abgelehnt." >&2
         return 2

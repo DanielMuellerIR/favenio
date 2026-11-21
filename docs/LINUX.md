@@ -7,9 +7,8 @@ die macOS-Apps gebaut. Details stehen im [gemeinsamen Unterbau](PORTABLE_CORE.md
 Die Desktop-Anbindung wurde unter Cinnamon/X11 und Plasma/Wayland mit Nemo und
 Dolphin geprüft, einschließlich Quick-Übergabe, Vorschau, Zwischenablage und
 Drag-and-drop. Die Datei- und Archivübergabe an einen korrigierten Fastra-Linux-Empfänger ist
-unter Cinnamon/X11 und Plasma/Wayland geprüft. Das signierte Linux-Paket steht
-im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.66.3)
-bereit.
+unter Cinnamon/X11 und Plasma/Wayland geprüft. Zur Ersteinrichtung siehe
+[Signiertes Paket installieren](#signiertes-paket-installieren).
 
 ## Voraussetzungen
 
@@ -64,7 +63,11 @@ Systemordner kopiert.
 
 ## Signiertes Paket installieren
 
-Paket, `linux-update.json` und `linux-update.json.sig` müssen zusammengehören.
+Lade `linux-update.json` und `linux-update.json.sig` aus dem
+[Linux-Updatekanal](https://github.com/DanielMuellerIR/favenio/releases/tag/linux-stable).
+Die im Manifest angegebene Paketadresse führt zum passenden Archiv in den
+[Favenio-Releases](https://github.com/DanielMuellerIR/favenio/releases).
+Paket, Manifest und Signatur müssen zusammengehören.
 Der Installer wird aus einer vertrauenswürdigen Favenio-Ausgabe oder dem
 geprüften Quellcheckout aufgerufen:
 

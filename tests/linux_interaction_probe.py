@@ -28,16 +28,28 @@ def main():
     xt.XTestFakeButtonEvent.argtypes=[c.c_void_p,c.c_uint,c.c_int,c.c_ulong]
     display=x.XOpenDisplay(None);assert display
     def key(name,down):xt.XTestFakeKeyEvent(display,x.XKeysymToKeycode(display,x.XStringToKeysym(name.encode())),down,0);x.XFlush(display)
-    def window_with_width(width):
+    def root_windows():
         parent=c.c_ulong();root=c.c_ulong();items=c.POINTER(c.c_ulong)();count=c.c_uint()
         x.XQueryTree(display,x.XDefaultRootWindow(display),c.byref(root),c.byref(parent),c.byref(items),c.byref(count))
-        found=None
+        found=[]
         for index in range(count.value):
             xx=c.c_int();yy=c.c_int();w=c.c_uint();h=c.c_uint();border=c.c_uint();depth=c.c_uint()
-            x.XGetGeometry(display,items[index],c.byref(root),c.byref(xx),c.byref(yy),c.byref(w),c.byref(h),c.byref(border),c.byref(depth))
-            if w.value==width and h.value>=500:found=items[index]
+            if x.XGetGeometry(display,items[index],c.byref(root),c.byref(xx),c.byref(yy),c.byref(w),c.byref(h),c.byref(border),c.byref(depth)):
+                found.append((items[index],xx.value,yy.value,w.value,h.value))
         x.XFree(items)
         return found
+
+    def window_with_width(width):
+        return next((window for window,_,_,w,h in reversed(root_windows()) if w==width and h>=500),None)
+
+    def region_has_contrast(window,crop):
+        result=subprocess.run(
+            ['import','-window',str(window),'-crop',crop,'-depth','8','gray:-'],
+            capture_output=True,timeout=3,
+        )
+        pixels=result.stdout
+        return result.returncode==0 and bool(pixels) and max(pixels)-min(pixels)>100
+
     with tempfile.TemporaryDirectory(prefix='favenio-input-probe-') as directory:
         root=Path(directory);runtime=root/'runtime';runtime.mkdir(mode=0o700);fixture=root/'fixture';fixture.mkdir()
         for name in ['needle-first.txt ','needle-second.txt','other.txt']:(fixture/name).write_text('example\n')
@@ -79,7 +91,10 @@ def main():
             xt.XTestFakeMotionEvent(display,-1,150,28,0)
             xt.XTestFakeButtonEvent(display,1,1,0);xt.XTestFakeButtonEvent(display,1,0,0);x.XFlush(display)
             for char in 'needle':key(char,1);key(char,0)
-            time.sleep(1.5)
+            deadline=time.monotonic()+6
+            while not region_has_contrast(window,'110x16+18+221'):
+                assert time.monotonic()<deadline,'Quick search must show the first result before selection'
+                time.sleep(.05)
             xt.XTestFakeMotionEvent(display,-1,120,229,0)
             xt.XTestFakeButtonEvent(display,1,1,0);xt.XTestFakeButtonEvent(display,1,0,0);x.XFlush(display)
             evidence=os.environ.get('FAVENIO_EVIDENCE_DIR')
@@ -142,12 +157,36 @@ def main():
             xt.XTestFakeButtonEvent(display,1,1,0);xt.XTestFakeButtonEvent(display,1,0,0);x.XFlush(display)
             for name in ['Home','Return']:key(name,1);key(name,0)
             time.sleep(.2)
-            xt.XTestFakeMotionEvent(display,-1,100,240,0)
+            opened_before={window for window,*_ in root_windows()}
+            xt.XTestFakeMotionEvent(display,-1,100,266,0)
             xt.XTestFakeButtonEvent(display,3,1,0);xt.XTestFakeButtonEvent(display,3,0,0);x.XFlush(display)
-            time.sleep(.2)
+            deadline=time.monotonic()+3
+            menu=None
+            labels_visible=False
+            while time.monotonic()<deadline:
+                menu=next((item for item in reversed(root_windows())
+                           if item[0] not in opened_before and item[3]>=160 and 220<=item[4]<=500),None)
+                if menu:
+                    _,_,_,width,height=menu
+                    # Fokusrahmen und Schatten liegen außerhalb der mittleren Menüzeilen.
+                    crop=f'{width-36}x{height//2}+18+{height//4}'
+                    if region_has_contrast(menu[0],crop):
+                        labels_visible=True
+                        break
+                time.sleep(.05)
+            assert menu,'Right-click must open the result context menu'
+            menu_window,menu_x,menu_y,menu_width,menu_height=menu
             if evidence:
-                subprocess.run(['import','-window','root',str(Path(evidence)/'result-context.png')],check=True,timeout=5)
-            key('Escape',1);key('Escape',0);time.sleep(.1)
+                subprocess.run(['import','-window',str(menu_window),str(Path(evidence)/'result-context.png')],check=True,timeout=5)
+            assert labels_visible,'The selected result context menu must show contrasting action labels'
+            xt.XTestFakeMotionEvent(display,-1,menu_x+menu_width//2,menu_y+menu_height*11//16,0)
+            xt.XTestFakeButtonEvent(display,1,1,0);xt.XTestFakeButtonEvent(display,1,0,0);x.XFlush(display)
+            deadline=time.monotonic()+3
+            while time.monotonic()<deadline:
+                copied=subprocess.check_output(['xclip','-selection','clipboard','-o'],timeout=3).decode()
+                if copied==str(fixture/'needle-second.txt'):break
+                time.sleep(.05)
+            assert copied==str(fixture/'needle-second.txt'),(repr(copied),'Copy Path must use the right-clicked result')
             # Echte Sortierauswahl und anschließende Ergebnisabfrage gemeinsam prüfen.
             for sort_index in [6, 7, 8, 9, 0]:
                 before=call('results',runID=state['runID'],offset=0,limit=128)
@@ -180,7 +219,7 @@ def main():
             assert criteria and json.loads(criteria[0])['root']['children'][0]['value']=='needle',edited
 
             if require_scope:assert config.get('roots',[config.get('root')])==[str(fixture)],config
-            print('X11 INPUT OK: Quick search and handoff, selection, Space preview open/close, exact clipboard path, criteria editor')
+            print('X11 INPUT OK: Quick search and handoff, selection, Space preview open/close, exact clipboard path, visible context menu and copy action, criteria editor')
         finally:
             try:os.killpg(process.pid,signal.SIGTERM)
             except ProcessLookupError:pass

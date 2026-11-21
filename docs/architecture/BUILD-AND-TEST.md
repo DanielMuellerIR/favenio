@@ -12,19 +12,33 @@ python3 -m unittest discover -s tests
 
 Der zweite Lauf ist wichtig: Die gebauten Apps verwenden den macOS-System-
 Interpreter, dessen Verhalten vom Python der Login-Shell abweichen kann.
-`build-app.sh` baut beide Bundles im Projektverzeichnis, kopiert Python-Kern und
-Icons, signiert je nach verfügbarer Identität und führt die Headless-Selbsttests
-aus. Eine Installation ersetzt weder einen Test noch einen Commit.
+`build-app.sh` baut beide Produkt-Bundles im Projektverzeichnis. `--check-bundle`
+prüft dort Bundle-ID, Produktversion, Ressourcen, Helfer und die Sparkle-
+Anbindung ohne Fenster oder Feed-Abruf. Die Headless-Integrationstests laufen
+aus den separaten Bundles unter `.build/selftests/`. Jedes Test-Bundle hat eine
+eigene App-Identität. Die Tests verwenden je Lauf eine frische Einstellungsdomäne
+und prüfen vorbelegte Werte bei regulärem Abschluss und erzwungenen Fehlern.
+Die Datumstest-Gegenprobe prüft zusätzlich, dass der Testordner beim Verlassen
+der Prüffunktion entfernt wird. Eine weitere Gegenprobe lässt den
+Aufnahmeprozess mit Fehlerstatus enden, ohne einen Screenshot zu erstellen.
 
-Erfolgskriterium der beiden Selbsttests ist ihre Schlusszeile `SELFTEST OK`,
-nicht ihr Exit-Status (`run_selftest` in `build-app.sh`). `NSApp.terminate(nil)`
-beendet den Prozess nämlich mit Status 0: Ein Selbsttest, der unterwegs
-darüber stirbt, ist am Status nicht von einem bestandenen zu unterscheiden.
-Am 2026-09-10 belegt — mit zurückgenommenem `windowWillClose`-Fix der
-Schnellsuche meldete `build-app.sh` Erfolg, während deren Selbsttest mitten
-im Lauf endete. Deshalb darf jede App ihre OK-Zeile genau einmal und als
-letzte Handlung ausgeben; `tests/test_build_safety.py::SelfTestGateTest`
-hält beides fest.
+Ein bestandener Integrationstest endet mit Status 0 und genau einer
+Schlusszeile `SELFTEST OK`. `NSApp.terminate(nil)` liefert auch bei
+vorzeitigem Ende Status 0. Dieser Fehler trat am 2026-09-10 mit
+zurückgenommenem `windowWillClose`-Fix der Schnellsuche auf. Die Abschlusszeile
+wird erst nach der Einstellungsprüfung ausgegeben.
+
+`FAVENIO_DEFER_SELFTEST=1` baut die Test-Bundles und schiebt alle App-Aufrufe
+auf. Die Produktprüfung kann danach am vorgesehenen Bundle laufen. Die
+Integrationstests und der Quick-Screenshot sind einzeln aufrufbar:
+
+```bash
+Favenio.app/Contents/MacOS/Favenio --check-bundle
+FavenioQuick.app/Contents/MacOS/FavenioQuick --check-bundle
+.build/selftests/FavenioMainSelfTest.app/Contents/MacOS/Favenio
+.build/selftests/FavenioQuickSelfTest.app/Contents/MacOS/FavenioQuick
+.build/selftests/FavenioQuickSelfTest.app/Contents/MacOS/FavenioQuick --selftest-scope-ui <ausgabeordner>
+```
 
 Die drei Skripte sind bewusst getrennt und dürfen nicht zusammenwachsen:
 
@@ -100,11 +114,12 @@ Notary-Vorgang bei Apple verbraucht; sie bleibt als zweite Linie. In
 `release.sh` fehlte bis 0.28.3 die Hälfte: Nur die gefälschte Build-Nummer
 wurde früh abgelehnt, ein geerbtes `SPARKLE_FEED_URL` erst im fertigen DMG.
 
-`install.sh` und `release.sh` prüfen zusätzlich den Update-Feed der erzeugten
-Bundles gegen `FAVENIO_FEED_URL` aus `notarize-lib.sh`. `build-app.sh` darf
-über `SPARKLE_FEED_URL` weiterhin einen anderen Feed bauen (Sparkle-E2E-Test
-im Projektverzeichnis); geerbt werden darf diese Variable nicht, sonst hört
-eine installierte oder ausgelieferte App dauerhaft auf einen fremden Feed.
+`common/update-feed-url.txt` und `common/update-public-key.txt` legen den
+Produktionskanal fest. Build, Installer, Release und Appcast verwenden diese
+Werte. Die Artefaktprüfungen lesen URL, Schlüssel und Signaturpflicht aus den
+fertigen Bundles. `build-app.sh` darf für einen lokalen Sparkle-Test über
+`SPARKLE_FEED_URL` einen anderen Feed eintragen. Installer und Release lehnen
+diese Testvariable früh ab.
 
 Das Appcast-Tor prüft ein heruntergeladenes Release-DMG auf angeheftetes
 Notary-Ticket und Gatekeeper-Akzeptanz, **bevor** `hdiutil` es einhängt. Erst
@@ -122,8 +137,8 @@ Testumfang nach Änderung:
 - Matcher, Traversierung, Archive, Extraktion oder JSONL: Unit-Tests mit beiden
   Interpretern.
 - gemeinsamer Swift-Kern oder Prozessaufruf: Unit-Tests plus `./build-app.sh`.
-- Haupt-App: Build plus `Favenio --selftest`; sichtbare Interaktion zusätzlich
-  gezielt am Fenster prüfen.
+- Haupt-App: Build mit Headless-Integrationstest. Sichtbare Interaktion
+  zusätzlich gezielt am Fenster prüfen.
 - FavenioQuick/Finder: Build, kontrollierter Fallback ohne Automation und ein
   Gerätetest mit Finder-Freigabe. Ablehnung muss funktionieren.
 - Icons oder Layout: fenstergezielter Screenshot mit `CGWindowList` und

@@ -1,14 +1,9 @@
 # Funktionsumfang
 
-Stand: 2026-10-18. Aktueller Kernstand: Favenio 0.64.0.
-
-Der Kriterienbaum für Name, Pfad, Inhalt, Metadaten, Größe, Datum und Bildmaße
-ist im CLI-Kern und in beiden Editoren umgesetzt.
-Der gewählte Funktionsumfang ist umgesetzt; Unterstützung und Grenzen stehen
-im jeweiligen Abschnitt und den verlinkten Verträgen.
-Die Reihenfolge bildet fachliche Abhängigkeiten ab; sie ist kein Release-Termin.
-Favenio bleibt lokal und indexlos. Der Python-Kern enthält die einzige
-Suchlogik und bleibt ohne Pflicht-Zusatzpakete nutzbar.
+Die Übersicht beschreibt verfügbare Suchfunktionen und verlinkt ihre
+Formatgrenzen. Die beschriebenen Fenster und Tastenkürzel beziehen sich auf
+macOS. Die [Linux-Anleitung](LINUX.md) beschreibt Unterschiede der Oberfläche
+und Plattformgrenzen. Geplante Arbeit steht im [Backlog](../BACKLOG.md).
 
 ## 1. Kombinierbare Kriterien mit verschachtelten Gruppen
 
@@ -89,12 +84,12 @@ Containerdateien:
 
 | Format | Textbezug |
 | --- | --- |
-| PDF mit Textebene | Seite (umgesetzt) |
-| DOCX | Teil und Absatz, zusammengeführte Textläufe und Tabellen (umgesetzt) |
-| ODT | Absätze und Tabellen (umgesetzt) |
-| EPUB | Kapitel in Spine-Lesereihenfolge und Absätze (umgesetzt) |
-| XLSX | Blatt und Zelle, aufgelöste gemeinsame Stringtabellen (umgesetzt) |
-| PPTX | Folie, Objekt, Absatz und Tabellenzelle (umgesetzt) |
+| PDF mit Textebene | Seite |
+| DOCX | Teil und Absatz, zusammengeführte Textläufe und Tabellen |
+| ODT | Absätze und Tabellen |
+| EPUB | Kapitel in Spine-Lesereihenfolge und Absätze |
+| XLSX | Blatt und Zelle, aufgelöste gemeinsame Stringtabellen |
+| PPTX | Folie, Objekt, Absatz und Tabellenzelle |
 
 Dokumente innerhalb von Archiven sind nach denselben begrenzten Verträgen
 lesbar. Optionale lokale Helfer extrahieren Daten; das Matching bleibt
@@ -144,7 +139,9 @@ nicht zugesagt; [Unterstützung und Grenzen](LOCAL_CONTENT.md).
 
 Lokale, ausdrücklich zuschaltbare OCR für einzelne Bilder und Screenshots ist
 umgesetzt; [Vertrag](OCR.md). Textlose PDF-Seiten sind ebenfalls ausdrücklich zuschaltbar, mit begrenztem Rendering; [Vertrag](PDF_OCR.md). Vorhandene PDF-Textebenen werden
-bevorzugt. OCR-Fundstellen bleiben als erkannter Text gekennzeichnet und
+bevorzugt. In PPTX lassen sich eingebettete Bilder getrennt einschalten
+(`--document-text --pptx-ocr`). [PPTX-Bild-OCR](DOCUMENT_TEXT.md#pptx-bild-ocr).
+OCR-Fundstellen bleiben als erkannter Text gekennzeichnet und
 unterliegen eigenen Zeit-, Seiten-, Pixel- und Textlimits.
 
 Eine umschaltbare Miniaturansicht erleichtert in beiden Apps die Auswahl von
@@ -167,11 +164,3 @@ Die Haupt-App kann eine Suchaufzeichnung öffnen, ihre Suche erneut ausführen
 und die Treffer anhand ihrer Quellidentität vergleichen. Die Ansicht zeigt
 neue und nur früher gefundene Treffer sowie die bekannte Abdeckung beider Läufe.
 [Ablauf und Grenzen](LOCAL-CONTROL.md#vergleich-in-der-macos-haupt-app)
-
-## Gemeinsame Abschlusskriterien
-
-Neue Funktionen benötigen passende Kern-/Transporttests und echte Prüfungen
-der betroffenen Ansichten. Vorhandene Suchverträge, strukturierte Archiv-
-identitäten, Begrenzungen, Abbruchverhalten und optional fehlende Fähigkeiten
-bleiben nachvollziehbar. Umsetzung und Dokumentation müssen übereinstimmen;
-die Roadmap wird bei tatsächlich abgenommenen Funktionen aktualisiert.

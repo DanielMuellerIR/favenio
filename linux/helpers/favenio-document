@@ -20,9 +20,19 @@ import tempfile
 import time
 from favenio_linux_limits import DECODER_ADDRESS_SPACE_BYTES
 
-MAX_BYTES = 64 * 1024 * 1024
-PAGE_BYTES = 256 * 1024
-OCR_PIXELS = 12_000_000
+# Das Skript liegt im Paket neben dem Suchkern, im Quellbaum unter linux/helpers.
+core_directory = Path(__file__).resolve().parent.parent
+if not (core_directory / 'favenio.py').is_file():
+    core_directory = core_directory.parent
+if not (core_directory / 'favenio.py').is_file():
+    raise RuntimeError("Favenio search core is missing")
+sys.path.insert(0, str(core_directory))
+from favenio import (DOCUMENT_BYTES as MAX_BYTES, DOCUMENT_PAGE_BYTES as PAGE_BYTES,
+                     DOCUMENT_PAGES, OCR_BLOCK_BYTES, OCR_BLOCKS, OCR_EDGE, OCR_MINIMUM_CONFIDENCE,
+                     OCR_PIXELS, OCR_TEXT_BYTES, PDF_OCR_DPI, PDF_OCR_PAGES, PDF_OCR_RENDER_EDGE,
+                     PDF_OCR_RENDER_PIXELS, PDF_OCR_RENDERED_PAGES, PDF_OCR_TOTAL_RENDER_PIXELS)
+sys.path.pop(0)
+
 PDF_READER = 'poppler-v1'
 OCR_READER = 'tesseract-image-v1'
 PDF_OCR_READER = 'poppler-tesseract-v1'
@@ -204,21 +214,22 @@ def recognize(path, work):
         if row['level'] != '5' or not row['text'].strip():
             continue
         confidence = float(row['conf']) / 100
-        if not math.isfinite(confidence) or confidence < .5:
+        if not math.isfinite(confidence) or confidence < OCR_MINIMUM_CONFIDENCE:
             continue
         key = tuple(row[name] for name in ('page_num', 'block_num', 'par_num', 'line_num'))
         words = groups.setdefault(key, [])
         words.append((row['text'], confidence, int(row['left']), int(row['top']), int(row['width']), int(row['height'])))
-        if len(groups) > 4096:
+        if len(groups) > OCR_BLOCKS:
             raise ReadFailure('ocrLimit')
-    if not width or not height or width > 8192 or height > 8192 or width * height > OCR_PIXELS:
+    if not width or not height or width > OCR_EDGE or height > OCR_EDGE or width * height > OCR_PIXELS:
         raise ReadFailure('ocrLimit')
     blocks = []
     total = 0
     for words in groups.values():
         text = ' '.join(word[0] for word in words)
-        total += len(text.encode())
-        if total > 1024**2 or len(text.encode()) > 65536:
+        count = len(text.encode())
+        total += count
+        if total > OCR_TEXT_BYTES or count > OCR_BLOCK_BYTES:
             raise ReadFailure('ocrLimit')
         left = min(word[2] for word in words)
         top = min(word[3] for word in words)
@@ -328,7 +339,8 @@ class Document:
                 try:
                     preflight_image(self.path)
                     normalized = Path(self.temporary.name, 'normalized.png')
-                    run([str(Path(__file__).resolve().parent.parent / 'favenio'), '--normalize-ocr', str(self.path), str(normalized), '8192'], maximum=1024, timeout=8)
+                    run([str(Path(__file__).resolve().parent.parent / 'favenio'), '--normalize-ocr',
+                         str(self.path), str(normalized), str(OCR_EDGE)], maximum=1024, timeout=8)
                     return dict(reader=OCR_READER, blocks=recognize(normalized, self.temporary.name))
                 finally:
                     self.close()
@@ -341,25 +353,28 @@ class Document:
                 raise ReadFailure('documentDamaged')
             return dict(pageCount=self.pages, pdfOCRCapability=1)
         index = request.get('index')
-        if type(index) is not int or not self.path or not 0 <= index < min(self.pages, 512):
+        if type(index) is not int or not self.path or not 0 <= index < min(self.pages, DOCUMENT_PAGES):
             raise ReadFailure('documentDamaged')
         if operation == 'page':
             output = run(['pdftotext', '-f', str(index+1), '-l', str(index+1), '-enc', 'UTF-8', '-eol', 'unix', '-nopgbrk', '-layout', str(self.path), '-'])
             return dict(page=index+1, text=output.decode('utf-8', 'strict'))
         if operation == 'ocrPage':
-            if index >= 128 or self.rendered_pages >= 16:
+            if index >= PDF_OCR_PAGES or self.rendered_pages >= PDF_OCR_RENDERED_PAGES:
                 raise ReadFailure('pdfOCRLimit')
             info = pdf_information(self.path, index+1)
             box = next((value for key, value in info.items() if key.endswith('CropBox')), '')
             bounds = [float(value) for value in box.split()]
             if len(bounds) != 4 or not all(math.isfinite(value) for value in bounds):
                 raise ReadFailure('documentDamaged')
-            width, height = (math.ceil(abs(bounds[i+2]-bounds[i]) * 150 / 72) for i in (0, 1))
+            width, height = (math.ceil(abs(bounds[i+2]-bounds[i]) * PDF_OCR_DPI / 72) for i in (0, 1))
             pixels = width * height
-            if width <= 0 or height <= 0 or max(width,height)>4096 or pixels>6_000_000 or self.rendered_pixels+pixels>32_000_000:
+            if (width <= 0 or height <= 0 or max(width, height) > PDF_OCR_RENDER_EDGE
+                    or pixels > PDF_OCR_RENDER_PIXELS
+                    or self.rendered_pixels + pixels > PDF_OCR_TOTAL_RENDER_PIXELS):
                 raise ReadFailure('pdfOCRLimit')
             prefix = Path(self.temporary.name, 'page')
-            run(['pdftoppm', '-f', str(index+1), '-l', str(index+1), '-singlefile', '-cropbox', '-r', '150', '-png', str(self.path), str(prefix)], maximum=1024)
+            run(['pdftoppm', '-f', str(index+1), '-l', str(index+1), '-singlefile', '-cropbox',
+                 '-r', str(PDF_OCR_DPI), '-png', str(self.path), str(prefix)], maximum=1024)
             self.rendered_pages += 1
             self.rendered_pixels += pixels
             return dict(reader=PDF_OCR_READER, page=index+1, blocks=recognize(prefix.with_suffix('.png'), self.temporary.name))

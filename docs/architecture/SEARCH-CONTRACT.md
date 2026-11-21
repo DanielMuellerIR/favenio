@@ -12,8 +12,22 @@ Dateiendung erkannt. Neben klassischen Archiven gehören auch ZIP-basierte
 Dokumentformate wie JAR, WHL, EPUB, DOCX, XLSX, PPTX, ODT, ODS, ODP
 sowie die iWork-Formate PAGES, NUMBERS und KEY dazu.
 
+Der Kern bleibt als einzelne ausführbare Datei nutzbar. Die CLI wählt per
+Betriebsartentabelle einen Handler. `SearchOptions` beschreibt den Lauf,
+`Search` verwaltet Traversierung und Trefferzustand und `HitRecord` kapselt
+Text- und JSONL-Ausgabe. Die Suche und `ArchiveLeafReader` verwenden gemeinsame
+Formaterkennung und Archivbudgets. Vorschauauftrag, Dokumentleser,
+Datumsauflösung und Dublettenprüfung besitzen eigene fachliche Einstiege.
+
 Verbindliches CLI-Verhalten:
 
+- Suche und Einmalaktionen verwenden die bestehenden Optionen und jeweils
+  genau eine Betriebsart. Einmalaktionen lehnen weitere Aktionen, Suchmuster,
+  Startpfade sowie Suchoptionen außerhalb der jeweils erlaubten Kombination ab.
+  Explizit gesetzte Standardwerte sind neutral. So akzeptiert etwa
+  `--preview-request` die lokale Lesepolitik,
+  aber keine Maßfilter oder Suchberichte. `--results-root` gehört zum
+  Ansichtsfilter und `--extract-root` zur Extraktion.
 - `--criteria-json` / `--criteria-file` nehmen den versionierten Baum aus
   `docs/CRITERIA.md` an. Schema, Grenzen, Dreiwertlogik, Wurzelbezug und
   `criteriaEvidence` gelten gleichermaßen für Dateien und Archivmitglieder.

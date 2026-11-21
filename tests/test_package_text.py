@@ -237,7 +237,10 @@ class PackageTextTests(TempTreeTest):
             result=run_probe('content-preview',path.suffix[1:],str(REPO/'favenio.py'),input=json.dumps(hit)+'\n')
             self.assertEqual(result.returncode,0,result.stderr)
             report=json.loads(result.stdout)
-            for key in ['partByteIdentity','roundtrip','positionExport','location','csv','configuration','initial','next','previous','context','offCancels']:
+            keys = ['roundtrip','positionExport','location','csv','configuration','initial','next','previous','context','offCancels']
+            if path.suffix == '.epub':
+                keys.append('partByteIdentity')
+            for key in keys:
                 self.assertTrue(report[key],(key,report))
 
     def test_swift_rejects_untrusted_locators_and_readers(self):

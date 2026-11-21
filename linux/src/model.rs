@@ -1,4 +1,5 @@
 use libloading::Library;
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::mem::ManuallyDrop;
 use std::{
@@ -34,7 +35,18 @@ impl Model {
         }
     }
     pub fn call(&self, value: Value) -> Result<Value, String> {
-        let input = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
+        self.send(&value)
+    }
+
+    pub(super) fn request<T: DeserializeOwned>(
+        &self,
+        request: &impl Serialize,
+    ) -> Result<T, String> {
+        serde_json::from_value(self.send(request)?).map_err(|error| error.to_string())
+    }
+
+    fn send(&self, request: &impl Serialize) -> Result<Value, String> {
+        let input = serde_json::to_vec(request).map_err(|e| e.to_string())?;
         if input.len() > 1_048_576 {
             return Err("Auftrag überschreitet 1 MiB.".into());
         }

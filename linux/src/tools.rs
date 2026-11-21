@@ -54,20 +54,22 @@ impl Ui {
         }
     }
     fn visible_hits(&self) -> Vec<Value> {
-        let response=self.model.call(json!({"operation":"projection","runID":self.run.borrow().as_deref().unwrap_or(""),"mode":"none","sort":(SORT_KEYS[self.sorting.selected()as usize]),"ascending":self.ascending.is_active()}));
+        let response = self.model.projection(
+            self.result_order(&self.run.borrow()),
+            "none",
+            Vec::new(),
+            false,
+        );
         let Ok(response) = response else {
             return Vec::new();
         };
         let hits = self.all_hits.borrow();
-        response["rows"]
-            .as_array()
+        response
+            .rows
             .into_iter()
-            .flatten()
-            .filter_map(|v| {
-                v["index"]
-                    .as_u64()
-                    .and_then(|i| hits.get(i as usize))
-                    .cloned()
+            .filter_map(|row| match row {
+                model_search::ProjectionRow::Hit { index } => hits.get(index).cloned(),
+                model_search::ProjectionRow::Group { .. } => None,
             })
             .collect()
     }
@@ -183,7 +185,7 @@ impl Ui {
                 return;
             }
             if let Some(ui) = weak.upgrade() {
-                let mut request = ui.configuration();
+                let mut request = json!(ui.configuration());
                 request["operation"] = json!("templates");
                 request["name"] = json!(name.text().to_string());
                 match ui.model.call(request) {
@@ -248,15 +250,35 @@ impl Ui {
         let weak = Rc::downgrade(self);
         let w = window.clone();
         save.connect_clicked(move |_| {
-            let Some(ui)=weak.upgrade() else{return};
-            let mut request=json!({"operation":"exportCurrent","runID":ui.run.borrow().as_deref().unwrap_or(""),"format":(["paths","pathsNUL","jsonl","csv"][format.selected()as usize]),"sort":(SORT_KEYS[ui.sorting.selected()as usize]),"ascending":ui.ascending.is_active()});
-            if selected.is_active(){request["indices"]=json!(ui.selected().iter().filter_map(|v|v["index"].as_u64()).collect::<Vec<_>>());}
-            match ui.model.call(request){
-                Ok(value)=>{if let Some(data)=value["data"].as_str().and_then(|s|base64::engine::general_purpose::STANDARD.decode(s).ok()){
-                    let name=["favenio-treffer.txt","favenio-treffer-nul.txt","favenio-treffer.jsonl","favenio-treffer.csv"][format.selected()as usize];
-                    ui.save_bytes("Treffer exportieren",name,data);w.close();
-                }},
-                Err(error)=>ui.status.set_text(&error)
+            let Some(ui) = weak.upgrade() else { return };
+            let formats = [
+                ("paths", "favenio-treffer.txt"),
+                ("pathsNUL", "favenio-treffer-nul.txt"),
+                ("jsonl", "favenio-treffer.jsonl"),
+                ("csv", "favenio-treffer.csv"),
+            ];
+            let Some(&(format, name)) = formats.get(format.selected() as usize) else {
+                ui.status.set_text("Ein Exportformat auswählen.");
+                return;
+            };
+            let indices = selected.is_active().then(|| {
+                ui.selected()
+                    .iter()
+                    .filter_map(|hit| hit["index"].as_u64())
+                    .collect()
+            });
+            let order = ui.run.borrow();
+            match ui
+                .model
+                .export_current(ui.result_order(&order), format, indices)
+            {
+                Ok(value) => {
+                    if let Ok(data) = base64::engine::general_purpose::STANDARD.decode(value) {
+                        ui.save_bytes("Treffer exportieren", name, data);
+                        w.close();
+                    }
+                }
+                Err(error) => ui.status.set_text(&error),
             }
         });
         window.set_child(Some(&body));

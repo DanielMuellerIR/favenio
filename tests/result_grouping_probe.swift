@@ -177,6 +177,16 @@ enum ResultGroupingProbe {
             let collapsedRaw = ResultProjection(hits: rawHits, mode: .folder, collapsed: [collapsedKey])
             report["independentRawCollapse"] = collapsedRaw.tableRow(for: 0) == nil
                 && (1..<rawHits.count).allSatisfy { collapsedRaw.tableRow(for: $0) != nil }
+            let longDirectory = "/fixture/" + String(repeating: "directory/", count: 12)
+            let filesystemIdentities = (0..<1024).map {
+                hit(longDirectory + String(format: "%04d.txt", $0)).identity
+            }
+            report["longCommonPrefix"] = Set(filesystemIdentities.map(\.hashValue)).count > 1000
+            let visiblePath = longDirectory + "Bericht.txt"
+            let legacy = HitIdentity(filesystemPath: visiblePath, archiveMembers: [])
+            let bytewise = HitIdentity(filesystemPath: visiblePath, archiveMembers: [],
+                                       filesystemPathBytes: Data(visiblePath.utf8))
+            report["equalAcrossWireVersions"] = legacy == bytewise && Set([legacy, bytewise]).count == 1
         case "large":
             let hits = (0..<100_000).map { hit("/root/folder-\($0 % 100)/file-\($0).txt") }
             let start = ProcessInfo.processInfo.systemUptime

@@ -48,9 +48,7 @@ private final class Session: FastraHandoffOwner {
     var duplicate: DuplicateJob?
     var previewLoad: ContentPreviewLoad?
     var resolution: Data?
-    var sortedIndices: [Int] = []
-    var sortedCount = 0
-    var sortedKey = "", sortedAscending = true
+    private let sortedHits = SortedHitIndices()
     var deliveredHits = 0
     var latestProgress: String?
     lazy var handoff = FastraHandoffController(owner: self)
@@ -72,6 +70,19 @@ private final class Session: FastraHandoffOwner {
             events.append(event)
         }
     }
+    func ordered(by order: BridgeResultOrder) -> ([Hit], [Int]) {
+        condition.lock()
+        let source = hits, accepted = self.accepted, removed = self.removed
+        condition.unlock()
+        let isVisible: (Int) -> Bool = { index in
+            let identity = source[index].identity
+            return !removed.contains(identity) && (accepted?.contains(identity) ?? true)
+        }
+        if order.sort == "arrival" {
+            return (source, source.indices.filter(isVisible))
+        }
+        return (source, sortedHits.sorted(source, by: order).filter(isVisible))
+    }
     func stop() {
         condition.lock(); closed = true; events.removeAll(); condition.broadcast(); condition.unlock()
         filter?.cancel(); duplicate?.cancel(); runner.cancel()
@@ -90,27 +101,27 @@ private func cancelFileActions() {
     actionLock.lock(); actionEvents.removeAll(); actionLock.unlock()
 }
 
-private func ordered(_ current: Session, request: [String: Any]) -> ([Hit], [Int]) {
-    current.condition.lock()
-    let source = current.hits, accepted = current.accepted, removed = current.removed
-    current.condition.unlock()
-    let sort = request["sort"] as? String ?? "name", ascending = request["ascending"] as? Bool ?? true
-    let isVisible: (Int) -> Bool = { index in
-        let identity = source[index].identity
-        return !removed.contains(identity) && (accepted?.contains(identity) ?? true)
+private final class SortedHitIndices {
+    private let lock = NSLock()
+    private var order: BridgeResultOrder?
+    private var count = 0
+    private var indices: [Int] = []
+
+    func sorted(_ hits: [Hit], by requested: BridgeResultOrder) -> [Int] {
+        let compare: (Int, Int) -> Bool = {
+            compareHits(hits[$0], hits[$1], key: requested.sort, ascending: requested.ascending)
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        if order != requested || count > hits.count {
+            indices = hits.indices.sorted(by: compare)
+        } else if count < hits.count {
+            indices = mergingSortedValues(indices, Array(count..<hits.count), using: compare)
+        }
+        order = requested
+        count = hits.count
+        return indices
     }
-    if sort == "arrival" {
-        return (source, source.indices.filter(isVisible))
-    }
-    let comparator: (Int, Int) -> Bool = { compareHits(source[$0], source[$1], key: sort, ascending: ascending) }
-    if current.sortedKey != sort || current.sortedAscending != ascending {
-        current.sortedIndices = source.indices.sorted(by: comparator)
-    } else if current.sortedCount < source.count {
-        current.sortedIndices = mergingSortedValues(current.sortedIndices, Array(current.sortedCount..<source.count), using: comparator)
-    }
-    current.sortedKey = sort; current.sortedAscending = ascending; current.sortedCount = source.count
-    let indices = current.sortedIndices.filter(isVisible)
-    return (source, indices)
 }
 
 private func configuration(_ request: [String: Any]) -> SearchConfiguration? {
@@ -119,8 +130,237 @@ private func configuration(_ request: [String: Any]) -> SearchConfiguration? {
         guard Set(pair.keys) == ["name", "value"], let name = pair["name"], let value = pair["value"] else { return nil }
         return URLQueryItem(name: name, value: value)
     }
-    guard items.count == pairs.count, SearchConfiguration.transportProblem(items) == nil else { return nil }
+    guard items.count == pairs.count else { return nil }
+    return configuration(items)
+}
+
+private func configuration(_ items: [URLQueryItem]) -> SearchConfiguration? {
+    guard SearchConfiguration.transportProblem(items) == nil else { return nil }
     return SearchConfiguration.fromQueryItems(items)
+}
+
+private enum BridgeResponse {
+    case typed(any Encodable)
+    case object([String: Any])
+    case error(String)
+
+    func data() -> Data? {
+        switch self {
+        case .typed(let value):
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            return try? encoder.encode(value)
+        case .object(let value):
+            return encoded(value)
+        case .error(let message):
+            return encoded(failure(message))
+        }
+    }
+}
+
+private func search(_ request: BridgeSearchRequest, operation: BridgeSearchOperation, data: Data) -> BridgeResponse {
+    let pattern = request.pattern
+    let roots = request.roots
+    let bytes = request.rootBytes.flatMap { SearchRoots.decodeRawPaths($0, paths: roots) }
+    guard let config = configuration(request.options.map(\.item)),
+          SearchRoots.problem(roots, rawBytes: bytes) == nil else {
+        return .error("Ungültige Suchkonfiguration.")
+    }
+    var frozen: Data?
+    if request.hasContinuation {
+        guard let raw = JSONByteSlices.member("continuation", in: data),
+              let proof = preservedJSONObject(raw),
+              let resolution = DateRangeTransport.resolution(proof),
+              DateRangeTransport.bound(resolution, to: config) else {
+            return .error("Übergebene Kalendergrenzen passen nicht zur Frage.")
+        }
+        frozen = resolution
+    }
+    var reference: String?
+    if request.hasReference {
+        guard config.requiresDateRanges else { return .error("Ein Laufzeitpunkt braucht Kalenderbereiche.") }
+        guard let raw = JSONByteSlices.member("dateReferenceTime", in: data),
+              let text = try? JSONDecoder().decode(String.self, from: raw),
+              DateRangeTransport.isISO(text) else { return .error("Ungültiger Laufzeitpunkt.") }
+        reference = text
+    }
+    let runConfig = frozen == nil ? config.forNewRun(reference: reference) : config
+    guard let arguments = runConfig.arguments(pattern: pattern, roots: roots, progress: true, frozenDateResolution: frozen) else {
+        return .error("Ungültige Suchkonfiguration oder leere Frage.")
+    }
+    if operation == .arguments { return .typed(BridgeArgumentsResponse(arguments: arguments)) }
+    if request.rootBytes != nil && bytes == nil { return .error("Ungültige POSIX-Suchwurzeln.") }
+    let rootData = bytes ?? roots.map { Data($0.utf8) }
+    if config.requiresFinderMetadata { return .error("Finder-Tags und -Kommentare können unter Linux nicht abgefragt werden. Gespeicherte Belege bleiben erhalten.") }
+    if config.localOnly { return .error("Für diese Linux-Installation ist die Sperre gegen Cloud-Nachladen nicht verfügbar.") }
+    for (path, data) in zip(roots, rootData) where ContentSourceGeneration.current(data) == nil {
+        return .error("Suchbereich fehlt oder ist nicht zugänglich: " + path)
+    }
+    var args = arguments
+    if let end = args.firstIndex(of: "--") {
+        var flags = (request.contentPreview == true ? ["--content-preview"] : [])
+            + ["--search-report", "--json-path-bytes"]
+        if let raw = request.rootBytes, let json = encoded(raw) {
+            flags.insert("--search-roots-bytes=" + String(decoding: json, as: UTF8.self), at: 0)
+        }
+        args.insert(contentsOf: flags, at: end)
+    }
+    session?.stop()
+    cancelFileActions()
+    let current = Session(quick: request.quick == true)
+    current.input = ControlSearchInput(pattern: pattern, roots: roots, options: runConfig)
+    current.input?.rootBytes = request.rootBytes == nil ? nil : rootData
+    session = current
+    current.runner.start(arguments: args, onBatch: { hits, progress in
+        current.condition.lock()
+        if !current.closed {
+            for hit in hits where current.identities.insert(hit.identity).inserted {
+                if current.quick && current.hits.count >= 20 { current.limited = true; break }
+                current.hits.append(hit)
+            }
+        }
+        let limited = current.limited
+        if let progress { current.latestProgress = progress }
+        current.condition.unlock()
+        if limited { current.runner.cancel() }
+    }, onReport: { report in
+        current.condition.lock(); current.report = report; current.condition.unlock()
+    }, onDateResolution: { data in
+        current.condition.lock(); current.resolution = data; current.condition.unlock()
+    }, completion: { exit in
+        current.condition.lock()
+        let limited = current.limited
+        let count = current.hits.count
+        let report = exit.report ?? current.report
+        current.condition.unlock()
+        let state = limited ? "limitReached" : current.runner.isCancelled ? "cancelled" : searchExitIsError(exit.status, reason: exit.reason) ? "failed" : "finished"
+        var event: [String: Any] = ["kind": "finish", "state": state, "count": count, "warnings": exit.warningCount]
+        current.condition.lock()
+        current.ending = state == "finished" ? (exit.warningCount == 0 ? "completed" : "warnings") : state == "limitReached" ? "cancelled" : state
+        current.warnings = exit.warningCount
+        current.error = state == "failed" ? searchFailureText(exit) : nil
+        current.condition.unlock()
+        if state == "failed" { event["error"] = searchFailureText(exit) }
+        let finalReport = report?.ending(state, warningCount: exit.warningCount)
+        if let finalReport {
+            event["report"] = finalReport.exportObject
+            event["reportText"] = finalReport.displayText
+        }
+        if state == "finished" && count == 0 {
+            event["emptyResultText"] = SearchReportSnapshot.emptyResultText(for: finalReport)
+        }
+        current.enqueue(event)
+    })
+    return .typed(BridgeRunResponse(runID: current.id))
+}
+
+private func poll(_ request: BridgePollRequest) -> BridgeResponse {
+    var events: [[String: Any]] = []
+    if let current = session, request.runID == current.id {
+        current.condition.lock()
+        let end = min(current.hits.count, current.deliveredHits + 512)
+        if end > current.deliveredHits {
+            let rows = (current.deliveredHits..<end).map { index -> [String: Any] in
+                var value = projected(current.hits[index], root: current.input?.root, multiple: (current.input?.roots.count ?? 0) > 1)
+                value["index"] = index
+                return value
+            }
+            var batch: [String: Any] = ["kind": "batch", "hits": rows]
+            if let progress = current.latestProgress { batch["progress"] = progress }
+            events.append(batch)
+            current.deliveredHits = end
+        }
+        if end == current.hits.count {
+            events += current.events
+            current.events.removeAll()
+        }
+        current.condition.unlock()
+    }
+    actionLock.lock()
+    events += actionEvents
+    actionEvents.removeAll()
+    actionLock.unlock()
+    return .object(["ok": true, "events": events])
+}
+
+private func page(_ request: BridgePageRequest) -> BridgeResponse {
+    guard let current = session, request.runID == current.id else { return .error("Suchlauf ist nicht mehr aktuell.") }
+    let order = BridgeResultOrder(sort: request.sort, ascending: request.ascending)
+    let (source, indices) = current.ordered(by: order)
+    let offset = request.offset
+    guard (0...indices.count).contains(offset), (1...128).contains(request.limit) else {
+        return .error("Ungültige Ergebnisseite.")
+    }
+    var page: [Any] = []
+    var bytes = 0
+    for index in indices.dropFirst(offset).prefix(request.limit) {
+        let data = jsonlData(for: [source[index]])
+        if bytes + data.count > 500_000 { break }
+        guard let row = preservedJSONObject(data) else { return .error("Ungültiger Treffer.") }
+        bytes += data.count
+        page.append(row)
+    }
+    guard !page.isEmpty || offset == indices.count else { return .error("Ein Treffer überschreitet die Antwortgrenze.") }
+    let next = offset + page.count
+    return .object(["ok": true, "hits": page, "count": indices.count, "nextOffset": next, "hasMore": next < indices.count])
+}
+
+private func exportCurrent(_ request: BridgeExportRequest) -> BridgeResponse {
+    guard let current = session, request.runID == current.id else { return .error("Suchlauf ist nicht mehr aktuell.") }
+    guard let format = HitExportFormat(rawValue: request.format) else { return .error("Exportformat fehlt.") }
+    let order = BridgeResultOrder(sort: request.sort, ascending: request.ascending)
+    let (source, indices) = current.ordered(by: order)
+    guard request.indices?.allSatisfy({ source.indices.contains($0) }) ?? true else {
+        return .error("Trefferauswahl überholt.")
+    }
+    let hits = (request.indices ?? indices).map { source[$0] }
+    return .typed(BridgeExportResponse(data: exportData(for: hits, format: format).base64EncodedString()))
+}
+
+private func projection(_ request: BridgeProjectionRequest) -> BridgeResponse {
+    guard let current = session, request.runID == current.id,
+          let mode = ResultGroupingMode(rawValue: request.mode ?? "none") else {
+        return .error("Suchlauf oder Gruppierung fehlt.")
+    }
+    current.condition.lock()
+    let unfiltered = current.filter == nil && current.removed.isEmpty
+    current.condition.unlock()
+    let (source, indices) = current.ordered(by: BridgeResultOrder(sort: request.sort, ascending: request.ascending))
+    let hits = indices.map { source[$0] }
+    let initially = ResultProjection(hits: hits, mode: mode)
+    let collapsedIDs = Set(request.collapsed ?? [])
+    func key(_ group: ResultGroup) -> String { encoded(group.key.components.map { $0.base64EncodedString() })!.base64EncodedString() }
+    let collapsed = Set(initially.groups.filter { request.collapseAll == true || collapsedIDs.contains(key($0)) }.map { $0.key })
+    let projection = ResultProjection(hits: hits, mode: mode, collapsed: collapsed)
+    var rows: [BridgeProjectionResponse.Row] = []
+    for row in 0..<projection.rowCount {
+        if let index = projection.hitIndex(at: row) {
+            rows.append(.hit(indices[index]))
+        } else if let group = projection.group(at: row) {
+            rows.append(.group(key: key(group), title: group.title, count: group.hitIndices.count))
+        }
+    }
+    return .typed(BridgeProjectionResponse(rows: rows, total: source.count, visible: hits.count,
+        expanded: projection.displayedHitCount, arrivalPrefix: unfiltered && mode == .none && request.sort == "arrival"))
+}
+
+private func performSearch(_ operation: BridgeSearchOperation, data: Data, decoder: JSONDecoder) -> BridgeResponse {
+    switch operation {
+    case .arguments, .start:
+        guard let request = try? decoder.decode(BridgeSearchRequest.self, from: data) else { return .error("Ungültige Suchkonfiguration.") }
+        return search(request, operation: operation, data: data)
+    case .poll:
+        return poll((try? decoder.decode(BridgePollRequest.self, from: data)) ?? BridgePollRequest(runID: nil))
+    case .projection:
+        guard let request = try? decoder.decode(BridgeProjectionRequest.self, from: data) else { return .error("Suchlauf oder Gruppierung fehlt.") }
+        return projection(request)
+    case .page:
+        guard let request = try? decoder.decode(BridgePageRequest.self, from: data) else { return .error("Ungültige Ergebnisseite.") }
+        return page(request)
+    case .exportCurrent:
+        guard let request = try? decoder.decode(BridgeExportRequest.self, from: data) else { return .error("Exportformat oder Trefferauswahl ungültig.") }
+        return exportCurrent(request)
+    }
 }
 
 private func perform(_ request: [String: Any]) -> [String: Any] {
@@ -147,104 +387,6 @@ private func perform(_ request: [String: Any]) -> [String: Any] {
     case "parse":
         guard let text = request["line"] as? String, let hit = parseHit(Data(text.utf8)) else { return failure("Ungültiger Treffer.") }
         return ["ok": true, "hit": projected(hit)]
-    case "arguments", "start":
-        guard let pattern = request["pattern"] as? String, let roots = request["roots"] as? [String],
-              let config = configuration(request), SearchRoots.problem(roots, rawBytes: request["rootBytes"].flatMap { SearchRoots.decodeRawPaths($0, paths: roots) }) == nil else {
-            return failure("Ungültige Suchkonfiguration.")
-        }
-        var frozen: Data?
-        if let proof = request["continuation"] {
-            guard let data = DateRangeTransport.resolution(proof), DateRangeTransport.bound(data, to: config) else { return failure("Übergebene Kalendergrenzen passen nicht zur Frage.") }
-            frozen = data
-        }
-        if request["dateReferenceTime"] != nil && !config.requiresDateRanges { return failure("Ein Laufzeitpunkt braucht Kalenderbereiche.") }
-        if let reference = request["dateReferenceTime"], !DateRangeTransport.isISO(reference) { return failure("Ungültiger Laufzeitpunkt.") }
-        let runConfig = frozen == nil ? config.forNewRun(reference: request["dateReferenceTime"] as? String) : config
-        guard let arguments = runConfig.arguments(pattern: pattern, roots: roots, progress: true, frozenDateResolution: frozen) else {
-            return failure("Ungültige Suchkonfiguration oder leere Frage.")
-        }
-        if operation == "arguments" { return ["ok": true, "arguments": arguments] }
-        if config.requiresFinderMetadata { return failure("Finder-Tags und -Kommentare können unter Linux nicht abgefragt werden. Gespeicherte Belege bleiben erhalten.") }
-        if config.localOnly { return failure("Für diese Linux-Installation ist die Sperre gegen Cloud-Nachladen nicht verfügbar.") }
-        let rootData: [Data]
-        if let raw = request["rootBytes"] {
-            guard let data = SearchRoots.decodeRawPaths(raw, paths: roots) else { return failure("Ungültige POSIX-Suchwurzeln.") }
-            rootData = data
-        } else { rootData = roots.map { Data($0.utf8) } }
-        for (path, data) in zip(roots, rootData) where ContentSourceGeneration.current(data) == nil {
-            return failure("Suchbereich fehlt oder ist nicht zugänglich: " + path)
-        }
-        session?.stop(); cancelFileActions()
-        let current = Session(quick: request["quick"] as? Bool == true)
-        current.input = ControlSearchInput(pattern: pattern, roots: roots, options: runConfig)
-        session = current
-        var args = arguments
-        if let raw = request["rootBytes"] as? [String] {
-            guard raw.count == roots.count, zip(raw, roots).allSatisfy({ pair in
-                guard let data = Data(base64Encoded: pair.0) else { return false }
-                return data.first == 47 && !data.contains(0) && data.count <= 4096 && data.base64EncodedString() == pair.0 && String(decoding: data, as: UTF8.self).utf8.elementsEqual(pair.1.utf8)
-            }), let json = encoded(raw), let end = args.firstIndex(of: "--") else { return failure("Ungültige POSIX-Suchwurzeln.") }
-            current.input?.rootBytes = raw.compactMap { Data(base64Encoded: $0) }
-            args.insert("--search-roots-bytes=" + String(decoding: json, as: UTF8.self), at: end)
-        }
-        if let end = args.firstIndex(of: "--") { args.insert(contentsOf: (request["contentPreview"] as? Bool == true ? ["--content-preview"] : []) + ["--search-report", "--json-path-bytes"], at: end) }
-        current.runner.start(arguments: args, onBatch: { hits, progress in
-            current.condition.lock()
-            if !current.closed {
-                for hit in hits where current.identities.insert(hit.identity).inserted {
-                    if current.quick && current.hits.count >= 20 { current.limited = true; break }
-                    current.hits.append(hit)
-                }
-            }
-            let limited = current.limited
-            if let progress { current.latestProgress = progress }
-            current.condition.unlock()
-            if limited { current.runner.cancel() }
-        }, onReport: { report in
-            current.condition.lock(); current.report = report; current.condition.unlock()
-        }, onDateResolution: { data in
-            current.condition.lock(); current.resolution = data; current.condition.unlock()
-        }, completion: { exit in
-            current.condition.lock()
-            let limited = current.limited
-            let count = current.hits.count
-            let report = exit.report ?? current.report
-            current.condition.unlock()
-            let state = limited ? "limitReached" : current.runner.isCancelled ? "cancelled" : searchExitIsError(exit.status, reason: exit.reason) ? "failed" : "finished"
-            var event: [String: Any] = ["kind": "finish", "state": state, "count": count, "warnings": exit.warningCount]
-            current.condition.lock()
-            current.ending = state == "finished" ? (exit.warningCount == 0 ? "completed" : "warnings") : state == "limitReached" ? "cancelled" : state
-            current.warnings = exit.warningCount
-            current.error = state == "failed" ? searchFailureText(exit) : nil
-            current.condition.unlock()
-            if state == "failed" { event["error"] = searchFailureText(exit) }
-            let finalReport = report?.ending(state, warningCount: exit.warningCount)
-            if let finalReport {
-                event["report"] = finalReport.exportObject
-                event["reportText"] = finalReport.displayText
-            }
-            if state == "finished" && count == 0 {
-                event["emptyResultText"] = SearchReportSnapshot.emptyResultText(for: finalReport)
-            }
-            current.enqueue(event)
-        })
-        return ["ok": true, "runID": current.id]
-    case "poll":
-        var events: [[String: Any]] = []
-        if let current = session, request["runID"] as? String == current.id {
-            current.condition.lock()
-            let end = min(current.hits.count, current.deliveredHits + 512)
-            if end > current.deliveredHits {
-                let rows = (current.deliveredHits..<end).map { index -> [String: Any] in var value = projected(current.hits[index], root: current.input?.root, multiple: (current.input?.roots.count ?? 0) > 1); value["index"] = index; return value }
-                var batch: [String: Any] = ["kind": "batch", "hits": rows]
-                if let progress = current.latestProgress { batch["progress"] = progress }
-                events.append(batch); current.deliveredHits = end
-            }
-            if end == current.hits.count { events += current.events; current.events.removeAll() }
-            current.condition.unlock()
-        }
-        actionLock.lock(); events += actionEvents; actionEvents.removeAll(); actionLock.unlock()
-        return ["ok": true, "events": events]
     case "cancel":
         session?.runner.cancel(); return ["ok": true]
     case "cancelPreview":
@@ -300,46 +442,6 @@ private func perform(_ request: [String: Any]) -> [String: Any] {
         session?.stop(); session = nil
         cancelFileActions()
         MaterializationManager.shared.cleanup(); return ["ok": true]
-    case "page", "exportCurrent":
-        guard let current = session, request["runID"] as? String == current.id else { return failure("Suchlauf ist nicht mehr aktuell.") }
-        let (source, indices) = ordered(current, request: request)
-        if operation == "exportCurrent" {
-            guard let raw = request["format"] as? String, let format = HitExportFormat(rawValue: raw) else { return failure("Exportformat fehlt.") }
-            let selected = request["indices"] as? [Int]
-            guard selected?.allSatisfy({ source.indices.contains($0) }) ?? true else { return failure("Trefferauswahl überholt.") }
-            return ["ok": true, "data": exportData(for: (selected ?? indices).map { source[$0] }, format: format).base64EncodedString()]
-        }
-        guard let offset = request["offset"] as? Int, let limit = request["limit"] as? Int,
-              (0...indices.count).contains(offset), (1...128).contains(limit) else { return failure("Ungültige Ergebnisseite.") }
-        var page: [Any] = [], bytes = 0
-        for index in indices.dropFirst(offset).prefix(limit) {
-            let data = jsonlData(for: [source[index]])
-            if bytes + data.count > 500_000 { break }
-            guard let row = preservedJSONObject(data) else { return failure("Ungültiger Treffer.") }
-            bytes += data.count; page.append(row)
-        }
-        guard !page.isEmpty || offset == indices.count else { return failure("Ein Treffer überschreitet die Antwortgrenze.") }
-        return ["ok": true, "hits": page, "count": indices.count, "nextOffset": offset + page.count, "hasMore": offset + page.count < indices.count]
-    case "projection":
-        guard let current = session, request["runID"] as? String == current.id,
-              let mode = ResultGroupingMode(rawValue: request["mode"] as? String ?? "none") else { return failure("Suchlauf oder Gruppierung fehlt.") }
-        current.condition.lock()
-        let unfiltered = current.filter == nil && current.removed.isEmpty
-        current.condition.unlock()
-        let (source, indices) = ordered(current, request: request)
-        let hits = indices.map { source[$0] }
-        let initially = ResultProjection(hits: hits, mode: mode)
-        let collapsedIDs = Set(request["collapsed"] as? [String] ?? [])
-        func key(_ group: ResultGroup) -> String { encoded(group.key.components.map { $0.base64EncodedString() })!.base64EncodedString() }
-        let collapsed = Set(initially.groups.filter { request["collapseAll"] as? Bool == true || collapsedIDs.contains(key($0)) }.map { $0.key })
-        let projection = ResultProjection(hits: hits, mode: mode, collapsed: collapsed)
-        var rows: [[String: Any]] = []
-        for row in 0..<projection.rowCount {
-            if let index = projection.hitIndex(at: row) { rows.append(["kind": "hit", "index": indices[index]]) }
-            else if let group = projection.group(at: row) { rows.append(["kind": "group", "key": key(group), "title": group.title, "count": group.hitIndices.count]) }
-        }
-        return ["ok": true, "rows": rows, "total": source.count, "visible": hits.count, "expanded": projection.displayedHitCount,
-                "arrivalPrefix": unfiltered && mode == .none && request["sort"] as? String == "arrival"]
     case "filter":
         guard let current = session, let query = request["criteria"] as? String else { return failure("Suchlauf oder Filter fehlt.") }
         let operation = ResultFilterRun()
@@ -507,9 +609,18 @@ public func releaseModel(_ pointer: UnsafeMutablePointer<CChar>?) { free(pointer
 @_cdecl("favenio_model")
 public func modelRequest(_ pointer: UnsafePointer<UInt8>?, _ count: Int) -> UnsafeMutablePointer<CChar>? {
     guard let pointer, count >= 0, count <= 1_048_576 else { return nil }
-    requestLock.lock(); defer { requestLock.unlock() }
+    requestLock.lock()
+    defer { requestLock.unlock() }
     let data = Data(bytes: pointer, count: count)
-    let response = (preservedJSONObject(data) as? [String: Any]).map(perform) ?? failure("Ungültiger Auftrag.")
-    guard let encoded = encoded(response), let text = String(data: encoded, encoding: .utf8) else { return nil }
+    let decoder = JSONDecoder()
+    let response: BridgeResponse
+    if let envelope = try? decoder.decode(BridgeSearchEnvelope.self, from: data) {
+        response = performSearch(envelope.operation, data: data, decoder: decoder)
+    } else if let request = preservedJSONObject(data) as? [String: Any] {
+        response = .object(perform(request))
+    } else {
+        response = .error("Ungültiger Auftrag.")
+    }
+    guard let encoded = response.data(), let text = String(data: encoded, encoding: .utf8) else { return nil }
     return strdup(text)
 }

@@ -25,8 +25,8 @@ impl Ui {
                 if value.borrow::<Value>()["kind"] == "group" {
                     return;
                 }
-                if !ui.selection.is_selected(position) {
-                    ui.selection.select_item(position, true);
+                if !ui.results.selection.is_selected(position) {
+                    ui.results.selection.select_item(position, true);
                 }
                 if let Some(child) = item.child() {
                     ui.result_menu(&child, x, y);
@@ -37,12 +37,24 @@ impl Ui {
         });
     }
     fn result_menu(self: &Rc<Self>, widget: &gtk::Widget, x: f64, y: f64) {
+        let stack = &self.results.stack;
+        let Some(anchor) =
+            widget.compute_point(stack, &gtk::graphene::Point::new(x as f32, y as f32))
+        else {
+            return;
+        };
         let popup = gtk::Popover::builder()
             .autohide(true)
             .has_arrow(false)
             .build();
-        popup.set_parent(widget);
-        popup.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        // Der Rahmen der Trefferansicht liefert die Textfarbe auch bei markierten Zeilen.
+        popup.set_parent(stack);
+        popup.set_pointing_to(Some(&gdk::Rectangle::new(
+            anchor.x() as i32,
+            anchor.y() as i32,
+            1,
+            1,
+        )));
         let body = column();
         body.set_spacing(2);
         for (action, title) in [

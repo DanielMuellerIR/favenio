@@ -136,10 +136,10 @@ p=r/'broken.zip';b=bytearray(p.read_bytes());b[33]^=1;p.write_bytes(b)
         defer { controller.cancel(); controller.results.window.close(); owner.window.close() }
         try duplicateRequire(!controller.results.window.isKeyWindow, "Test hat Fokus übernommen")
         controller.prepareSnapshot(); owner.hits = []
-        try duplicateRequire(controller.scopeNote.stringValue.contains("3 Objekte"), "Menge nicht festgehalten")
+        try duplicateRequire(controller.scopeNote.stringValue.contains("3 Dateien"), "Menge nicht festgehalten")
         controller.begin()
         try duplicateWait { controller.job == nil }
-        try duplicateRequire(controller.status.stringValue.hasPrefix("Abgeschlossen: 1"), controller.status.stringValue + (controller.status.toolTip ?? ""))
+        try duplicateRequire(controller.status.stringValue == "Prüfung abgeschlossen · 1 Gruppe mit gleichem Inhalt", controller.status.stringValue + (controller.status.toolTip ?? ""))
         try duplicateRequire(controller.results.hits.count == 2 && controller.results.resultTableRowCount == 3, "Gruppenprojektion")
         let header = controller.results.tableView.view(atColumn: 0, row: 0, makeIfNecessary: true) as? NSTableCellView
         try duplicateRequire(header?.textField?.stringValue.hasPrefix("Gruppe 1") == true, "Native Gruppenüberschrift fehlt bei nil-Spalte")
@@ -156,6 +156,22 @@ p=r/'broken.zip';b=bytearray(p.read_bytes());b[33]^=1;p.write_bytes(b)
 
         let first = controller.results.tableView.rect(ofRow: 1)
         try duplicateRequire(first.height >= 40, "Dateizeile zu niedrig")
+        let missingURL = root.appendingPathComponent("verschwundene-datei")
+        let missing = Hit(path: missingURL.path, kind: "file", line: nil, size: nil,
+                          filesystemPath: missingURL.path, archiveMembers: [], isDirectory: false)
+        owner.hits = [a, b, missing]
+        controller.prepareSnapshot()
+        controller.begin()
+        try duplicateWait { controller.job == nil }
+        try duplicateRequire(controller.status.stringValue == "Teilprüfung · 1 Gruppe mit gleichem Inhalt · 1 Datei nicht geprüft",
+                             controller.status.stringValue)
+        try duplicateRequire(controller.results.hits.count == 2 && !controller.issueNote.isHidden
+                             && controller.issueNote.stringValue.contains(missingURL.lastPathComponent),
+                             "Teilprüfung zeigt die bestätigte Gruppe oder den ausgefallenen Kandidaten nicht")
+        controller.results.window.contentView?.layoutSubtreeIfNeeded()
+        try duplicateRequire(controller.status.frame.height >= controller.status.intrinsicContentSize.height
+                             && controller.issueNote.frame.height >= controller.issueNote.intrinsicContentSize.height,
+                             "Prüfstatus oder Hinweis abgeschnitten")
         let decoded = try JSONDecoder().decode(DuplicateResult.self, from: JSONSerialization.data(withJSONObject: [
             "type":"duplicateResult", "schemaVersion":1, "state":"completed", "complete":true,
             "checkedAt":"2026-10-18T15:00:00Z", "scopeCount":2, "hashedFiles":2, "readBytes":20,

@@ -22,6 +22,10 @@ Die eigenen Versuche umfassen Scan-PDFs aus deutschen/englischen Bildschirmtexte
 
 ## Render- und Arbeitsgrenzen
 
+Der Suchkern legt die gemeinsamen Raster- und Lesebudgets fest. Der macOS-Bau
+erzeugt daraus die Swift-Konstanten, der Linux-Helfer liest sie aus seinem
+mitgelieferten Kern. Vision-spezifische Filter bleiben im Vision-Leseweg.
+
 - macOS 13 oder neuer für Vision-OCR; normale PDF-Textebenen behalten ihren bisherigen optionalen PDFKit-Pfad.
 - Reguläre Datei, höchstens 64 MiB; der Helfer liest über einen nicht blockierenden, mit `fstat` geprüften Dateideskriptor in begrenzte Daten. PDFKit erhält Daten, keine Quell-URL.
 - Höchstens 128 angeforderte Seiten pro Dokument; gegenüber dem normalen Textebenenleser mit 512 Seiten bewusst kleiner.

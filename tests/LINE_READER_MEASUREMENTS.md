@@ -1,8 +1,9 @@
 # Zeilenleser: Messung 2026-09-05
 
-Reproduktion: `python3 tests/benchmark_line_reader.py --baseline 7fc8691`.
+Reproduktion im Checkout `74b185a`:
+`python3 tests/benchmark_line_reader.py --baseline 7fc8691`.
 macOS/Apple M5, System-Python 3.9, warmer Seitencache, je drei frische
-Prozesse. Rohwerte: `tests/measurements/line-reader-2026-09-05.jsonl`.
+Prozesse.
 
 Zwei Fixtures zu je 64 MiB, deren einziger Treffer ganz am Ende steht — so
 sagt der billige Inhaltsvortest „nachsehen", und der Leser muss alles lesen:

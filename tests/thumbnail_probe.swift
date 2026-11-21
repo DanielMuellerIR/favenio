@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import ImageIO
+import Quartz
 
 private func thumbnailCheck(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() {
@@ -28,6 +29,10 @@ private func thumbnailPNGData(_ color: CGColor) -> Data {
 }
 private final class ThumbnailProbeOwner: HitListController, NSTableViewDataSource, NSTableViewDelegate {
     var changes = 0
+    var actionIssue: String?
+    override func presentActionIssue(summary: String, detail: String?) {
+        actionIssue = summary
+    }
     func numberOfRows(in view: NSTableView) -> Int { resultTableRowCount }
     func tableViewSelectionDidChange(_ note: Notification) { if !isRestoringSelection { refreshContentPreview() } }
     func tableView(_ view: NSTableView, sortDescriptorsDidChange old: [NSSortDescriptor]) {
@@ -46,6 +51,75 @@ private final class ThumbnailProbeOwner: HitListController, NSTableViewDataSourc
 #endif
 struct ThumbnailProbe {
     static func main() throws { try run(CommandLine.arguments) }
+
+    static func checkArchiveMenu() {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        let owner = ThumbnailProbeOwner()
+        let table = owner.tableView
+        table.dataSource = owner
+        table.allowsMultipleSelection = true
+        table.addTableColumn(NSTableColumn(identifier: .init("name")))
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 500, height: 400))
+        scroll.documentView = table
+        owner.installThumbnails(in: scroll, compact: false)
+        guard let grid = owner.thumbnailController else { fatalError("Missing results grid") }
+        let source = "/fixture/archive.zip"
+        owner.hits = [
+            Hit(path: source + "!/docs/", kind: "member", line: nil, size: nil,
+                filesystemPath: source, archiveMembers: ["docs/"], isDirectory: true),
+            Hit(path: source + "!/docs/report.txt", kind: "member", line: nil, size: 5,
+                filesystemPath: source, archiveMembers: ["docs/report.txt"], isDirectory: false),
+            Hit(path: "/fixture/other.pdf", kind: "file", line: nil, size: 6,
+                filesystemPath: "/fixture/other.pdf", archiveMembers: [], isDirectory: false),
+        ]
+        owner.resultGrouping.rebuild()
+        table.reloadData()
+        grid.setGrid(true, persist: false)
+
+        let commonApp = URL(fileURLWithPath: "/fixture/Common.app")
+        let exclusiveApp = URL(fileURLWithPath: "/fixture/Text.app")
+        var lookedUp = Set<String>()
+        applicationsLookupForTesting = { hit in
+            lookedUp.insert(hit.path)
+            return hit.isMember ? [commonApp, exclusiveApp] : [commonApp]
+        }
+        defer { applicationsLookupForTesting = nil }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let fileActions = ["Vorschau (Leertaste)", "Öffnen", "Im Finder zeigen"]
+
+        grid.contextTableRow = 0
+        thumbnailCheck(owner.populateHitMenu(menu), "Archive folder has a menu")
+        thumbnailCheck(lookedUp.isEmpty, "Archive folder is not sent to application lookup")
+        for title in fileActions {
+            thumbnailCheck(menu.item(withTitle: title)?.isEnabled == false, "Disabled: " + title)
+        }
+        thumbnailCheck(menu.item(withTitle: "Öffnen mit")?.isEnabled == false, "No apps for archive folder")
+        thumbnailCheck(menu.item(withTitle: "Pfad kopieren")?.action != nil, "Copy folder path remains available")
+        thumbnailCheck(menu.item(withTitle: "Quellarchiv im Finder zeigen")?.action != nil, "Reveal source archive remains available")
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        thumbnailCheck(owner.hitPasteboardWriter(0) == nil, "Archive folder cannot be dragged as a file")
+        owner.togglePreview()
+        thumbnailCheck(owner.actionIssue?.contains("Ordner im Archiv") == true, "Direct preview explains the unavailable folder")
+        thumbnailCheck(QLPreviewPanel.shared()?.isVisible != true && owner.previewURLs.isEmpty,
+                       "Direct preview keeps the panel closed without a file")
+
+        table.selectRowIndexes(IndexSet(integersIn: 0...2), byExtendingSelection: false)
+        thumbnailCheck(owner.populateHitMenu(menu), "Mixed selection has a menu")
+        thumbnailCheck(lookedUp == Set(owner.hits.dropFirst().map(\.path)), "Only openable selected hits contribute")
+        for title in fileActions {
+            let item = menu.item(withTitle: title)
+            thumbnailCheck(item?.isEnabled == true && item?.action != nil, "Enabled: " + title)
+        }
+        let openWith = menu.item(withTitle: "Öffnen mit")
+        let apps = openWith?.submenu?.items.compactMap { $0.representedObject as? URL }
+        thumbnailCheck(openWith?.isEnabled == true && apps == [commonApp], "Offer only apps common to all files")
+
+        grid.contextTableRow = 99
+        thumbnailCheck(!owner.populateHitMenu(menu) && menu.items.isEmpty, "An empty row clears stale actions")
+        print("ARCHIVE MENU OK")
+    }
+
     static func run(_ arguments: [String]) throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let root = URL(fileURLWithPath: arguments[1])
@@ -209,11 +283,12 @@ struct ThumbnailProbe {
         let shared = MaterializationManager.shared
         shared.cliPath = repo + "/favenio.py"
         shared.temporaryDirectory = root
-        var retainedURL: URL?
-        shared.request(member) { if case .ready(let url) = $0 { retainedURL = url } }
-        thumbnailWait { retainedURL != nil }
-        let provider = NSFilePromiseProvider(fileType: "public.png", delegate: own)
-        provider.userInfo = member
+        own.hits.append(member)
+        let memberIndex = own.hits.count - 1
+        guard let provider = own.hitPasteboardWriter(memberIndex) as? NSFilePromiseProvider else {
+            fatalError("Dragging an uncached archive member must return a file promise")
+        }
+        thumbnailCheck(shared.knownURL(for: member) == nil, "Drag preparation leaves archive member unmaterialized")
         thumbnailCheck(own.filePromiseProvider(provider, fileNameForType: "public.png") == "image.png", "Promise name")
         let destination = root.appendingPathComponent("promised.png")
         var promised = false
@@ -226,7 +301,26 @@ struct ThumbnailProbe {
         }
         thumbnailWait { promised }
         thumbnailCheck(promiseFailure == nil && (try? Data(contentsOf: destination)) == data, "Promise bytes")
-        thumbnailCheck(shared.knownURL(for: member) == retainedURL, "Promise shared URL")
+        let retainedURL = shared.knownURL(for: member)
+        thumbnailCheck(retainedURL != nil && (own.hitPasteboardWriter(memberIndex) as? NSURL) as URL? == retainedURL,
+                       "Later drag uses the existing shared materialized file")
+        shared.cleanup()
+        let missing = Hit(path: archive.path + "!/missing.png", kind: "member", line: nil, size: nil,
+            filesystemPath: archive.path, archiveMembers: ["missing.png"], isDirectory: false)
+        grid.setGrid(false, persist: false)
+        grid.contextTableRow = -1
+        own.replaceFilteredHits([missing], keepingSelection: [])
+        own.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        thumbnailCheck(own.actionRows() == [0] && own.actionIssue == nil, "Select the missing member")
+        guard let panel = QLPreviewPanel.shared() else {
+            fatalError("Missing Quick Look panel")
+        }
+        own.togglePreview()
+        thumbnailWait { own.actionIssue != nil }
+        thumbnailCheck(own.actionIssue == "Konnte nicht auspacken." && own.previewURLs.isEmpty,
+                       "A valid archive with a missing member fails to materialize")
+        thumbnailCheck(!panel.isVisible && panel.dataSource !== own,
+                       "No Quick Look attachment or window after the extraction failed")
         shared.cleanup()
         let largeSource = root.appendingPathComponent("large-source.bin")
         FileManager.default.createFile(atPath: largeSource.path, contents: Data())

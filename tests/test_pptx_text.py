@@ -245,6 +245,19 @@ class PPTXTextTests(TempTreeTest):
         self.path.write_bytes(pptx_bytes(slides=[('slides/z.xml',slide(shape(2,paragraph('Jahresbericht')))+'<broken'),('slides/a.xml',None)]))
         self.assertEqual(self.search()[2]['coverage'],'withinRequestedScope');self.assertEqual(self.negative()[0],1)
 
+    def test_completed_table_paragraph_precedes_later_cell_validation_error(self):
+        body = table(8, [paragraph('Jahresbericht'), paragraph('Unsichtbar')])
+        body = body.replace('<a:txBody><a:bodyPr/><a:lstStyle/>'+paragraph('Unsichtbar')+'</a:txBody>', '')
+        self.path.write_bytes(pptx_bytes(slides=[
+            ('slides/z.xml', slide(body)), ('slides/a.xml', slide(shape(7, paragraph('Zweiter'))))]))
+        code, hits, report, errors = self.search('--term=Zweiter')
+        self.assertEqual(code, 0, errors)
+        self.assertIn('documentDamaged', [reason['id'] for reason in report['reasons']])
+        first, second = [term['documentPosition'] for term in hits[0]['terms']]
+        self.assertEqual((first['objectID'], first['row'], first['column']), ('8', 1, 1))
+        self.assertEqual((second['objectID'], second['slide']), ('7', 2))
+        self.assertEqual(self.negative()[0], 1)
+
     def test_strict_namespaces_and_xml_utf16(self):
         with zipfile.ZipFile(self.path) as archive:items=[(x.filename,archive.read(x).decode().replace(PML,'http://purl.oclc.org/ooxml/presentationml/main').replace(DML,'http://purl.oclc.org/ooxml/drawingml/main').replace(OFFICE,'http://purl.oclc.org/ooxml/officeDocument/relationships')) for x in archive.infolist()]
         self.path.write_bytes(package(items));self.assertEqual(self.search()[0],0)

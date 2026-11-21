@@ -1,9 +1,11 @@
 """Gemeinsamer Swift-Build pro Testprozess, getrennte Prozesse je Prüffall."""
 import atexit
 import os
+import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -71,21 +73,67 @@ def run_process(command, *, input=None, timeout=20, environment=None):
     return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
 
 
-def swift_function(source, signature):
-    """Schneidet eine Swift-Funktion samt Rumpf aus dem Quelltext: von der
-    Signatur bis zur passenden schließenden Klammer. Gezählt werden schlicht
-    die geschweiften Klammern — das trägt, solange im Rumpf keine in einem
-    Text steht."""
-    start = source.index(signature)
+def native_document_helper_sources(helper, scratch):
+    limits = Path(scratch, "DocumentHelperLimits.swift")
+    result = run_process([sys.executable, "-B", str(REPO / "tools/generate-document-limits.py"),
+                          str(limits)])
+    if result.returncode:
+        raise RuntimeError(result.stderr)
+    return (limits, REPO / "ocr/DocumentHelperIO.swift", REPO / "ocr/VisionText.swift",
+            REPO / helper / "main.swift")
+
+
+_SWIFT_DELIMITERS = re.compile(r'//[^\n]*|/\*|#*(?:"""|")|[{}()]')
+_SWIFT_COMMENT_DELIMITERS = re.compile(r'/\*|\*/')
+
+
+def _skip_block_comment(source, start):
+    depth = 1
+    for token in _SWIFT_COMMENT_DELIMITERS.finditer(source, start):
+        depth += 1 if token[0] == '/*' else -1
+        if depth == 0:
+            return token.end()
+    raise AssertionError('Offener Swift-Kommentar')
+
+
+def _skip_string(source, token):
+    opening = token[0]
+    quotes = opening.lstrip('#')
+    hashes = opening[:-len(quotes)]
+    closing = quotes + hashes
+    events = re.compile(re.escape(closing) + '|' + re.escape('\\' + hashes) + r'(.)', re.DOTALL)
+    position = token.end()
+    while event := events.search(source, position):
+        if event[0] == closing:
+            return event.end()
+        position = event.end()
+        if event[1] == '(':
+            position = _swift_delimiter_end(source, position - 1, '(', ')')
+    raise AssertionError('Offene Swift-Zeichenkette')
+
+
+def _swift_delimiter_end(source, start, opening, closing):
     depth = 0
-    for index in range(start, len(source)):
-        if source[index] == "{":
+    position = start
+    while token := _SWIFT_DELIMITERS.search(source, position):
+        position = token.end()
+        if token[0] == '/*':
+            position = _skip_block_comment(source, position)
+        elif token[0].startswith(('"', '#')):
+            position = _skip_string(source, token)
+        elif token[0] == opening:
             depth += 1
-        elif source[index] == "}":
+        elif token[0] == closing and depth:
             depth -= 1
             if depth == 0:
-                return source[start:index + 1]
-    raise AssertionError("Funktion %r ist nicht abgeschlossen" % signature)
+                return position
+    raise AssertionError(f'Offener Swift-Block ab Offset {start}')
+
+
+def swift_function(source, signature):
+    """Grenze für statische Wächter, die eine konkrete Signatur kennen."""
+    start = source.index(signature)
+    return source[start:_swift_delimiter_end(source, start, '{', '}')]
 
 
 def suite_binary():
@@ -98,44 +146,18 @@ def suite_binary():
     directory = tempfile.TemporaryDirectory(prefix='favenio-swift-tests-')
     root = Path(directory.name)
     try:
-        source = (REPO / 'common/FavenioCore.swift').read_text(encoding='utf-8')
-        # Nur der Bundle-Einstieg vor Hit braucht Sparkle. Der gesamte
-        # gemeinsame Laufzeitcode geht unverändert in denselben Build.
-        core = root / 'Core.swift'
-        core.write_text('import AppKit\nimport Darwin\nimport Quartz\n'
-                        'import UniformTypeIdentifiers\n'
-                        'let pythonPath = "/usr/bin/python3"\n'
-                        + source[source.index('final class TypeDescriptionCache {'):], encoding='utf-8')
-        quick = (REPO / 'quick/FavenioQuick.swift').read_text(encoding='utf-8')
-        harness = (REPO / 'tests/quick_scope_probe.swift.in').read_text(encoding='utf-8')
-        for marker, signature in (
-            ('REFRESH', 'func refreshFinderFoldersAsync() {'),
-            ('APPLY', 'func applyScopeOutcome(_ outcome: FinderScopeOutcome) {'),
-            ('NOTE', 'func runScopeNoteText() -> String? {'),
-            ('SEARCH_INFO', 'func showSearchInfo('),
-            ('SCOPE_PROBLEM', 'func showScopeProblem('),
-        ):
-            harness = harness.replace('/* ' + marker + ' */', swift_function(quick, signature))
-        scope = root / 'QuickScope.swift'
-        scope.write_text(harness, encoding='utf-8')
-        filter_source = (REPO / 'tests/result_filter_probe.swift').read_text(encoding='utf-8')
-        for marker, signature in (
-            ('QUICK_FILTER_RELOAD', 'func reloadKeepingSelection('),
-            ('QUICK_FILTER_SELECTION', 'func tableViewSelectionDidChange('),
-        ):
-            filter_source = filter_source.replace('/* ' + marker + ' */', swift_function(quick, signature))
-        filter_probe = root / 'ResultFilterProbe.swift'
-        filter_probe.write_text(filter_source, encoding='utf-8')
         binary = root / 'TestProbe'
         probes = ['runner_probe.swift', 'materialization_probe.swift',
                   'configuration_probe.swift', 'thumbnail_probe.swift', 'duplicate_probe.swift', 'export_probe.swift', 'search_report_probe.swift', 'content_preview_probe.swift', 'test_probe.swift']
-        command = ['swiftc', '-O', '-D', 'FAVENIO_TEST_SUITE', str(core), str(scope),
-                   *[str(REPO / ('common/' + name + '.swift')) for name in ('DuplicateModel', 'ResultFilterModel', 'CriteriaModel', 'SearchModel', 'SearchConfiguration', 'SearchProcess', 'ContentModel', 'ContentPreviewLoad', 'DateRangeModel', 'SearchReportModel')],
+        command = ['swiftc', '-O', '-D', 'FAVENIO_TEST_SUITE', str(REPO / 'common/FavenioCore.swift'),
+                   *[str(REPO / ('common/' + name + '.swift')) for name in ('DuplicateModel', 'ResultFilterModel', 'CriteriaModel', 'SearchModel', 'HitPresentation', 'SearchConfiguration', 'SearchProcess', 'ContentModel', 'ContentPreviewLoad', 'DateRangeModel', 'SearchReportModel')],
                    str(REPO / 'common/ContentPreview.swift'), str(REPO / 'common/Thumbnails.swift'),
                    str(REPO / 'common/SearchReport.swift'), str(REPO / 'common/DuplicateCheck.swift'),
                    str(REPO / 'common/CriteriaEditor.swift'),
                    str(REPO / 'common/DateRanges.swift'), str(REPO / 'common/FinderMetadata.swift'),
-                   str(REPO / 'gui/CriteriaEditorSelfTest.swift'), str(filter_probe),
+                   str(REPO / 'common/FinderScope.swift'),
+                   str(REPO / 'gui/CriteriaEditorSelfTest.swift'),
+                   str(REPO / 'tests/AppKitSelfTestSupport.swift'), str(REPO / 'tests/result_filter_probe.swift'),
                    str(REPO / 'tests/result_grouping_probe.swift'), str(REPO / 'tests/search_roots_probe.swift'), str(REPO / 'tests/date_ranges_probe.swift'), str(REPO / 'tests/finder_metadata_probe.swift')]
         command += [str(REPO / 'tests' / name) for name in probes]
         result = run_process(command + ['-o', str(binary)], timeout=300)

@@ -38,6 +38,9 @@ Unterprozesse und zwei Temp-Ordner — gegen die Zusage, dass gleichzeitige
 Anforderungen desselben Treffers EINEN Unterprozess und dieselbe Datei
 teilen. Anzeige und Export behalten ihren bisherigen Pfadtext.
 `common/SearchModel.swift` enthält Hit-Modell und JSONL-Parsing;
+`common/HitPresentation.swift` formatiert die Fundstellenspalte auf Deutsch
+für AppKit und GTK. `common/FinderScope.swift` bündelt die Finder-Abfrage,
+`common/UpdateSupport.swift` kapselt Sparkle und den Produkt-Bundle-Check.
 `common/SearchProcess.swift` enthält Unterprozessaufrufe und den
 `MaterializationManager`. `common/FavenioCore.swift` behält die AppKit-Darstellung
 und Dateiaktionen. Änderungen am
@@ -50,7 +53,7 @@ Prüfung verändert werden. Snapshot-Gleichheit verwendet ursprüngliche Wertbyt
 Status und Generation, keine JSON-Einrückung. Die Formatwahl berücksichtigt auch
 optional erfasste Werte in Treffern, nicht nur Kriterien. Vorschau, Spalten und
 historischer Ansichtsfilter lesen keine Finder-Attribute nach; Datenvertrag und
-Versionsgates stehen in [docs/FINDER_METADATA.md](docs/FINDER_METADATA.md).
+Versionsgates stehen in [docs/FINDER_METADATA.md](../FINDER_METADATA.md).
 Dort steht auch `HitListController`, die Basisklasse BEIDER Controller:
 Trefferliste, wirksame Zeilenmenge (`actionRows`), Quick-Look-Vorschau samt
 Tastenweiterleitung und die Kontextmenü-Aktionen „Öffnen mit", „Im Finder
@@ -237,7 +240,8 @@ Finder wählt die Operation und verwaltet deren Rücknahme.
 
 Die Haupt-App streamt Treffer, erhält die Auswahl bei neuen Ergebnissen und
 bietet Öffnen, Öffnen mit, Finder-Anzeige, Pfadkopie, Quick Look und Drag-and-
-drop. Der `--selftest`-Pfad ist die automatische Grenze zwischen GUI und Kern.
+drop. Der Headless-Integrationstest prüft die Grenze zwischen GUI und Kern
+mit eigenen Test-Bundles.
 
 In BEIDEN Apps startet erst Return die Suche, nicht das Tippen: Das
 Suchfeld setzt `sendsWholeSearchString = true` und

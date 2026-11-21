@@ -117,9 +117,9 @@ class UnicodeSourceTest(TempTreeTest):
 
     def test_regex_overflow_is_validation_error_before_search(self):
         query = leaf('overflow', 'name', 'regex', 'a{999999999999999999999}')
-        for options in (['--validate-criteria'], []):
+        for command in (['--validate-criteria'] + arguments(query), arguments(query) + [self.root]):
             with mock.patch.object(favenio.Search, 'search_path', side_effect=AssertionError('kein Suchstart')):
-                code, lines, err = run(options + arguments(query) + [self.root])
+                code, lines, err = run(command)
             self.assertEqual((code, lines), (2, []))
             self.assertIn('favenio: fehler:', err)
             self.assertIn('Bedingung overflow', err)

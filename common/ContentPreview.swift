@@ -2,22 +2,6 @@ import AppKit
 import CryptoKit
 import Darwin
 
-func contentPreviewDisclosureSelfTest(_ controller: HitListController) -> String? {
-    let view = controller.contentPreviewView
-    let arguments = ["-u", "core", "--json", "--", "needle", "/fixture"]
-    guard !view.enabled, view.body.isHidden,
-          controller.contentPreviewArguments(arguments) == arguments else {
-        return "Fundstellenvorschau startet nicht schlank und zugeklappt"
-    }
-    defer { if view.enabled { view.toggle.performClick(nil) } }
-    view.toggle.performClick(nil)
-    guard view.enabled, !view.body.isHidden,
-          controller.contentPreviewArguments(arguments) == ["-u", "core", "--json", "--content-preview", "--", "needle", "/fixture"] else {
-        return "Fundstellenvorschau klappt nicht auf oder aktiviert ihren Kernpfad nicht"
-    }
-    return nil
-}
-
 final class ContentPreviewView: NSStackView {
     let toggle = NSButton(checkboxWithTitle: "Fundstellenvorschau", target: nil, action: nil)
     let sourceLabel = NSTextField(labelWithString: "")

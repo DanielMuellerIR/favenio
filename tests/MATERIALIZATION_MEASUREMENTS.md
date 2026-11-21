@@ -1,10 +1,11 @@
 # Auspacken von Archivtreffern: Messung 2026-09-05
 
-Reproduktion: `python3 tests/benchmark_materialization.py --baseline 96e23fa`.
+Reproduktion im Checkout `7fc8691` mit macOS und Swift:
+`python3 tests/benchmark_materialization.py --baseline 96e23fa`.
 macOS/Apple M5, Swift `-O`, System-Python, warmer Seitencache. Je drei frische
 Prozesse. Drei Fixtures: ein Zip mit einem 128-MiB-Eintrag (gespeichert), ein
 Zip im Zip mit einem 64-MiB-Eintrag und ein 7z (LZMA) mit 128 MiB
-Zufallsdaten. Rohwerte: `tests/measurements/materialization-2026-09-05.jsonl`.
+Zufallsdaten.
 
 `blocked` ist die Zeit, die der Aufruf auf dem Main-Thread nicht zurückkehrt;
 `max_delay` die größte Verspätung eines 5-ms-Main-Timers über sein

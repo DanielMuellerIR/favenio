@@ -39,11 +39,6 @@ jobs:
       # signieren.
       # Nicht eingecheckt: Repository- oder github-pages-Umgebungsvariable.
       FAVENIO_TEAM_ID: ${{ vars.FAVENIO_TEAM_ID }}
-      # Derselbe öffentliche Schlüssel, den build-app.sh als SUPublicEDKey in
-      # beide Bundles schreibt — die Quelle ist build-app.sh, hier steht nur
-      # die Kopie, gegen die das Release-Artefakt geprüft wird. Ein Test
-      # (tests/test_appcast_workflow.py) hält beide Stellen zusammen.
-      SPARKLE_PUBLIC_KEY: "H504COadHZVAKo+/XD0jzXT5PJzghkS2t/DDYmuHPDg="
 
     steps:
       - name: Check out source
@@ -141,20 +136,20 @@ jobs:
           # überhaupt läuft.
           #
           # Argumente: <mountpoint> <release-tag> <erwarteter Schlüssel>
-          #            <erwartete Entwickler-Team-ID>
+          #            <erwartete Entwickler-Team-ID> <erwartete Feed-URL>
           # Setzt bei Erfolg ARTIFACT_VERSION, ARTIFACT_BUILD und
           # ARTIFACT_PUBLIC_KEY.
           favenio_check_artifact() {
             local mountpoint="$1" tag="$2" expected_key="$3"
-            local expected_team="$4"
+            local expected_team="$4" expected_feed="$5"
             local app plist bundle_id expected_id app_version app_build
             local app_key app_feed app_signed_feed team_requirement
-            # Der Produktions-Update-Feed. Quelle ist der Default in
-            # build-app.sh; hier steht die Kopie, gegen die das Release-
-            # Artefakt geprüft wird. Ein Test (tests/test_appcast_workflow.py)
-            # hält beide Stellen zusammen.
-            local expected_feed="https://danielmuellerir.github.io/favenio/appcast.xml"
             shopt -s nullglob
+
+            if [[ -z "$expected_key" || -z "$expected_feed" ]]; then
+              echo "ERROR: production update channel is incomplete." >&2
+              return 1
+            fi
 
             if [[ -z "$expected_team" ]]; then
               echo "ERROR: expected developer team ID is missing." >&2
@@ -298,8 +293,10 @@ jobs:
           }
           # ===== END favenio-check-artifact =====
 
+          expected_key="$(cat common/update-public-key.txt)"
+          expected_feed="$(cat common/update-feed-url.txt)"
           favenio_check_artifact "$mountpoint" "$RELEASE_TAG" \
-            "$SPARKLE_PUBLIC_KEY" "$FAVENIO_TEAM_ID"
+            "$expected_key" "$FAVENIO_TEAM_ID" "$expected_feed"
           version="$ARTIFACT_VERSION"
           build="$ARTIFACT_BUILD"
 

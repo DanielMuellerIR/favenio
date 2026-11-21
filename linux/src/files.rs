@@ -65,8 +65,8 @@ impl Ui {
                 dialog.connect_response(move |dialog, response| {
                     if response == gtk::ResponseType::Ok {
                         if let Some(app) = dialog.app_info() {
-                            if let Err(e) =
-                                app.launch(&[file.clone()], None::<&gio::AppLaunchContext>)
+                            if let Err(e) = app
+                                .launch(std::slice::from_ref(&file), None::<&gio::AppLaunchContext>)
                             {
                                 status.set_text(&e.to_string());
                             }
@@ -223,8 +223,8 @@ impl Ui {
                 || key == gdk::Key::Left
             {
                 if let Some(ui) = weak.upgrade() {
-                    let current = (0..ui.store.n_items())
-                        .find(|i| ui.selection.is_selected(*i))
+                    let current = (0..ui.results.store.n_items())
+                        .find(|i| ui.results.selection.is_selected(*i))
                         .unwrap_or(0);
                     let direction = if key == gdk::Key::Down || key == gdk::Key::Right {
                         1
@@ -232,14 +232,15 @@ impl Ui {
                         -1
                     };
                     let mut next = current as i32 + direction;
-                    while next >= 0 && (next as u32) < ui.store.n_items() {
+                    while next >= 0 && (next as u32) < ui.results.store.n_items() {
                         if let Some(object) = ui
+                            .results
                             .store
                             .item(next as u32)
                             .and_downcast::<glib::BoxedAnyObject>()
                         {
                             if object.borrow::<Value>()["kind"] != "group" {
-                                ui.selection.select_item(next as u32, true);
+                                ui.results.selection.select_item(next as u32, true);
                                 ui.act("preview");
                                 break;
                             }
@@ -261,7 +262,7 @@ impl Ui {
         window.set_child(Some(&body));
         window.present();
         *self.preview_window.borrow_mut() = Some(window.clone());
-        let encoding = &self.encodings[self.encoding.selected() as usize];
+        let encoding = self.selected_encoding();
         let page = hit["documentPosition"]["page"].as_u64().unwrap_or(1);
         self.preview_jobs
             .borrow_mut()

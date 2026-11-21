@@ -15,19 +15,25 @@ import UniformTypeIdentifiers
         case "configuration": try ConfigurationProbe.run(arguments)
         case "duplicates": try DuplicateProbe.run(arguments)
         case "thumbnails": try ThumbnailProbe.run(Array(CommandLine.arguments.dropFirst()))
+        case "archive-menu": ThumbnailProbe.checkArchiveMenu()
         case "export": try ExportProbe.main()
         case "content-preview": try ContentPreviewProbe.run(arguments)
-        case "result-filter": try ResultFilterProbe.run(arguments)
+        case "result-filter": try ResultFilterProbe.run()
         case "result-grouping": try ResultGroupingProbe.run(arguments)
         case "search-roots": try SearchRootsProbe.run(arguments)
         case "finder-metadata": try FinderMetadataProbe.run(arguments)
         case "date-ranges": try DateRangesProbe.run(arguments)
         case "criteria-editor": try CriteriaEditorSelfTest.run()
-        case "scope-refresh": QuickScopeRefreshHarness.run()
-        case "scope-note": QuickScopeNoteHarness.run()
         case "pixel-limit", "csv-field", "type-description":
             try values(command[1])
-        case "common-apps": try commonApps(compareDirect: command.contains("--direct"))
+        case "hit-transport": try hitTransport()
+        case "hit-sorting": try hitSorting()
+        case "find-cli": print(findCLI() ?? "")
+        case "common-apps":
+            try commonApps(compareDirect: command.contains("--direct"),
+                           fixture: command.contains("--fixture-applications"))
+        case "metadata-fields":
+            FileHandle.standardOutput.write(try JSONEncoder().encode(metadataFieldList()))
         default: exit(2)
         }
     }
@@ -66,7 +72,7 @@ import UniformTypeIdentifiers
     /// Liest eine Liste von Dateinamen (je Zeile ein Treffer) und
     /// vergleicht beide Fassungen: gleiche Anwendungsliste, und wie lange
     /// jede gebraucht hat.
-    static func commonApps(compareDirect: Bool) throws {
+    static func commonApps(compareDirect: Bool, fixture: Bool) throws {
         let input = FileHandle.standardInput.readDataToEndOfFile()
         let names = try JSONDecoder().decode([String].self, from: input)
         // ECHTE Dateien: `urlsForApplications(toOpen: URL)` liefert für
@@ -99,13 +105,22 @@ import UniformTypeIdentifiers
             return "extension:" + ext
         }
         var snapshot: [String: [URL]] = [:]
-        for hit in hits where snapshot[lookupKey(hit)] == nil {
-            snapshot[lookupKey(hit)] = applicationsFor(hit)
+        if !fixture {
+            for hit in hits where snapshot[lookupKey(hit)] == nil {
+                snapshot[lookupKey(hit)] = applicationsFor(hit)
+            }
         }
-        applicationsLookupForTesting = { snapshot[lookupKey($0)] ?? [] }
+        var lookups: [String] = []
+        applicationsLookupForTesting = {
+            let key = lookupKey($0)
+            lookups.append(key)
+            if fixture { return [URL(fileURLWithPath: "/fixture/Editor.app")] }
+            return snapshot[key] ?? []
+        }
         defer { applicationsLookupForTesting = nil }
         var start = Date()
         let neu = commonApplicationsFor(hits).map { $0.path }
+        let actualLookups = lookups
         let neuDauer = Date().timeIntervalSince(start)
         start = Date()
         let alt = commonApplicationsPerHit(hits).map { $0.path }
@@ -123,9 +138,48 @@ import UniformTypeIdentifiers
         }
         let report: [String: [String]] = [
             "neu": neu, "alt": alt, "direct": direct.map { $0.path },
+            "lookups": actualLookups,
             "dauer": [String(format: "%.4f", neuDauer),
                       String(format: "%.4f", altDauer)],
         ]
+        FileHandle.standardOutput.write(try JSONEncoder().encode(report))
+    }
+
+    static func hitTransport() throws {
+        let input = FileHandle.standardInput.readDataToEndOfFile()
+        let lines = try JSONDecoder().decode([String].self, from: input)
+        let hits = lines.map { parseHit(Data($0.utf8)) }
+        let parsed = hits.map { $0?.isDirectory }
+        let serialized = try jsonlData(for: hits.compactMap { $0 }).split(separator: 0x0a).map {
+            try JSONSerialization.jsonObject(with: Data($0))
+        }
+        let report: [String: Any] = [
+            "parsed": parsed.map { $0 as Any? ?? NSNull() },
+            "serialized": serialized,
+        ]
+        FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: report))
+    }
+
+    static func hitSorting() throws {
+        func hit(_ name: String, width: Int? = nil, height: Int? = nil) -> Hit {
+            Hit(path: "/fixture/\(name)", kind: "file", line: nil, size: nil,
+                filesystemPath: "/fixture/\(name)", archiveMembers: [], isDirectory: false,
+                width: width, height: height)
+        }
+        let missing = hit("no dimensions")
+        let narrow = hit("narrow", width: 2, height: 9)
+        let square = hit("square", width: 6, height: 6)
+        let firstTie = hit("a tie", width: 10, height: 10)
+        let secondTie = hit("b tie", width: 5, height: 20)
+        let oversized = hit("oversized", width: Int.max, height: 2)
+        let hits = [secondTie, oversized, missing, square, firstTie, narrow]
+        var report: [String: [String]] = [:]
+        for ascending in [true, false] {
+            let compare: (Hit, Hit) -> Bool = { compareHits($0, $1, key: "dims", ascending: ascending) }
+            let direction = ascending ? "ascending" : "descending"
+            report[direction] = hits.sorted(by: compare).map(\.displayName)
+            report[direction + "Reflexive"] = hits.filter { compare($0, $0) }.map(\.displayName)
+        }
         FileHandle.standardOutput.write(try JSONEncoder().encode(report))
     }
 

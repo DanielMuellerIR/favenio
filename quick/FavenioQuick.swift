@@ -18,352 +18,13 @@
 import AppKit
 import Quartz   // QLPreviewPanel (QuickLook-Vorschau)
 
+#if !FAVENIO_SELFTEST
 @main
 struct FavenioQuickApp {
     static func main() {
-        if CommandLine.arguments.contains("--selftest-scope-ui") {
-            let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            let app = NSApplication.shared
-            app.setActivationPolicy(.accessory)
-            let controller = QuickController()
-            controller.buildWindow()
-            controller.field.stringValue = "fixture"
-            controller.hasSearched = true
-            controller.searchRoot = "/ersatz"
-            controller.finish(query: "fixture", errorText: nil)
-            controller.window.orderBack(nil)
-            defer { controller.window.orderOut(nil) }
-            let output = URL(fileURLWithPath: CommandLine.arguments.last!)
-            func captureWindow(_ name: String) throws {
-                controller.window.displayIfNeeded()
-                let capture = Process()
-                capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                capture.arguments = ["-x", "-l", "\(controller.window.windowNumber)",
-                    output.appendingPathComponent(name + ".png").path]
-                try capture.run()
-                capture.waitUntilExit()
-                precondition(capture.terminationStatus == 0 && !app.isActive)
-                precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmost)
-            }
-            do {
-                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-                for (index, folders) in [["/finder"], ["/ersatz"]].enumerated() {
-                    controller.applyScopeOutcome(.folders(folders))
-                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
-                    precondition(!app.isActive && controller.window.isVisible)
-                    if index == 0 {
-                        precondition(controller.infoLabel.stringValue.contains("Finder-Ordner ist /finder"))
-                        precondition(controller.infoLabel.textColor == .systemOrange)
-                    } else {
-                        precondition(controller.runScopeMismatch == nil)
-                        precondition(controller.infoLabel.stringValue == controller.searchOutcomeText)
-                        precondition(controller.infoLabel.textColor == .secondaryLabelColor)
-                        precondition(controller.infoLabel.toolTip == controller.searchOutcomeText! + "\n/ersatz")
-                    }
-                    try captureWindow("scope-\(index)")
-                }
-                let fixture = output.appendingPathComponent(UUID().uuidString)
-                try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: false)
-                defer { try? FileManager.default.removeItem(at: fixture) }
-                try Data().write(to: fixture.appendingPathComponent("fixture.txt"))
-                controller.manualSearchRoots = [fixture.path]
-                controller.userPickedScope = true
-                controller.initialSearchSeconds = 0
-                controller.startSearch()
-                let until = Date(timeIntervalSinceNow: 8)
-                while controller.resumeButton.isHidden && Date() < until {
-                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
-                }
-                precondition(!controller.resumeButton.isHidden && controller.infoLabel.stringValue.contains("Pausiert"))
-                try captureWindow("quick-paused")
-                controller.resumeButton.performClick(nil)
-                while controller.runningSearch != nil && Date() < until {
-                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
-                }
-                precondition(controller.hits.count == 1 && controller.infoLabel.stringValue.contains("Suchbereich durchsucht"))
-                try captureWindow("quick-finished")
-                print("SCOPE UI OK — Bereichswarnung und normaler Quick-Endstand im Hintergrund geprüft")
-            } catch {
-                print("SELFTEST FEHLER: \(error)")
-                exit(1)
-            }
-            exit(0)
-        }
-        if CommandLine.arguments.contains("--selftest") {
-            _ = NSApplication.shared
-            let controller = QuickController()
-            if let error = pixelFieldSelfTest(controller.pixelFields,
-                                             validate: controller.validatePixelInputs) {
-                print("SELFTEST FEHLER: \(error)")
-                exit(1)
-            }
-            controller.filterView.literalWildcards = true
-            precondition(controller.searchConfiguration.literalWildcards)
-            controller.filterView.exclusions = ["node_modules", " keep spaces "]
-            controller.filterView.rawFacts = ["min-size": "0"]
-            guard controller.searchConfiguration.hasPositiveFilter,
-                  controller.searchConfiguration.arguments(pattern: "", root: "/fixture") != nil else {
-                print("SELFTEST FEHLER: Reine Faktenfilter starten keine Suche")
-                exit(1)
-            }
-            guard controller.searchConfiguration.exclusions == ["node_modules", " keep spaces "],
-                  SearchConfiguration.fromQueryItems(controller.searchConfiguration.queryItems)
-                    == controller.searchConfiguration else {
-                print("SELFTEST FEHLER: Ausschlussoptionen gehen zwischen Controls und Übergabe verloren")
-                exit(1)
-            }
-            // Weitere Suchbegriffe: erreichen Argumente und die Übergabe-URL.
-            controller.filterView.terms = ["beta"]
-            guard controller.searchConfiguration.terms == ["beta"],
-                  controller.searchConfiguration.arguments(pattern: "alpha", root: "/fixture")?
-                      .contains("--term=beta") == true,
-                  controller.searchConfiguration.queryItems.contains(
-                      URLQueryItem(name: "term", value: "beta")) else {
-                print("SELFTEST FEHLER: Weitere Suchbegriffe erreichen Argumente oder Übergabe nicht")
-                exit(1)
-            }
-            controller.filterView.terms = []
-            let criteria = """
-            {"schemaVersion":1,"root":{"id":"quick","field":"name","operator":"contains","value":"Treffer"}}
-            """
-            controller.criteriaControl.applyJSON(criteria)
-            guard controller.searchConfiguration.criteriaJSON == criteria,
-                  controller.searchConfiguration.arguments(pattern: "", root: "/fixture")?
-                    .contains("--criteria-json=" + criteria) == true,
-                  SearchConfiguration.fromQueryItems(controller.searchConfiguration.queryItems)
-                    == controller.searchConfiguration else {
-                print("SELFTEST FEHLER: Quick verliert den Kriterienbaum")
-                exit(1)
-            }
-            controller.criteriaControl.applyJSON(nil)
-            controller.startSearch()
-            guard controller.queuedQuery else {
-                print("SELFTEST FEHLER: Reine Faktenfilter erreichen Quick-Start nicht")
-                exit(1)
-            }
-            controller.cancelSearch()
-            controller.field.stringValue = "Treffer"
-            controller.minWidthField.stringValue = "10.5"
-            controller.startSearch()
-            controller.openInMainApp()
-            guard controller.runningSearch == nil, !controller.searching,
-                  !controller.queuedQuery,
-                  controller.infoLabel.stringValue == controller.minWidthField.toolTip else {
-                print("SELFTEST FEHLER: Ungültige Maße starten oder übergeben die Schnellsuche")
-                exit(1)
-            }
-            controller.field.stringValue = ""
-            controller.optionsChanged()
-            guard controller.minWidthField.toolTip != nil else {
-                print("SELFTEST FEHLER: Maßfehler ohne Suchtext bleibt unsichtbar")
-                exit(1)
-            }
-            let oversized = QuickController()
-            oversized.field.stringValue = String(repeating: "🙂", count: 1025)
-            oversized.scopePopup.addItem(withTitle: "Fixture")
-            oversized.scopePopup.selectedItem?.representedObject = "/fixture"
-            oversized.openInMainApp()
-            guard oversized.infoLabel.stringValue == quickHandoffInputProblem(
-                query: oversized.field.stringValue, root: "/fixture"),
-                  quickHandoffInputProblem(query: String(repeating: "🙂", count: 1024),
-                                           root: "/fixture") == nil,
-                  quickHandoffInputProblem(query: "x", root: String(repeating: "x", count: 4097)) != nil else {
-                print("SELFTEST FEHLER: Zu lange Übergabe wird nicht vor dem Öffnen erkannt")
-                exit(1)
-            }
-            for flags: NSEvent.ModifierFlags in [[], .shift, .option, .command] {
-                let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
-                    modifierFlags: flags, timestamp: 0, windowNumber: 0,
-                    context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
-                    isARepeat: false, keyCode: 53)!
-                guard controller.previewPanel(nil, handle: event) == flags.isEmpty else {
-                    print("SELFTEST FEHLER: Quick Look verarbeitet Escape mit Zusatztaste")
-                    exit(1)
-                }
-            }
-            let literal = Hit(path: "/fixture/a.zip!/inner.zip!/x.txt", kind: "member",
-                line: nil, size: nil, filesystemPath: "/fixture/a.zip",
-                archiveMembers: ["inner.zip!/x.txt"], isDirectory: false)
-            let nested = Hit(path: literal.path, kind: "member", line: nil, size: nil,
-                filesystemPath: literal.filesystemPath,
-                archiveMembers: ["inner.zip", "x.txt"], isDirectory: false)
-            controller.tableView.dataSource = controller
-            controller.tableView.allowsMultipleSelection = true
-            controller.hits = [literal, nested]
-            controller.reloadKeepingSelection([])
-            controller.tableView.selectRowIndexes([0], byExtendingSelection: false)
-            let selected = controller.selectedHitIdentities()
-            controller.hits.reverse()
-            controller.reloadKeepingSelection(selected)
-            guard controller.tableView.selectedRowIndexes == IndexSet(integer: 1) else {
-                print("SELFTEST FEHLER: Quick verwechselt gleiche Anzeigepfade")
-                exit(1)
-            }
-            // Kein externer Öffnen-Aufruf: Die leere Tabelle liefert keine URL.
-            controller.hits = []
-            controller.reloadKeepingSelection([])
-            controller.contextRow = 7
-            controller.openSelected()
-            guard controller.contextRow == -1 else {
-                print("SELFTEST FEHLER: Doppelklick behält die alte Kontextzeile")
-                exit(1)
-            }
-            controller.contextRow = 7
-            controller.ctxOpen()
-            guard controller.contextRow == 7 else {
-                print("SELFTEST FEHLER: Kontextaktion verliert ihre Zeile")
-                exit(1)
-            }
-            let deduped = QuickController()
-            let roots = SearchRoots(["/scope-a", "/scope-b"])
-            var repeated: [Hit] = []
-            for index in 0..<25 {
-                var hit = Hit(path: "/scope-a/item-\(index)", kind: "file", line: nil, size: 1,
-                    filesystemPath: "/scope-a/item-\(index)", archiveMembers: [], isDirectory: false,
-                    searchRootBytes: roots.bytes[0])
-                repeated.append(hit); hit.searchRootBytes = roots.bytes[1]; repeated.append(hit)
-            }
-            deduped.enqueueSearchHits(repeated, scope: roots)
-            guard deduped.pending.count == 25, Set(deduped.pending.map { $0.identity }).count == 25,
-                  deduped.pending.allSatisfy({ $0.searchRootBytes == roots.bytes[0] }) else {
-                print("SELFTEST FEHLER: Quick dedupliziert überlappende Suchbereiche falsch")
-                exit(1)
-            }
-            deduped.manualSearchRoots = roots.paths; deduped.userPickedScope = true
-            deduped.rebuildScopePopup(); deduped.scopeChanged()
-            deduped.scopeProblem = nil; deduped.applyScopeOutcome(.denied)
-            guard deduped.selectedSearchRoots == roots.paths, deduped.scopeProblem == nil else {
-                print("SELFTEST FEHLER: Späte Finderantwort ersetzt manuelle Bereiche")
-                exit(1)
-            }
-            let automatic = QuickController()
-            automatic.scopeResolved = true; automatic.scopeFinderFolders = ["/finder"]
-            automatic.rebuildScopePopup()
-            automatic.scopePopup.select(automatic.scopePopup.itemArray.first { $0.identifier?.rawValue == "editSearchRoots" })
-            guard automatic.selectedSearchRoots == ["/finder"] else {
-                print("SELFTEST FEHLER: Editor-Menü verliert sichtbaren Finderbereich")
-                exit(1)
-            }
-            do {
-                let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                defer { try? FileManager.default.removeItem(at: root) }
-                // os.walk liest die FIFO vor dem Abstieg in den Trefferordner.
-                // Ihre Warnung muss auch nach dem Fortsetzen sichtbar bleiben.
-                precondition(mkfifo(root.appendingPathComponent("warn.pipe").path, 0o600) == 0)
-                let matches = root.appendingPathComponent("matches")
-                try FileManager.default.createDirectory(at: matches, withIntermediateDirectories: true)
-                for index in 0..<32 {
-                    try Data("NEEDLE\n".utf8).write(to: matches.appendingPathComponent("match-\(index).txt"))
-                }
-                let limited = QuickController()
-                limited.tableView.dataSource = limited
-                limited.field.stringValue = "NEEDLE"
-                limited.modeControl.selectItem(at: 1)
-                limited.scopePopup.addItem(withTitle: "Fixture")
-                limited.scopePopup.selectedItem?.representedObject = root.path
-                limited.initialSearchSeconds = 0
-                limited.startSearch()
-                let deadline = ProcessInfo.processInfo.systemUptime + 10
-                while limited.resumeButton.isHidden && ProcessInfo.processInfo.systemUptime < deadline {
-                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
-                }
-                guard let run = limited.runningSearch, !limited.searching, !limited.resumeButton.isHidden,
-                      limited.infoLabel.stringValue.contains("Weitere Treffer möglich") else {
-                    print("SELFTEST FEHLER: Zeitpause ohne Treffer nicht sichtbar")
-                    exit(1)
-                }
-                limited.resumeSearch()
-                guard limited.runningSearch === run else { print("SELFTEST FEHLER: Fortsetzen startet neue Suche"); exit(1) }
-                while limited.runningSearch != nil && ProcessInfo.processInfo.systemUptime < deadline {
-                    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
-                }
-                guard limited.hits.count == 32, limited.runningSearch == nil, limited.resumeButton.isHidden,
-                      limited.infoLabel.stringValue.contains("Abdeckung eingeschränkt") else {
-                    print("SELFTEST FEHLER: Quick setzt die Suche nicht bis zum Ende fort")
-                    exit(1)
-                }
-                guard limited.skippedCount == 1,
-                      limited.infoLabel.stringValue.contains(skippedNote(1)),
-                      !limited.infoLabel.stringValue.contains("fehlgeschlagen") else {
-                    print("SELFTEST FEHLER: Fortsetzen verliert Warnungen")
-                    exit(1)
-                }
-            } catch {
-                print("SELFTEST FEHLER: Quick-Zeitpause: \(error)")
-                exit(1)
-            }
-            if let error = quickFilterDisclosureSelfTest() {
-                print("SELFTEST FEHLER: \(error)")
-                exit(1)
-            }
-            let finderColumns = QuickController()
-            finderColumns.buildWindow()
-            if let error = finderColumnsSelfTest(finderColumns) ?? quickHandoffIssueSelfTest() {
-                print("SELFTEST FEHLER: \(error)")
-                exit(1)
-            }
-            let grouped = QuickController()
-            grouped.buildWindow()
-            if let error = resultGroupingListSelfTest(grouped) {
-                print("SELFTEST FEHLER: \(error)")
-                exit(1)
-            }
-            let filtered = QuickController()
-            filtered.buildWindow()
-            if let error = resultFilterListSelfTest(filtered, terminate: {
-                filtered.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
-            }) {
-                print("SELFTEST FEHLER: \(error)")
-                exit(1)
-            }
-            let filteredLimit = QuickController()
-            filteredLimit.buildWindow()
-            filteredLimit.resultFilter.criteria.applyJSON(CriteriaNode(field: "name", value: "keep-").json)
-            filteredLimit.resultFilter.apply()
-            filteredLimit.pending = (0..<24).map { n in
-                let path = "/missing/" + (n % 2 == 0 ? "keep-" : "other-") + String(n) + ".txt"
-                return Hit(path: path, kind: "file", line: nil, size: 1,
-                    filesystemPath: path, archiveMembers: [], isDirectory: false)
-            }
-            filteredLimit.flushPending()
-            let filteredUntil = ProcessInfo.processInfo.systemUptime + 8
-            while filteredLimit.resultFilter.isFiltering && ProcessInfo.processInfo.systemUptime < filteredUntil {
-                RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
-            }
-            guard filteredLimit.resultFilter.sourceCount == 24,
-                  filteredLimit.hits.count == 12, filteredLimit.pending.isEmpty,
-                  filteredLimit.resultFilter.errorMessage == nil else {
-                print("SELFTEST FEHLER: Ansichtsfilter verliert Quick-Quelltreffer")
-                filteredLimit.resultFilter.stopForTermination()
-                exit(1)
-            }
-            filteredLimit.resultFilter.reset()
-            guard filteredLimit.hits.count == 24 else { print("SELFTEST FEHLER: Quick-Filterreset verliert Quelltreffer"); exit(1) }
-            // Die Vorschau zu schließen darf die App NICHT beenden. Der
-            // Controller ist auch Delegat des Quick-Look-Panels, und dessen
-            // `orderOut` kommt als `windowWillClose` an. Feuerte hier
-            // `NSApp.terminate`, endete der Selbsttest ohne die Zeile
-            // „SELFTEST OK" — der Lauf muss also weiterkommen.
-            do {
-                let quitter = QuickController()
-                quitter.buildWindow()
-                quitter.windowWillClose(Notification(
-                    name: NSWindow.willCloseNotification,
-                    object: QLPreviewPanel.shared() as Any))
-                quitter.windowWillClose(Notification(
-                    name: NSWindow.willCloseNotification,
-                    object: NSWindow()))
-            }
-            if let error = validateSparkleConfiguration(
-                expectedBundleIdentifier: "local.favenio.quick"
-            ) {
-                print("SELFTEST FEHLER: \(error)")
-                exit(1)
-            }
-            print("SELFTEST OK — Sparkle-Anbindung der Schnellsuche "
-                  + "funktioniert")
-            exit(0)
+        if CommandLine.arguments.contains("--check-bundle") {
+            exit(checkProductBundle(identifier: "local.favenio.quick", appName: "Favenio Schnellsuche",
+                                    helpers: ["favenio-ocr", "favenio-pdf"]))
         }
         // Headless-Diagnose: was sieht DIESES Bundle beim Finder wirklich?
         if CommandLine.arguments.contains("--finder-scope") {
@@ -378,90 +39,7 @@ struct FavenioQuickApp {
     }
 }
 
-/// Aufklappen: Ohne gespeicherten Zustand sind die Filter zugeklappt, der
-/// Schalter öffnet sie, und zugeklappt nennt der Titel die gesetzten Filter
-/// (`filterDisclosureSelfTest`). Der gespeicherte Zustand des Entwicklers
-/// wird beiseitegelegt und zurückgeschrieben — jeder Build löschte ihn sonst
-/// (build-app.sh führt den Selbsttest aus). Deshalb liefert die Prüfung einen
-/// Fehlertext, statt selbst `exit(1)` zu rufen: `exit` beendet den Prozess
-/// sofort, und das `defer` unten liefe nie.
-func quickFilterDisclosureSelfTest() -> String? {
-    let key = QuickController.filtersExpandedKey
-    let saved = UserDefaults.standard.object(forKey: key)
-    let finderColumnKeys = ["finderColumn.finderTags", "finderColumn.finderComment"]
-    let savedFinderColumns = UserDefaults.standard.dictionaryRepresentation().filter { finderColumnKeys.contains($0.key) }
-    defer {
-        for key in finderColumnKeys {
-            if let value = savedFinderColumns[key] { UserDefaults.standard.set(value, forKey: key) }
-            else { UserDefaults.standard.removeObject(forKey: key) }
-        }
-        if let saved {
-            UserDefaults.standard.set(saved, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-    }
-    UserDefaults.standard.removeObject(forKey: key)
-    finderColumnKeys.forEach { UserDefaults.standard.removeObject(forKey: $0) }
-    let collapsed = QuickController()
-    collapsed.buildWindow()
-    if let error = contentPreviewDisclosureSelfTest(collapsed) { return error }
-    // Infozeile und Knopf stehen in der Aufklappzeile, nicht in der
-    // zugeklappten Maßzeile. `isHidden` allein sähe das nicht: Eine Ansicht
-    // in einer versteckten Zeile bleibt selbst `isHidden == false`.
-    guard !collapsed.infoLabel.isHiddenOrHasHiddenAncestor,
-          !collapsed.openButton.isHiddenOrHasHiddenAncestor else {
-        return "Infozeile oder Übergabeknopf sind bei zugeklappten Filtern unsichtbar"
-    }
-    UserDefaults.standard.set(true, forKey: "finderColumn.finderTags")
-    let restored = QuickController()
-    restored.buildWindow()
-    restored.window.orderOut(nil)
-    guard restored.finderColumnsVisible, restored.searchConfiguration.finderMetadata else {
-        return "Wiederhergestellte Finder-Spalten erfassen keine Eigenschaften"
-    }
-    return filterDisclosureSelfTest(collapsed.filters)
-}
-
-func quickHandoffIssueSelfTest() -> String? {
-    let controller = QuickController()
-    controller.buildWindow()
-    let warning = "Die Haupt-App unterstützt Finder-Eigenschaften noch nicht."
-    controller.searching = true
-    controller.showHandoffIssue(warning)
-    controller.showProgress(path: "/fixture")
-    controller.pending = [Hit(path: "/fixture/keep.txt", kind: "file", line: nil, size: 1,
-        filesystemPath: "/fixture/keep.txt", archiveMembers: [], isDirectory: false)]
-    controller.flushPending()
-    controller.finish(query: "keep", errorText: nil)
-    controller.hasSearched = true
-    controller.searchRoot = "/ersatz"
-    controller.applyScopeOutcome(.folders(["/finder"]))
-    guard controller.lastInfo.text.contains("Finder-Ordner ist /finder"),
-          controller.lastInfo.text.contains(warning) else { return "Übergabehinweis verdeckt tatsächlichen Suchbereich" }
-    controller.applyScopeOutcome(.folders(["/ersatz"]))
-    guard controller.hits.count == 1, controller.searchOutcomeText?.contains("1 Treffer") == true,
-          controller.lastInfo.text == warning else { return "Übergabehinweis wird durch Suchabschluss oder Bereichsantwort ersetzt" }
-    let errorText = "Eigener Suchfehler: " + String(repeating: "Vollständiger technischer Grund. ", count: 40)
-    controller.finish(query: "keep", errorText: errorText)
-    guard controller.lastInfo.text == errorText,
-          controller.lastInfo.detail?.contains(errorText) == true,
-          controller.lastInfo.detail?.contains(warning) == true else { return "Alter Übergabehinweis verdeckt Suchfehler" }
-    controller.showHandoffIssue(warning)
-    controller.presentActionIssue(summary: "Eigener Aktionsfehler", detail: nil)
-    guard controller.lastInfo.text == "Eigener Aktionsfehler",
-          controller.lastInfo.detail?.contains("Eigener Aktionsfehler") == true,
-          controller.lastInfo.detail?.contains(warning) == true else { return "Alter Übergabehinweis verdeckt Aktionsfehler" }
-    controller.showHandoffIssue(warning)
-    controller.clearHits()
-    guard controller.handoffIssue == nil, controller.lastInfo.text == QuickController.hint else { return "Neue Frage behält alten Übergabehinweis" }
-    controller.showHandoffIssue(warning)
-    controller.field.stringValue = ""
-    controller.openInMainApp()
-    guard controller.handoffIssue == nil else { return "Neuer Übergabeversuch behält alten Hinweis" }
-    print("QUICK HANDOFF ISSUE OK: progress, batch, finish, scope, error precedence, reset")
-    return nil
-}
+#endif
 
 /// Erbt von HitListController (common/FavenioCore.swift): Trefferliste,
 /// Vorschau und die gemeinsamen Kontextmenü-Aktionen stehen dort EINMAL
@@ -494,7 +72,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         let control = NSPopUpButton()
         control.addItems(withTitles: SearchTextMode.allCases.map { $0.title })
         control.setAccessibilityIdentifier("searchTextMode")
-        control.toolTip = "Suchziel: Rohinhalt oder logischer PDF-Dokumenttext mit Seitenbelegen"
+        control.toolTip = searchTextModeToolTip
         return control
     }()
     // Bildmaße (Breite/Höhe je von/bis), leer = egal; gelten per UND.
@@ -548,12 +126,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     var searching = false
 
     var scopeFinderFolders: [String] = []   // Finder-Fenster (async geladen)
-    var refreshingScope = false
-    // Jede Aktivierung braucht eine eigene Finder-Antwort. Läuft die vorige
-    // Abfrage noch, wird die jüngste Generation vorgemerkt und anschließend
-    // wirklich neu abgefragt; ihre alte Antwort darf nicht übernommen werden.
-    var scopeRefreshGeneration = 0
-    var queuedScopeRefreshGeneration: Int?
+    private let finderScopeRefresh: FinderScopeRefresh
     var userPickedScope = false             // hat der Nutzer selbst gewählt?
     // Steht die Antwort des Finders für DIESE Aktivierung schon fest? Solange
     // nicht, ist der Suchbereich unbekannt — und eine Suche darf nicht
@@ -592,6 +165,18 @@ final class QuickController: HitListController, NSApplicationDelegate,
     var resumePipe: Pipe?
     var searchOutcomeText: String?
 
+    #if FAVENIO_SELFTEST
+    var handoffWorkspaceForSelfTest: (
+        application: URL,
+        openURL: (URL) -> Bool,
+        openApplication: (URL, NSWorkspace.OpenConfiguration) -> Void
+    )?
+    #endif
+
+    init(finderScopeRefresh: FinderScopeRefresh = FinderScopeRefresh()) {
+        self.finderScopeRefresh = finderScopeRefresh
+        super.init()
+    }
 
     // ---------- App-Lebenszyklus ----------
 
@@ -689,13 +274,14 @@ final class QuickController: HitListController, NSApplicationDelegate,
     /// als unbekannt.
     func applicationDidBecomeActive(_ notification: Notification) {
         if CommandLine.arguments.contains("--control-test-host") { return }
-        scopeRefreshGeneration += 1
         scopeResolved = false
         // Ein Finder-Ordner der vorigen Aktivierung ist keine gültige
         // Antwort für die neue. Bleibt die Abfrage aus oder scheitert sie,
         // muss das Menü auf die gemeinsamen Ersatzordner fallen.
         scopeFinderFolders = []
-        refreshFinderFoldersAsync()
+        finderScopeRefresh.refresh(forActivation: true) { [weak self] outcome in
+            self?.applyScopeOutcome(outcome)
+        }
         rebuildScopePopup()
     }
 
@@ -1110,32 +696,6 @@ final class QuickController: HitListController, NSApplicationDelegate,
         scopePopup.lastItem?.identifier = NSUserInterfaceItemIdentifier("editSearchRoots")
     }
 
-    func refreshFinderFoldersAsync() {
-        let generation = scopeRefreshGeneration
-        guard !refreshingScope else {
-            queuedScopeRefreshGeneration = generation
-            return
-        }
-        refreshingScope = true
-        // Läuft im Hintergrund (osascript-Unterprozess) — der Main-Thread
-        // blockiert NIE.
-        finderWindowFoldersAsync { [weak self] outcome in
-            guard let self else { return }
-            self.refreshingScope = false
-            // Nur die Antwort der aktuellen Aktivierung darf den Suchbereich
-            // setzen. Eine inzwischen vorgemerkte Aktivierung wird danach mit
-            // einer frischen Finder-Abfrage bedient.
-            if generation == self.scopeRefreshGeneration {
-                self.applyScopeOutcome(outcome)
-            }
-            guard let queued = self.queuedScopeRefreshGeneration else { return }
-            self.queuedScopeRefreshGeneration = nil
-            if queued == self.scopeRefreshGeneration {
-                self.refreshFinderFoldersAsync()
-            }
-        }
-    }
-
     /// Antwort des Finders verarbeiten. Wichtig: Ein Fehlschlag wird GEMELDET
     /// statt stillschweigend auf den Benutzerordner zurückzufallen.
     func applyScopeOutcome(_ outcome: FinderScopeOutcome) {
@@ -1260,7 +820,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
     func maybeReportDeniedAutomation() {
         let suppressKey = "FavenioSuppressAutomationAlert"
         if deniedAlertShown { return }
-        if UserDefaults.standard.bool(forKey: suppressKey) { return }
+        if favenioPreferences.bool(forKey: suppressKey) { return }
         deniedAlertShown = true
 
         let alert = NSAlert()
@@ -1281,7 +841,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
         case .alertFirstButtonReturn:
             openAutomationSettings()
         case .alertThirdButtonReturn:
-            UserDefaults.standard.set(true, forKey: suppressKey)
+            favenioPreferences.set(true, forKey: suppressKey)
         default:
             break
         }
@@ -1746,6 +1306,13 @@ final class QuickController: HitListController, NSApplicationDelegate,
             showInfo("Konnte Ergebnisübergabe nicht erzeugen.")
             return
         }
+        #if FAVENIO_SELFTEST
+        if format.hasHeader, mainAppURL != nil {
+            try? FileManager.default.removeItem(at: resultsFile)
+            return
+        }
+        if handoffWorkspaceForSelfTest?.openURL(handoffURL) == true { return }
+        #else
         if format.hasHeader, let appURL = mainAppURL {
             NSWorkspace.shared.open([handoffURL], withApplicationAt: appURL,
                                     configuration: NSWorkspace.OpenConfiguration()) { _, error in
@@ -1763,6 +1330,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
             NSApp.terminate(nil)
             return
         }
+        #endif
         // Weg 2 (Fallback): Favenio.app direkt starten. Derselbe strukturierte
         // URL-Datensatz reist als Argument mit; dadurch bleiben Wurzel,
         // Optionen und das Fortsetzen der Suche exakt wie im primären Weg.
@@ -1779,6 +1347,13 @@ final class QuickController: HitListController, NSApplicationDelegate,
         // Weg, den Datensatz trotzdem zuzustellen.
         configuration.createsNewApplicationInstance = true
         configuration.arguments = ["--handoff-url", handoffURL.absoluteString]
+        #if FAVENIO_SELFTEST
+        if let handoffWorkspaceForSelfTest {
+            handoffWorkspaceForSelfTest.openApplication(appURL, configuration)
+        } else {
+            try? FileManager.default.removeItem(at: resultsFile)
+        }
+        #else
         NSWorkspace.shared.openApplication(at: appURL,
                                            configuration: configuration) {
             _, error in
@@ -1792,11 +1367,15 @@ final class QuickController: HitListController, NSApplicationDelegate,
                 }
             }
         }
+        #endif
     }
 
     /// Die große Favenio.app finden: über die Bundle-ID (LaunchServices)
     /// oder als Nachbarin im selben Ordner wie diese App.
     func locateMainApp() -> URL? {
+        #if FAVENIO_SELFTEST
+        return handoffWorkspaceForSelfTest?.application
+        #else
         if let url = NSWorkspace.shared.urlForApplication(
             withBundleIdentifier: "local.favenio") {
             return url
@@ -1807,6 +1386,7 @@ final class QuickController: HitListController, NSApplicationDelegate,
             return sibling
         }
         return nil
+        #endif
     }
 
     // ---------- Trefferliste (Anzeige + Öffnen) ----------

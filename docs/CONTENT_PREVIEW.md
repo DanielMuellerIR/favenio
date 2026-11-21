@@ -140,6 +140,8 @@ Pro Auftrag gelten:
 
 - Höchstens 128 KiB Auftrag, 64 MiB Blattbytes und drei Sekunden Leserarbeit.
   Ein eigener Alarm unterbricht auch einen einzelnen teuren Regexaufruf.
+  Aufrufe aus Worker-Threads oder mit einem belegten Prozessalarm führen
+  denselben Leser in einem eigenen kurzlebigen Prozess aus.
 - In den Apps höchstens fünf Sekunden einschließlich Warten und Auspacken;
   SIGTERM/SIGKILL und das Abmelden eigener Materialisierungsanforderer verwenden
   die bestehenden Prozesswege. Andere Anforderer desselben Auftrags bleiben erhalten.

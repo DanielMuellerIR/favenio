@@ -1,6 +1,7 @@
 """Echte Linux-Sprachgrenze: Swift-Modelle und Suchprozess aus einem fremden Aufrufer."""
 import base64
 import ctypes
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -136,6 +137,98 @@ class SharedModelTests(unittest.TestCase):
             current = self.call(operation='projection', mode='none', **run)
             self.assertFalse(current['arrivalPrefix'])
             self.assertEqual([row['index'] for row in current['rows']], [0, 2])
+
+    def test_sorted_selection_and_export_share_result_indices(self):
+        with tempfile.TemporaryDirectory(prefix='favenio-ffi-order-') as directory:
+            roots = [str(Path(directory, name)) for name in ('needle-b', 'needle-c', 'needle-a')]
+            for name in roots:
+                Path(name).touch()
+            started = self.call(operation='start', pattern='needle', roots=roots, options=[])
+            self.finish(started)
+            run = dict(runID=started['runID'], sort='name', ascending=False)
+            initial = self.call(operation='projection', **run)
+            self.assertEqual([row['index'] for row in initial['rows']], [1, 0, 2])
+            self.assertTrue(self.call(operation='remove', indices=[0])['ok'])
+            page = self.call(operation='page', offset=0, limit=1, **run)
+            self.assertEqual(page['count'], 2)
+            self.assertTrue(page['hasMore'])
+            self.assertEqual(page['nextOffset'], 1)
+            result = self.call(operation='exportCurrent', format='pathsNUL', **run)
+            self.assertEqual(base64.b64decode(result['data']), os.fsencode(roots[1]) + b'\0' + os.fsencode(roots[2]) + b'\0')
+            invalid = self.call(operation='exportCurrent', format='pathsNUL', indices=['0'], **run)
+            self.assertFalse(invalid['ok'], invalid)
+
+    def test_parallel_pages_keep_their_own_sort_order(self):
+        with tempfile.TemporaryDirectory(prefix="favenio-ffi-concurrent-") as directory:
+            roots = [str(Path(directory, f"needle-{number:02d}.txt")) for number in reversed(range(16))]
+            sizes = {path: index for index, path in enumerate(roots, start=1)}
+            for path, size in sizes.items():
+                Path(path).write_bytes(b"x" * size)
+            started = self.call(operation="start", pattern="needle", roots=roots, options=[])
+            hits, _ = self.finish(started)
+            self.assertEqual([hit["path"] for hit in hits], roots)
+            expected_paths = roots.copy()
+
+            def check_page(number):
+                ascending = number % 2 == 0
+                offset = number % 8
+                field = "name" if number % 4 < 2 else "size"
+                page = self.call(operation="page", runID=started["runID"], sort=field,
+                                 ascending=ascending, offset=offset, limit=5)
+                key = sizes.__getitem__ if field == "size" else None
+                expected = sorted(expected_paths, key=key, reverse=not ascending)[offset:offset + 5]
+                self.assertTrue(page["ok"], page)
+                self.assertEqual(page["count"], len(expected_paths))
+                self.assertEqual([row.get("hit", row)["path"] for row in page["hits"]], expected)
+
+            with ThreadPoolExecutor(max_workers=4) as workers:
+                list(workers.map(check_page, range(24)))
+                self.assertTrue(self.call(operation="remove", indices=[0, 7, 15])["ok"])
+                expected_paths = [path for index, path in enumerate(roots) if index not in {0, 7, 15}]
+                list(workers.map(check_page, range(24)))
+
+    def test_sorted_page_includes_a_later_search_batch(self):
+        with tempfile.TemporaryDirectory(prefix="favenio-ffi-later-batch-") as directory:
+            root = Path(directory)
+            first, later = [str(root / name) for name in ("needle-b", "needle-a")]
+            ready = root / "resume"
+            engine = root / "fixture.py"
+            engine.write_text(
+                "import json, time\nfrom pathlib import Path\n"
+                "def hit(path):\n"
+                "    print(json.dumps(dict(path=path, type='file', isDirectory=False, "
+                "filesystemPath=path, archiveMembers=[])), flush=True)\n"
+                f"hit({first!r})\n"
+                "deadline = time.monotonic() + 10\n"
+                f"while not Path({str(ready)!r}).exists():\n"
+                "    if time.monotonic() >= deadline: raise SystemExit(2)\n"
+                "    time.sleep(.01)\n"
+                f"hit({later!r})\n",
+                encoding="utf-8",
+            )
+            previous_engine = os.environ["FAVENIO_ENGINE"]
+            try:
+                os.environ["FAVENIO_ENGINE"] = str(engine)
+                started = self.call(operation="start", pattern="needle", roots=[directory], options=[])
+                self.assertTrue(started["ok"], started)
+                parameters = dict(runID=started["runID"], sort="name", ascending=True, offset=0, limit=4)
+                deadline = time.monotonic() + 8
+                while True:
+                    page = self.call(operation="page", **parameters)
+                    self.assertTrue(page["ok"], page)
+                    if page["count"] or time.monotonic() >= deadline:
+                        break
+                    time.sleep(.01)
+                self.assertEqual([row.get("hit", row)["path"] for row in page["hits"]], [first])
+                ready.touch()
+                _, ending = self.finish(started)
+                self.assertEqual(ending["state"], "finished")
+                page = self.call(operation="page", **parameters)
+                self.assertEqual(page["count"], 2, page)
+                self.assertEqual([row.get("hit", row)["path"] for row in page["hits"]], [later, first])
+            finally:
+                self.call(operation="cleanup")
+                os.environ["FAVENIO_ENGINE"] = previous_engine
 
     def finish(self, started):
         self.assertTrue(started['ok'], started)

@@ -209,7 +209,9 @@ extension MainController {
         let window = RecordingComparisonWindow(comparison, run: run, report: report, problem: problem)
         window.onClose = { [weak self] in self?.recordingComparisonWindow = nil }
         recordingComparisonWindow = window
-        if !CommandLine.arguments.contains("--selftest") { window.window.makeKeyAndOrderFront(nil) }
+        #if !FAVENIO_SELFTEST
+        window.window.makeKeyAndOrderFront(nil)
+        #endif
     }
 }
 

@@ -1,13 +1,113 @@
 use super::*;
+
+pub(super) struct EvidencePane {
+    pub enabled: gtk::CheckButton,
+    navigation: gtk::Box,
+    query: gtk::DropDown,
+    previous: gtk::Button,
+    next: gtk::Button,
+    context: gtk::Button,
+    cancel: gtk::Button,
+    scroll: gtk::ScrolledWindow,
+    pub text: gtk::TextView,
+    pub restart: gtk::Button,
+}
+
+impl EvidencePane {
+    pub fn new(body: &gtk::Box) -> Self {
+        let preview_enabled = gtk::CheckButton::with_label("Fundstellenvorschau");
+        preview_enabled.set_active(false);
+        let navigation = row();
+        let evidence_query = gtk::DropDown::from_strings(&["Fundstelle"]);
+        let previous_evidence = gtk::Button::with_label("Vorherige");
+        let next_evidence = gtk::Button::with_label("Nächste");
+        let context_evidence = gtk::Button::with_label("Mehr Kontext");
+        let cancel_evidence = gtk::Button::with_label("Abbrechen");
+        for widget in [
+            evidence_query.clone().upcast::<gtk::Widget>(),
+            previous_evidence.clone().upcast(),
+            next_evidence.clone().upcast(),
+            context_evidence.clone().upcast(),
+            cancel_evidence.clone().upcast(),
+        ] {
+            navigation.append(&widget);
+        }
+        let (scroll, preview) = editor(100);
+        preview.set_editable(false);
+        let preview_restart = gtk::Button::with_label("Mit Vorschau neu suchen");
+
+        body.append(&preview_enabled);
+        body.append(&navigation);
+        body.append(&scroll);
+        body.append(&preview_restart);
+        let pane = Self {
+            enabled: preview_enabled,
+            navigation,
+            query: evidence_query,
+            previous: previous_evidence,
+            next: next_evidence,
+            context: context_evidence,
+            cancel: cancel_evidence,
+            scroll,
+            text: preview,
+            restart: preview_restart,
+        };
+        pane.show_controls(false);
+        pane
+    }
+
+    pub fn show_controls(&self, visible: bool) {
+        self.scroll.set_visible(visible);
+        self.navigation.set_visible(visible);
+        self.restart.set_visible(visible);
+    }
+}
+
+pub(super) fn connect_navigation(ui: &Rc<Ui>) {
+    for (button, delta, context) in [
+        (&ui.evidence.previous, -1, false),
+        (&ui.evidence.next, 1, false),
+        (&ui.evidence.context, 0, true),
+    ] {
+        let weak = Rc::downgrade(ui);
+        button.connect_clicked(move |_| {
+            if let Some(ui) = weak.upgrade() {
+                ui.navigate_evidence(delta, context);
+            }
+        });
+    }
+    let weak = Rc::downgrade(ui);
+    ui.evidence.cancel.connect_clicked(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            let _ = ui.model.call(json!({"operation":"cancelPreview"}));
+            ui.evidence_load.borrow_mut().take();
+            ui.status
+                .set_text("Nachladen abgebrochen. Bisheriger Beleg bleibt erhalten.");
+        }
+    });
+    let weak = Rc::downgrade(ui);
+    ui.evidence.query.connect_selected_notify(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.evidence_occurrence.set(0);
+            ui.evidence_at_end.set(false);
+            let _ = ui.model.call(json!({"operation":"cancelPreview"}));
+            ui.evidence_load.borrow_mut().take();
+            if let Some(hit) = ui.selected().first() {
+                ui.render_evidence(&hit["preview"]);
+            }
+        }
+    });
+}
+
 impl Ui {
     pub(super) fn update_preview(&self) {
-        if !self.preview_enabled.is_active() {
-            self.preview.buffer().set_text("");
+        if !self.evidence.enabled.is_active() {
+            self.evidence.text.buffer().set_text("");
             return;
         }
         let selected = self.selected();
         let Some(hit) = selected.first() else {
-            self.preview.buffer().set_text("Treffer auswählen.");
+            self.evidence.text.buffer().set_text("Treffer auswählen.");
             return;
         };
         let id = hit["id"].as_str().unwrap_or("").to_owned();
@@ -33,22 +133,22 @@ impl Ui {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            self.evidence_query.set_model(Some(&gtk::StringList::new(
+            self.evidence.query.set_model(Some(&gtk::StringList::new(
                 &labels.iter().map(String::as_str).collect::<Vec<_>>(),
             )));
-            self.evidence_query.set_selected(0);
+            self.evidence.query.set_selected(0);
         }
         match self
             .model
             .call(json!({"operation":"previewStatus","raw":hit["raw"]}))
         {
             Ok(value) => self.render_evidence(&value["preview"]),
-            Err(error) => self.preview.buffer().set_text(&error),
+            Err(error) => self.evidence.text.buffer().set_text(&error),
         }
     }
     pub(super) fn render_evidence(&self, preview: &Value) {
         let snippets = preview["snippets"].as_array().cloned().unwrap_or_default();
-        let buffer = self.preview.buffer();
+        let buffer = self.evidence.text.buffer();
         buffer.set_text("");
         let tag = buffer.tag_table().lookup("evidence").unwrap_or_else(|| {
             let tag = gtk::TextTag::builder()
@@ -156,7 +256,7 @@ impl Ui {
         let selected = self.selected();
         let Some(hit) = selected.first() else { return };
         let occurrence = (self.evidence_occurrence.get() as i64 + i64::from(delta)).max(0) as u64;
-        match self.model.call(json!({"operation":"loadPreview","raw":hit["raw"],"queryIndex":self.evidence_query.selected(),"occurrence":occurrence,"context":context})){
+        match self.model.call(json!({"operation":"loadPreview","raw":hit["raw"],"queryIndex":self.evidence.query.selected(),"occurrence":occurrence,"context":context})){
             Ok(value)=>{*self.evidence_load.borrow_mut()=value["loadID"].as_str().map(str::to_owned);self.status.set_text("Fundstelle wird geladen …");},Err(error)=>self.status.set_text(&error)
         }
     }

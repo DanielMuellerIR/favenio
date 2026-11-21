@@ -80,37 +80,6 @@ struct Hit: Hashable {
     /// Die Oberflächen fragen hier, statt die Bedingung nachzubauen.
     var hasOpenableFile: Bool { !(isMember && isDirectory) }
 
-    /// Die Spalte „Fundstelle": Zeilennummer bei Inhaltstreffern,
-    /// „Feld: Wert“ bei Metadaten oder begrenzte Kriterienbelege.
-    var locationText: String {
-        if terms.count > 1 {
-            // Alle Begriffe: „1, 3" bzw. „Keywords: Winter | Title: Alpen".
-            if terms.allSatisfy({ $0.line != nil }) {
-                return terms.map { $0.documentPosition?.title ?? String($0.line!) }.joined(separator: ", ")
-            }
-            if terms.allSatisfy({ $0.field != nil }) {
-                return terms.map { $0.field! + ": " + ($0.value ?? "") }
-                    .joined(separator: " | ")
-            }
-        }
-        if let field, let value { return field + ": " + value }
-        if let documentPosition { return documentPosition.title }
-        if let line { return String(line) }
-        let fields = ["name": "Name", "extension": "Endung", "relativePath": "Pfad",
-                      "content": "Inhalt", "metadata": "Metadaten", "size": "Größe",
-                      "modified": "Geändert", "created": "Erstellt", "width": "Breite", "height": "Höhe",
-                      "finderTags": "Finder-Tags", "finderComment": "Finder-Kommentar"]
-        let locations = criteriaEvidence.filter { ["content", "metadata"].contains($0.field) }
-        let facts = criteriaEvidence.filter { !["content", "metadata"].contains($0.field) }
-        var evidence = (locations + facts).prefix(3).map {
-            let place = ($0.documentPosition.map { " " + $0.title } ?? $0.line.map { " Zeile \($0)" } ?? "") + ($0.metadataField.map { " \($0)" } ?? "")
-            let absent = $0.field == "content" && $0.negated ? "ohne „" + $0.value + "“" : $0.value
-            return (fields[$0.field] ?? $0.field) + place + ": " + absent + ($0.valueTruncated ? "…" : "")
-        }
-        if criteriaEvidence.count > 3 { evidence.append("+\(criteriaEvidence.count - 3) weitere") }
-        return evidence.joined(separator: " | ")
-    }
-
     /// Die Spalte „Maße": „1200×800" oder leer.
     var dimensionsText: String {
         guard let width, let height else { return "" }
@@ -221,7 +190,15 @@ struct HitIdentity: Hashable {
     }
 
     func hash(into hasher: inout Hasher) {
-        hasher.combine(filesystemPathBytes ?? Data(filesystemPath.utf8))
+        // Foundation.Data lässt bei langen gemeinsamen Präfixen die
+        // unterscheidenden Dateinamen aus. Beide Pfadrepräsentationen müssen
+        // dieselben vollständigen Bytes in denselben Hasher schreiben.
+        if let filesystemPathBytes {
+            hasher.combine(filesystemPathBytes.count)
+            filesystemPathBytes.withUnsafeBytes { hasher.combine(bytes: $0) }
+        } else {
+            Self.hashOriginalText(filesystemPath, into: &hasher)
+        }
         for values in [archiveMembers, archiveMemberBytes] {
             hasher.combine(values.count)
             for value in values { Self.hashOriginalText(value, into: &hasher) }

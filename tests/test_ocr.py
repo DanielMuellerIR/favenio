@@ -221,13 +221,21 @@ class OCRCoreTests(unittest.TestCase):
 class NativeOCRTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        from swift_test_support import native_document_helper_sources, run_process
+
         cls.directory = tempfile.TemporaryDirectory(prefix='favenio-native-ocr-')
         cls.addClassCleanup(cls.directory.cleanup)
         cls.root = Path(cls.directory.name)
         cls.helper, cls.fixture = cls.root / 'ocr', cls.root / 'fixture'
-        for sources, target in [(['ocr/VisionText.swift', 'ocr/main.swift'], cls.helper), (['tests/ocr_fixture.swift'], cls.fixture)]:
-            result = subprocess.run(['swiftc', '-O', *[str(REPO / p) for p in sources], '-o', str(target)], capture_output=True, text=True, timeout=30)
-            if result.returncode:raise RuntimeError(result.stderr)
+        builds = [
+            (native_document_helper_sources("ocr", cls.root), cls.helper),
+            ((REPO / "tests/ocr_fixture.swift",), cls.fixture),
+        ]
+        for sources, target in builds:
+            result = run_process(["swiftc", "-O", *(str(source) for source in sources),
+                                  "-o", str(target)], timeout=30)
+            if result.returncode:
+                raise RuntimeError(result.stderr)
         cls.image = cls.root / 'own-screen.png'
         subprocess.run([str(cls.fixture), str(cls.image)], check=True, timeout=5)
 

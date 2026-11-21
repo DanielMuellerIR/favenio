@@ -2,9 +2,6 @@
 
 # Favenio
 
-Linux: Rust/GTK-Oberflächen verwenden die gemeinsamen Swift-Anwendungsmodelle und den Python-Suchkern. Signierte Pakete stehen im [Linux-Release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.70.0) und über einen eigenen GitHub-Updatekanal bereit. Die Desktop-Anbindung ist unter X11 und Wayland geprüft. Siehe [Linux-Bau und Installation](docs/LINUX.md).
-
-
 **„facile invenio", Latein für „ich finde mit Leichtigkeit".**
 
 Favenio ist eine indexlose Dateisuche für macOS und Linux im Stil von EasyFind: Sie
@@ -25,73 +22,34 @@ Der Suchkern ist pures Python 3 (nur Standardbibliothek), eine Datei, keine
 Installation. Darauf aufbauend gibt es zwei native macOS-Apps: ein großes
 Suchfenster und ein kleines Schnellsuche-Panel für die Finder-Toolbar.
 
-## Neu in 0.70.0
+## Funktionen
 
-Unter macOS lassen sich Originaldateien und Ordner aus beiden Apps in den Finder
-ziehen und dort verschieben oder kopieren. Die Schnellsuche pausiert nach fünf
-Sekunden an der nächsten Lesegrenze und lässt sich im selben Fenster fortsetzen.
+- Dateien und Ordner mit verschachtelten UND-/ODER-Kriterien durchsuchen.
+  Textkodierung, Kalenderbereiche, Finder-Tags und Finder-Kommentare wählen.
+- Fundstellen mit Hervorhebung ansehen und bei gültiger Quelle weiteren
+  Kontext laden.
+- Dokumenttext in PDF, DOCX, ODT, EPUB, XLSX und PPTX durchsuchen. Lokale OCR
+  getrennt für Bilder, textlose PDF-Seiten oder eingebettete PPTX-Bilder einschalten.
+- Treffer filtern, gruppieren und in der Vorschau ansehen oder das äußere
+  Archiv eines Treffers öffnen.
+- Unter macOS das Lesen auf lokal vorhandene Inhalte von iCloud Drive auf
+  APFS begrenzen.
+- Dateien und Archivmitglieder per Bytevergleich auf Dubletten prüfen.
+  Der Suchbericht erklärt Auslassungen und Grenzen.
 
-## Neu in 0.68.0
-
-Die PPTX-Dokumenttextsuche kann Text in eingebetteten Screenshots erkennen.
-Die Statuszeile erklärt leere Suchergebnisse, die macOS-Haupt-App vergleicht
-Läufe mit Aufzeichnungen und Linux kann Treffer in Eingangsreihenfolge anhängen.
-
-## Neu in 0.66.3
-
-Linux-Ergebnisabfragen unterstützen alle Sortierungen. Metadatenkriterien behalten „Alle Textfelder“ beim Bearbeiten bei. Ordnergruppen unterscheiden auch gleich dargestellte Namen mit unterschiedlichen ursprünglichen Pfadbytes.
-
-## Neu in 0.66.2
-
-Unter Linux öffnet und schließt die Leertaste die Vorschau in Liste und Miniaturraster. Kopierte Pfade behalten abschließende Leerzeichen; aktuelle Bildlader funktionieren mit fester Speichergrenze. Der Nemo-Adapter liefert seine offenen Ansichten auch bei leerer allgemeiner Ordnerliste.
-
-## Neu in 0.66.1
-
-ExifTool wird unter Arch/CachyOS auch dann gefunden, wenn der Desktop-PATH das Vendor-Perl-Verzeichnis auslässt. Archivaktionen erhalten äußere POSIX-Pfade auch bei ungültigem UTF-8.
-
-## Neu in 0.66.0
-
-Die Linux-Oberflächen verwenden den bestehenden Python-Suchkern und gemeinsame Swift-Anwendungsmodelle. Rust/GTK stellt beide Fenster bereit, ergänzt durch Poppler/Tesseract, integrierte Vorschauen, Dateimanager-Adapter und signierte Updatekoordination. Einrichtung und Plattformdetails stehen unter [Linux](docs/LINUX.md).
-
-## Neu in 0.65.0
-
-Version 0.65.0 trennt gemeinsame Anwendungsmodelle und Prozesscode von AppKit. Der optionale Transport `--json-path-bytes` erhält äußere POSIX-Dateinamen einschließlich ungültigem UTF-8 bytegenau. Die Linux-Oberflächen befinden sich im Aufbau; diese Version ist noch kein vollständiger Linux-Port.
-
-Seit dem letzten GitHub-Release 0.38.5 sind in beiden Apps hinzugekommen:
-
-- Ein grafischer Editor für verschachtelte UND-/ODER-Kriterien, mehrere
-  Suchdateien und -ordner, Kalenderbereiche, Finder-Tags und Finder-Kommentare.
-- Kanonischer Unicode-Vergleich und wählbare Textkodierungen mit
-  quellengebundener Vorschau, Fundstellennavigation und Kontext auf Anforderung.
-- Logische Textsuche in PDF, DOCX, ODT, EPUB, XLSX und PPTX. Lokale Bild-OCR und
-  OCR textloser PDF-Seiten sind getrennt zuschaltbar; erkannter Text bleibt
-  unsicher, eingebettete Office-Bilder sind ausgeschlossen.
-- Reversible Trefferfilter, einklappbare Gruppen, Miniaturansichten und
-  ausdrückliche Aktionen für das Quellarchiv eines Archivtreffers.
-- Eine Option für lokal vorhandene Inhalte mit belegter Unterstützung für
-  iCloud Drive auf APFS. Weitere Cloudprovider sind ungeprüft; eine allgemeine
-  Offlinegarantie gibt es nicht.
-- Ausdrückliche Dublettenprüfung über Dateien und Archivmitglieder mit
-  vollständigem Bytevergleich sowie Suchberichte zu Auslassungen und Grenzen.
-  Die Prüfung löscht keine Dateien, verändert keine Archive und behauptet keine Speicherersparnis.
-
-Version 0.64.1 verhindert, dass ein nur lokaler Archivabruf einen laufenden
-Auftrag mit anderer Zugriffsregel übernimmt, und nennt PDF-OCR ausdrücklich im Suchbericht.
-
-Bestehende Vorlagen und Aufzeichnungen bleiben lesbar; neue Fähigkeiten tragen
-ausdrückliche Formatversionen und weisen ältere Empfänger ab. Details stehen
-in den folgenden Abschnitten und im [Changelog](CHANGELOG.md).
+Die [Funktionsübersicht](docs/FEATURES.md) beschreibt Formate und
+Plattformgrenzen. Änderungen je Version stehen im [Changelog](CHANGELOG.md).
 
 ## Screenshots
 
 Die Haupt-App verbindet Kriterien, Dokumenttext und ausdrücklich gewählte lokale OCR.
 Das Beispiel zeigt ein gescanntes PDF mit Seitenbeleg und begrenztem Kontext.
 
-![Favenio 0.64.0: Hauptfenster mit PDF-OCR-Fund und quellengebundenem Kontext](assets/screenshots/main-window.png)
+![Favenio: Hauptfenster mit PDF-OCR-Fund und quellengebundenem Kontext](assets/screenshots/main-window.png)
 
 Die Finder-Schnellsuche verwendet denselben Suchkern und dieselben Filter.
 
-![Favenio 0.64.0: Schnellsuche mit PDF-OCR und quellengebundenem Kontext](assets/screenshots/quick-search.png)
+![Favenio: Schnellsuche mit PDF-OCR und quellengebundenem Kontext](assets/screenshots/quick-search.png)
 
 ## Voraussetzungen
 
@@ -105,20 +63,26 @@ Die Finder-Schnellsuche verwendet denselben Suchkern und dieselben Filter.
 
 ## Installation
 
-`Favenio-<version>.dmg` von der
-[Releases-Seite](../../releases/latest) laden, öffnen und beide Apps nach
-`Programme` ziehen.
+### macOS
 
-Das DMG ist mit einer Developer-ID signiert und von Apple notarisiert;
-Gatekeeper öffnet die Apps ohne zusätzliche Schritte.
+`Favenio-<version>.dmg` aus dem
+[aktuellen macOS-Release](https://github.com/DanielMuellerIR/favenio/releases/latest) laden, öffnen und
+beide Apps nach `Programme` ziehen. Das signierte DMG ist von Apple notarisiert.
 
-Ab Version 0.14.0 suchen beide Apps automatisch nach signierten Updates und
-installieren sie nur nach Bestätigung. In der Haupt-App gibt es zusätzlich
-**Favenio → Nach Updates suchen …**. Bei der Update-Prüfung werden keine
-Hardware- oder Systemprofildaten übertragen. Ältere Versionen enthalten noch
-keinen Updater; 0.14.0 muss deshalb einmalig über das DMG installiert werden.
+Beide Apps suchen nach signierten Updates und installieren sie nach
+Bestätigung. In der Haupt-App gibt es zusätzlich **Favenio → Nach Updates suchen …**.
+Bei der Update-Prüfung werden keine Hardware- oder Systemprofildaten übertragen.
 
-Alternativ selbst bauen — drei Skripte, jedes für sich vollständig:
+### Linux
+
+Die Linux-Apps laufen auf x86-64. Die Dateimanager-Anbindung ist mit Nemo unter
+X11 und Dolphin unter Wayland geprüft. Die
+[Linux-Installationsanleitung](docs/LINUX.md#signiertes-paket-installieren)
+erklärt den Download und die Installation des signierten Pakets.
+
+### macOS-Apps aus dem Quellcode bauen
+
+Diese Skripte bauen, installieren oder paketieren die Apps.
 
 ```bash
 ./build.sh          # beide Apps im Repository bauen und selbst testen (Wrapper auf build-app.sh; ohne Argumente, Einstellungen über Umgebungsvariablen wie `FAVENIO_SIGN_ID`)
@@ -128,10 +92,10 @@ Alternativ selbst bauen — drei Skripte, jedes für sich vollständig:
 
 Quell-Builds können nur ad hoc signiert sein und werden nie automatisch
 installiert. Für Tests, die schon vor dem ersten App-Start eine Notarisierung
-verlangen, dient `FAVENIO_DEFER_SELFTEST=1 ./install.sh`. Damit werden die
-App-Selbsttests des Builds aufgeschoben. Nach der Installation beide
-installierten App-Binaries mit `--selftest` starten und prüfen, dass die
-letzte Ausgabezeile mit `SELFTEST OK` beginnt.
+verlangen, dient `FAVENIO_DEFER_SELFTEST=1 ./install.sh`. Nach der Installation
+beide installierten App-Binaries mit `--check-bundle` starten und auf
+`BUNDLE OK` achten. Die vollständigen Integrationstests laufen aus den lokalen
+[Test-Bundles](docs/architecture/BUILD-AND-TEST.md#bauen-und-testen).
 Was in `/Applications` landet, trägt ein angeheftetes
 Notary-Ticket: `install.sh` notarisiert die Bundles selbst, prüft sie vor und
 nach dem Kopieren (`codesign`, `spctl`, `stapler validate`) und endet mit Exit-Code 2, wenn der alte Installationsstand unverändert oder
@@ -196,7 +160,7 @@ Kommt ein Eintragsname mehrfach in einem ZIP- oder TAR-Archiv vor
 Extraktion den letzten Eintrag. Bei über `bsdtar` gelesenen Formaten,
 einschließlich TAR.ZST, gilt der erste Eintrag.
 
-## Nutzung durch Skripte und AI-Agenten (headless)
+## Skripte und Automatisierung
 
 Favenio ist bewusst maschinenfreundlich gebaut:
 
@@ -547,8 +511,9 @@ Strings erzeugen keine Zelltreffer. Inline- und Rich-Text-Läufe werden verbunde
 Formeln tragen nur ausdrücklich beschriftete gespeicherte Ergebnisse bei, die
 veraltet sein können. Formeltext bleibt aus, Zahlen bleiben unformatierte
 Speicherwerte. Versteckte Blätter/Zellen sind enthalten, Kommentare und Zeichnungen
-ausgeschlossen. Vorschau, Navigation und Exporte erhalten Blattnamen, Zelladressen
-und Wertarten. [XLSX-Projektion und Grenzen](docs/DOCUMENT_TEXT.md).
+ausgeschlossen. Die CLI-Textausgabe nennt Blattname und Zelladresse.
+Vorschau, Navigation und Exporte erhalten Blattnamen, Zelladressen und Wertarten.
+[XLSX-Projektion und Grenzen](docs/DOCUMENT_TEXT.md).
 
 PPTX folgt Präsentationsliste und Folienbeziehungen; Form-/Textkastenläufe und
 Tabellenabsätze bleiben mit Folie, gespeicherter Objekt-ID und Absatz belegt.
@@ -951,11 +916,11 @@ Exit-Code 0 = Ordner ermittelt, 1 = kein Finder-Fenster, 2 = Fehler
 ```bash
 python3 -m unittest discover -s tests            # Unit-Tests (Kern)
 /usr/bin/python3 -m unittest discover -s tests   # Interpreter der Apps
-Favenio.app/Contents/MacOS/Favenio --selftest    # Headless-GUI-Anbindung
+./build.sh                                     # bauen, Integration und Bundles prüfen
 ```
 
-`build-app.sh` führt nach jedem Build beide App-Selbsttests aus und lässt die
-Bundles im Repository. Release-Änderungen stehen in [CHANGELOG.md](CHANGELOG.md).
+`build-app.sh` führt beide Integrationstests aus lokalen Test-Bundles aus und
+prüft Ressourcen und Update-Anbindung in den beiden Produkt-Bundles. Release-Änderungen stehen in [CHANGELOG.md](CHANGELOG.md).
 
 ## Lizenz
 

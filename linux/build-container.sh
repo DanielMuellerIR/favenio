@@ -11,6 +11,8 @@ docker build --platform linux/amd64 -t "$image" -f "$repo/linux/Dockerfile" "$re
 case "$mode" in
     package) command=(bash linux/package.sh) ;;
     check) command=(bash -e -c '
+        cargo fmt --manifest-path linux/Cargo.toml --check
+        cargo clippy --locked --manifest-path linux/Cargo.toml --all-targets -- -D clippy::all
         bash linux/build.sh debug
         export FAVENIO_SHARED_LIBRARY="$PWD/.build/linux/libfavenio-shared.so"
         export FAVENIO_ENGINE="$PWD/.build/linux/favenio.py"

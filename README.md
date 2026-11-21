@@ -2,9 +2,6 @@
 
 # Favenio
 
-Linux: Rust/GTK frontends share the Swift application models and Python search engine. Signed packages are available through the [Linux release](https://github.com/DanielMuellerIR/favenio/releases/tag/v0.70.0) and a separate GitHub update channel. Desktop integration has been tested on X11 and Wayland. See [Linux build and installation](docs/LINUX.md).
-
-
 **"facile invenio" — Latin for "I find with ease".**
 
 Favenio is an index-free file search for macOS and Linux in the spirit of EasyFind: it
@@ -26,72 +23,35 @@ The search core is pure Python 3 (standard library only), a single file, no
 installation. Two native macOS apps are built on top of it: a full search
 window and a small quick-search panel for the Finder toolbar.
 
-## What’s new in 0.70.0
+The macOS and Linux app interfaces are currently in German.
 
-On macOS, drag original files and folders from either app into Finder to move
-or copy them. Quick search pauses after five seconds at the next reading boundary
-and can resume in the same window.
+## Features
 
-## What’s new in 0.68.0
+- Search with nested AND/OR criteria across files and folders. Choose explicit
+  encodings, calendar ranges, Finder tags and Finder comments.
+- Inspect matching passages with highlighting and request more context while
+  the source is still valid.
+- Search document text in PDF, DOCX, ODT, EPUB, XLSX and PPTX. Enable local
+  OCR separately for images, textless PDF pages or images embedded in PPTX.
+- Filter, group and preview results, or open the outer archive of a result.
+- On macOS, restrict content reads to files already available locally on
+  iCloud Drive with APFS.
+- Check files and archive members for duplicates by comparing their bytes.
+  A search report explains omissions and limits.
 
-PPTX document search can recognize text in embedded screenshots. Search status
-explains empty results, the macOS main app can compare runs with recordings,
-and Linux can append results in arrival order.
-
-## What’s new in 0.66.3
-
-Linux result queries support every sort option. Editing metadata criteria preserves “All text fields”. Folder groups also distinguish identically displayed names whose original path bytes differ.
-
-## What’s new in 0.66.2
-
-Linux result previews now open and close with Space in both list and thumbnail views. Copied paths preserve trailing spaces, newer image loaders work within a fixed memory limit, and the Nemo adapter supplies its open views when Nemo’s general folder list is empty.
-
-## What’s new in 0.66.1
-
-ExifTool is now found in Arch/CachyOS’s vendor Perl directory even when the desktop PATH omits it. Archive actions also preserve outer POSIX paths with invalid UTF-8.
-
-## What’s new in 0.66.0
-
-Linux frontends now share the existing Python engine and portable Swift application models. Rust/GTK provides both windows, with Poppler/Tesseract readers, integrated previews, file-manager adapters and signed update coordination. See [Linux](docs/LINUX.md) for setup and platform details.
-
-## What's new in 0.65.0
-
-Version 0.65.0 separates the shared application models and process code from AppKit. The optional `--json-path-bytes` transport preserves outer POSIX filenames exactly, including invalid UTF-8. Linux frontends are under development; this version does not claim a complete Linux port.
-
-Since the previous GitHub release, 0.38.5, both apps have gained:
-
-- A graphical editor for nested AND/OR criteria, several search files and
-  folders, calendar ranges, Finder tags and Finder comments.
-- Canonical Unicode matching and explicit text encodings, with source-bound
-  previews, occurrence navigation and additional context on request.
-- Logical PDF, DOCX, ODT, EPUB, XLSX and PPTX text search. Local image OCR and
-  OCR of textless PDF pages are separate opt-ins; recognized text remains
-  uncertain, and embedded Office images are excluded.
-- Reversible result filters, collapsible groups, thumbnail views and explicit
-  access to an archive result's source archive.
-- A local-content search option supported for iCloud Drive on APFS. Other cloud
-  providers remain unverified; this is no general offline guarantee.
-- Explicit duplicate checks across files and archive members, confirmed by
-  full byte comparison, plus search reports explaining omissions and limits.
-  Duplicate checks never delete files or modify archives and claim no space savings.
-
-Version 0.64.1 prevents a local-only archive request from joining an ongoing
-request with a different access policy and lists PDF OCR explicitly in search reports.
-
-Existing templates and recordings remain readable; newer features carry explicit
-format versions and reject older receivers. Details are in the sections below
-and the [changelog](CHANGELOG.md).
+See the [feature overview](docs/FEATURES.md) for format and platform limits.
+Release changes are listed in the [changelog](CHANGELOG.md).
 
 ## Screenshots
 
 The main app combines criteria, document text and optional local OCR.
 This example shows a scanned PDF with its page evidence and bounded context.
 
-![Favenio 0.64.0 main window with a PDF OCR result and source-bound context](assets/screenshots/main-window.png)
+![Favenio main window with a PDF OCR result and source-bound context](assets/screenshots/main-window.png)
 
 The Finder quick-search panel uses the same search core and filters.
 
-![Favenio 0.64.0 quick search with PDF OCR and source-bound context](assets/screenshots/quick-search.png)
+![Favenio quick search with PDF OCR and source-bound context](assets/screenshots/quick-search.png)
 
 ## Requirements
 
@@ -105,20 +65,26 @@ The Finder quick-search panel uses the same search core and filters.
 
 ## Installation
 
+### macOS
+
 Download `Favenio-<version>.dmg` from the
-[Releases page](../../releases/latest), open it and drag both apps into
-`Applications`.
+[latest macOS release](https://github.com/DanielMuellerIR/favenio/releases/latest), open it and
+drag both apps into `Applications`. Apple notarizes the signed DMG.
 
-The DMG is signed with a Developer ID and notarized by Apple, so Gatekeeper
-opens the apps without extra steps.
+Both apps check for signed updates and install them after confirmation. The
+main app also has **Favenio → Nach Updates suchen …** (“Check for Updates”).
+Update checks send no hardware or system profile.
 
-Starting with version 0.14.0, both apps check for signed updates automatically
-and install them only after confirmation. The main app also provides
-**Favenio → Nach Updates suchen …** (“Check for Updates”). No hardware or
-system profile is sent with update checks. Versions before 0.14.0 have no
-updater, so 0.14.0 must be installed once from the DMG.
+### Linux
 
-Building from source instead — three scripts, each self-contained:
+The Linux apps run on x86-64. The file-manager integration has been tested
+with Nemo on X11 and Dolphin on Wayland. The
+[Linux installation guide](docs/LINUX.md#signiertes-paket-installieren)
+explains where to get the signed package and how to install it.
+
+### Build the macOS apps from source
+
+Use these scripts to build, install or package the apps.
 
 ```bash
 ./build.sh          # build and self-test both apps in the repository (wrapper for build-app.sh; no arguments, settings via environment variables such as `FAVENIO_SIGN_ID`)
@@ -128,9 +94,9 @@ Building from source instead — three scripts, each self-contained:
 
 Source builds may be ad-hoc signed and are never installed automatically.
 For tests that require notarization before any app starts, use
-`FAVENIO_DEFER_SELFTEST=1 ./install.sh`. This defers the build's app self-tests;
-after installation, run each installed app binary with `--selftest` and check
-that its final output line begins with `SELFTEST OK`.
+`FAVENIO_DEFER_SELFTEST=1 ./install.sh`. After installation, run each installed
+app binary with `--check-bundle` and look for `BUNDLE OK`. The full integration
+tests run from the local [test bundles](docs/architecture/BUILD-AND-TEST.md#bauen-und-testen).
 Whatever lands in `/Applications` carries a stapled notarization ticket:
 `install.sh` notarizes the bundles itself, verifies them before and after
 copying (`codesign`, `spctl`, `stapler validate`), and exits with code 2 when the previous installation is unchanged or restored.
@@ -190,7 +156,7 @@ If an entry name occurs more than once in a ZIP or TAR archive (including
 gzip/bzip2/xz-compressed TARs), search and extraction use its last occurrence.
 Formats read through `bsdtar`, including TAR.ZST, use the first occurrence.
 
-## Use by scripts and AI agents (headless)
+## Scripting and automation
 
 Favenio is deliberately machine-friendly:
 
@@ -525,8 +491,9 @@ reference through a bounded cache; unused strings never become cell hits. Inline
 and rich text runs are joined. Formulas contribute only explicitly labelled
 stored results, which may be stale; formula text is excluded and numbers remain
 unformatted stored values. Hidden sheets/cells are included, comments and drawings
-are excluded. Preview, navigation and exports retain sheet names, cell addresses
-and value kinds. See [XLSX projection and limits](docs/DOCUMENT_TEXT.md).
+are excluded. The CLI's text output shows the sheet name and cell address.
+Preview, navigation and exports retain sheet names, cell addresses and value
+kinds. See [XLSX projection and limits](docs/DOCUMENT_TEXT.md).
 
 
 PPTX follows presentation slide relationships and joins text runs in shapes and
@@ -906,11 +873,11 @@ folders found, 1 = no Finder window, 2 = error (including denied access).
 ```bash
 python3 -m unittest discover -s tests            # unit tests (core)
 /usr/bin/python3 -m unittest discover -s tests   # app runtime interpreter
-Favenio.app/Contents/MacOS/Favenio --selftest    # headless GUI wiring
+./build.sh                                     # build, integration and bundle checks
 ```
 
-`build-app.sh` runs both app self-tests automatically after every build and
-leaves the resulting bundles in the repository. See [CHANGELOG.md](CHANGELOG.md)
+`build-app.sh` runs both integration tests from local test bundles and checks
+the resources and updater in the two product bundles. See [CHANGELOG.md](CHANGELOG.md)
 for release changes.
 
 ## License

@@ -2,13 +2,13 @@
 import zlib
 
 
-def pdf_bytes(pages):
+def pdf_bytes(pages, page_size=(600, 800)):
     objects = [b'', b'', b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>']
     kids = []
     for entries in pages:
         page_id = len(objects) + 1
         kids.append(b'%d 0 R' % page_id)
-        objects.append(b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>' % (page_id + 1))
+        objects.append(b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>' % (*page_size, page_id + 1))
         lines = []
         for x, y, text in entries:
             escaped = text.encode('latin-1').replace(b'\\', b'\\\\').replace(b'(', b'\\(').replace(b')', b'\\)')
